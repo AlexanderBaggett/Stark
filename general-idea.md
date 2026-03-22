@@ -16,11 +16,23 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 try to always use fastcc
 
 ## Functions
-- Different types of functions for different purposes but also for compiler optimizations. 
-- Looking for ideas on different types for different roles and performance categories.
-- Execution weight hot, cold, (none) or w(number) will translate to either branch weights of 50,000, 20, 1,000 or whatever numnber user specifies
-- Inline, NoInline, InlineHint, hot, cold
-
+- 3 types
+- Keywords for different types
+- 1. finite (translates to mustprogress and willreturn)
+- 2. law (pure, no side effects, readonly garuntees)
+- 3. finite law (both)
+- 4. fn (everything else)
+### Additional function keywords
+- Inline, 
+- NoInline, 
+- InlineHint (the default) 
+- hot, 
+- cold
+- ffi (prevents the default fastcc that is normally used)
+- inline, noinline, and inlinehint are mutually exclusive.
+- hot and cold are mutually exclusive.
+- cold should not imply coldcc automatically unless you are very sure.
+- nounwind should still be inferred/emitted by default on everything internal that qualifies, not made a user  - keyword.
 
 ## Loops
 - Keywords for or while + either (infinite, non-deterministic, willexit )
@@ -56,6 +68,8 @@ try to always use fastcc
 ## Poison values
 - array indices are pointer-width (no poison values or widening)
 
+# Borrower System
+- See markdown document BorrowerSystem.md
 
 ## Structs
 - Regular Structs
@@ -66,10 +80,10 @@ try to always use fastcc
 - Data only
 
 ## Traits
-- Same as Rust, but with C-style syntax
+- Same as Rust, but with C#-style syntax
 
-## Laws
-- a specialized group of functions
+## Doctorine
+- a group of law functions
 - bundle of implementations with no owned data.
 - compile-time only
 - no identity
@@ -96,7 +110,12 @@ try to always use fastcc
 - all bit operators, bit shifting etc
 - indexing arrays and queues via []
 - any operator standard in C is available here
-- overflow not possible, we saturate instead.
+- 
+
+## Arithmatic
+- make default overflow UB/illegal
+- unchecked
+- saturation and wrapping operators exist and are explicit
 - ^ operator for exponents
 
 
@@ -108,11 +127,8 @@ try to always use fastcc
       1. i +  one of the following (essentially powers of 2 with 1 step in between)
          1. 2
          2. 4
-         3. 6
          4. 8
-         5. 12
          6. 16
-         7. 20
          8. 24
          9. 32
          10. 48
@@ -163,20 +179,7 @@ try to always use fastcc
             3. cold  
             4. hot  
             5. (inlinehint) the default  
-      2. Argument attributes   
-         1. Pointer Attributes  
-            1. Required 1 of  
-               1. noalias (must be either nocapture or noalias)  
-               2. nocapture   
-            2. Required 1 of  
-               1. readonly  
-               2. readnone  
-               3. writeonly  
-            3. Optional  
-               1. Free  (opposite of nofree)
-            4. Implied auto propagated to LLVM IR  
-               1. (notnull) defaulted on  
-               2. (nofree) defaulted on (unless free)  
+
       3. Value Attributes  
          1. noundef (defaulted on)  
 
