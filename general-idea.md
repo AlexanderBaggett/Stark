@@ -13,8 +13,6 @@ Since this langauge will inevitably hard to use, we would like to provide SOME s
 And it is designed to be as fast and as optimized as possible and needs to beat C performance on most benchmarks either through restrictions or intense specificity that correlates 1 to 1 with LLVM Compiler options, or by the fact that most unperformant IR can't be generated because of the restrictiveness
 
 
-try to always use fastcc
-
 ## Functions
 - 4 types
 - Keywords for different types
@@ -85,7 +83,7 @@ try to always use fastcc
 - Same as Rust, but with C#-style syntax
 
 ## Doctorine
-- a group of law functions
+- a group of law functions (using C# class syntax to encapsulate)
 - bundle of implementations with no owned data.
 - compile-time only
 - no identity
@@ -120,6 +118,11 @@ try to always use fastcc
 - saturation and wrapping operators exist and are explicit
 - ^ operator for exponents
 
+# Tradeoffs
+- We give specificity and get speed in return
+- We accept restrictions and gain speed in return
+- We trade compilation time for better performance. 
+- We want as many compiler passes as necessary to maximize performance
 
 ## Semi Formal Grammar (incomplete)        
 
