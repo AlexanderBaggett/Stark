@@ -1,0 +1,184 @@
+# Stark Lang
+This langauge is intended to be faster than C or Rust.
+This language designed to be brutally fast by specifying all of the LLVM optimizations as built-in language features.
+In many cases this language will restrict most things or require specificity about most things in order to achieve bleeding edge performance.
+
+This language will be more restrictive than Rust and Haskell and possibly harder to understand. And more restrictive then C99 with restricted mode
+This language will envitably be extrememly verbose in order to convey as much info as possible to the LLVM compiler backend.
+
+Speed, performance and memory usage are priorities. Ease of use, is very low on the list.
+
+Since this langauge will inevitably hard to use, we would like to provide SOME syntactic sugar in scenarios where it saves the developer time, without adding hidden bloat. 
+
+And it is designed to be as fast and as optimized as possible and needs to beat C performance on most benchmarks either through restrictions or intense specificity that correlates 1 to 1 with LLVM Compiler options, or by the fact that most unperformant IR can't be generated because of the restrictiveness
+
+
+try to always use fastcc
+
+## Functions
+- Different types of functions for different purposes but also for compiler optimizations. 
+- Looking for ideas on different types for different roles and performance categories.
+- Execution weight hot, cold, (none) or w(number) will translate to either branch weights of 50,000, 20, 1,000 or whatever numnber user specifies
+- Inline, NoInline, InlineHint, hot, cold
+
+
+## Loops
+- Keywords for or while + either (infinite, non-deterministic, willexit )
+- for loops otherwise identical to C-style for loops
+
+
+## Syntax 
+- Like C# but without classes or public/private modifiers
+- with some python-like syntatic sugar and expansions but only ones that have no additional overhead cost.
+- uninitialized variables are not allowed. e.g no  int x; or somestruct y;
+
+## Branching 
+- if/else
+- switch 
+- pattern matching
+- can assign branch weights for performance tuning w1, w99 etc
+
+## Pointers
+- Must declare Alias, NoAlias, Unique, Readonly, WriteOnly
+- The Unique Constraint: A pointer can be marked as "Unique." If a function takes a Unique array, the compiler ensures that no other part of the program holds a reference to that array.
+- No pointers to pointers
+- Pointers can and must be freed in the scope they are declared
+- Pointers must declare Local or NonLocal when passing to a function
+
+
+## No Nulls ever
+- Don't exist
+- you either succeeded and got back your result
+- or you succeeded and got back your empty array of values
+- strings being arrays of chars are empty e.g. ""
+- 
+
+## Poison values
+- array indices are pointer-width (no poison values or widening)
+
+
+## Structs
+- Regular Structs
+    - can contain functions
+        - works like rust
+
+## Records
+- Data only
+
+## Traits
+- Same as Rust, but with C-style syntax
+
+## Laws
+- a specialized group of functions
+- bundle of implementations with no owned data.
+- compile-time only
+- no identity
+- cannot be heap-allocated
+- cannot capture environment
+- static dispatch by default
+- specializable when passed as a generic parameter
+- purity / no side effects / 
+- readonly guarantees
+- Use C# class syntax
+
+## Mutability
+- Everything is immutable by default
+- Can bail out with `mut` keyword
+
+## Syntax 
+- Like C# but without classes or public/private modifiers
+- with some python-like syntatic sugar and expansions but only ones that have no additional overhead cost.
+- uninitialized variables are not allowed. e.g no  int x; or somestruct y;
+
+
+## Operators
+- standard + - % / * < > = == != <= >= ? && || & | operators
+- all bit operators, bit shifting etc
+- indexing arrays and queues via []
+- any operator standard in C is available here
+- overflow not possible, we saturate instead.
+- ^ operator for exponents
+
+
+## Semi Formal Grammar (incomplete)        
+
+
+1. Types
+   1. Integers
+      1. i +  one of the following (essentially powers of 2 with 1 step in between)
+         1. 2
+         2. 4
+         3. 6
+         4. 8
+         5. 12
+         6. 16
+         7. 20
+         8. 24
+         9. 32
+         10. 48
+         11. 64
+         12. 96
+         13. 128
+         14. 192
+         15. 256
+         16. 384
+         17. 512
+         18. 768
+         19. 1024
+      2. + a range
+         1. `[` some-integer some-integer `]`
+
+      
+   2. Floating point  
+      1.  Emit `fast` LLVM IR on all calls unless ffi  
+      2. Required one or none of  
+         1. ffi (disables fast)  
+      3. f \+ one of the following  
+         1. 16  
+         2. 32  
+         3. 64  
+         4. 80  
+         5. 128  
+
+2. Allocation  
+   1. Required One of  
+      1. stack  
+      2. heap  
+      3. register  
+      4. static  
+      5. arena
+   2. Required 0 or 1 of
+      1. mut (mutability like Rust)
+
+3. Functions  
+   1. Calling convention attribute (required)  
+      1. Required 0 or 1 of  
+         1. (fastcc)  defaulted on  
+         2. ffi  
+   2. Attributes  
+      1. Inlining  
+         1. Required 0 or 1 of  
+            1. inline  
+            2. noinline  
+            3. cold  
+            4. hot  
+            5. (inlinehint) the default  
+      2. Argument attributes   
+         1. Pointer Attributes  
+            1. Required 1 of  
+               1. noalias (must be either nocapture or noalias)  
+               2. nocapture   
+            2. Required 1 of  
+               1. readonly  
+               2. readnone  
+               3. writeonly  
+            3. Optional  
+               1. Free  (opposite of nofree)
+            4. Implied auto propagated to LLVM IR  
+               1. (notnull) defaulted on  
+               2. (nofree) defaulted on (unless free)  
+      3. Value Attributes  
+         1. noundef (defaulted on)  
+
+         
+### Model 1: No Exceptions (`nounwind` everywhere)
