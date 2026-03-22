@@ -16,7 +16,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 try to always use fastcc
 
 ## Functions
-- 3 types
+- 4 types
 - Keywords for different types
 - 1. finite (translates to mustprogress and willreturn)
 - 2. law (pure, no side effects, readonly garuntees)
@@ -38,9 +38,8 @@ try to always use fastcc
 - Keywords for or while + either (infinite, non-deterministic, willexit )
 - for loops otherwise identical to C-style for loops
 
-
 ## Syntax 
-- Like C# but without classes or public/private modifiers
+- Like C#
 - with some python-like syntatic sugar and expansions but only ones that have no additional overhead cost.
 - uninitialized variables are not allowed. e.g no  int x; or somestruct y;
 
@@ -71,8 +70,11 @@ try to always use fastcc
 # Borrower System
 - See markdown document BorrowerSystem.md
 
+# Modules and Visibility
+- See markdown document ModulesAndVisibility.md 
+
 ## Structs
-- Regular Structs
+- Regular Structs C# syntax
     - can contain functions
         - works like rust
 
@@ -99,10 +101,10 @@ try to always use fastcc
 - Everything is immutable by default
 - Can bail out with `mut` keyword
 
-## Syntax 
-- Like C# but without classes or public/private modifiers
-- with some python-like syntatic sugar and expansions but only ones that have no additional overhead cost.
-- uninitialized variables are not allowed. e.g no  int x; or somestruct y;
+# Strings and Characters
+- Like Rust Strings, but come in 2 flavors
+- Ascii (backed by i8/utf8)
+- Unicode (backed by i32)
 
 
 ## Operators
