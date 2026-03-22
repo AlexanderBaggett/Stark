@@ -2,151 +2,157 @@
 
 ## General Strategy
 
-Stark should treat module structure and visibility as an optimization feature, not just a code-organization feature.
+Stark treats module structure and visibility as optimization-relevant parts of the language.
 
-The central rule is:
+The governing rules are:
 
 - expose as little as possible
 - export as little as possible
 - keep most code and data inside the current compilation unit or package
-- let the compiler and linker see the strongest possible closed-world structure
+- preserve a closed-world view whenever possible
 
-LLVM gets much stronger when functions and globals are not externally visible. Restrictive linkage enables:
+Restrictive visibility is valuable because it enables:
 
 - dead code elimination
 - global constant propagation
 - global scalar replacement
-- calling convention changes
-- better inlining
+- more aggressive inlining
+- more aggressive internalization
 - direct calls instead of PLT indirection
 - direct global access instead of GOT indirection
-- more aggressive whole-program optimization under LTO
+- stronger LTO and ThinLTO results
 
-Stark should therefore default to privacy and require explicit opt-in for broader visibility.
+For this reason, Stark defaults to privacy and requires explicit widening of visibility.
 
 ## Core Model
 
-Stark should have three structural layers:
+Stark has two user-facing structural layers:
 
 - `package` or `library`
   - the build artifact and import boundary
 - `module`
   - the source-file-level namespace and compilation unit
-- declarations inside a module
-  - functions, globals, types, laws, traits, constants, and related declarations
 
-The important note is that only `package` and `module` are user-facing organizational concepts. The compiler may reason about individual declarations internally, but that is not a separate source-language construct.
+Modules are the namespace system.
 
-## Modules As Namespaces
+Stark does not use reopenable namespaces as a separate language feature.
 
-Stark should use modules as its namespace system.
+## Module Declaration Syntax
 
-That means:
+Each source file declares exactly one module.
 
-- one source file corresponds to one module
-- directories determine nested module paths
-- imports reference module paths
-- selected names may be re-exported explicitly
+The syntax is:
 
-This avoids the complexity of a separate reopenable namespace system and lines up well with LLVM and ThinLTO.
+```stark
+module SomeModule
+```
 
-### Why this is a good fit
+There is exactly one `module` declaration per source file.
 
-- It keeps name lookup simple.
-- It keeps source organization predictable.
-- It preserves good incremental compilation boundaries.
-- It fits ThinLTO's preferred granularity well: neither one huge module nor one module per function.
-
-## File and Module Mapping
-
-Recommended rules:
-
-- one `.stark` source file = one Stark module
-- module path is derived from package root plus directory structure
-- the file name becomes the leaf module name unless explicitly overridden
-- there should be no reopenable namespace construct spanning multiple files
+The `module` declaration appears after all imports.
 
 Example:
 
+```stark
+import Math
+import Math.SIMD
+
+module Vectors
+```
+
+The import section therefore precedes the module declaration.
+
+## Import Syntax
+
+Imports are explicit and module-based.
+
+The syntax is:
+
+```stark
+import SomeModule
+```
+
+Additional rules:
+
+- imports appear before the `module` declaration
+- imports do not implicitly re-export anything
+- importing a module does not automatically expose all nested modules
+- wildcard imports should be avoided or forbidden
+
+Imports are compile-time name-resolution constructs. They are not visibility modifiers and do not by themselves imply linker export.
+
+## File and Module Mapping
+
+Stark uses one source file per module.
+
+The intended model is:
+
+- one source file equals one module
+- directory layout determines module nesting
+- the module declaration names the file's module
+- there are no reopenable namespace blocks spanning multiple files
+
+Example layout:
+
 ```text
 math/
-  vector.stark
+  vectors.stark
   matrix.stark
   simd/
     dot.stark
 ```
 
-Possible module paths:
+This supports a straightforward module tree and matches ThinLTO-friendly compilation granularity.
 
-- `math.vector`
-- `math.matrix`
-- `math.simd.dot`
+## Visibility Keywords
 
-This model is simple and naturally supports one LLVM module per source file.
+Stark uses the following visibility keywords:
 
-## Imports and Re-Exports
-
-Imports should be explicit and module-based.
-
-Recommended rules:
-
-- importing a module does not automatically expose all nested modules
-- wildcard imports should either be forbidden or strongly discouraged
-- re-exports should be explicit
-- re-exporting should not imply linker export
-
-This distinction matters:
-
-- source-level visibility controls whether Stark code may name something
-- linker-level export controls whether foreign code or other link units may reference a symbol
-
-Those are not the same thing and should not be collapsed into one concept.
-
-## Visibility Levels
-
-Stark should keep visibility very small and very clear.
-
-Recommended visibility model:
-
-- default module-private visibility
 - `internal`
 - `public`
 - `export`
 
-### 1. Module-Private By Default
+If no visibility keyword is written, the declaration is module-private.
 
-This is the default when no modifier is written.
+These are source-language keywords, not just descriptive terms.
+
+## Meaning of Each Visibility Level
+
+### Module-Private
+
+This is the default when no visibility keyword is present.
 
 Meaning:
 
 - visible only inside the current module
 - not visible to sibling modules
-- not part of package API
+- not visible to downstream packages
 - not linker-exported
 
-This should be the most common visibility level.
+This is the default for all ordinary declarations.
 
-### 2. `internal`
+### `internal`
 
 Meaning:
 
 - visible to other modules inside the same package or library
 - not visible to downstream packages
-- not part of the runtime ABI by default
+- not a public package API
+- not a linker-exported ABI symbol by default
 
-This is the normal way to share helpers across a package without weakening optimization too much.
+`internal` is the normal way to share helpers across a package without weakening optimization more than necessary.
 
-### 3. `public`
+### `public`
 
 Meaning:
 
-- visible to other Stark packages importing this package
-- part of the source-level API
-- does not necessarily imply a linker-exported symbol
+- visible to downstream Stark code importing the package
+- part of the source-level package API
+- not necessarily a linker-exported symbol
 
-This is important because many language-level APIs do not need to be externally preemptable or visible to foreign code.
+`public` is a source-visibility concept, not automatically a binary-ABI concept.
 
-### 4. `export`
+### `export`
 
 Meaning:
 
@@ -154,117 +160,161 @@ Meaning:
 - intended for FFI, runtime entry points, plugin boundaries, or stable binary interfaces
 - should be used sparingly
 
-This is the strongest visibility and the weakest from the optimizer's perspective.
+`export` is the weakest visibility level from the optimizer's perspective.
 
-## Why `public` and `export` Should Be Separate
+## Why `public` and `export` Are Separate
 
-Many languages accidentally conflate source visibility and binary export. Stark should avoid that.
+Stark keeps source visibility separate from binary export.
 
-If a function is merely part of the Stark package API:
+This distinction is required because:
 
-- downstream Stark code may need to call it
-- the compiler and linker may still know a great deal about how it is used
-- under LTO or whole-program builds, it may still be internalized in final artifacts
+- a declaration may need to be visible to downstream Stark code
+- that same declaration may not need to exist as a fully visible linker symbol
+- linker-visible symbols are much more restrictive for optimization
 
-If a function is truly `export`:
+In Stark:
 
-- it must survive as a visible linker symbol
-- foreign code may reference it
-- ABI and preemption concerns become much more important
-- LLVM loses optimization opportunities
+- `public` controls source-level API visibility
+- `export` controls binary-level ABI visibility
 
-Keeping these apart gives Stark a much cleaner optimization model.
+The language does not collapse these into one concept.
 
-## Suggested Lowering Intent
+## What Visibility Keywords May Apply To
 
-The language spec does not need to expose LLVM linkage names directly, but the frontend should broadly aim for the following:
+Visibility keywords apply to top-level module declarations of the following kinds:
 
-- module-private
+- functions
+- laws
+- global constants
+- global variables
+- `struct` declarations
+- `record` declarations
+- `trait` declarations
+- `doctrine` declarations
+- type aliases
+- explicit re-exports
+
+These keywords may also apply to submodule declarations if Stark later adds explicit nested submodule declarations in source.
+
+## What Visibility Keywords May Not Apply To
+
+Visibility keywords do not apply to:
+
+- local variables
+- function parameters
+- generic parameters
+- block-scoped declarations
+- statements
+- expressions
+- match arms
+- imports
+
+In the initial model, visibility keywords also do not apply to individual fields or individual methods inside a type body.
+
+Visibility is defined at the top-level module declaration boundary.
+
+## Recommended Simplicity Rule
+
+The simplest good rule set is:
+
+- top-level declarations may carry `internal`, `public`, or `export`
+- everything else is module-private by default
+- fields and local declarations do not carry visibility modifiers
+
+This keeps the surface model small and easy to reason about.
+
+## Lowering Intent
+
+The source language does not expose LLVM linkage terms directly, but the frontend should lower using the most restrictive correct linkage.
+
+Broad lowering intent:
+
+- module-private declarations
   - prefer `private` or `internal`
 - `internal`
   - prefer `internal`
 - `public`
-  - use the most restrictive linkage consistent with cross-module/package semantics
+  - use the most restrictive linkage consistent with package API semantics
   - rely on package compilation model and LTO internalization where possible
 - `export`
   - use true externally visible linkage
 
-The frontend should always prefer the most restrictive correct linkage.
+The frontend always prefers the narrowest correct visibility and linkage.
 
-## Shared Libraries vs Executables
+## Executables and Shared Libraries
 
-Stark should bias toward direct access whenever possible.
+### Executables
 
-### When building executables
+When building executables, Stark should aggressively assume local resolution.
 
-Recommended strategy:
+The intended strategy is:
 
-- mark all non-FFI symbols `dso_local`
+- mark non-export symbols `dso_local`
 - avoid semantic interposition by default
-- keep all non-export roots optimizable and internalizable
+- keep non-export roots eligible for internalization
 
-This avoids unnecessary PLT and GOT overhead.
+This preserves direct calls and direct global access.
 
-### When building shared libraries
+### Shared Libraries
 
-Recommended strategy:
+When building shared libraries, Stark should still preserve direct internal access wherever possible.
+
+The intended strategy is:
 
 - use hidden visibility by default
-- export only explicitly marked `export` symbols
-- avoid default-visible, preemptable symbols unless the language or ABI actually requires them
+- export only explicitly marked `export` declarations
+- avoid default-visible preemptable symbols unless the ABI really requires them
 
-This preserves direct internal calls and direct internal global access inside the shared library.
+This preserves direct internal calls and direct internal data access inside the shared library.
 
-## Generics, Monomorphization, and ODR-Style Deduplication
+## Generics and Monomorphization
 
-If Stark uses monomorphization for generics, multiple codegen units may emit identical instantiations.
+If Stark uses monomorphization, identical instantiations may appear in multiple codegen units.
 
-Recommended strategy:
+The intended lowering strategy is:
 
 - use ODR-style deduplicable linkage for generic instantiations
 - prefer the equivalent of `linkonce_odr`, not plain `linkonce`
-- group associated generated data with the function in the same comdat when needed
+- group associated generated data in the same comdat when required
 
-This matters because:
-
-- ODR-style linkage still permits inlining
-- plain non-ODR weak/linkonce semantics block important optimization
-- comdat grouping keeps related generated artifacts consistent during deduplication
+This is required to preserve safe inlining and correct deduplication behavior.
 
 ## Constants and Global Data
 
-Stark should aggressively distinguish immutable data from mutable global state.
+Stark aggressively distinguishes immutable global data from mutable global state.
 
-Recommended rules:
+The following are immutable unless explicitly declared otherwise:
 
-- string literals are immutable
-- lookup tables are immutable
-- type metadata is immutable when possible
-- sealed dispatch tables and variant tables are immutable when possible
-- immutable globals should be emitted as constants
+- string literals
+- numeric lookup tables
+- sealed dispatch tables when possible
+- type metadata when possible
+- variant tables when possible
 
-When address identity is not semantically meaningful, the compiler should also use address-insignificance-friendly lowering such as local unnamed-address style handling.
+Immutable global data should be emitted as constants.
+
+When address identity is not semantically meaningful, the frontend should also use address-insignificance-friendly lowering such as local unnamed-address style handling.
 
 This enables:
 
 - constant folding of loads
 - constant merging
-- less duplicate data
-- better cache use
+- reduced duplicate data
+- better cache behavior
 - stronger interprocedural propagation
 
 ## Closed-World Bias
 
-The module and visibility system should reinforce Stark's broader closed-world philosophy.
+The module and visibility system reinforces Stark's broader closed-world design.
 
-That means:
+The default assumptions are:
 
 - most declarations are not externally visible
-- most helper functions are module-private or `internal`
-- most type metadata stays local to the package or final binary
+- most helpers are module-private or `internal`
+- most metadata remains local to the package or final binary
 - dynamic linking and open-world replacement are explicit concessions, not defaults
 
-This pairs naturally with Stark's goals around:
+This supports:
 
 - internal fast calling conventions
 - static dispatch
@@ -273,67 +323,49 @@ This pairs naturally with Stark's goals around:
 
 ## LTO and Compilation Strategy
 
-Stark should be designed with ThinLTO in mind.
+Stark is designed to work well with ThinLTO.
 
-Recommended strategy:
+The intended compilation strategy is:
 
 - one LLVM module per source file
-- enable ThinLTO by default in optimized builds when practical
-- rely on ThinLTO to import small hot functions cross-module
-- rely on LTO internalization to shrink visibility further in final binaries
+- ThinLTO enabled by default in optimized builds when practical
+- cross-module importing for small hot functions
+- LTO internalization for final binaries
 
-This gives Stark:
+This enables:
 
 - cross-module inlining
 - better dead stripping
 - stronger whole-program constant propagation
-- more chances to recover internal-style optimization on symbols that started more visible than necessary
+- recovery of internal-style optimization on declarations that were initially more visible than strictly necessary
 
-But Stark should not rely on LTO alone. The frontend should still emit restrictive visibility up front.
+Stark does not rely on LTO alone. Restrictive visibility is still emitted up front.
 
-## What To Avoid
+## What Stark Avoids
 
-Stark should avoid the following unless there is a strong justification:
+Stark avoids the following unless there is a strong justification:
 
 - reopenable namespace systems
 - default-public top-level declarations
-- automatic runtime export of source-visible API
+- automatic linker export of source-visible API
 - open-ended symbol interposition semantics
-- plain non-ODR weak/linkonce linkage for generics
-- widespread use of "must keep" retention mechanisms
-- exposing low-level linker concepts directly in ordinary source syntax
-
-These either complicate the language or reduce optimization power without enough benefit.
-
-## Recommended Stark Rules
-
-If Stark wants a compact, optimization-friendly design, the simplest good rule set is:
-
-- modules are namespaces
-- one source file equals one module
-- directory layout defines module path
-- declarations are module-private by default
-- `internal` exposes within the package
-- `public` exposes to Stark source importers
-- `export` exposes a real linker symbol
-- shared libraries use hidden visibility by default
-- executables use `dso_local`-style assumptions aggressively
-- generics use ODR-style deduplicable linkage
-- immutable globals are constants
-- address identity is not preserved unless the language actually exposes it
+- plain non-ODR weak or linkonce linkage for generics
+- widespread use of forced-retention mechanisms
+- low-level linker terminology in ordinary source syntax
 
 ## Summary
 
-Modules and visibility are one of the highest-leverage parts of language design for optimization.
+The Stark module and visibility model is defined by the following rules:
 
-The best Stark design is one that:
+- modules are namespaces
+- one source file equals one module
+- imports appear before the module declaration
+- `module SomeModule` declares the module in the file
+- top-level declarations are module-private by default
+- `internal`, `public`, and `export` are the visibility keywords
+- `public` and `export` are not the same concept
+- visibility modifiers apply to top-level declarations, not to locals or statements
+- fields and local declarations do not carry visibility modifiers in the initial model
+- executables and shared libraries both default to the most restrictive practical visibility
 
-- treats modules as namespaces
-- defaults to privacy
-- separates source visibility from binary export
-- favors internalization
-- favors hidden visibility
-- favors immutable constants
-- favors ThinLTO-friendly module granularity
-
-That gives LLVM the strongest possible view of the program while still giving users a clear and simple source model.
+This model is intentionally simple at the source level and intentionally restrictive at the optimization level.
