@@ -185,6 +185,8 @@ Visibility keywords apply to top-level module declarations of the following kind
 
 - functions
 - laws
+- finites
+- finite laws
 - global constants
 - global variables
 - `struct` declarations

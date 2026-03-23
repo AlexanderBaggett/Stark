@@ -40,6 +40,9 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - Like C#
 - with some python-like syntatic sugar and expansions but only ones that have no additional overhead cost.
 - uninitialized variables are not allowed. e.g no  int x; or somestruct y;
+- ex  heap Somestruct s = new Somestruct(){X =10; Y = 10;};
+- constructors and new() for structs and records
+-
 
 ## Branching 
 - if/else
@@ -59,6 +62,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - Don't exist
 - you either succeeded and got back your result
 - or you succeeded and got back your empty array of values
+- rawpointers can be null but only through ffi, you can't initialize anything as null or set the value of anything to null
 - strings being arrays of chars are empty e.g. ""
 - 
 
@@ -104,6 +108,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - Ascii (backed by i8/utf8)
 - Unicode (backed by i32)
 
+# Generica
 
 ## Operators
 - standard + - % / * < > = == != <= >= ? && || & | operators

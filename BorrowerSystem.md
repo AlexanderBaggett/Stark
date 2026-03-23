@@ -2,156 +2,220 @@
 
 ## General Strategy
 
-Stark should not try to beat Rust by copying Rust's borrowing model and making it slightly more verbose. If Stark wants to extract more performance from LLVM than Rust typically can, it needs restrictions that produce stronger compiler facts more often.
+Stark uses a stricter borrower system than Rust in order to expose more optimizer-relevant information to LLVM in ordinary code.
 
-The core strategy is:
+The system is built around the following rules:
 
-- Make the common case more restrictive than Rust.
-- Reserve flexible behavior for explicit escape hatches.
-- Encode escape behavior, mutability, effects, sharing, and dispatch in the source language.
-- Lower those source-level guarantees into LLVM attributes and metadata automatically.
-- Prefer a few high-value restrictions that unlock major optimizations over many low-value restrictions that only make the language harder to use.
+- safe code uses non-escaping borrows by default
+- safe code has no null references
+- safe code separates deep immutability from ordinary shared access
+- initialization is expressed explicitly
+- effects are part of the function model
+- destructor behavior is heavily constrained
+- shared mutable state is explicit
+- dispatch is closed-world by default
+- raw pointers exist only as an explicit low-level escape hatch
 
-The important design principle is that every restriction should justify itself by unlocking stronger IR:
+Every restriction in this system exists to unlock stronger IR. The intended result is broader use of:
 
-- more `captures(...)`
-- more `noalias`
-- more `readonly`
-- more `dereferenceable`
-- more `align`
-- more `nounwind`
-- more `nosync`
-- more `nofree`
-- more `memory(...)`
-- more `willreturn`
-- more `mustprogress`
-- more `initializes(...)`
-- more `dead_on_return`
+- `captures(...)`
+- `noalias`
+- `readonly`
+- `dereferenceable`
+- `align`
+- `nonnull`
+- `noundef`
+- `nounwind`
+- `nosync`
+- `nofree`
+- `memory(...)`
+- `willreturn`
+- `mustprogress`
+- `initializes(...)`
+- `dead_on_return`
 
-Stark's identity should be:
-
-- Rust is strongest on ownership safety and general-purpose ergonomics.
-- Stark is strongest on effect visibility, escape visibility, transitive immutability, and closed-world optimization.
-
-That means the safe default in Stark should be:
-
-- non-escaping borrows
-- transitive immutability
-- non-shared data
-- static dispatch
-- explicit output initialization
-- trivial cleanup behavior
-
-Everything more flexible should be requested explicitly.
+The safe subset of Stark is the maximally optimizable subset. More flexible behavior is available, but it must be requested explicitly.
 
 ## 1. Non-Escaping Borrows By Default
 
-Rust borrows describe validity, but they do not make escape class the main source-level distinction. Stark can be stricter by making escape behavior explicit in the type system.
+Stark makes escape class a first-class part of the borrower system.
 
-Suggested borrow classes:
+The core borrow classes are:
 
-- `borrow T`: may not be stored, returned, or forwarded to unknown code
-- `retborrow T`: may escape only through the return value
-- `storeborrow T`: may be stored or otherwise escape
+- `borrow T`
+- `retborrow T`
+- `storeborrow T`
 
-This is stricter than a generic borrow model because the default borrow is ephemeral and call-local.
+These classes have the following meaning:
 
-### Why it matters
+- `borrow T`
+  A non-owning borrow that may not be stored, returned, or forwarded to unknown code.
+- `retborrow T`
+  A non-owning borrow that may escape only through the return value.
+- `storeborrow T`
+  A non-owning borrow that may be stored or otherwise escape.
 
-If most borrows are guaranteed non-escaping, the compiler can emit stronger capture information much more often. That helps alias analysis, load forwarding, stack promotion, and interprocedural optimization.
+`borrow T` is the default borrow form in safe code.
 
-### LLVM information unlocked
+This model gives the compiler stronger and more explicit capture information than a generic borrow model. In particular, it supports broad emission of:
 
 - `captures(none)` for ordinary `borrow`
 - `captures(ret: address, provenance)` for `retborrow`
-- `returned` when a function literally returns the same pointer argument
-- `nofree` reasoning stays stronger when uncaptured pointers cross calls
+- `returned` when a function returns the same pointer argument
+- stronger `nofree` reasoning across calls involving uncaptured borrows
 
-### Design consequence
+## 2. Raw Pointers, FFI, and Null Handling
 
-Most code should use `borrow` by default. Escaping a borrow should be a separate, visible capability rather than the default behavior.
+Safe Stark code does not have null references or nullable borrows.
 
-## 2. Transitive Immutability, Not Just Shared Reference
+Null is permitted only in the raw-pointer and FFI domain.
 
-Rust shared references are not maximally immutable because interior mutability exists. Stark can extract more optimizer facts by distinguishing simple sharing from deep freezing.
+The raw pointer forms are:
 
-Suggested distinction:
+- `rawptr<T>`
+- `rawmutptr<T>`
 
-- `frozen T`: nothing reachable through this reference may be mutated
-- `shared T`: shared access is allowed, but explicit mutation-capable primitives may exist
+These are the only pointer forms that may be:
 
-Under `frozen`, the language should ban interior mutability, hidden atomics, and mutation through reachable aliases.
+- null
+- dangling
+- unaligned
+- aliased
+- pointers to pointers
+- passed directly to or from foreign code
 
-### Why it matters
+Raw pointers are allowed only in:
 
-LLVM optimization gets much stronger when the compiler knows that all reachable memory is truly read-only for the duration of the borrow, not just "not written through this particular path."
+- `ffi fn`
+- explicit raw or unsafe low-level regions
+- explicit runtime or backend-facing code
+- explicit conversions at foreign boundaries
 
-### LLVM information unlocked
+The following rules apply:
 
-- `readonly` on parameters much more often
-- `memory(argmem: read)` or stronger function memory effects
-- invariance-style reasoning for truly immutable memory
-- more load hoisting and redundant load elimination
+- dereferencing a raw pointer is never implicit
+- raw pointers must be null-checked before conversion into safe Stark borrows
+- null-checking proves only non-nullness
+- null-checking does not prove alignment, lifetime, initialization, alias safety, or provenance validity
+- conversion from a raw pointer into a safe borrow is always explicit
 
-### Design consequence
+Pointers to pointers are forbidden in ordinary safe Stark code.
 
-Stark should separate "shared access" from "deeply frozen access." The latter is the real optimization lever.
+Pointers to pointers are permitted only through raw pointers in FFI or explicit low-level escape hatches.
 
-## 3. First-Class `out` and `init` Parameters
+Examples of permitted raw-only forms include:
 
-Rust can model output initialization with library patterns like `MaybeUninit`, but it is not a primary function-typing concept. Stark can be stricter and clearer by making initialization contracts part of the language.
+- `rawptr<rawptr<i8>>`
+- `rawmutptr<rawmutptr<void>>`
 
-Suggested forms:
+This boundary preserves the safe-code guarantees that matter most for optimization:
+
+- safe borrows remain non-null
+- safe borrows remain eligible for `nonnull`
+- safe borrows remain eligible for `noundef`
+- safe borrows remain eligible for `dereferenceable`
+- safe borrows remain eligible for stronger alias reasoning
+
+## 3. Transitive Immutability
+
+Stark distinguishes ordinary shared access from deep immutability.
+
+The core distinction is:
+
+- `frozen T`
+- `shared T`
+
+These forms have the following meaning:
+
+- `frozen T`
+  Nothing reachable through this reference may be mutated for the duration of the borrow.
+- `shared T`
+  Shared access is permitted, but explicit mutation-capable primitives may exist in this domain.
+
+Under `frozen`, the language prohibits:
+
+- interior mutability
+- hidden atomics
+- mutation through reachable aliases
+
+This distinction exists so the compiler can rely on true read-only behavior rather than mere absence of writes through one syntactic path.
+
+It enables broader use of:
+
+- `readonly`
+- `memory(argmem: read)`
+- invariance-style reasoning for immutable memory
+- aggressive load hoisting and redundant load elimination
+
+## 4. First-Class `out` and `init` Parameters
+
+Initialization is an explicit part of the Stark type and call model.
+
+The core forms are:
 
 - `out T`
 - `out [T; N]`
 - `init T`
 
-The contract should be:
+The contract is:
 
 - the callee must write the required bytes before return
 - the callee may not read bytes before initializing them
 - the caller treats the destination as uninitialized until the call completes
 
-### Why it matters
+These forms are used for construction, filling, decoding, and other write-before-read APIs.
 
-This turns a common low-level pattern into something LLVM can reason about directly instead of inferring through ordinary pointer traffic.
-
-### LLVM information unlocked
+They exist to support direct lowering to:
 
 - `initializes(...)`
 - `writable`
 - `dead_on_return`
-- better dead-store elimination
-- better reasoning about fill-only APIs and constructors
 
-### Design consequence
+They also improve dead-store elimination and reasoning about constructors and fill-only routines.
 
-Buffer-filling and structure-construction APIs should prefer `out` and `init` parameters over ordinary mutable borrows when the real intent is initialization rather than mutation of a live value.
+## 5. Compiler-Derived Function Guarantees
 
-## 4. A Real Effect System
+Stark exposes a small user-facing function model and derives stronger compiler guarantees from it.
 
-This is one of the biggest opportunities to be meaningfully more explicit than Rust. Stark should make operational guarantees part of function types or declarations, not just inferred backend properties.
+The source-level function forms are:
 
-Suggested effects:
+- `fn`
+- `finite`
+- `law`
+- `finite law`
 
-- `pure`
-- `read`
-- `nosync`
-- `nofree`
-- `nounwind`
-- `willreturn`
-- `mustprogress`
+Additional user-facing modifiers include:
+
+- `inline`
+- `noinline`
+- `inlinehint`
+- `hot`
 - `cold`
-- `tail`
+- `ffi`
 
-These should be source-level guarantees, not merely optimization hints.
+These are the source-language constructs the programmer writes.
 
-### Why it matters
+The compiler then derives semantic guarantees from:
 
-When effect classes are explicit, LLVM does not need to rediscover them by inference. More functions can carry the strongest valid attributes from the start.
+- the function kind
+- the borrower rules
+- the shared-state rules
+- the destructor restrictions
+- the actual function body
 
-### LLVM information unlocked
+These derived guarantees are not separate user-facing keywords. They are internal semantic facts that the compiler lowers to LLVM when valid.
+
+The most important derived guarantees are:
+
+- no visible side effects
+- read-only memory behavior
+- no synchronization
+- no allocation or freeing
+- no unwind
+- guaranteed return
+- guaranteed progress
+
+These support direct lowering to:
 
 - `memory(none)`
 - `memory(argmem: read)`
@@ -160,74 +224,78 @@ When effect classes are explicit, LLVM does not need to rediscover them by infer
 - `nounwind`
 - `willreturn`
 - `mustprogress`
-- better inlining and tail-call decisions
 
-### Design consequence
+The intended mapping is:
 
-Stark should treat effects as a core type-system feature, not just optional annotations. This is a major source of information Rust usually cannot express directly in function signatures.
+- `fn`
+  - general function form
+  - the compiler infers as many guarantees as possible from the body and surrounding rules
+- `finite`
+  - implies guaranteed return and guaranteed progress
+  - lowers to `willreturn` and `mustprogress`
+- `law`
+  - implies purity, no visible side effects, and readonly-style guarantees
+  - lowers toward `memory(none)` or `memory(argmem: read)` depending on what the function reads
+  - also allows broad inference of `nosync`, `nofree`, and `nounwind`
+- `finite law`
+  - combines both sets of guarantees
 
-## 5. Restrict Destructors Much More Than Rust
+This keeps Stark's surface syntax small while still allowing the compiler to emit strong function attributes deliberately.
 
-Rust `Drop` is powerful, but that power weakens optimizer certainty. A destructor that may allocate, synchronize, panic, or call arbitrary code makes IR more conservative.
+## 6. Restricted Destruction
 
-Stark can be stricter by making trivial destruction the default and sharply limiting effectful cleanup.
+Destructor behavior in Stark is intentionally narrow.
 
-Suggested policy:
+The default destruction model is:
 
 - POD-by-default
 - trivial destructors by default
-- effectful destructors only in explicit zones
-- destructors in safe code cannot panic
-- destructors in safe code cannot synchronize or allocate unless explicitly opted into a more expensive category
+- explicit opt-in for more expensive cleanup categories
 
-### Why it matters
+In safe code, destructors do not:
 
-The more cleanup code can do, the harder it is to preserve `nounwind`, `nosync`, `nofree`, and tail-call-friendly control flow.
+- panic
+- synchronize
+- allocate
 
-### LLVM information unlocked
+unless the type is placed in an explicitly more expensive category.
 
-- broader `nounwind`
-- broader `nosync`
-- simpler CFGs
-- better tail-call opportunities
-- fewer hidden call edges
+This restriction exists to preserve:
 
-### Design consequence
+- `nounwind`
+- `nosync`
+- `nofree`
+- tail-call-friendly control flow
+- simple and optimizer-friendly CFG structure
 
-Stark should strongly prefer explicit teardown functions for complex cleanup rather than letting all cleanup behavior hide behind automatic destruction.
+Complex teardown logic belongs in explicit teardown functions rather than in unrestricted automatic destruction.
 
-## 6. Explicit Shared-State Capability
+## 7. Explicit Shared-State Capability
 
-If shared mutable state is part of the ordinary object model, the optimizer must stay conservative more often. Stark can be stricter by separating ordinary owned data from explicitly shared data.
+Shared mutable state is not part of Stark's default object model.
 
-Suggested model:
+The default model is:
 
-- normal heap objects are non-shared by default
-- publishing to shared state is an explicit transition
-- shared memory lives in a distinct type family or capability domain
+- ordinary heap objects are non-shared
+- publication into shared state is explicit
+- shared memory belongs to a distinct type or capability domain
 - atomics and mutex-backed mutation are legal only in that explicit shared domain
 
-### Why it matters
+This keeps most code in a non-shared semantic world.
 
-If the compiler can assume most data is not concurrently shared, it can keep ordinary loads and stores non-atomic and mark more functions `nosync`.
+That, in turn, allows broader use of:
 
-### LLVM information unlocked
+- plain `load` and `store`
+- `nosync`
+- stronger alias reasoning
+- stronger dereferenceability reasoning
+- more aggressive speculation and loop optimization
 
-- plain `load` and `store` in more code
-- fewer atomics
-- broader `nosync`
-- stronger alias and dereferenceability reasoning
-- more speculation and loop optimization
+## 8. Closed-World Dispatch By Default
 
-### Design consequence
+The borrower system is paired with a closed-world default compilation model.
 
-Shared-state programming should be possible, but clearly marked. The default semantic world should be non-shared.
-
-## 7. Closed-World Dispatch By Default
-
-Dynamic dispatch, address-taken functions, and open-world linking all reduce optimization visibility. Stark can be stricter by making closed-world assumptions the default.
-
-Suggested defaults:
+The default dispatch rules are:
 
 - static dispatch
 - monomorphization for generics
@@ -236,75 +304,64 @@ Suggested defaults:
 - internal linkage by default
 - dynamic dispatch only through explicit runtime-facing constructs
 
-### Why it matters
+This supports stronger whole-program reasoning and broader internalization.
 
-LLVM becomes much stronger when the frontend can present finite callee sets, internal functions, and closed dispatch graphs.
+It also improves:
 
-### LLVM information unlocked
+- devirtualization
+- inlining
+- ThinLTO importing
+- internal fast calling convention use
+- finite-callee reasoning
 
-- better devirtualization
-- more internalization
-- more `fastcc`
-- better ThinLTO and inlining outcomes
-- indirect-call promotion opportunities
-- finite-callee metadata opportunities
+## 9. Stronger Slice and Array Contracts
 
-### Design consequence
+Stark slices and arrays carry stronger contracts in hot code than a minimal pointer-plus-length model.
 
-Stark should optimize for whole-program or mostly-closed-world compilation first, and treat open-world dispatch as an explicit concession to flexibility.
-
-## 8. Stronger Slice and Array Contracts
-
-Rust slices already carry length, but Stark can go further and make more hot-path layout and aliasing facts explicit.
-
-Suggested slice qualifiers:
+The relevant qualifiers include:
 
 - contiguous
 - stride = 1
-- aligned(16/32/64)
+- aligned(16)
+- aligned(32)
+- aligned(64)
 - exact length
 - length multiple
 - disjoint from another slice
 - mutable but non-overlapping
 
-These should be part of the type or parameter contract for performance-critical APIs.
+These qualifiers are used for performance-critical APIs and loops.
 
-### Why it matters
-
-Loop vectorization and bounds-check elimination get much easier when alignment, disjointness, and trip-shape constraints are explicit rather than inferred from arbitrary pointer arithmetic.
-
-### LLVM information unlocked
+They exist to support broader use of:
 
 - `align`
 - `dereferenceable(N)`
 - `noalias`
 - `range` attributes and metadata
-- better GEP flags
+- stronger GEP flags
 - stronger vectorization-friendly loop facts
 
-### Design consequence
-
-Stark should make "fast slice" contracts explicit and ergonomic for hot code. This is one of the clearest places to expose more information than Rust does by default.
+This is one of Stark's clearest opportunities to expose more optimizer-relevant information than Rust does by default.
 
 ## Summary
 
-The borrower system Stark needs is not "Rust borrowing with different syntax." It is a stricter semantic system built around:
+The Stark borrower system is not "Rust borrowing with different syntax." It is a stricter semantic system organized around:
 
-- escape classes
+- explicit escape classes
+- an explicit raw-pointer boundary
+- null-free safe borrows
 - transitive immutability
-- first-class initialization contracts
+- explicit initialization contracts
 - explicit effects
-- heavily limited destructors
-- explicit shared-state capabilities
+- restricted destruction
+- explicit shared-state capability
 - closed-world dispatch
 - richer slice contracts
 
-These restrictions matter because they give the compiler stronger facts more often, and those facts map directly to LLVM optimization power.
+The system is designed so that:
 
-The high-level rule should be:
+- safe code remains the strongest optimization domain
+- raw and FFI code are isolated
+- flexibility weakens guarantees only when explicitly requested
 
-- safe code is the maximally optimizable subset
-- flexible behavior exists, but must be explicitly requested
-- every extra capability should weaken IR only when the programmer actually needs it
-
-That is the most plausible path for Stark to expose more optimizer-relevant information than Rust in ordinary code.
+This is the intended path for Stark to expose more optimizer-relevant information than Rust in ordinary code.
