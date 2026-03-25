@@ -5,7 +5,7 @@ compilationUnit
     ;
 
 importDeclaration
-    : IMPORT qualifiedName SEMI?
+    : EXPORT? IMPORT qualifiedName SEMI?
     ;
 
 moduleDeclaration
@@ -48,6 +48,7 @@ functionModifier
     | HOT
     | COLD
     | FFI
+    | STRICTFP
     ;
 
 returnType
@@ -81,27 +82,19 @@ functionBody
     ;
 
 structDeclaration
-    : STRUCT Identifier typeParameterList? inheritanceClause? structBody
+    : STRUCT Identifier typeParameterList? structBody
     ;
 
 recordDeclaration
-    : RECORD Identifier typeParameterList? primaryConstructorParameters? inheritanceClause? recordBody
+    : RECORD Identifier typeParameterList? primaryConstructorParameters? recordBody
     ;
 
 traitDeclaration
-    : TRAIT Identifier typeParameterList? inheritanceClause? traitBody
+    : TRAIT Identifier typeParameterList? traitBody
     ;
 
 doctrineDeclaration
-    : DOCTRINE Identifier typeParameterList? inheritanceClause? doctrineBody
-    ;
-
-inheritanceClause
-    : COLON typeList
-    ;
-
-typeList
-    : type_ (COMMA type_)*
+    : DOCTRINE Identifier typeParameterList? doctrineBody
     ;
 
 primaryConstructorParameters
@@ -166,11 +159,7 @@ doctrineFunctionKind
     ;
 
 constructorDeclaration
-    : Identifier parameterList constructorInitializer? block
-    ;
-
-constructorInitializer
-    : COLON (BASE | THIS) argumentList
+    : Identifier parameterList block
     ;
 
 globalConstantDeclaration
@@ -228,17 +217,12 @@ typeQualifier
 
 nonArrayType
     : rawPointerType
-    | sliceOrArrayType
     | simpleType rangeConstraint?
     ;
 
 rawPointerType
     : RAWPTR LT type_ GT
     | RAWMUTPTR LT type_ GT
-    ;
-
-sliceOrArrayType
-    : LBRACK type_ (SEMI expression)? RBRACK
     ;
 
 simpleType
@@ -255,7 +239,7 @@ builtinType
     ;
 
 arraySuffix
-    : LBRACK RBRACK
+    : LBRACK expression? RBRACK
     ;
 
 rangeConstraint
@@ -373,8 +357,6 @@ pattern
     : DISCARD
     | literal
     | VAR Identifier
-    | type_ Identifier?
-    | qualifiedName
     ;
 
 expressionList
@@ -395,10 +377,17 @@ assignmentOperator
     | ADD_ASSIGN
     | SUB_ASSIGN
     | MUL_ASSIGN
+    | WRAP_ADD_ASSIGN
+    | WRAP_SUB_ASSIGN
+    | WRAP_MUL_ASSIGN
+    | SAT_ADD_ASSIGN
+    | SAT_SUB_ASSIGN
+    | SAT_MUL_ASSIGN
     | DIV_ASSIGN
     | MOD_ASSIGN
     | AND_ASSIGN
     | OR_ASSIGN
+    | XOR_ASSIGN
     ;
 
 conditionalExpression
@@ -414,7 +403,11 @@ logicalAndExpression
     ;
 
 bitwiseOrExpression
-    : bitwiseAndExpression (OR bitwiseAndExpression)*
+    : bitwiseXorExpression (OR bitwiseXorExpression)*
+    ;
+
+bitwiseXorExpression
+    : bitwiseAndExpression (CARET bitwiseAndExpression)*
     ;
 
 bitwiseAndExpression
@@ -434,16 +427,20 @@ shiftExpression
     ;
 
 additiveExpression
-    : multiplicativeExpression ((PLUS | MINUS | CARET) multiplicativeExpression)*
+    : multiplicativeExpression ((PLUS | MINUS | WRAP_ADD | WRAP_SUB | SAT_ADD | SAT_SUB) multiplicativeExpression)*
     ;
 
 multiplicativeExpression
-    : unaryExpression ((STAR | DIV | MOD) unaryExpression)*
+    : unaryExpression ((STAR | DIV | MOD | WRAP_MUL | SAT_MUL) unaryExpression)*
     ;
 
 unaryExpression
-    : postfixExpression
-    | (PLUS | MINUS | BANG | TILDE) unaryExpression
+    : powerExpression
+    | (PLUS | MINUS | WRAP_SUB | BANG | TILDE) unaryExpression
+    ;
+
+powerExpression
+    : postfixExpression (POW unaryExpression)?
     ;
 
 postfixExpression
@@ -522,11 +519,12 @@ INLINEHINT  : 'inlinehint';
 HOT         : 'hot';
 COLD        : 'cold';
 FFI         : 'ffi';
+STRICTFP    : 'strictfp';
 
 STRUCT      : 'struct';
 RECORD      : 'record';
 TRAIT       : 'trait';
-DOCTRINE    : 'doctrine' | 'doctorine';
+DOCTRINE    : 'doctrine';
 
 STACK       : 'stack';
 HEAP        : 'heap';
@@ -557,8 +555,6 @@ RETURN      : 'return';
 BREAK       : 'break';
 CONTINUE    : 'continue';
 NEW         : 'new';
-BASE        : 'base';
-THIS        : 'this';
 CONST       : 'const';
 WHERE       : 'where';
 VAR         : 'var';
@@ -587,19 +583,33 @@ FLOAT_TYPE
     : 'f' DIGIT+
     ;
 
-ADD_ASSIGN  : '+=';
-SUB_ASSIGN  : '-=';
-MUL_ASSIGN  : '*=';
+WRAP_ADD_ASSIGN : '+%=';
+WRAP_SUB_ASSIGN : '-%=';
+WRAP_MUL_ASSIGN : '*%=';
+SAT_ADD_ASSIGN  : '+|=';
+SAT_SUB_ASSIGN  : '-|=';
+SAT_MUL_ASSIGN  : '*|=';
+ADD_ASSIGN      : '+=';
+SUB_ASSIGN      : '-=';
+MUL_ASSIGN      : '*=';
 DIV_ASSIGN  : '/=';
 MOD_ASSIGN  : '%=';
 AND_ASSIGN  : '&=';
 OR_ASSIGN   : '|=';
+XOR_ASSIGN  : '^=';
 EQ          : '==';
 NEQ         : '!=';
 LTE         : '<=';
 GTE         : '>=';
 AND_AND     : '&&';
 OR_OR       : '||';
+POW         : '**';
+WRAP_ADD    : '+%';
+WRAP_SUB    : '-%';
+WRAP_MUL    : '*%';
+SAT_ADD     : '+|';
+SAT_SUB     : '-|';
+SAT_MUL     : '*|';
 
 ASSIGN      : '=';
 LT          : '<';

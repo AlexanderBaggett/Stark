@@ -1,0 +1,4 @@
+export import System.Console
+export import System.IO.Stdout
+export import System.IO.Stderr
+module System

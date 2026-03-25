@@ -27,6 +27,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - hot, 
 - cold
 - ffi (prevents the default fastcc that is normally used)
+- strictfp (uses strict IEEE-style floating-point semantics instead of the default fast-math model)
 - inline, noinline, and inlinehint are mutually exclusive.
 - hot and cold are mutually exclusive.
 - cold should not imply coldcc automatically unless you are very sure.
@@ -51,18 +52,20 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - can assign branch weights for performance tuning w1, w99 etc
 
 ## Pointers
-- Must declare Alias, NoAlias, Unique, Readonly, WriteOnly
-- The Unique Constraint: A pointer can be marked as "Unique." If a function takes a Unique array, the compiler ensures that no other part of the program holds a reference to that array.
-- No pointers to pointers
-- Pointers can and must be freed in the scope they are declared
-- Pointers must declare Local or NonLocal when passing to a function
+- Safe code follows the borrower model from `BorrowerSystem.md`
+- Safe borrows are non-null and non-owning
+- Raw pointers exist only for FFI or explicit low-level escape hatches
+- Pointers to pointers are only permitted through raw pointers at FFI boundaries
+- Safe code does not manually free memory
+- Owned values are dropped automatically at scope exit unless moved elsewhere
+- No garbage collector is required for safe Stark code because ownership and lifetime validation determine cleanup statically
 
 
 ## No Nulls ever
 - Don't exist
 - you either succeeded and got back your result
 - or you succeeded and got back your empty array of values
-- rawpointers can be null but only through ffi, you can't initialize anything as null or set the value of anything to null
+- rawpointers can be null but only through ffi / raw boundaries, and safe values cannot be initialized from null without an explicit checked conversion
 - strings being arrays of chars are empty e.g. ""
 - 
 
@@ -86,7 +89,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 ## Traits
 - Same as Rust, but with C#-style syntax
 
-## Doctorine
+## Doctrine
 - a group of law functions (using C# class syntax to encapsulate)
 - bundle of implementations with no owned data.
 - compile-time only
@@ -112,6 +115,8 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 
 ## Operators
 - standard + - % / * < > = == != <= >= ? && || & | operators
+- ^ is bitwise XOR
+- ** is exponentiation
 - all bit operators, bit shifting etc
 - indexing arrays and queues via []
 - any operator standard in C is available here
@@ -121,7 +126,15 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - make default overflow UB/illegal
 - unchecked
 - saturation and wrapping operators exist and are explicit
-- ^ operator for exponents
+- ^ is XOR, not exponentiation
+- ** is the exponent operator
+- the current compiler-lowered exponent path is floating-point oriented
+
+## Errors and Runtime
+- Stark has no exceptions or stack unwinding
+- recoverable errors are values
+- panic/assert/failure are unrecoverable trap-or-abort paths
+- canonical hosted entrypoint is `export ffi fn i32 main()`
 
 # Tradeoffs
 - We give specificity and get speed in return

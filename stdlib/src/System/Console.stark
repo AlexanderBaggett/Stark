@@ -1,0 +1,27 @@
+module System.Console
+
+ffi fn i32 fputs(ascii text, rawptr<i8> stream);
+const rawptr<i8> stdout = null;
+const rawptr<i8> stderr = null;
+
+public fn void Write(ascii text) {
+    fputs(text, stdout);
+    return;
+}
+
+public fn void WriteLine(ascii text) {
+    Write(text);
+    Write("\n");
+    return;
+}
+
+public fn void WriteError(ascii text) {
+    fputs(text, stderr);
+    return;
+}
+
+public fn void WriteErrorLine(ascii text) {
+    WriteError(text);
+    WriteError("\n");
+    return;
+}

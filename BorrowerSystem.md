@@ -36,7 +36,55 @@ Every restriction in this system exists to unlock stronger IR. The intended resu
 
 The safe subset of Stark is the maximally optimizable subset. More flexible behavior is available, but it must be requested explicitly.
 
-## 1. Non-Escaping Borrows By Default
+## 1. Ownership By Default, Moves, and Lifetime Tracking
+
+Stark safe code is ownership-based. It does not use garbage collection.
+
+Every safe value is in exactly one of the following categories:
+
+- owned
+- borrowed
+- raw
+- static
+
+The default category is owned.
+
+The ownership rules are:
+
+- every non-borrow, non-raw safe value has exactly one owner
+- ownership transfer happens by move
+- moved values are no longer usable from the old binding
+- values that remain owned at scope exit are dropped automatically
+- assignment to an initialized owned place drops the previous value before storing the new one
+- parameters owned by the callee are dropped at the end of the function unless they were moved out earlier
+- safe code has no `forget`-style escape hatch
+
+Copying is not the default. Implicit copying is limited to trivially copyable scalar categories and immutable borrow forms.
+
+This gives Stark the same fundamental memory-management model that eliminates the need for GC:
+
+- ownership determines who is responsible for cleanup
+- moves transfer that responsibility
+- drop scopes ensure cleanup happens deterministically
+- borrows never own and therefore never free
+
+The compiler enforces this with an internal ownership and lifetime analysis.
+
+The internal model is:
+
+- lexical drop scopes for locals, temporaries, and parameters
+- move and initialization tracking over normalized control flow
+- explicit lifetime sources for borrows
+- validation that a stored or returned borrow outlives its destination
+- conservative rejection when a borrow source cannot be proven
+
+This analysis is intentionally closer to Rust's MIR borrow checking than to a tracing or reference-counted runtime model. The safe language requires static proof instead of runtime GC.
+
+Arena storage follows the same no-GC rule. In the current model, `arena` storage is region-owned and reclaimed when its lexical region ends. Safe code cannot create immortal arena allocations by accident.
+
+Intentional leaks are permitted only through explicit raw or FFI escape hatches.
+
+## 2. Non-Escaping Borrows By Default
 
 Stark makes escape class a first-class part of the borrower system.
 
@@ -64,7 +112,7 @@ This model gives the compiler stronger and more explicit capture information tha
 - `returned` when a function returns the same pointer argument
 - stronger `nofree` reasoning across calls involving uncaptured borrows
 
-## 2. Raw Pointers, FFI, and Null Handling
+## 3. Raw Pointers, FFI, and Null Handling
 
 Safe Stark code does not have null references or nullable borrows.
 
@@ -116,7 +164,7 @@ This boundary preserves the safe-code guarantees that matter most for optimizati
 - safe borrows remain eligible for `dereferenceable`
 - safe borrows remain eligible for stronger alias reasoning
 
-## 3. Transitive Immutability
+## 4. Transitive Immutability
 
 Stark distinguishes ordinary shared access from deep immutability.
 
@@ -147,14 +195,14 @@ It enables broader use of:
 - invariance-style reasoning for immutable memory
 - aggressive load hoisting and redundant load elimination
 
-## 4. First-Class `out` and `init` Parameters
+## 5. First-Class `out` and `init` Parameters
 
 Initialization is an explicit part of the Stark type and call model.
 
 The core forms are:
 
 - `out T`
-- `out [T; N]`
+- `out T[N]`
 - `init T`
 
 The contract is:
@@ -173,7 +221,7 @@ They exist to support direct lowering to:
 
 They also improve dead-store elimination and reasoning about constructors and fill-only routines.
 
-## 5. Compiler-Derived Function Guarantees
+## 6. Compiler-Derived Function Guarantees
 
 Stark exposes a small user-facing function model and derives stronger compiler guarantees from it.
 
@@ -242,7 +290,7 @@ The intended mapping is:
 
 This keeps Stark's surface syntax small while still allowing the compiler to emit strong function attributes deliberately.
 
-## 6. Restricted Destruction
+## 7. Restricted Destruction
 
 Destructor behavior in Stark is intentionally narrow.
 
@@ -270,7 +318,7 @@ This restriction exists to preserve:
 
 Complex teardown logic belongs in explicit teardown functions rather than in unrestricted automatic destruction.
 
-## 7. Explicit Shared-State Capability
+## 8. Explicit Shared-State Capability
 
 Shared mutable state is not part of Stark's default object model.
 
@@ -291,7 +339,7 @@ That, in turn, allows broader use of:
 - stronger dereferenceability reasoning
 - more aggressive speculation and loop optimization
 
-## 8. Closed-World Dispatch By Default
+## 9. Closed-World Dispatch By Default
 
 The borrower system is paired with a closed-world default compilation model.
 
@@ -314,7 +362,7 @@ It also improves:
 - internal fast calling convention use
 - finite-callee reasoning
 
-## 9. Stronger Slice and Array Contracts
+## 10. Stronger Slice and Array Contracts
 
 Stark slices and arrays carry stronger contracts in hot code than a minimal pointer-plus-length model.
 
@@ -347,6 +395,9 @@ This is one of Stark's clearest opportunities to expose more optimizer-relevant 
 
 The Stark borrower system is not "Rust borrowing with different syntax." It is a stricter semantic system organized around:
 
+- ownership by default
+- deterministic destruction without GC
+- internal lifetime tracking
 - explicit escape classes
 - an explicit raw-pointer boundary
 - null-free safe borrows

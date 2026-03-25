@@ -1,0 +1,15 @@
+module System.IO.Stderr
+
+ffi fn i32 fputs(ascii text, rawptr<i8> stream);
+const rawptr<i8> stderr = null;
+
+public fn void Write(ascii text) {
+    fputs(text, stderr);
+    return;
+}
+
+public fn void WriteLine(ascii text) {
+    Write(text);
+    Write("\n");
+    return;
+}

@@ -1,0 +1,277 @@
+using System.Diagnostics;
+using System.ComponentModel;
+
+namespace Stark.Compiler;
+
+internal sealed record NativeToolchainResult(
+    bool Succeeded,
+    string OutputPath,
+    string StandardOutput,
+    string StandardError);
+
+internal static class NativeToolchain
+{
+    public static bool TryDetectDefaultTargetInfo(out LlvmTargetInfo targetInfo)
+    {
+        targetInfo = default!;
+
+        try
+        {
+            var tempDirectory = Directory.CreateTempSubdirectory("stark-target-");
+            try
+            {
+                var tempSourcePath = Path.Combine(tempDirectory.FullName, "empty.c");
+                File.WriteAllText(tempSourcePath, string.Empty);
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "clang",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                startInfo.ArgumentList.Add("-S");
+                startInfo.ArgumentList.Add("-emit-llvm");
+                startInfo.ArgumentList.Add("-x");
+                startInfo.ArgumentList.Add("c");
+                startInfo.ArgumentList.Add(tempSourcePath);
+                startInfo.ArgumentList.Add("-o");
+                startInfo.ArgumentList.Add("-");
+
+                using var process = Process.Start(startInfo);
+                if (process is null)
+                {
+                    return false;
+                }
+
+                var standardOutput = process.StandardOutput.ReadToEnd();
+                _ = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                if (process.ExitCode != 0)
+                {
+                    return false;
+                }
+
+                string? triple = null;
+                string? dataLayout = null;
+
+                foreach (var line in standardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (line.StartsWith("target triple = \"", StringComparison.Ordinal))
+                    {
+                        triple = ExtractQuotedValue(line);
+                    }
+                    else if (line.StartsWith("target datalayout = \"", StringComparison.Ordinal))
+                    {
+                        dataLayout = ExtractQuotedValue(line);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(triple))
+                {
+                    return false;
+                }
+
+                targetInfo = new LlvmTargetInfo(triple, dataLayout);
+                return true;
+            }
+            finally
+            {
+                try
+                {
+                    tempDirectory.Delete(recursive: true);
+                }
+                catch
+                {
+                    // Best effort cleanup only.
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static NativeToolchainResult EmitObject(string llvmIr, string outputPath)
+    {
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true);
+    }
+
+    public static NativeToolchainResult EmitExecutable(string llvmIr, string outputPath)
+    {
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false);
+    }
+
+    public static NativeToolchainResult LinkExecutable(IEnumerable<string> objectPaths, string outputPath)
+    {
+        return RunTool("clang", BuildLinkExecutableArguments(objectPaths, outputPath), outputPath);
+    }
+
+    public static NativeToolchainResult CreateStaticLibrary(IEnumerable<string> objectPaths, string outputPath)
+    {
+        var arguments = BuildStaticLibraryArguments(objectPaths, outputPath);
+
+        if (OperatingSystem.IsWindows())
+        {
+            return RunFirstAvailableTool(["llvm-lib", "lib"], arguments, outputPath);
+        }
+
+        return RunFirstAvailableTool(["llvm-ar", "ar"], arguments, outputPath);
+    }
+
+    private static NativeToolchainResult CompileLlvmIr(string llvmIr, string outputPath, bool compileOnly)
+    {
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-llvm-");
+        try
+        {
+            var llvmPath = Path.Combine(tempDirectory.FullName, "module.ll");
+            File.WriteAllText(llvmPath, llvmIr);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "clang",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            startInfo.ArgumentList.Add("-Wno-override-module");
+            if (compileOnly)
+            {
+                startInfo.ArgumentList.Add("-c");
+            }
+
+            startInfo.ArgumentList.Add(llvmPath);
+            startInfo.ArgumentList.Add("-o");
+            startInfo.ArgumentList.Add(fullOutputPath);
+
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start clang.");
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            var standardError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            return new NativeToolchainResult(
+                process.ExitCode == 0,
+                fullOutputPath,
+                standardOutput,
+                standardError);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    private static IEnumerable<string> BuildLinkExecutableArguments(IEnumerable<string> objectPaths, string outputPath)
+    {
+        foreach (var objectPath in objectPaths)
+        {
+            yield return Path.GetFullPath(objectPath);
+        }
+
+        yield return "-o";
+        yield return Path.GetFullPath(outputPath);
+    }
+
+    private static IEnumerable<string> BuildStaticLibraryArguments(IEnumerable<string> objectPaths, string outputPath)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            yield return $"/OUT:{Path.GetFullPath(outputPath)}";
+        }
+        else
+        {
+            yield return "rcs";
+            yield return Path.GetFullPath(outputPath);
+        }
+
+        foreach (var objectPath in objectPaths)
+        {
+            yield return Path.GetFullPath(objectPath);
+        }
+    }
+
+    private static NativeToolchainResult RunFirstAvailableTool(IEnumerable<string> toolNames, IEnumerable<string> arguments, string outputPath)
+    {
+        NativeToolchainResult? lastFailure = null;
+
+        foreach (var toolName in toolNames)
+        {
+            try
+            {
+                return RunTool(toolName, arguments, outputPath);
+            }
+            catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+            {
+                lastFailure = new NativeToolchainResult(
+                    Succeeded: false,
+                    OutputPath: Path.GetFullPath(outputPath),
+                    StandardOutput: string.Empty,
+                    StandardError: exception.Message);
+            }
+        }
+
+        return lastFailure ?? new NativeToolchainResult(
+            Succeeded: false,
+            OutputPath: Path.GetFullPath(outputPath),
+            StandardOutput: string.Empty,
+            StandardError: "No suitable native tool was available.");
+    }
+
+    private static NativeToolchainResult RunTool(string toolName, IEnumerable<string> arguments, string outputPath)
+    {
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = toolName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start {toolName}.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return new NativeToolchainResult(
+            process.ExitCode == 0,
+            fullOutputPath,
+            standardOutput,
+            standardError);
+    }
+
+    private static string? ExtractQuotedValue(string line)
+    {
+        var firstQuote = line.IndexOf('"');
+        var lastQuote = line.LastIndexOf('"');
+        return firstQuote >= 0 && lastQuote > firstQuote
+            ? line[(firstQuote + 1)..lastQuote]
+            : null;
+    }
+}

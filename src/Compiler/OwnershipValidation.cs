@@ -1,0 +1,1686 @@
+using Antlr4.Runtime;
+using Antlr4.Runtime.Tree;
+using Stark.Parsing;
+
+namespace Stark.Compiler;
+
+internal sealed class OwnershipValidator
+{
+    private readonly CompilerPassContext _context;
+    private readonly ParseResult _parseResult;
+    private readonly SyntaxModel _syntaxModel;
+    private readonly ModuleGraph _moduleGraph;
+    private readonly TypeCheckModel _typeModel;
+    private readonly StarkTypeResolver _typeResolver;
+    private readonly Dictionary<string, StarkParser.FunctionDeclarationContext> _functionDeclarations;
+    private readonly Dictionary<string, TypedFunctionSignature> _signatures;
+    private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
+
+    public OwnershipValidator(
+        CompilerPassContext context,
+        ParseResult parseResult,
+        SyntaxModel syntaxModel,
+        ModuleGraph moduleGraph,
+        TypeCheckModel typeModel)
+    {
+        _context = context;
+        _parseResult = parseResult;
+        _syntaxModel = syntaxModel;
+        _moduleGraph = moduleGraph;
+        _typeModel = typeModel;
+        _typeResolver = new StarkTypeResolver(context, "ownership-validate", moduleGraph, typeModel.NamedTypes);
+        _functionDeclarations = parseResult.Root.topLevelDeclaration()
+            .Select(static declaration => declaration.functionDeclaration())
+            .Where(static declaration => declaration is not null)!
+            .ToDictionary(static declaration => declaration.Identifier().GetText(), StringComparer.Ordinal);
+        _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
+
+        SeedMutableGlobals();
+    }
+
+    public OwnershipValidationModel Validate()
+    {
+        var summaries = new Dictionary<string, FunctionOwnershipSummary>(StringComparer.Ordinal);
+
+        foreach (var functionDeclaration in _functionDeclarations.Values)
+        {
+            var name = functionDeclaration.Identifier().GetText();
+            if (!_signatures.TryGetValue(name, out var signature))
+            {
+                continue;
+            }
+
+            var summary = ValidateFunction(functionDeclaration, signature);
+            summaries[name] = summary;
+        }
+
+        return new OwnershipValidationModel(_syntaxModel.ModuleName, summaries);
+    }
+
+    private FunctionOwnershipSummary ValidateFunction(
+        StarkParser.FunctionDeclarationContext functionDeclaration,
+        TypedFunctionSignature signature)
+    {
+        var summary = new FunctionOwnershipBuilder(signature.Name);
+        var state = new FlowState();
+        var functionScope = state.EnterScope();
+
+        foreach (var parameter in signature.Parameters)
+        {
+            state.Declare(new VariableInfo(
+                parameter.Name,
+                parameter.Type,
+                StorageClass.None,
+                VariableOrigin.Parameter,
+                IsMutable: false,
+                IsConstant: false,
+                BorrowLifetime: parameter.Type.BorrowKind == StarkBorrowKind.None
+                    ? BorrowLifetime.None
+                    : BorrowLifetime.External));
+        }
+
+        if (functionDeclaration.functionBody().block() is { } body)
+        {
+            CheckBlock(body, state, signature, summary, openScope: true);
+        }
+
+        state.ExitScope(functionScope, summary);
+        return summary.Build();
+    }
+
+    private void CheckBlock(
+        StarkParser.BlockContext block,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        bool openScope)
+    {
+        var scope = openScope ? state.EnterScope() : state.CurrentScope;
+
+        foreach (var statement in block.statement())
+        {
+            CheckStatement(statement, state, signature, summary);
+        }
+
+        if (openScope)
+        {
+            state.ExitScope(scope!, summary);
+        }
+    }
+
+    private void CheckStatement(
+        StarkParser.StatementContext statement,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        if (statement.block() is { } block)
+        {
+            CheckBlock(block, state, signature, summary, openScope: true);
+            return;
+        }
+
+        if (statement.localConstantDeclaration() is { } localConstant)
+        {
+            CheckLocalDeclaration(
+                localConstant.type_(),
+                localConstant.constantDeclarators().constantDeclarator()
+                    .Select(static declarator => (
+                        Identifier: (ITerminalNode)declarator.Identifier(),
+                        ConstantExpression: (StarkParser.ExpressionContext?)declarator.expression(),
+                        Initializer: (StarkParser.VariableInitializerContext?)null))
+                    .ToArray(),
+                StorageClass.None,
+                isMutable: false,
+                isConstant: true,
+                state,
+                signature,
+                summary);
+            return;
+        }
+
+        if (statement.localVariableDeclaration() is { } localVariable)
+        {
+            CheckLocalDeclaration(
+                localVariable.type_(),
+                localVariable.variableDeclarators().variableDeclarator()
+                    .Select(static declarator => (
+                        Identifier: (ITerminalNode)declarator.Identifier(),
+                        ConstantExpression: (StarkParser.ExpressionContext?)null,
+                        Initializer: (StarkParser.VariableInitializerContext?)declarator.variableInitializer()))
+                    .ToArray(),
+                ParseStorageClass(localVariable.storageClass()),
+                isMutable: localVariable.MUT() is not null,
+                isConstant: false,
+                state,
+                signature,
+                summary);
+            return;
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            EvaluateExpression(ifStatement.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+
+            var thenState = state.Clone();
+            CheckStatement(ifStatement.statement(0), thenState, signature, summary);
+
+            FlowState? elseState = null;
+            if (ifStatement.statement().Length > 1)
+            {
+                elseState = state.Clone();
+                CheckStatement(ifStatement.statement(1), elseState, signature, summary);
+            }
+
+            state.MergeBranches(thenState, elseState);
+            return;
+        }
+
+        if (statement.switchStatement() is { } switchStatement)
+        {
+            var switchValue = EvaluateExpression(switchStatement.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+
+            var sectionStates = new List<FlowState>();
+            foreach (var section in switchStatement.switchSection())
+            {
+                var sectionState = state.Clone();
+                foreach (var label in section.switchLabel())
+                {
+                    if (label.pattern() is { } pattern)
+                    {
+                        BindSwitchPattern(pattern, switchValue, sectionState);
+                    }
+
+                    if (label.whenClause() is { } whenClause)
+                    {
+                        EvaluateExpression(whenClause.expression(), sectionState, signature, summary, ValueUse.Read, allowFunctionReference: false);
+                    }
+                }
+
+                foreach (var nestedStatement in section.statement())
+                {
+                    CheckStatement(nestedStatement, sectionState, signature, summary);
+                }
+
+                sectionStates.Add(sectionState);
+            }
+
+            state.MergeBranches(sectionStates);
+            return;
+        }
+
+        if (statement.whileStatement() is { } whileStatement)
+        {
+            EvaluateExpression(whileStatement.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            var loopState = state.Clone();
+            CheckStatement(whileStatement.statement(), loopState, signature, summary);
+            state.MergeLoop(loopState);
+            return;
+        }
+
+        if (statement.forStatement() is { } forStatement)
+        {
+            var loopState = state.Clone();
+            var loopScope = loopState.EnterScope();
+
+            if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
+            {
+                CheckForVariableDeclaration(localForVariableDeclaration, loopState, signature, summary);
+            }
+            else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
+            {
+                foreach (var expression in initializerExpressions.expression())
+                {
+                    EvaluateExpression(expression, loopState, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+                }
+            }
+
+            if (forStatement.forCondition() is { } condition)
+            {
+                EvaluateExpression(condition.expression(), loopState, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            }
+
+            CheckStatement(forStatement.statement(), loopState, signature, summary);
+
+            if (forStatement.forIterator() is { } iterator)
+            {
+                foreach (var expression in iterator.expressionList().expression())
+                {
+                    EvaluateExpression(expression, loopState, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+                }
+            }
+
+            loopState.ExitScope(loopScope, summary);
+            state.MergeLoop(loopState);
+            return;
+        }
+
+        if (statement.returnStatement() is { } returnStatement)
+        {
+            if (returnStatement.expression() is { } expression)
+            {
+                var value = EvaluateExpression(
+                    expression,
+                    state,
+                    signature,
+                    summary,
+                    ValueUse.ForReturn(signature.ReturnType),
+                    allowFunctionReference: false);
+
+                if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
+                {
+                    ValidateReturnedBorrowLifetime(value, summary, expression);
+                }
+            }
+
+            return;
+        }
+
+        if (statement.expressionStatement() is { } expressionStatement)
+        {
+            EvaluateExpression(expressionStatement.expression(), state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+        }
+    }
+
+    private void CheckForVariableDeclaration(
+        StarkParser.LocalForVariableDeclarationContext declaration,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        CheckLocalDeclaration(
+            declaration.type_(),
+            declaration.variableDeclarators().variableDeclarator()
+                .Select(static declarator => (
+                    Identifier: (ITerminalNode)declarator.Identifier(),
+                    ConstantExpression: (StarkParser.ExpressionContext?)null,
+                    Initializer: (StarkParser.VariableInitializerContext?)declarator.variableInitializer()))
+                .ToArray(),
+            ParseStorageClass(declaration.storageClass()),
+            isMutable: declaration.MUT() is not null,
+            isConstant: false,
+            state,
+            signature,
+            summary);
+    }
+
+    private void CheckLocalDeclaration(
+        StarkParser.Type_Context typeContext,
+        IReadOnlyList<(ITerminalNode Identifier, StarkParser.ExpressionContext? ConstantExpression, StarkParser.VariableInitializerContext? Initializer)> declarators,
+        StorageClass storageClass,
+        bool isMutable,
+        bool isConstant,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        var declaredType = _typeResolver.ResolveType(typeContext);
+
+        foreach (var declarator in declarators)
+        {
+            BorrowLifetime borrowLifetime = declaredType.BorrowKind == StarkBorrowKind.None
+                ? BorrowLifetime.None
+                : BorrowLifetime.Unknown;
+
+            if (declarator.ConstantExpression is { } constantExpression)
+            {
+                var value = EvaluateExpression(
+                    WrapExpression(constantExpression),
+                    state,
+                    signature,
+                    summary,
+                    ValueUse.ForAssignment(declaredType),
+                    allowFunctionReference: false);
+                borrowLifetime = InferLifetimeForAssignment(declaredType, value, summary, constantExpression);
+            }
+            else if (declarator.Initializer is { } initializer)
+            {
+                var value = EvaluateVariableInitializer(initializer, state, signature, summary, declaredType);
+                borrowLifetime = InferLifetimeForAssignment(declaredType, value, summary, initializer);
+            }
+
+            state.Declare(new VariableInfo(
+                declarator.Identifier.GetText(),
+                declaredType,
+                storageClass,
+                VariableOrigin.Local,
+                isMutable,
+                isConstant,
+                borrowLifetime));
+        }
+    }
+
+    private ExpressionInfo EvaluateVariableInitializer(
+        StarkParser.VariableInitializerContext initializer,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        StarkTypeSymbol declaredType)
+    {
+        if (initializer.expression() is { } expression)
+        {
+            return EvaluateExpression(expression, state, signature, summary, ValueUse.ForAssignment(declaredType), allowFunctionReference: false);
+        }
+
+        if (initializer.objectInitializer() is { } objectInitializer)
+        {
+            foreach (var memberInitializer in objectInitializer.memberInitializer())
+            {
+                EvaluateExpression(memberInitializer.expression(), state, signature, summary, ValueUse.ForAssignment(memberInitializer.expression()), allowFunctionReference: false);
+            }
+
+            return new ExpressionInfo(declaredType);
+        }
+
+        if (initializer.arrayInitializer() is { } arrayInitializer)
+        {
+            foreach (var item in arrayInitializer.expression())
+            {
+                EvaluateExpression(item, state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+            }
+        }
+
+        return new ExpressionInfo(declaredType);
+    }
+
+    private ExpressionInfo EvaluateExpression(
+        StarkParser.ExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateAssignmentExpression(expression.assignmentExpression(), state, signature, summary, use, allowFunctionReference);
+    }
+
+    private ExpressionInfo EvaluateAssignmentExpression(
+        StarkParser.AssignmentExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        if (expression.conditionalExpression() is { } conditionalExpression)
+        {
+            return EvaluateConditionalExpression(conditionalExpression, state, signature, summary, use, allowFunctionReference);
+        }
+
+        var left = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Place, allowFunctionReference: true);
+        var rightUse = expression.assignmentOperator().GetText() == "="
+            ? ValueUse.ForAssignment(left.Type)
+            : ValueUse.Read;
+        var right = EvaluateAssignmentExpression(expression.assignmentExpression(), state, signature, summary, rightUse, allowFunctionReference: false);
+
+        if (expression.assignmentOperator().GetText() == "=")
+        {
+            ApplyAssignment(left, right, state, summary, expression.unaryExpression());
+            return left with { BorrowLifetime = right.BorrowLifetime };
+        }
+
+        if (IsMoveOnly(left.Type) && left.IsIndirectPlace)
+        {
+            OwnershipError(summary, "STK4203", $"Cannot move out of field or indexed place of type '{left.Type.DisplayName}'.", expression.unaryExpression());
+        }
+
+        return left;
+    }
+
+    private void ApplyAssignment(
+        ExpressionInfo left,
+        ExpressionInfo right,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        if (!left.IsPlace)
+        {
+            return;
+        }
+
+        if (left.Variable is { } variable)
+        {
+            if (variable.Origin == VariableOrigin.Global)
+            {
+                if (IsMoveOnly(left.Type))
+                {
+                    summary.ImplicitDrops.Add(variable.Name);
+                }
+
+                return;
+            }
+
+            if (state.TryGetState(variable.Id, out var variableState) && variableState.IsInitialized && IsAutomaticallyDropped(left.Type, variable.StorageClass))
+            {
+                summary.ImplicitDrops.Add(variable.Name);
+            }
+
+            var borrowLifetime = left.Type.BorrowKind == StarkBorrowKind.None
+                ? BorrowLifetime.None
+                : right.BorrowLifetime;
+            if (left.Type.BorrowKind != StarkBorrowKind.None)
+            {
+                ValidateAssignedBorrowLifetime(left, right, state, summary, context);
+            }
+
+            state.SetInitialized(variable.Id, true, borrowLifetime);
+        }
+    }
+
+    private void ValidateAssignedBorrowLifetime(
+        ExpressionInfo left,
+        ExpressionInfo right,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        if (left.Variable is null)
+        {
+            return;
+        }
+
+        var sourceLifetime = right.BorrowLifetime;
+        if (!DoesLifetimeOutliveScope(sourceLifetime, left.Variable.DeclarationScopeId, state))
+        {
+            OwnershipError(summary, "STK4202", $"Borrow assigned to '{left.Variable.Name}' does not live long enough for its destination scope.", context);
+        }
+    }
+
+    private ExpressionInfo EvaluateConditionalExpression(
+        StarkParser.ConditionalExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference);
+        if (expression.expression().Length == 0)
+        {
+            return ApplyUse(condition, state, summary, use, expression);
+        }
+
+        var thenState = state.Clone();
+        var whenTrue = EvaluateExpression(expression.expression(0), thenState, signature, summary, use, allowFunctionReference: false);
+
+        var elseState = state.Clone();
+        var whenFalse = EvaluateExpression(expression.expression(1), elseState, signature, summary, use, allowFunctionReference: false);
+
+        state.MergeBranches(thenState, elseState);
+
+        var resultType = FindCommonType(whenTrue.Type, whenFalse.Type);
+        var borrowLifetime = BorrowLifetime.Merge(whenTrue.BorrowLifetime, whenFalse.BorrowLifetime);
+        return new ExpressionInfo(resultType, BorrowLifetime: borrowLifetime);
+    }
+
+    private ExpressionInfo EvaluateLogicalOrExpression(
+        StarkParser.LogicalOrExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        var operands = expression.logicalAndExpression()
+            .Select(item => EvaluateLogicalAndExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference))
+            .ToArray();
+
+        var result = operands.Length == 1
+            ? operands[0]
+            : new ExpressionInfo(StarkTypeSymbols.Bool);
+        return ApplyUse(result, state, summary, use, expression);
+    }
+
+    private ExpressionInfo EvaluateLogicalAndExpression(
+        StarkParser.LogicalAndExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        var operands = expression.bitwiseOrExpression()
+            .Select(item => EvaluateBitwiseOrExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference))
+            .ToArray();
+
+        var result = operands.Length == 1
+            ? operands[0]
+            : new ExpressionInfo(StarkTypeSymbols.Bool);
+        return ApplyUse(result, state, summary, use, expression);
+    }
+
+    private ExpressionInfo EvaluateBitwiseOrExpression(
+        StarkParser.BitwiseOrExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.bitwiseXorExpression(),
+            item => EvaluateBitwiseXorExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression);
+    }
+
+    private ExpressionInfo EvaluateBitwiseXorExpression(
+        StarkParser.BitwiseXorExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.bitwiseAndExpression(),
+            item => EvaluateBitwiseAndExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression);
+    }
+
+    private ExpressionInfo EvaluateBitwiseAndExpression(
+        StarkParser.BitwiseAndExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.equalityExpression(),
+            item => EvaluateEqualityExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression);
+    }
+
+    private ExpressionInfo EvaluateEqualityExpression(
+        StarkParser.EqualityExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.relationalExpression(),
+            item => EvaluateRelationalExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression,
+            forceResultType: StarkTypeSymbols.Bool);
+    }
+
+    private ExpressionInfo EvaluateRelationalExpression(
+        StarkParser.RelationalExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.shiftExpression(),
+            item => EvaluateShiftExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression,
+            forceResultType: StarkTypeSymbols.Bool);
+    }
+
+    private ExpressionInfo EvaluateShiftExpression(
+        StarkParser.ShiftExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.additiveExpression(),
+            item => EvaluateAdditiveExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression);
+    }
+
+    private ExpressionInfo EvaluateAdditiveExpression(
+        StarkParser.AdditiveExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.multiplicativeExpression(),
+            item => EvaluateMultiplicativeExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression);
+    }
+
+    private ExpressionInfo EvaluateMultiplicativeExpression(
+        StarkParser.MultiplicativeExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        return EvaluateBinaryChain(
+            expression.unaryExpression(),
+            item => EvaluateUnaryExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            state,
+            summary,
+            use,
+            expression);
+    }
+
+    private ExpressionInfo EvaluateBinaryChain<TContext>(
+        IEnumerable<TContext> operands,
+        Func<TContext, ExpressionInfo> evaluateOperand,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        ParserRuleContext context,
+        StarkTypeSymbol? forceResultType = null)
+        where TContext : ParserRuleContext
+    {
+        ExpressionInfo? current = null;
+
+        foreach (var operand in operands)
+        {
+            var value = evaluateOperand(operand);
+            current = current is null
+                ? value
+                : new ExpressionInfo(forceResultType ?? FindCommonType(current.Type, value.Type));
+        }
+
+        return ApplyUse(current ?? new ExpressionInfo(StarkTypeSymbols.Error), state, summary, use, context);
+    }
+
+    private ExpressionInfo EvaluateUnaryExpression(
+        StarkParser.UnaryExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        if (expression.powerExpression() is { } powerExpression)
+        {
+            return EvaluatePowerExpression(powerExpression, state, signature, summary, use, allowFunctionReference);
+        }
+
+        var operand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        return ApplyUse(operand with { Variable = null, IsPlace = false, IsIndirectPlace = false }, state, summary, use, expression);
+    }
+
+    private ExpressionInfo EvaluatePowerExpression(
+        StarkParser.PowerExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        var left = EvaluatePostfixExpression(expression.postfixExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference);
+        if (expression.unaryExpression() is not { } rightExpression)
+        {
+            return ApplyUse(left, state, summary, use, expression);
+        }
+
+        var right = EvaluateUnaryExpression(rightExpression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        return ApplyUse(new ExpressionInfo(FindCommonType(left.Type, right.Type)), state, summary, use, expression);
+    }
+
+    private ExpressionInfo EvaluatePostfixExpression(
+        StarkParser.PostfixExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
+        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference || requiresCallableTarget);
+
+        foreach (var postfixPart in expression.postfixPart())
+        {
+            if (postfixPart.argumentList() is { } argumentList)
+            {
+                binding = InvokeCall(binding, argumentList, state, summary, use);
+                use = ValueUse.Read;
+                continue;
+            }
+
+            if (postfixPart.expressionList() is { } expressionList)
+            {
+                binding = ApplyIndex(binding, expressionList, state, signature, summary);
+                continue;
+            }
+
+            binding = ApplyMemberAccess(binding, postfixPart.Identifier().GetText(), summary, postfixPart);
+        }
+
+        return ApplyUse(binding, state, summary, use, expression);
+    }
+
+    private ExpressionInfo EvaluatePrimaryExpression(
+        StarkParser.PrimaryExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        if (expression.literal() is { } literal)
+        {
+            return ApplyUse(new ExpressionInfo(EvaluateLiteralType(literal)), state, summary, use, literal);
+        }
+
+        if (expression.Identifier() is { } identifier)
+        {
+            return ResolveValue(identifier.GetText(), identifier.Symbol, state, summary, use, allowFunctionReference);
+        }
+
+        if (expression.qualifiedName() is { } qualifiedName)
+        {
+            return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, state, summary, use, allowFunctionReference);
+        }
+
+        if (expression.objectCreationExpression() is { } objectCreationExpression)
+        {
+            var created = EvaluateObjectCreation(objectCreationExpression, state, signature, summary);
+            return ApplyUse(created, state, summary, use, objectCreationExpression);
+        }
+
+        return EvaluateExpression(expression.expression(), state, signature, summary, use, allowFunctionReference: false);
+    }
+
+    private ExpressionInfo EvaluateObjectCreation(
+        StarkParser.ObjectCreationExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        var type = _typeResolver.ResolveType(expression.type_());
+
+        if (expression.argumentList() is { } argumentList)
+        {
+            foreach (var argument in argumentList.argument())
+            {
+                EvaluateExpression(argument.expression(), state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+            }
+        }
+
+        if (expression.objectInitializer() is { } objectInitializer)
+        {
+            foreach (var initializer in objectInitializer.memberInitializer())
+            {
+                EvaluateExpression(initializer.expression(), state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+            }
+        }
+
+        return new ExpressionInfo(type, BorrowLifetime: BorrowLifetime.None);
+    }
+
+    private ExpressionInfo ResolveValue(
+        string name,
+        IToken token,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        bool allowFunctionReference)
+    {
+        if (state.TryLookup(name, out var variable))
+        {
+            if (!state.TryGetState(variable.Id, out var variableState) || !variableState.IsInitialized)
+            {
+                OwnershipError(summary, "STK4200", $"Value '{name}' was moved or is otherwise unavailable.", token);
+                return new ExpressionInfo(variable.Type);
+            }
+
+            var binding = new ExpressionInfo(
+                variable.Type,
+                Variable: variable,
+                BorrowLifetime: variableState.BorrowLifetime,
+                IsPlace: true,
+                IsDirectVariable: true);
+
+            return ApplyUse(binding, state, summary, use, token);
+        }
+
+        if (_typeModel.Globals.TryGetValue(name, out var globalType))
+        {
+            var binding = new ExpressionInfo(
+                globalType,
+                Variable: new VariableInfo(
+                    name,
+                    globalType,
+                    StorageClass.Static,
+                    VariableOrigin.Global,
+                    IsMutable: _mutableGlobals.TryGetValue(name, out var isMutable) && isMutable,
+                    IsConstant: !_mutableGlobals.TryGetValue(name, out isMutable) || !isMutable,
+                    BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External),
+                BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                IsPlace: true,
+                IsDirectVariable: true);
+
+            if (use.Kind == ValueUseKind.Consume && IsMoveOnly(globalType))
+            {
+                OwnershipError(summary, "STK4204", $"Cannot move out of global or static storage '{name}'.", token);
+            }
+
+            return binding;
+        }
+
+        if (_signatures.TryGetValue(name, out var function))
+        {
+            return allowFunctionReference
+                ? new ExpressionInfo(function.ReturnType, Function: function)
+                : new ExpressionInfo(StarkTypeSymbols.Error);
+        }
+
+        if (_moduleGraph.HasModule(name))
+        {
+            return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
+        }
+
+        return new ExpressionInfo(StarkTypeSymbols.Error);
+    }
+
+    private void BindSwitchPattern(StarkParser.PatternContext pattern, ExpressionInfo switchValue, FlowState state)
+    {
+        if (pattern.VAR() is not null && pattern.Identifier() is { } capture)
+        {
+            state.Declare(new VariableInfo(
+                capture.GetText(),
+                switchValue.Type,
+                StorageClass.None,
+                VariableOrigin.Local,
+                IsMutable: false,
+                IsConstant: false,
+                switchValue.BorrowLifetime));
+        }
+    }
+
+    private ExpressionInfo InvokeCall(
+        ExpressionInfo target,
+        StarkParser.ArgumentListContext arguments,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ValueUse use)
+    {
+        if (target.Function is null)
+        {
+            return new ExpressionInfo(StarkTypeSymbols.Error);
+        }
+
+        var borrowArguments = new List<BorrowLifetime>();
+
+        for (var index = 0; index < arguments.argument().Length; index++)
+        {
+            var parameterType = index < target.Function.Parameters.Count
+                ? target.Function.Parameters[index].Type
+                : StarkTypeSymbols.Error;
+            var argumentValue = EvaluateExpression(
+                arguments.argument(index).expression(),
+                state,
+                target.Function,
+                summary,
+                ValueUse.ForCallArgument(parameterType),
+                allowFunctionReference: false);
+
+            if (argumentValue.Type.BorrowKind != StarkBorrowKind.None)
+            {
+                borrowArguments.Add(argumentValue.BorrowLifetime);
+            }
+        }
+
+        var borrowLifetime = target.Function.ReturnType.BorrowKind == StarkBorrowKind.None
+            ? BorrowLifetime.None
+            : BorrowLifetime.InferFromCall(borrowArguments);
+
+        return ApplyUse(
+            new ExpressionInfo(target.Function.ReturnType, BorrowLifetime: borrowLifetime),
+            state,
+            summary,
+            use,
+            arguments);
+    }
+
+    private ExpressionInfo ApplyIndex(
+        ExpressionInfo target,
+        StarkParser.ExpressionListContext expressionList,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        foreach (var index in expressionList.expression())
+        {
+            EvaluateExpression(index, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        }
+
+        var elementType = target.Type.ElementType ?? StarkTypeSymbols.Error;
+        return new ExpressionInfo(
+            elementType,
+            Variable: target.Variable,
+            BorrowLifetime: target.BorrowLifetime,
+            IsPlace: target.IsPlace,
+            IsIndirectPlace: true);
+    }
+
+    private ExpressionInfo ApplyMemberAccess(
+        ExpressionInfo target,
+        string memberName,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        if (target.NamespaceName is not null)
+        {
+            var qualifiedName = $"{target.NamespaceName}.{memberName}";
+            if (_moduleGraph.HasModule(qualifiedName))
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+            }
+
+            if (_typeModel.Globals.TryGetValue(qualifiedName, out var globalType))
+            {
+                return new ExpressionInfo(
+                    globalType,
+                    Variable: new VariableInfo(
+                        qualifiedName,
+                        globalType,
+                        StorageClass.Static,
+                        VariableOrigin.Global,
+                        IsMutable: _mutableGlobals.TryGetValue(qualifiedName, out var isMutable) && isMutable,
+                        IsConstant: !_mutableGlobals.TryGetValue(qualifiedName, out isMutable) || !isMutable,
+                        BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External),
+                    BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                    IsPlace: true,
+                    IsDirectVariable: true);
+            }
+
+            if (_signatures.TryGetValue(qualifiedName, out var function))
+            {
+                return new ExpressionInfo(function.ReturnType, Function: function);
+            }
+
+            return new ExpressionInfo(StarkTypeSymbols.Error);
+        }
+
+        var namedType = target.Type.NamedType is not null && _typeModel.NamedTypes.TryGetValue(target.Type.NamedType, out var resolved)
+            ? resolved
+            : null;
+
+        if (namedType is null || !namedType.Fields.TryGetValue(memberName, out var field))
+        {
+            return new ExpressionInfo(StarkTypeSymbols.Error);
+        }
+
+        return new ExpressionInfo(
+            field.Type,
+            Variable: target.Variable,
+            BorrowLifetime: target.BorrowLifetime,
+            IsPlace: target.IsPlace,
+            IsIndirectPlace: true);
+    }
+
+    private ExpressionInfo ApplyUse(
+        ExpressionInfo value,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        ParserRuleContext context)
+    {
+        return ApplyUse(value, state, summary, use, context.Start);
+    }
+
+    private ExpressionInfo ApplyUse(
+        ExpressionInfo value,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        IToken token)
+    {
+        if (use.Kind != ValueUseKind.Consume || !IsMoveOnly(value.Type))
+        {
+            return value;
+        }
+
+        if (value.IsIndirectPlace)
+        {
+            OwnershipError(summary, "STK4203", $"Cannot move out of field or indexed place of type '{value.Type.DisplayName}'.", token);
+            return value;
+        }
+
+        if (value.Variable is null)
+        {
+            return value;
+        }
+
+        if (value.Variable.Origin == VariableOrigin.Global)
+        {
+            OwnershipError(summary, "STK4204", $"Cannot move out of global or static storage '{value.Variable.Name}'.", token);
+            return value;
+        }
+
+        if (!state.TryGetState(value.Variable.Id, out var stateValue) || !stateValue.IsInitialized)
+        {
+            OwnershipError(summary, "STK4200", $"Value '{value.Variable.Name}' was moved or is otherwise unavailable.", token);
+            return value;
+        }
+
+        state.SetInitialized(value.Variable.Id, false, value.BorrowLifetime);
+        summary.Moves.Add(value.Variable.Name);
+        return value;
+    }
+
+    private BorrowLifetime InferLifetimeForAssignment(
+        StarkTypeSymbol declaredType,
+        ExpressionInfo value,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        if (declaredType.BorrowKind == StarkBorrowKind.None)
+        {
+            return BorrowLifetime.None;
+        }
+
+        if (value.BorrowLifetime.Kind == BorrowLifetimeKind.None)
+        {
+            return BorrowLifetime.Unknown;
+        }
+
+        return value.BorrowLifetime;
+    }
+
+    private void ValidateReturnedBorrowLifetime(ExpressionInfo value, FunctionOwnershipBuilder summary, ParserRuleContext context)
+    {
+        if (value.BorrowLifetime.Kind is BorrowLifetimeKind.LocalScope or BorrowLifetimeKind.Temporary)
+        {
+            OwnershipError(summary, "STK4202", "Returned borrow does not live long enough to escape the current function.", context);
+        }
+
+        if (value.BorrowLifetime.Kind == BorrowLifetimeKind.Unknown)
+        {
+            OwnershipError(summary, "STK4202", "Returned borrow has no proven source lifetime.", context);
+        }
+    }
+
+    private bool DoesLifetimeOutliveScope(BorrowLifetime lifetime, int targetScopeId, FlowState state)
+    {
+        return lifetime.Kind switch
+        {
+            BorrowLifetimeKind.None => true,
+            BorrowLifetimeKind.External => true,
+            BorrowLifetimeKind.Temporary => false,
+            BorrowLifetimeKind.Unknown => false,
+            BorrowLifetimeKind.LocalScope => state.ScopeContains(lifetime.ScopeId!.Value, targetScopeId),
+            _ => false
+        };
+    }
+
+    private void SeedMutableGlobals()
+    {
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+            {
+                continue;
+            }
+
+            foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+            {
+                _mutableGlobals[declarator.Identifier().GetText()] = variableDeclaration.MUT() is not null;
+            }
+        }
+    }
+
+    private static StorageClass ParseStorageClass(StarkParser.StorageClassContext context)
+    {
+        return context.GetText() switch
+        {
+            "stack" => StorageClass.Stack,
+            "heap" => StorageClass.Heap,
+            "register" => StorageClass.Register,
+            "static" => StorageClass.Static,
+            "arena" => StorageClass.Arena,
+            _ => StorageClass.None
+        };
+    }
+
+    private static bool IsMoveOnly(StarkTypeSymbol type)
+    {
+        if (type.Kind == StarkTypeKind.Error || type.Kind == StarkTypeKind.Void)
+        {
+            return false;
+        }
+
+        if (type.BorrowKind != StarkBorrowKind.None)
+        {
+            return type.IsMutableView;
+        }
+
+        return type.Kind switch
+        {
+            StarkTypeKind.Bool => false,
+            StarkTypeKind.Integer => false,
+            StarkTypeKind.Float => false,
+            StarkTypeKind.RawPointer => false,
+            StarkTypeKind.Null => false,
+            _ => true
+        };
+    }
+
+    private static bool IsAutomaticallyDropped(StarkTypeSymbol type, StorageClass storageClass)
+    {
+        return IsMoveOnly(type) && storageClass != StorageClass.Static;
+    }
+
+    private static StarkTypeSymbol FindCommonType(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        if (left.Kind == StarkTypeKind.Error || right.Kind == StarkTypeKind.Error)
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        if (Equals(left, right))
+        {
+            return left;
+        }
+
+        if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
+        {
+            return StarkTypeSymbols.Integer(Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0));
+        }
+
+        if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Float)
+        {
+            return StarkTypeSymbols.Float(Math.Max(left.BitWidth ?? 32, right.BitWidth ?? 32));
+        }
+
+        if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Integer)
+        {
+            return left;
+        }
+
+        if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Float)
+        {
+            return right;
+        }
+
+        if (left.Kind == StarkTypeKind.Unicode && right.Kind == StarkTypeKind.Ascii)
+        {
+            return left;
+        }
+
+        if (left.Kind == StarkTypeKind.Ascii && right.Kind == StarkTypeKind.Unicode)
+        {
+            return right;
+        }
+
+        return StarkTypeSymbols.Error;
+    }
+
+    private static StarkTypeSymbol EvaluateLiteralType(StarkParser.LiteralContext literal)
+    {
+        if (literal.signedIntegerLiteral() is not null)
+        {
+            return StarkTypeSymbols.Integer(8);
+        }
+
+        if (literal.FloatLiteral() is not null)
+        {
+            return StarkTypeSymbols.Float(32);
+        }
+
+        if (literal.StringLiteral() is not null)
+        {
+            return StarkTypeSymbols.Ascii;
+        }
+
+        if (literal.CharacterLiteral() is not null)
+        {
+            return StarkTypeSymbols.Ascii;
+        }
+
+        if (literal.TRUE() is not null || literal.FALSE() is not null)
+        {
+            return StarkTypeSymbols.Bool;
+        }
+
+        return StarkTypeSymbols.Null;
+    }
+
+    private SourceLocation Location(IToken token) => new(_context.Input.FilePath, token.Line, token.Column + 1);
+
+    private void OwnershipError(FunctionOwnershipBuilder summary, string code, string message, ParserRuleContext context)
+    {
+        OwnershipError(summary, code, message, context.Start);
+    }
+
+    private void OwnershipError(FunctionOwnershipBuilder summary, string code, string message, IToken token)
+    {
+        summary.OwnershipValid = false;
+        _context.Diagnostics.Error(code, message, "ownership-validate", Location(token));
+    }
+
+    private static StarkParser.ExpressionContext WrapExpression(StarkParser.ExpressionContext expression) => expression;
+
+    private enum VariableOrigin
+    {
+        Local,
+        Parameter,
+        Global
+    }
+
+    private enum StorageClass
+    {
+        None,
+        Stack,
+        Heap,
+        Register,
+        Static,
+        Arena
+    }
+
+    private enum BorrowLifetimeKind
+    {
+        None,
+        External,
+        LocalScope,
+        Temporary,
+        Unknown
+    }
+
+    private enum ValueUseKind
+    {
+        Read,
+        Consume,
+        Place
+    }
+
+    private readonly record struct ValueUse(ValueUseKind Kind)
+    {
+        public static readonly ValueUse Read = new(ValueUseKind.Read);
+        public static readonly ValueUse ConsumeTemporary = new(ValueUseKind.Consume);
+        public static readonly ValueUse Place = new(ValueUseKind.Place);
+
+        public static ValueUse ForAssignment(StarkTypeSymbol targetType) => IsMoveOnly(targetType) ? new(ValueUseKind.Consume) : Read;
+
+        public static ValueUse ForCallArgument(StarkTypeSymbol parameterType) =>
+            parameterType.BorrowKind != StarkBorrowKind.None || parameterType.Kind == StarkTypeKind.RawPointer || !IsMoveOnly(parameterType)
+                ? Read
+                : new(ValueUseKind.Consume);
+
+        public static ValueUse ForReturn(StarkTypeSymbol returnType) =>
+            returnType.BorrowKind != StarkBorrowKind.None || !IsMoveOnly(returnType)
+                ? Read
+                : new(ValueUseKind.Consume);
+
+        public static ValueUse ForAssignment(StarkParser.ExpressionContext _) => ConsumeTemporary;
+    }
+
+    private sealed record BorrowLifetime(BorrowLifetimeKind Kind, int? ScopeId = null)
+    {
+        public static readonly BorrowLifetime None = new(BorrowLifetimeKind.None);
+        public static readonly BorrowLifetime External = new(BorrowLifetimeKind.External);
+        public static readonly BorrowLifetime Temporary = new(BorrowLifetimeKind.Temporary);
+        public static readonly BorrowLifetime Unknown = new(BorrowLifetimeKind.Unknown);
+
+        public static BorrowLifetime Local(int scopeId) => new(BorrowLifetimeKind.LocalScope, scopeId);
+
+        public static BorrowLifetime Merge(BorrowLifetime left, BorrowLifetime right)
+        {
+            if (left == right)
+            {
+                return left;
+            }
+
+            if (left.Kind == BorrowLifetimeKind.None)
+            {
+                return right;
+            }
+
+            if (right.Kind == BorrowLifetimeKind.None)
+            {
+                return left;
+            }
+
+            return Unknown;
+        }
+
+        public static BorrowLifetime InferFromCall(IReadOnlyList<BorrowLifetime> arguments)
+        {
+            if (arguments.Count == 0)
+            {
+                return Unknown;
+            }
+
+            var distinct = arguments.Distinct().ToArray();
+            return distinct.Length == 1 ? distinct[0] : Unknown;
+        }
+    }
+
+    private sealed record VariableInfo(
+        string Name,
+        StarkTypeSymbol Type,
+        StorageClass StorageClass,
+        VariableOrigin Origin,
+        bool IsMutable,
+        bool IsConstant,
+        BorrowLifetime BorrowLifetime)
+    {
+        public int Id { get; init; }
+
+        public int DeclarationScopeId { get; init; }
+    }
+
+    private sealed record VariableState(bool IsInitialized, BorrowLifetime BorrowLifetime);
+
+    private sealed record ExpressionInfo(
+        StarkTypeSymbol Type,
+        VariableInfo? Variable = null,
+        TypedFunctionSignature? Function = null,
+        BorrowLifetime BorrowLifetime = null!,
+        bool IsPlace = false,
+        bool IsDirectVariable = false,
+        bool IsIndirectPlace = false,
+        string? NamespaceName = null)
+    {
+        public ExpressionInfo(StarkTypeSymbol type)
+            : this(type, BorrowLifetime: BorrowLifetime.None)
+        {
+        }
+    }
+
+    private sealed class ScopeFrame
+    {
+        public ScopeFrame(int id, ScopeFrame? parent)
+        {
+            Id = id;
+            Parent = parent;
+        }
+
+        public int Id { get; }
+
+        public ScopeFrame? Parent { get; }
+
+        public Dictionary<string, int> Symbols { get; } = new(StringComparer.Ordinal);
+
+        public List<int> DeclaredVariables { get; } = [];
+    }
+
+    private sealed class FlowState
+    {
+        private readonly Dictionary<int, VariableInfo> _variables;
+        private readonly Dictionary<int, VariableState> _states;
+        private readonly Dictionary<int, ScopeFrame> _scopes;
+        private int _nextVariableId;
+        private int _nextScopeId;
+
+        public FlowState()
+        {
+            _variables = new Dictionary<int, VariableInfo>();
+            _states = new Dictionary<int, VariableState>();
+            _scopes = new Dictionary<int, ScopeFrame>();
+            CurrentScope = new ScopeFrame(0, null);
+            _scopes[0] = CurrentScope;
+            _nextScopeId = 1;
+        }
+
+        private FlowState(
+            Dictionary<int, VariableInfo> variables,
+            Dictionary<int, VariableState> states,
+            Dictionary<int, ScopeFrame> scopes,
+            ScopeFrame currentScope,
+            int nextVariableId,
+            int nextScopeId)
+        {
+            _variables = variables;
+            _states = states;
+            _scopes = scopes;
+            CurrentScope = currentScope;
+            _nextVariableId = nextVariableId;
+            _nextScopeId = nextScopeId;
+        }
+
+        public ScopeFrame CurrentScope { get; private set; }
+
+        public ScopeFrame EnterScope()
+        {
+            var frame = new ScopeFrame(_nextScopeId++, CurrentScope);
+            _scopes[frame.Id] = frame;
+            CurrentScope = frame;
+            return frame;
+        }
+
+        public void ExitScope(ScopeFrame scope, FunctionOwnershipBuilder summary)
+        {
+            foreach (var variableId in scope.DeclaredVariables)
+            {
+                if (!_variables.TryGetValue(variableId, out var variable)
+                    || !_states.TryGetValue(variableId, out var state))
+                {
+                    continue;
+                }
+
+                if (state.IsInitialized && IsAutomaticallyDropped(variable.Type, variable.StorageClass))
+                {
+                    summary.ImplicitDrops.Add(variable.Name);
+                }
+
+                _states.Remove(variableId);
+                _variables.Remove(variableId);
+            }
+
+            CurrentScope = scope.Parent ?? scope;
+            _scopes.Remove(scope.Id);
+        }
+
+        public void Declare(VariableInfo variable)
+        {
+            var id = _nextVariableId++;
+            var bound = variable with { Id = id, DeclarationScopeId = CurrentScope.Id };
+            CurrentScope.Symbols[bound.Name] = id;
+            CurrentScope.DeclaredVariables.Add(id);
+            _variables[id] = bound;
+            _states[id] = new VariableState(IsInitialized: true, bound.BorrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : bound.BorrowLifetime);
+        }
+
+        public bool TryLookup(string name, out VariableInfo variable)
+        {
+            var scope = CurrentScope;
+            while (scope is not null)
+            {
+                if (scope.Symbols.TryGetValue(name, out var id) && _variables.TryGetValue(id, out variable!))
+                {
+                    return true;
+                }
+
+                scope = scope.Parent;
+            }
+
+            variable = default!;
+            return false;
+        }
+
+        public bool TryGetState(int variableId, out VariableState state) => _states.TryGetValue(variableId, out state!);
+
+        public void SetInitialized(int variableId, bool isInitialized, BorrowLifetime borrowLifetime)
+        {
+            if (_states.ContainsKey(variableId))
+            {
+                _states[variableId] = new VariableState(isInitialized, borrowLifetime);
+            }
+        }
+
+        public FlowState Clone()
+        {
+            var scopeMap = new Dictionary<int, ScopeFrame>();
+            ScopeFrame CloneScope(ScopeFrame source)
+            {
+                if (scopeMap.TryGetValue(source.Id, out var existing))
+                {
+                    return existing;
+                }
+
+                var parent = source.Parent is null ? null : CloneScope(source.Parent);
+                var clone = new ScopeFrame(source.Id, parent);
+                foreach (var symbol in source.Symbols)
+                {
+                    clone.Symbols[symbol.Key] = symbol.Value;
+                }
+
+                clone.DeclaredVariables.AddRange(source.DeclaredVariables);
+                scopeMap[source.Id] = clone;
+                return clone;
+            }
+
+            var currentScope = CloneScope(CurrentScope);
+            var scopes = scopeMap.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            return new FlowState(
+                _variables.ToDictionary(static pair => pair.Key, static pair => pair.Value),
+                _states.ToDictionary(static pair => pair.Key, static pair => pair.Value),
+                scopes,
+                currentScope,
+                _nextVariableId,
+                _nextScopeId);
+        }
+
+        public void MergeBranches(FlowState thenState, FlowState? elseState)
+        {
+            var visibleIds = GetVisibleVariableIds();
+            foreach (var id in visibleIds)
+            {
+                var left = thenState._states.TryGetValue(id, out var thenVar) ? thenVar : new VariableState(false, BorrowLifetime.None);
+                var right = elseState is null
+                    ? _states.TryGetValue(id, out var original) ? original : new VariableState(false, BorrowLifetime.None)
+                    : elseState._states.TryGetValue(id, out var elseVar) ? elseVar : new VariableState(false, BorrowLifetime.None);
+
+                _states[id] = new VariableState(
+                    left.IsInitialized && right.IsInitialized,
+                    BorrowLifetime.Merge(left.BorrowLifetime, right.BorrowLifetime));
+            }
+        }
+
+        public void MergeBranches(IEnumerable<FlowState> branches)
+        {
+            var branchList = branches.ToArray();
+            if (branchList.Length == 0)
+            {
+                return;
+            }
+
+            var visibleIds = GetVisibleVariableIds();
+            foreach (var id in visibleIds)
+            {
+                var initialized = true;
+                BorrowLifetime lifetime = BorrowLifetime.None;
+                var first = true;
+
+                foreach (var branch in branchList)
+                {
+                    var state = branch._states.TryGetValue(id, out var stateValue)
+                        ? stateValue
+                        : new VariableState(false, BorrowLifetime.None);
+                    initialized &= state.IsInitialized;
+                    lifetime = first ? state.BorrowLifetime : BorrowLifetime.Merge(lifetime, state.BorrowLifetime);
+                    first = false;
+                }
+
+                _states[id] = new VariableState(initialized, lifetime);
+            }
+        }
+
+        public void MergeLoop(FlowState loopState)
+        {
+            var visibleIds = GetVisibleVariableIds();
+            foreach (var id in visibleIds)
+            {
+                var before = _states.TryGetValue(id, out var beforeState) ? beforeState : new VariableState(false, BorrowLifetime.None);
+                var after = loopState._states.TryGetValue(id, out var afterState) ? afterState : new VariableState(false, BorrowLifetime.None);
+                _states[id] = new VariableState(
+                    before.IsInitialized && after.IsInitialized,
+                    BorrowLifetime.Merge(before.BorrowLifetime, after.BorrowLifetime));
+            }
+        }
+
+        public bool ScopeContains(int ownerScopeId, int targetScopeId)
+        {
+            if (!_scopes.TryGetValue(targetScopeId, out var target))
+            {
+                return false;
+            }
+
+            var current = target;
+            while (current is not null)
+            {
+                if (current.Id == ownerScopeId)
+                {
+                    return true;
+                }
+
+                current = current.Parent;
+            }
+
+            return false;
+        }
+
+        private HashSet<int> GetVisibleVariableIds()
+        {
+            var ids = new HashSet<int>();
+            var scope = CurrentScope;
+            while (scope is not null)
+            {
+                foreach (var id in scope.Symbols.Values)
+                {
+                    ids.Add(id);
+                }
+
+                scope = scope.Parent;
+            }
+
+            return ids;
+        }
+    }
+
+    private sealed class FunctionOwnershipBuilder
+    {
+        public FunctionOwnershipBuilder(string name)
+        {
+            Name = name;
+        }
+
+        public string Name { get; }
+
+        public bool OwnershipValid { get; set; } = true;
+
+        public List<string> ImplicitDrops { get; } = [];
+
+        public List<string> Moves { get; } = [];
+
+        public FunctionOwnershipSummary Build()
+        {
+            return new FunctionOwnershipSummary(
+                Name,
+                OwnershipValid,
+                ImplicitDrops.ToArray(),
+                Moves.ToArray());
+        }
+    }
+}

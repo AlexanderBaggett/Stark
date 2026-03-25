@@ -72,14 +72,23 @@ The syntax is:
 import SomeModule
 ```
 
+Explicit re-exports use the `export import` form:
+
+```stark
+export import SomeModule
+```
+
 Additional rules:
 
 - imports appear before the `module` declaration
 - imports do not implicitly re-export anything
+- `export import` is the explicit re-export declaration form
 - importing a module does not automatically expose all nested modules
-- wildcard imports should be avoided or forbidden
+- wildcard imports are forbidden
 
-Imports are compile-time name-resolution constructs. They are not visibility modifiers and do not by themselves imply linker export.
+Plain imports are compile-time name-resolution constructs. They do not by themselves imply re-export or linker export.
+
+`export import` makes the imported module part of the package-facing Stark surface.
 
 ## File and Module Mapping
 
@@ -193,10 +202,10 @@ Visibility keywords apply to top-level module declarations of the following kind
 - `record` declarations
 - `trait` declarations
 - `doctrine` declarations
-- type aliases
-- explicit re-exports
 
 These keywords may also apply to submodule declarations if Stark later adds explicit nested submodule declarations in source.
+
+Type aliases are deferred to roadmap milestone `v1.1`. They are not part of the current Stark surface.
 
 ## What Visibility Keywords May Not Apply To
 
@@ -209,7 +218,9 @@ Visibility keywords do not apply to:
 - statements
 - expressions
 - match arms
-- imports
+- plain imports
+
+`export import` is a dedicated import form, not a general visibility modifier applied to imports.
 
 In the initial model, visibility keywords also do not apply to individual fields or individual methods inside a type body.
 

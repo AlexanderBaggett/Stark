@@ -1,0 +1,43 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+
+# Test output
+[Tt]est[Rr]esults/
+coverage/
+*.coverage
+*.coveragexml
+*.trx
+
+# IDE/editor state
+.vs/
+.vscode/
+*.user
+*.rsuser
+*.suo
+*.swp
+*.swo
+
+# NuGet/local package restore noise
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Native/compiler-generated artifacts
+*.ll
+*.bc
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+
+# OS noise
+.DS_Store
+Thumbs.db
