@@ -50,6 +50,7 @@ The top-level declaration categories are:
 - `record` declarations
 - `trait` declarations
 - `doctrine` declarations
+- type alias declarations
 - global constants
 - global variables
 
@@ -193,6 +194,20 @@ The raw pointer forms are:
 
 Safe Stark code does not have null references or nullable borrows. Null exists only in the raw/FFI domain.
 
+### 6.5 Generic Parameters and Type Aliases
+
+Generic type parameters may appear on functions, `struct` declarations, `record` declarations, `trait` declarations, and `doctrine` declarations.
+
+Generic parameters participate in name resolution, constraint checking, and type substitution.
+
+Generic instantiation is monomorphized by default.
+
+Specialization is permitted when a more specific implementation is available and the closed-world rules select it unambiguously.
+
+Type aliases introduce alternate names for existing types.
+
+A type alias does not by itself create a distinct runtime type or ABI identity.
+
 ## 7. Ownership, Borrowing, and Lifetime Rules
 
 Stark safe code is ownership-based and does not use garbage collection.
@@ -259,6 +274,7 @@ Doctrines have the following properties:
 - no heap allocation
 - no environment capture
 - static dispatch by default
+- specialization-friendly in the closed-world model
 
 ## 9. Globals and Storage Classes
 
@@ -466,5 +482,7 @@ The source model assumes:
 - restrictive visibility by default
 - limited externally visible symbols
 - internalization-friendly code generation
+- generic instantiation is monomorphized by default
+- specialization is an explicit closed-world optimization tool
 
 Dynamic dispatch and open-world behavior are explicit concessions, not the default model.

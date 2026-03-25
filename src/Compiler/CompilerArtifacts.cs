@@ -409,11 +409,192 @@ public sealed record AbiModel(
     string ModuleName,
     IReadOnlyDictionary<string, AbiFunctionSignature> Functions);
 
+public enum ParameterCaptureKind
+{
+    None,
+    Return,
+    Escape
+}
+
+public sealed record ParameterMemoryEffectSummary(
+    string Name,
+    string Type,
+    bool IsMemoryBacked,
+    bool GuaranteedNonNull,
+    bool GuaranteedReadOnly,
+    bool GuaranteedWriteOnly,
+    bool GuaranteedNoAlias,
+    int? DereferenceableBytes,
+    int? AlignmentBytes,
+    bool Reads,
+    bool Writes,
+    ParameterCaptureKind CaptureKind);
+
+internal sealed record ConcreteTypeLayout(int SizeBytes, int AlignmentBytes);
+
+internal static class ConcreteTypeLayoutHelper
+{
+    public static ConcreteTypeLayout? TryGetConcreteTypeLayout(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        return TryGetConcreteTypeLayout(type, namedTypes, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private static ConcreteTypeLayout? TryGetConcreteTypeLayout(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        ISet<string> activeNamedTypes)
+    {
+        var concreteType = type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+
+        return concreteType.Kind switch
+        {
+            StarkTypeKind.Bool => new ConcreteTypeLayout(1, 1),
+            StarkTypeKind.Integer when concreteType.BitWidth is int bitWidth =>
+                TryGetScalarLayout((bitWidth + 7) / 8),
+            StarkTypeKind.Float when concreteType.BitWidth is int floatWidth =>
+                TryGetScalarLayout((floatWidth + 7) / 8),
+            StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
+                TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, activeNamedTypes),
+            StarkTypeKind.Named when concreteType.NamedType is not null
+                                     && namedTypes.TryGetValue(concreteType.NamedType, out var namedType)
+                                     && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record =>
+                TryGetNamedTypeLayout(namedType, namedTypes, activeNamedTypes),
+            _ => null
+        };
+    }
+
+    private static ConcreteTypeLayout? TryGetFixedArrayLayout(
+        StarkTypeSymbol elementType,
+        int fixedLength,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        ISet<string> activeNamedTypes)
+    {
+        var elementLayout = TryGetConcreteTypeLayout(elementType, namedTypes, activeNamedTypes);
+        if (elementLayout is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var sizeBytes = checked(elementLayout.SizeBytes * fixedLength);
+            return new ConcreteTypeLayout(sizeBytes, fixedLength == 0 ? 1 : elementLayout.AlignmentBytes);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static ConcreteTypeLayout? TryGetNamedTypeLayout(
+        NamedTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        ISet<string> activeNamedTypes)
+    {
+        if (!activeNamedTypes.Add(type.Name))
+        {
+            return null;
+        }
+
+        try
+        {
+            var sizeBytes = 0;
+            var alignmentBytes = 1;
+
+            foreach (var field in type.OrderedFields)
+            {
+                var fieldLayout = TryGetConcreteTypeLayout(field.Type, namedTypes, activeNamedTypes);
+                if (fieldLayout is null)
+                {
+                    return null;
+                }
+
+                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
+                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+            }
+
+            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+        finally
+        {
+            activeNamedTypes.Remove(type.Name);
+        }
+    }
+
+    private static ConcreteTypeLayout? TryGetScalarLayout(int sizeBytes)
+    {
+        if (sizeBytes <= 0)
+        {
+            return new ConcreteTypeLayout(0, 1);
+        }
+
+        return sizeBytes switch
+        {
+            1 => new ConcreteTypeLayout(1, 1),
+            2 => new ConcreteTypeLayout(2, 2),
+            4 => new ConcreteTypeLayout(4, 4),
+            8 => new ConcreteTypeLayout(8, 8),
+            _ => new ConcreteTypeLayout(sizeBytes, 1)
+        };
+    }
+
+    private static int AlignTo(int value, int alignment)
+    {
+        if (alignment <= 1)
+        {
+            return value;
+        }
+
+        var remainder = value % alignment;
+        if (remainder == 0)
+        {
+            return value;
+        }
+
+        return checked(value + (alignment - remainder));
+    }
+}
+
+public sealed record FunctionMemoryEffectSummary(
+    bool ReadsArgumentMemory,
+    bool WritesArgumentMemory,
+    bool CapturesArgumentMemory);
+
+public sealed record CallArgumentMemoryEffectSummary(
+    int ArgumentIndex,
+    string? CallerParameterName,
+    string? CalleeParameterName,
+    bool Reads,
+    bool Writes,
+    ParameterCaptureKind CaptureKind);
+
+public sealed record CallMemoryEffectSummary(
+    string CalleeName,
+    FunctionMemoryEffectSummary MemoryEffects,
+    IReadOnlyList<CallArgumentMemoryEffectSummary> Arguments);
+
 public sealed record FunctionValidationSummary(
     string Name,
     bool EffectsValid,
     bool BorrowingValid,
-    IReadOnlyList<string> CalledFunctions);
+    IReadOnlyList<string> CalledFunctions,
+    FunctionMemoryEffectSummary? MemoryEffects = null,
+    IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
+    IReadOnlyList<CallMemoryEffectSummary>? Calls = null);
 
 public sealed record SemanticValidationModel(
     string ModuleName,

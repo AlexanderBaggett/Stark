@@ -276,16 +276,7 @@ internal sealed class LlvmIrEmitter
     private string RenderAbiParameter(AbiParameterSymbol parameter, bool includeName)
     {
         var segments = new List<string> { MapType(parameter.LlvmType) };
-
-        switch (parameter.Kind)
-        {
-            case AbiParameterKind.SRet:
-                segments.Add($"noalias sret({MapType(parameter.SourceType)})");
-                break;
-            case AbiParameterKind.IndirectIn:
-                segments.Add("readonly");
-                break;
-        }
+        segments.AddRange(DeriveAbiParameterAttributes(parameter));
 
         if (includeName)
         {
@@ -293,6 +284,78 @@ internal sealed class LlvmIrEmitter
         }
 
         return string.Join(" ", segments);
+    }
+
+    private IReadOnlyList<string> DeriveAbiParameterAttributes(AbiParameterSymbol parameter)
+    {
+        var attributes = new List<string>();
+
+        if (parameter.Kind == AbiParameterKind.SRet)
+        {
+            attributes.Add("noalias");
+            attributes.Add($"sret({MapType(parameter.SourceType)})");
+            attributes.Add("nonnull");
+            if (TryGetConcreteTypeLayout(parameter.SourceType) is { } sretLayout)
+            {
+                attributes.Add($"dereferenceable({sretLayout.SizeBytes})");
+                if (sretLayout.AlignmentBytes > 1)
+                {
+                    attributes.Add($"align {sretLayout.AlignmentBytes}");
+                }
+            }
+
+            return attributes;
+        }
+
+        if (parameter.Kind == AbiParameterKind.IndirectIn)
+        {
+            attributes.Add("nonnull");
+            if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+            {
+                attributes.Add("noalias");
+                attributes.Add("writeonly");
+            }
+            else
+            {
+                attributes.Add("noalias");
+                attributes.Add("readonly");
+            }
+
+            if (TryGetConcreteTypeLayout(parameter.SourceType) is { } indirectLayout)
+            {
+                attributes.Add($"dereferenceable({indirectLayout.SizeBytes})");
+                if (indirectLayout.AlignmentBytes > 1)
+                {
+                    attributes.Add($"align {indirectLayout.AlignmentBytes}");
+                }
+            }
+
+            return attributes;
+        }
+
+        if (parameter.LlvmType.Kind != StarkTypeKind.RawPointer)
+        {
+            return attributes;
+        }
+
+        if (parameter.SourceType.BorrowKind != StarkBorrowKind.None || parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+        {
+            attributes.Add("nonnull");
+        }
+
+        if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+        {
+            attributes.Add("noalias");
+            attributes.Add("writeonly");
+        }
+        else if (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                 || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && !parameter.SourceType.IsMutablePointer)
+                 || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && !parameter.SourceType.IsMutableView))
+        {
+            attributes.Add("readonly");
+        }
+
+        return attributes;
     }
 
     private static string BuildFunctionAttributes(FunctionEffectProfile effects)
@@ -612,6 +675,11 @@ internal sealed class LlvmIrEmitter
 
         builder.Append('"');
         return builder.ToString();
+    }
+
+    private ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type)
+    {
+        return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes);
     }
 
     private sealed class FunctionBodyEmitter

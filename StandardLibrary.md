@@ -121,11 +121,166 @@ Compile:
 dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 ```
 
-## Near-Term Library Work
+## Roadmap Scope
 
-The next standard-library additions on the roadmap are:
+This document is a library roadmap, not a language-spec chapter and not a milestone schedule.
 
-- file read APIs
-- file write APIs
-- path and file error modeling
-- string helpers used by the library itself
+It tracks:
+
+- the public stdlib surface that is already implemented
+- the next modules and namespaces to flesh out
+- runtime, allocator, and IO dependencies that must stay behind the library boundary
+- the test and packaging work needed to keep the package consumable as the surface grows
+
+The intent is to keep the stdlib organized around stable module boundaries rather than around internal compiler phases. The implemented surface above remains the source of truth for the current package shape.
+
+## Near-Term Module Surface Plan
+
+The next work slice should grow the stdlib by module family, not by ad hoc helper functions.
+
+### `System`
+
+Keep the root module as an import hub only.
+
+- continue to re-export the modules that are intended to be user-facing entry points
+- avoid putting behavior in the package root unless it is truly cross-cutting
+- treat this module as the stable top-level namespace for package consumers
+
+### `System.Console`
+
+Keep `System.Console` as the friendly high-level output module.
+
+- preserve the current text output API
+- prefer small wrapper APIs here over exposing raw runtime handles
+- add formatting-oriented helpers only when the text model underneath is ready for them
+- keep error output alongside normal output so command-line applications have one obvious entry point
+
+### `System.IO.Stdout` and `System.IO.Stderr`
+
+Keep these modules as the minimal stream-backed sinks.
+
+- preserve them as the low-level text emission layer under `System.Console`
+- share as much implementation as possible without leaking shared runtime details into the surface
+- keep them narrow until the stdlib has a broader file and stream model
+
+### `System.IO`
+
+Introduce a parent IO namespace once there is enough surface to justify it.
+
+Likely first additions:
+
+- file open/read/write/close APIs
+- stream-flush and stream-state helpers
+- file existence and basic metadata queries
+- path-friendly helpers used by file APIs
+
+The parent module should group the related pieces; it should not become a dumping ground for unrelated runtime helpers.
+
+### `System.Text`
+
+Add text helpers once the library needs more than raw `ascii` passthrough.
+
+Likely first additions:
+
+- string slicing and search helpers
+- simple join/concat helpers
+- lightweight formatting helpers for console and diagnostics output
+- helpers for translating between library-internal text representations
+
+The text layer should be designed so future allocator-backed string types can be added without rewriting the public module layout.
+
+### `System.Path` or `System.IO.Path`
+
+Add path helpers only after the file APIs need them.
+
+Likely first additions:
+
+- separator and directory-separator constants
+- join/combine helpers
+- extension/base-name helpers
+- normalization helpers that stay platform-aware without overpromising canonicalization
+
+Path helpers should be pure library code where possible, with platform-specific behavior isolated behind a small abstraction layer.
+
+### `System.Runtime`
+
+Reserve a runtime-facing namespace for library support that is not directly user-facing.
+
+Likely first additions:
+
+- process start and shutdown helpers
+- exit-code plumbing
+- environment and host capability access
+- low-level allocation entry points if the compiler/runtime contract requires them
+
+This namespace should expose the smallest stable set needed by the rest of the stdlib.
+
+## Runtime, Allocator, and IO Dependencies
+
+The stdlib should treat these dependencies as implementation boundaries, not public design goals.
+
+### Runtime boundary
+
+- The library can depend on compiler-emitted or toolchain-provided runtime symbols, but user code should not.
+- Startup and shutdown behavior should stay coordinated between the compiler toolchain and `System.Runtime`, not encoded in application code.
+- Any API that needs process termination or host interaction should be routed through a library wrapper instead of direct FFI calls in user code.
+
+### Allocator boundary
+
+- The current `ascii` output slice avoids allocation, which keeps the initial surface simple.
+- Future text, path, file, and collection helpers will need a clear allocator story before they can become ergonomic.
+- Prefer a single allocator contract for stdlib internals rather than ad hoc allocation helpers in each module.
+- If the compiler/runtime eventually supplies a default allocator, the library should use that through a narrow, well-named boundary.
+
+### IO boundary
+
+- The current output modules intentionally hide the libc stream handles.
+- Later file and stream APIs should still hide `FILE*`-style details behind Stark types or opaque handles.
+- IO error reporting should be modeled in the stdlib surface, not exposed as raw C return codes.
+- Keep platform-specific file descriptors, paths, and newline behavior contained inside the IO layer.
+
+## Testing Plan
+
+Stdlib tests should cover the package as a package, not only the individual source files.
+
+### Current smoke coverage
+
+- compile the repository stdlib root into a package artifact
+- verify the emitted manifest lists the expected modules
+- verify the package can be consumed without importing stdlib source files directly
+- keep one end-to-end executable test that exercises `System.Console` output on both stdout and stderr
+
+### Coverage for new modules
+
+- add one build smoke test per new public module family
+- validate re-export behavior whenever the package root changes
+- add consumption tests for APIs that are meant to work from packaged output only
+- add regression tests for error cases as soon as a module starts modeling failures
+- keep tests close to the surface shape they validate so failures point back to the right module
+
+### Packaging checks
+
+- verify the package manifest stays in sync with exported module names
+- verify the package output location can be overridden
+- verify the package remains usable from a clean consumer project with no source dependency
+- verify the emitted artifact set remains stable enough for downstream tooling
+
+## Packaging Plan
+
+The packaging flow should stay simple and scriptable.
+
+- `scripts/build-stdlib.sh` remains the canonical build entry point for the repository package
+- the script should continue to emit both the archive and the package manifest
+- package output should remain compatible with the compiler's `-I` source/package lookup path
+- packaging changes should preserve the ability to build the stdlib in isolation from application code
+- if more than one stdlib package appears later, each package should still be buildable through the same basic workflow
+
+## Near-Term Work Ordering
+
+The next implementation pass should focus on:
+
+- factoring shared IO logic under the current `System` slice without widening the public surface prematurely
+- adding a real `System.IO` namespace once file and stream APIs are ready
+- introducing text helpers only when they can be backed by a clear string and allocator story
+- keeping runtime, allocator, and IO concerns behind narrow stdlib boundaries
+- extending tests and packaging checks alongside each new module family

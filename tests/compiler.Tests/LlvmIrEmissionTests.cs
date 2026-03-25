@@ -239,7 +239,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("@.str.0 = private unnamed_addr constant", llvm);
         Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
-        Assert.Contains("declare i32 @puts(ptr)", llvm);
+        Assert.Contains("declare i32 @puts(ptr readonly)", llvm);
         Assert.Contains("define i32 @main()", llvm);
         Assert.Contains("call i32 @puts(ptr getelementptr inbounds ([15 x i8], ptr @.str.0, i32 0, i32 0))", llvm);
     }
@@ -401,9 +401,32 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Read(ptr readonly %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Read(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("load %Box, ptr %arg_box", llvm);
         Assert.Contains("call i32 @Read(ptr %", llvm);
+    }
+
+    [Fact]
+    public void BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i8 Tag;
+                i32 Value;
+            }
+
+            fn void Touch(borrow Pair pair) {
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly dereferenceable(8) align 4 %arg_pair)", llvm);
     }
 
     [Fact]
@@ -430,7 +453,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Make(ptr noalias sret(%Box) %ret)", llvm);
+        Assert.Contains("define fastcc void @Make(ptr noalias sret(%Box) nonnull dereferenceable(4) align 4 %ret)", llvm);
         Assert.Contains("store %Box", llvm);
         Assert.Contains("ret void", llvm);
         Assert.Contains("call void @Make(ptr sret(%Box) %", llvm);
@@ -645,8 +668,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("declare fastcc void @Geometry_Make(ptr noalias sret(%Geometry_Box))", llvm);
-        Assert.Contains("declare fastcc i32 @Geometry_Read(ptr readonly)", llvm);
+        Assert.Contains("declare fastcc void @Geometry_Make(ptr noalias sret(%Geometry_Box) nonnull dereferenceable(4) align 4)", llvm);
+        Assert.Contains("declare fastcc i32 @Geometry_Read(ptr nonnull noalias readonly dereferenceable(4) align 4)", llvm);
         Assert.Contains("call void @Geometry_Make(ptr sret(%Geometry_Box)", llvm);
         Assert.Contains("call i32 @Geometry_Read(ptr", llvm);
     }

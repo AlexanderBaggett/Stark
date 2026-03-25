@@ -62,11 +62,16 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature)
     {
         var summary = new FunctionOwnershipBuilder(signature.Name);
-        var state = new FlowState();
+        var state = new FlowState(_typeModel.NamedTypes);
         var functionScope = state.EnterScope();
+        var parameterDeclarations = functionDeclaration.parameterList().parameter();
 
-        foreach (var parameter in signature.Parameters)
+        for (var index = 0; index < signature.Parameters.Count; index++)
         {
+            var parameter = signature.Parameters[index];
+            var declarationLocation = index < parameterDeclarations.Length
+                ? Location(parameterDeclarations[index].Identifier().Symbol)
+                : null;
             state.Declare(new VariableInfo(
                 parameter.Name,
                 parameter.Type,
@@ -76,7 +81,9 @@ internal sealed class OwnershipValidator
                 IsConstant: false,
                 BorrowLifetime: parameter.Type.BorrowKind == StarkBorrowKind.None
                     ? BorrowLifetime.None
-                    : BorrowLifetime.External));
+                    : BorrowLifetime.External,
+                DeclarationLocation: declarationLocation),
+                isInitialized: true);
         }
 
         if (functionDeclaration.functionBody().block() is { } body)
@@ -84,7 +91,7 @@ internal sealed class OwnershipValidator
             CheckBlock(body, state, signature, summary, openScope: true);
         }
 
-        state.ExitScope(functionScope, summary);
+        state.ExitScope(functionScope, summary, ValidateScopeExitState);
         return summary.Build();
     }
 
@@ -104,7 +111,7 @@ internal sealed class OwnershipValidator
 
         if (openScope)
         {
-            state.ExitScope(scope!, summary);
+            state.ExitScope(scope!, summary, ValidateScopeExitState);
         }
     }
 
@@ -250,7 +257,7 @@ internal sealed class OwnershipValidator
                 }
             }
 
-            loopState.ExitScope(loopScope, summary);
+            loopState.ExitScope(loopScope, summary, ValidateScopeExitState);
             state.MergeLoop(loopState);
             return;
         }
@@ -332,21 +339,45 @@ internal sealed class OwnershipValidator
                     ValueUse.ForAssignment(declaredType),
                     allowFunctionReference: false);
                 borrowLifetime = InferLifetimeForAssignment(declaredType, value, summary, constantExpression);
+                state.Declare(new VariableInfo(
+                    declarator.Identifier.GetText(),
+                    declaredType,
+                    storageClass,
+                    VariableOrigin.Local,
+                    isMutable,
+                    isConstant,
+                    borrowLifetime,
+                    DeclarationLocation: Location(declarator.Identifier.Symbol)),
+                    isInitialized: true);
             }
             else if (declarator.Initializer is { } initializer)
             {
                 var value = EvaluateVariableInitializer(initializer, state, signature, summary, declaredType);
                 borrowLifetime = InferLifetimeForAssignment(declaredType, value, summary, initializer);
+                state.Declare(new VariableInfo(
+                    declarator.Identifier.GetText(),
+                    declaredType,
+                    storageClass,
+                    VariableOrigin.Local,
+                    isMutable,
+                    isConstant,
+                    borrowLifetime,
+                    DeclarationLocation: Location(declarator.Identifier.Symbol)),
+                    isInitialized: true);
             }
-
-            state.Declare(new VariableInfo(
-                declarator.Identifier.GetText(),
-                declaredType,
-                storageClass,
-                VariableOrigin.Local,
-                isMutable,
-                isConstant,
-                borrowLifetime));
+            else
+            {
+                state.Declare(new VariableInfo(
+                    declarator.Identifier.GetText(),
+                    declaredType,
+                    storageClass,
+                    VariableOrigin.Local,
+                    isMutable,
+                    isConstant,
+                    borrowLifetime,
+                    DeclarationLocation: Location(declarator.Identifier.Symbol)),
+                    isInitialized: false);
+            }
         }
     }
 
@@ -407,13 +438,20 @@ internal sealed class OwnershipValidator
             return EvaluateConditionalExpression(conditionalExpression, state, signature, summary, use, allowFunctionReference);
         }
 
-        var left = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Place, allowFunctionReference: true);
-        var rightUse = expression.assignmentOperator().GetText() == "="
+        var isSimpleAssignment = expression.assignmentOperator().GetText() == "=";
+        var left = EvaluateUnaryExpression(
+            expression.unaryExpression(),
+            state,
+            signature,
+            summary,
+            isSimpleAssignment ? ValueUse.Place : ValueUse.Read,
+            allowFunctionReference: true);
+        var rightUse = isSimpleAssignment
             ? ValueUse.ForAssignment(left.Type)
             : ValueUse.Read;
         var right = EvaluateAssignmentExpression(expression.assignmentExpression(), state, signature, summary, rightUse, allowFunctionReference: false);
 
-        if (expression.assignmentOperator().GetText() == "=")
+        if (isSimpleAssignment)
         {
             ApplyAssignment(left, right, state, summary, expression.unaryExpression());
             return left with { BorrowLifetime = right.BorrowLifetime };
@@ -451,7 +489,10 @@ internal sealed class OwnershipValidator
                 return;
             }
 
-            if (state.TryGetState(variable.Id, out var variableState) && variableState.IsInitialized && IsAutomaticallyDropped(left.Type, variable.StorageClass))
+            if (left.ProjectionPath is null
+                && state.TryGetState(variable.Id, out var variableState)
+                && variableState.MayBeInitialized
+                && IsAutomaticallyDropped(left.Type, variable.StorageClass))
             {
                 summary.ImplicitDrops.Add(variable.Name);
             }
@@ -464,7 +505,14 @@ internal sealed class OwnershipValidator
                 ValidateAssignedBorrowLifetime(left, right, state, summary, context);
             }
 
-            state.SetInitialized(variable.Id, true, borrowLifetime);
+            if (left.ProjectionPath is { Length: > 0 } projectionPath)
+            {
+                state.MarkFieldInitialized(variable.Id, projectionPath[0]);
+            }
+            else
+            {
+                state.SetInitialized(variable.Id, borrowLifetime);
+            }
         }
     }
 
@@ -483,7 +531,20 @@ internal sealed class OwnershipValidator
         var sourceLifetime = right.BorrowLifetime;
         if (!DoesLifetimeOutliveScope(sourceLifetime, left.Variable.DeclarationScopeId, state))
         {
-            OwnershipError(summary, "STK4202", $"Borrow assigned to '{left.Variable.Name}' does not live long enough for its destination scope.", context);
+            var reason = sourceLifetime.Kind switch
+            {
+                BorrowLifetimeKind.LocalScope => "because it is tied to local scope and would escape the destination scope.",
+                BorrowLifetimeKind.Temporary => "because it is tied to a temporary value that ends before the destination scope.",
+                BorrowLifetimeKind.Unknown => "because its source lifetime could not be proven for this destination scope.",
+                _ => "because the source lifetime ends before the destination scope."
+            };
+
+            OwnershipError(
+                summary,
+                "STK4202",
+                $"Lifetime error: cannot assign {DescribeBorrowSource(right)} to '{left.Variable.Name}' {reason}",
+                context);
+            ReportBorrowSourceNote(summary, sourceLifetime);
         }
     }
 
@@ -736,10 +797,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
-        var left = EvaluatePostfixExpression(expression.postfixExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference);
+        var postfixUse = expression.unaryExpression() is null ? use : ValueUse.Read;
+        var left = EvaluatePostfixExpression(expression.postfixExpression(), state, signature, summary, postfixUse, allowFunctionReference);
         if (expression.unaryExpression() is not { } rightExpression)
         {
-            return ApplyUse(left, state, summary, use, expression);
+            return left;
         }
 
         var right = EvaluateUnaryExpression(rightExpression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
@@ -755,7 +817,10 @@ internal sealed class OwnershipValidator
         bool allowFunctionReference)
     {
         var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
-        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference || requiresCallableTarget);
+        var primaryUse = expression.postfixPart().Length == 0
+            ? use.Kind == ValueUseKind.Place ? ValueUse.Place : ValueUse.Read
+            : ValueUse.ProjectBase;
+        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, primaryUse, allowFunctionReference || requiresCallableTarget);
 
         foreach (var postfixPart in expression.postfixPart())
         {
@@ -847,9 +912,15 @@ internal sealed class OwnershipValidator
     {
         if (state.TryLookup(name, out var variable))
         {
-            if (!state.TryGetState(variable.Id, out var variableState) || !variableState.IsInitialized)
+            if (!state.TryGetState(variable.Id, out var variableState))
             {
-                OwnershipError(summary, "STK4200", $"Value '{name}' was moved or is otherwise unavailable.", token);
+                OwnershipError(summary, "STK4200", $"Value '{name}' is not available in the current flow state.", token);
+                return new ExpressionInfo(variable.Type);
+            }
+
+            if (!variableState.IsDefinitelyInitialized && use.Kind is not (ValueUseKind.Place or ValueUseKind.ProjectBase))
+            {
+                ReportUnavailableValue(variable, variableState, summary, token);
                 return new ExpressionInfo(variable.Type);
             }
 
@@ -874,7 +945,8 @@ internal sealed class OwnershipValidator
                     VariableOrigin.Global,
                     IsMutable: _mutableGlobals.TryGetValue(name, out var isMutable) && isMutable,
                     IsConstant: !_mutableGlobals.TryGetValue(name, out isMutable) || !isMutable,
-                    BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External),
+                    BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                    DeclarationLocation: null),
                 BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
                 IsPlace: true,
                 IsDirectVariable: true);
@@ -913,7 +985,9 @@ internal sealed class OwnershipValidator
                 VariableOrigin.Local,
                 IsMutable: false,
                 IsConstant: false,
-                switchValue.BorrowLifetime));
+                switchValue.BorrowLifetime,
+                DeclarationLocation: Location(capture.Symbol)),
+                isInitialized: true);
         }
     }
 
@@ -944,7 +1018,7 @@ internal sealed class OwnershipValidator
                 ValueUse.ForCallArgument(parameterType),
                 allowFunctionReference: false);
 
-            if (argumentValue.Type.BorrowKind != StarkBorrowKind.None)
+            if (parameterType.BorrowKind != StarkBorrowKind.None)
             {
                 borrowArguments.Add(argumentValue.BorrowLifetime);
             }
@@ -952,7 +1026,10 @@ internal sealed class OwnershipValidator
 
         var borrowLifetime = target.Function.ReturnType.BorrowKind == StarkBorrowKind.None
             ? BorrowLifetime.None
-            : BorrowLifetime.InferFromCall(borrowArguments);
+            : BorrowLifetime.InferFromCall(
+                borrowArguments,
+                Location(arguments.Start),
+                $"borrow source for call '{target.Function.Name}'");
 
         return ApplyUse(
             new ExpressionInfo(target.Function.ReturnType, BorrowLifetime: borrowLifetime),
@@ -980,7 +1057,9 @@ internal sealed class OwnershipValidator
             Variable: target.Variable,
             BorrowLifetime: target.BorrowLifetime,
             IsPlace: target.IsPlace,
-            IsIndirectPlace: true);
+            IsIndirectPlace: true,
+            ProjectionPath: target.ProjectionPath,
+            HasIndexProjection: true);
     }
 
     private ExpressionInfo ApplyMemberAccess(
@@ -1008,7 +1087,8 @@ internal sealed class OwnershipValidator
                         VariableOrigin.Global,
                         IsMutable: _mutableGlobals.TryGetValue(qualifiedName, out var isMutable) && isMutable,
                         IsConstant: !_mutableGlobals.TryGetValue(qualifiedName, out isMutable) || !isMutable,
-                        BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External),
+                        BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                        DeclarationLocation: null),
                     BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
                     IsPlace: true,
                     IsDirectVariable: true);
@@ -1036,7 +1116,11 @@ internal sealed class OwnershipValidator
             Variable: target.Variable,
             BorrowLifetime: target.BorrowLifetime,
             IsPlace: target.IsPlace,
-            IsIndirectPlace: true);
+            IsIndirectPlace: true,
+            ProjectionPath: target.Variable is null
+                ? target.ProjectionPath
+                : AppendProjection(target.ProjectionPath, memberName),
+            HasIndexProjection: target.HasIndexProjection);
     }
 
     private ExpressionInfo ApplyUse(
@@ -1056,6 +1140,21 @@ internal sealed class OwnershipValidator
         ValueUse use,
         IToken token)
     {
+        if (use.CaptureBorrowLifetime && value.BorrowLifetime.Kind == BorrowLifetimeKind.None)
+        {
+            value = value with { BorrowLifetime = InferBorrowLifetimeFromValue(value, token) };
+        }
+
+        if (use.Kind == ValueUseKind.ProjectBase)
+        {
+            return value;
+        }
+
+        if (!TryEnsureValueAvailable(value, state, summary, use, token))
+        {
+            return value;
+        }
+
         if (use.Kind != ValueUseKind.Consume || !IsMoveOnly(value.Type))
         {
             return value;
@@ -1063,6 +1162,15 @@ internal sealed class OwnershipValidator
 
         if (value.IsIndirectPlace)
         {
+            if (value.Variable is { } projectedVariable
+                && value.ProjectionPath is { Length: 1 } projectionPath
+                && !value.HasIndexProjection)
+            {
+                state.MarkFieldMoved(projectedVariable.Id, projectionPath[0], value.BorrowLifetime, Location(token));
+                summary.Moves.Add($"{projectedVariable.Name}.{projectionPath[0]}");
+                return value;
+            }
+
             OwnershipError(summary, "STK4203", $"Cannot move out of field or indexed place of type '{value.Type.DisplayName}'.", token);
             return value;
         }
@@ -1078,13 +1186,13 @@ internal sealed class OwnershipValidator
             return value;
         }
 
-        if (!state.TryGetState(value.Variable.Id, out var stateValue) || !stateValue.IsInitialized)
+        if (!state.TryGetState(value.Variable.Id, out var stateValue))
         {
-            OwnershipError(summary, "STK4200", $"Value '{value.Variable.Name}' was moved or is otherwise unavailable.", token);
+            OwnershipError(summary, "STK4200", $"Value '{value.Variable.Name}' is not available in the current flow state.", token);
             return value;
         }
 
-        state.SetInitialized(value.Variable.Id, false, value.BorrowLifetime);
+        state.SetMoved(value.Variable.Id, value.BorrowLifetime, Location(token));
         summary.Moves.Add(value.Variable.Name);
         return value;
     }
@@ -1100,24 +1208,34 @@ internal sealed class OwnershipValidator
             return BorrowLifetime.None;
         }
 
-        if (value.BorrowLifetime.Kind == BorrowLifetimeKind.None)
+        if (value.BorrowLifetime.Kind != BorrowLifetimeKind.None)
         {
-            return BorrowLifetime.Unknown;
+            return value.BorrowLifetime;
         }
 
-        return value.BorrowLifetime;
+        return InferBorrowLifetimeFromValue(value, context.Start);
     }
 
     private void ValidateReturnedBorrowLifetime(ExpressionInfo value, FunctionOwnershipBuilder summary, ParserRuleContext context)
     {
-        if (value.BorrowLifetime.Kind is BorrowLifetimeKind.LocalScope or BorrowLifetimeKind.Temporary)
+        if (value.BorrowLifetime.Kind == BorrowLifetimeKind.LocalScope)
         {
-            OwnershipError(summary, "STK4202", "Returned borrow does not live long enough to escape the current function.", context);
+            OwnershipError(summary, "STK4202", $"Lifetime error: cannot return {DescribeBorrowSource(value)} because it is tied to local scope and would escape the current function.", context);
+            ReportBorrowSourceNote(summary, value.BorrowLifetime);
+            return;
+        }
+
+        if (value.BorrowLifetime.Kind == BorrowLifetimeKind.Temporary)
+        {
+            OwnershipError(summary, "STK4202", $"Lifetime error: cannot return {DescribeBorrowSource(value)} because it is tied to a temporary value.", context);
+            ReportBorrowSourceNote(summary, value.BorrowLifetime);
+            return;
         }
 
         if (value.BorrowLifetime.Kind == BorrowLifetimeKind.Unknown)
         {
-            OwnershipError(summary, "STK4202", "Returned borrow has no proven source lifetime.", context);
+            OwnershipError(summary, "STK4202", $"Lifetime error: cannot return {DescribeBorrowSource(value)} because its source lifetime could not be proven for this return path.", context);
+            ReportBorrowSourceNote(summary, value.BorrowLifetime);
         }
     }
 
@@ -1279,6 +1397,302 @@ internal sealed class OwnershipValidator
         _context.Diagnostics.Error(code, message, "ownership-validate", Location(token));
     }
 
+    private void OwnershipError(FunctionOwnershipBuilder summary, string code, string message, SourceLocation? location)
+    {
+        summary.OwnershipValid = false;
+        _context.Diagnostics.Error(code, message, "ownership-validate", location);
+    }
+
+    private void OwnershipNote(string code, string message, SourceLocation location)
+    {
+        _context.Diagnostics.Info(code, message, "ownership-validate", location);
+    }
+
+    private void ValidateScopeExitState(VariableInfo variable, VariableState state, FunctionOwnershipBuilder summary)
+    {
+        if (!IsAutomaticallyDropped(variable.Type, variable.StorageClass)
+            || state.AggregateState is null
+            || state.IsDefinitelyInitialized
+            || !state.AggregateState.MayHaveAnyAvailableFields)
+        {
+            return;
+        }
+
+        if (!state.AggregateState.HasDefinitelyUnavailableUninitializedFields)
+        {
+            return;
+        }
+
+        OwnershipError(
+            summary,
+            "STK4205",
+            $"Drop error: cannot drop '{variable.Name}' because it is not fully initialized. Missing fields: {DescribeDefinitelyUnavailableFields(state.AggregateState)}.",
+            variable.DeclarationLocation);
+    }
+
+    private bool TryEnsureValueAvailable(
+        ExpressionInfo value,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        IToken token)
+    {
+        if (value.Variable is not { } variable)
+        {
+            return true;
+        }
+
+        if (variable.Origin == VariableOrigin.Global)
+        {
+            return true;
+        }
+
+        if (!state.TryGetState(variable.Id, out var variableState))
+        {
+            OwnershipError(summary, "STK4200", $"Value '{variable.Name}' is not available in the current flow state.", token);
+            return false;
+        }
+
+        if (value.ProjectionPath is { Length: > 0 } projectionPath)
+        {
+            return TryEnsureProjectedValueAvailable(variable, variableState, projectionPath, value.HasIndexProjection, summary, use, token);
+        }
+
+        if (variableState.IsDefinitelyInitialized || use.Kind == ValueUseKind.Place)
+        {
+            return true;
+        }
+
+        ReportUnavailableValue(variable, variableState, summary, token);
+        return false;
+    }
+
+    private bool TryEnsureProjectedValueAvailable(
+        VariableInfo variable,
+        VariableState state,
+        IReadOnlyList<string> projectionPath,
+        bool hasIndexProjection,
+        FunctionOwnershipBuilder summary,
+        ValueUse use,
+        IToken token)
+    {
+        if (projectionPath.Count == 0)
+        {
+            return true;
+        }
+
+        if (state.UnavailableKind == UnavailableValueKind.Moved)
+        {
+            ReportUnavailableValue(variable, state, summary, token);
+            return false;
+        }
+
+        if (!TryGetNamedAggregate(variable.Type, out var namedType))
+        {
+            if (!state.IsDefinitelyInitialized && use.Kind != ValueUseKind.Place)
+            {
+                ReportUnavailableValue(variable, state, summary, token);
+                return false;
+            }
+
+            return true;
+        }
+
+        var aggregateState = state.AggregateState ?? AggregateFieldState.Empty;
+        var topLevelField = projectionPath[0];
+        var fieldState = aggregateState.GetFieldState(topLevelField);
+
+        if (use.Kind == ValueUseKind.Place && projectionPath.Count == 1 && !hasIndexProjection)
+        {
+            return true;
+        }
+
+        if (fieldState.IsDefinitelyAvailable)
+        {
+            return true;
+        }
+
+        if (fieldState.UnavailableKind == UnavailableValueKind.Moved)
+        {
+            OwnershipError(
+                summary,
+                "STK4200",
+                $"Move error: field '{topLevelField}' of '{variable.Name}' was moved and must be reinitialized before it can be read.",
+                token);
+            if (fieldState.UnavailableLocation is not null)
+            {
+                OwnershipNote("STK4200", $"Field '{topLevelField}' of '{variable.Name}' was moved here.", fieldState.UnavailableLocation);
+            }
+
+            return false;
+        }
+
+        if (fieldState.UnavailableKind == UnavailableValueKind.ControlFlow || fieldState.MayBeAvailable)
+        {
+            OwnershipError(
+                summary,
+                "STK4200",
+                $"Control-flow error: field '{topLevelField}' of '{variable.Name}' is not available on every path.",
+                token);
+            return false;
+        }
+
+        OwnershipError(
+            summary,
+            "STK4205",
+            projectionPath.Count == 1 && !hasIndexProjection
+                ? $"Initialization error: field '{topLevelField}' of '{variable.Name}' is not initialized yet."
+                : $"Initialization error: cannot access '{FormatProjection(variable.Name, projectionPath, hasIndexProjection)}' because field '{topLevelField}' of '{variable.Name}' is not initialized yet.",
+            token);
+        if (variable.DeclarationLocation is not null)
+        {
+            OwnershipNote("STK4205", $"Aggregate '{variable.Name}' was declared here.", variable.DeclarationLocation);
+        }
+
+        return false;
+    }
+
+    private void ReportUnavailableValue(
+        VariableInfo variable,
+        VariableState state,
+        FunctionOwnershipBuilder summary,
+        IToken token)
+    {
+        if (state.AggregateState is not null
+            && state.AggregateState.MayHaveAnyAvailableFields
+            && state.UnavailableKind is not UnavailableValueKind.Moved)
+        {
+            if (state.AggregateState.HasDefinitelyUnavailableMovedFields
+                && !state.AggregateState.HasDefinitelyUnavailableUninitializedFields)
+            {
+                OwnershipError(
+                    summary,
+                    "STK4200",
+                    $"Move error: value '{variable.Name}' is partially moved. Unavailable fields: {DescribeDefinitelyUnavailableFields(state.AggregateState)}.",
+                    token);
+
+                foreach (var movedField in state.AggregateState.GetDefinitelyUnavailableFields(UnavailableValueKind.Moved))
+                {
+                    if (movedField.UnavailableLocation is not null)
+                    {
+                        OwnershipNote("STK4200", $"Field '{movedField.Name}' of '{variable.Name}' was moved here.", movedField.UnavailableLocation);
+                    }
+                }
+
+                return;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: value '{variable.Name}' is not fully initialized. Missing fields: {DescribeDefinitelyUnavailableFields(state.AggregateState)}.",
+                token);
+            if (variable.DeclarationLocation is not null)
+            {
+                OwnershipNote("STK4205", $"Aggregate '{variable.Name}' was declared here.", variable.DeclarationLocation);
+            }
+
+            return;
+        }
+
+        OwnershipError(summary, "STK4200", DescribeUnavailableValue(variable.Name, state), token);
+        ReportUnavailableValueNote(variable, state);
+    }
+
+    private void ReportUnavailableValueNote(VariableInfo variable, VariableState state)
+    {
+        if (state.UnavailableKind == UnavailableValueKind.Moved && state.UnavailableLocation is not null)
+        {
+            OwnershipNote("STK4200", $"Value '{variable.Name}' was moved here.", state.UnavailableLocation);
+            return;
+        }
+
+        if (state.UnavailableKind == UnavailableValueKind.NeverInitialized && variable.DeclarationLocation is not null)
+        {
+            OwnershipNote("STK4200", $"Value '{variable.Name}' was declared here without an initializer.", variable.DeclarationLocation);
+        }
+    }
+
+    private void ReportBorrowSourceNote(FunctionOwnershipBuilder summary, BorrowLifetime lifetime)
+    {
+        if (lifetime.OriginLocation is null)
+        {
+            return;
+        }
+
+        OwnershipNote("STK4202", lifetime.OriginDescription is null ? "Borrow source is here." : $"{lifetime.OriginDescription} is here.", lifetime.OriginLocation);
+    }
+
+    private bool TryGetNamedAggregate(StarkTypeSymbol type, out NamedTypeSymbol namedType)
+    {
+        namedType = null!;
+        if (type.NamedType is null || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var candidate))
+        {
+            return false;
+        }
+
+        namedType = candidate;
+        return namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record;
+    }
+
+    private static string[] AppendProjection(IReadOnlyList<string>? existing, string memberName)
+    {
+        if (existing is null || existing.Count == 0)
+        {
+            return [memberName];
+        }
+
+        var result = new string[existing.Count + 1];
+        for (var index = 0; index < existing.Count; index++)
+        {
+            result[index] = existing[index];
+        }
+
+        result[^1] = memberName;
+        return result;
+    }
+
+    private static string DescribeDefinitelyUnavailableFields(AggregateFieldState aggregateState) =>
+        string.Join(
+            ", ",
+            aggregateState.GetDefinitelyUnavailableFields()
+                .Select(field => field.UnavailableKind == UnavailableValueKind.Moved ? $"{field.Name} (moved)" : field.Name)
+                .DefaultIfEmpty("none"));
+
+    private static string FormatProjection(string variableName, IReadOnlyList<string> projectionPath, bool hasIndexProjection)
+    {
+        var projection = string.Join(".", projectionPath);
+        return hasIndexProjection ? $"{variableName}.{projection}[...]" : $"{variableName}.{projection}";
+    }
+
+    private static string DescribeUnavailableValue(string name, VariableState state)
+    {
+        return state.UnavailableKind switch
+        {
+            UnavailableValueKind.Moved => $"Move error: value '{name}' was moved and must be reinitialized before it can be read.",
+            UnavailableValueKind.NeverInitialized => $"Initialization error: value '{name}' is not initialized yet.",
+            UnavailableValueKind.PartiallyInitialized => $"Initialization error: value '{name}' is not fully initialized yet.",
+            UnavailableValueKind.ControlFlow => $"Control-flow error: value '{name}' is not available on every path; it may have been moved or may not have been initialized.",
+            _ => $"Value '{name}' is not available in the current flow state."
+        };
+    }
+
+    private static string DescribeBorrowSource(ExpressionInfo value)
+    {
+        if (value.Variable is { } variable)
+        {
+            return $"borrow '{variable.Name}'";
+        }
+
+        return value.BorrowLifetime.Kind switch
+        {
+            BorrowLifetimeKind.Temporary => "a temporary borrow",
+            BorrowLifetimeKind.LocalScope => "a local-scope borrow",
+            BorrowLifetimeKind.Unknown => "a borrow with an unknown source lifetime",
+            _ => "this borrow"
+        };
+    }
+
     private static StarkParser.ExpressionContext WrapExpression(StarkParser.ExpressionContext expression) => expression;
 
     private enum VariableOrigin
@@ -1311,24 +1725,42 @@ internal sealed class OwnershipValidator
     {
         Read,
         Consume,
-        Place
+        Place,
+        ProjectBase
     }
 
-    private readonly record struct ValueUse(ValueUseKind Kind)
+    private enum UnavailableValueKind
+    {
+        None,
+        NeverInitialized,
+        PartiallyInitialized,
+        Moved,
+        ControlFlow
+    }
+
+    private readonly record struct ValueUse(ValueUseKind Kind, bool CaptureBorrowLifetime = false)
     {
         public static readonly ValueUse Read = new(ValueUseKind.Read);
         public static readonly ValueUse ConsumeTemporary = new(ValueUseKind.Consume);
         public static readonly ValueUse Place = new(ValueUseKind.Place);
+        public static readonly ValueUse ProjectBase = new(ValueUseKind.ProjectBase);
 
-        public static ValueUse ForAssignment(StarkTypeSymbol targetType) => IsMoveOnly(targetType) ? new(ValueUseKind.Consume) : Read;
+        public static ValueUse ForAssignment(StarkTypeSymbol targetType) =>
+            targetType.BorrowKind != StarkBorrowKind.None
+                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true)
+                : IsMoveOnly(targetType) ? new(ValueUseKind.Consume) : Read;
 
         public static ValueUse ForCallArgument(StarkTypeSymbol parameterType) =>
-            parameterType.BorrowKind != StarkBorrowKind.None || parameterType.Kind == StarkTypeKind.RawPointer || !IsMoveOnly(parameterType)
+            parameterType.BorrowKind != StarkBorrowKind.None
+                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true)
+                : parameterType.Kind == StarkTypeKind.RawPointer || !IsMoveOnly(parameterType)
                 ? Read
                 : new(ValueUseKind.Consume);
 
         public static ValueUse ForReturn(StarkTypeSymbol returnType) =>
-            returnType.BorrowKind != StarkBorrowKind.None || !IsMoveOnly(returnType)
+            returnType.BorrowKind != StarkBorrowKind.None
+                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true)
+                : !IsMoveOnly(returnType)
                 ? Read
                 : new(ValueUseKind.Consume);
 
@@ -1342,7 +1774,21 @@ internal sealed class OwnershipValidator
         public static readonly BorrowLifetime Temporary = new(BorrowLifetimeKind.Temporary);
         public static readonly BorrowLifetime Unknown = new(BorrowLifetimeKind.Unknown);
 
-        public static BorrowLifetime Local(int scopeId) => new(BorrowLifetimeKind.LocalScope, scopeId);
+        public SourceLocation? OriginLocation { get; init; }
+
+        public string? OriginDescription { get; init; }
+
+        public static BorrowLifetime Local(int scopeId, SourceLocation? originLocation = null, string? originDescription = null) =>
+            new(BorrowLifetimeKind.LocalScope, scopeId) { OriginLocation = originLocation, OriginDescription = originDescription };
+
+        public static BorrowLifetime ExternalAt(SourceLocation? originLocation, string? originDescription = null) =>
+            originLocation is null ? External : new(BorrowLifetimeKind.External) { OriginLocation = originLocation, OriginDescription = originDescription };
+
+        public static BorrowLifetime TemporaryAt(SourceLocation originLocation, string? originDescription = null) =>
+            new(BorrowLifetimeKind.Temporary) { OriginLocation = originLocation, OriginDescription = originDescription };
+
+        public static BorrowLifetime UnknownAt(SourceLocation originLocation, string? originDescription = null) =>
+            new(BorrowLifetimeKind.Unknown) { OriginLocation = originLocation, OriginDescription = originDescription };
 
         public static BorrowLifetime Merge(BorrowLifetime left, BorrowLifetime right)
         {
@@ -1364,15 +1810,17 @@ internal sealed class OwnershipValidator
             return Unknown;
         }
 
-        public static BorrowLifetime InferFromCall(IReadOnlyList<BorrowLifetime> arguments)
+        public static BorrowLifetime InferFromCall(IReadOnlyList<BorrowLifetime> arguments, SourceLocation? originLocation = null, string? originDescription = null)
         {
             if (arguments.Count == 0)
             {
-                return Unknown;
+                return originLocation is null ? Unknown : UnknownAt(originLocation, originDescription);
             }
 
             var distinct = arguments.Distinct().ToArray();
-            return distinct.Length == 1 ? distinct[0] : Unknown;
+            return distinct.Length == 1
+                ? distinct[0]
+                : originLocation is null ? Unknown : UnknownAt(originLocation, originDescription);
         }
     }
 
@@ -1383,14 +1831,67 @@ internal sealed class OwnershipValidator
         VariableOrigin Origin,
         bool IsMutable,
         bool IsConstant,
-        BorrowLifetime BorrowLifetime)
+        BorrowLifetime BorrowLifetime,
+        SourceLocation? DeclarationLocation)
     {
         public int Id { get; init; }
 
         public int DeclarationScopeId { get; init; }
     }
 
-    private sealed record VariableState(bool IsInitialized, BorrowLifetime BorrowLifetime);
+    private sealed record VariableState(
+        bool IsDefinitelyInitialized,
+        bool MayBeInitialized,
+        BorrowLifetime BorrowLifetime,
+        UnavailableValueKind UnavailableKind,
+        AggregateFieldState? AggregateState = null,
+        SourceLocation? UnavailableLocation = null)
+    {
+        public static VariableState Initialized(BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState) =>
+            new(true, true, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.None, aggregateState);
+
+        public static VariableState Uninitialized(BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState) =>
+            new(false, false, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.NeverInitialized, aggregateState);
+
+        public static VariableState Moved(BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState, SourceLocation? unavailableLocation) =>
+            new(false, false, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.Moved, aggregateState, unavailableLocation);
+
+        public static VariableState PartiallyInitialized(BorrowLifetime borrowLifetime, AggregateFieldState aggregateState) =>
+            new(false, aggregateState.MayHaveAnyAvailableFields, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.PartiallyInitialized, aggregateState);
+
+        public static VariableState Merge(VariableState left, VariableState right, BorrowLifetime borrowLifetime)
+        {
+            var isDefinitelyInitialized = left.IsDefinitelyInitialized && right.IsDefinitelyInitialized;
+            var mayBeInitialized = left.MayBeInitialized || right.MayBeInitialized;
+            var aggregateState = AggregateFieldState.Merge(left.AggregateState, right.AggregateState);
+
+            if (isDefinitelyInitialized)
+            {
+                return Initialized(borrowLifetime, aggregateState);
+            }
+
+            if (mayBeInitialized || left.UnavailableKind != right.UnavailableKind)
+            {
+                return new VariableState(false, mayBeInitialized, borrowLifetime, UnavailableValueKind.ControlFlow, aggregateState);
+            }
+
+            return new VariableState(false, false, borrowLifetime, left.UnavailableKind, aggregateState, left.UnavailableLocation ?? right.UnavailableLocation);
+        }
+    }
+
+    private BorrowLifetime InferBorrowLifetimeFromValue(ExpressionInfo value, IToken token)
+    {
+        if (value.Variable is { } variable && value.IsPlace)
+        {
+            return variable.Origin == VariableOrigin.Global
+                ? BorrowLifetime.ExternalAt(variable.DeclarationLocation, $"borrow source for '{variable.Name}'")
+                : BorrowLifetime.Local(variable.DeclarationScopeId, variable.DeclarationLocation, $"borrow source for '{variable.Name}'");
+        }
+
+        return value.Type.Kind == StarkTypeKind.Error
+            ? BorrowLifetime.UnknownAt(Location(token), "borrow source")
+            : BorrowLifetime.TemporaryAt(Location(token), "temporary borrow");
+    }
 
     private sealed record ExpressionInfo(
         StarkTypeSymbol Type,
@@ -1400,7 +1901,9 @@ internal sealed class OwnershipValidator
         bool IsPlace = false,
         bool IsDirectVariable = false,
         bool IsIndirectPlace = false,
-        string? NamespaceName = null)
+        string? NamespaceName = null,
+        string[]? ProjectionPath = null,
+        bool HasIndexProjection = false)
     {
         public ExpressionInfo(StarkTypeSymbol type)
             : this(type, BorrowLifetime: BorrowLifetime.None)
@@ -1427,14 +1930,16 @@ internal sealed class OwnershipValidator
 
     private sealed class FlowState
     {
+        private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
         private readonly Dictionary<int, VariableInfo> _variables;
         private readonly Dictionary<int, VariableState> _states;
         private readonly Dictionary<int, ScopeFrame> _scopes;
         private int _nextVariableId;
         private int _nextScopeId;
 
-        public FlowState()
+        public FlowState(IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
         {
+            _namedTypes = namedTypes;
             _variables = new Dictionary<int, VariableInfo>();
             _states = new Dictionary<int, VariableState>();
             _scopes = new Dictionary<int, ScopeFrame>();
@@ -1444,6 +1949,7 @@ internal sealed class OwnershipValidator
         }
 
         private FlowState(
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             Dictionary<int, VariableInfo> variables,
             Dictionary<int, VariableState> states,
             Dictionary<int, ScopeFrame> scopes,
@@ -1451,6 +1957,7 @@ internal sealed class OwnershipValidator
             int nextVariableId,
             int nextScopeId)
         {
+            _namedTypes = namedTypes;
             _variables = variables;
             _states = states;
             _scopes = scopes;
@@ -1469,7 +1976,7 @@ internal sealed class OwnershipValidator
             return frame;
         }
 
-        public void ExitScope(ScopeFrame scope, FunctionOwnershipBuilder summary)
+        public void ExitScope(ScopeFrame scope, FunctionOwnershipBuilder summary, Action<VariableInfo, VariableState, FunctionOwnershipBuilder> validateScopeExitState)
         {
             foreach (var variableId in scope.DeclaredVariables)
             {
@@ -1479,7 +1986,9 @@ internal sealed class OwnershipValidator
                     continue;
                 }
 
-                if (state.IsInitialized && IsAutomaticallyDropped(variable.Type, variable.StorageClass))
+                validateScopeExitState(variable, state, summary);
+
+                if (state.MayBeInitialized && IsAutomaticallyDropped(variable.Type, variable.StorageClass))
                 {
                     summary.ImplicitDrops.Add(variable.Name);
                 }
@@ -1492,14 +2001,17 @@ internal sealed class OwnershipValidator
             _scopes.Remove(scope.Id);
         }
 
-        public void Declare(VariableInfo variable)
+        public void Declare(VariableInfo variable, bool isInitialized)
         {
             var id = _nextVariableId++;
             var bound = variable with { Id = id, DeclarationScopeId = CurrentScope.Id };
             CurrentScope.Symbols[bound.Name] = id;
             CurrentScope.DeclaredVariables.Add(id);
             _variables[id] = bound;
-            _states[id] = new VariableState(IsInitialized: true, bound.BorrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : bound.BorrowLifetime);
+            var aggregateState = CreateAggregateState(bound.Type, isInitialized);
+            _states[id] = isInitialized
+                ? VariableState.Initialized(bound.BorrowLifetime, aggregateState)
+                : VariableState.Uninitialized(bound.BorrowLifetime, aggregateState);
         }
 
         public bool TryLookup(string name, out VariableInfo variable)
@@ -1521,11 +2033,54 @@ internal sealed class OwnershipValidator
 
         public bool TryGetState(int variableId, out VariableState state) => _states.TryGetValue(variableId, out state!);
 
-        public void SetInitialized(int variableId, bool isInitialized, BorrowLifetime borrowLifetime)
+        public void SetInitialized(int variableId, BorrowLifetime borrowLifetime)
         {
-            if (_states.ContainsKey(variableId))
+            if (_states.ContainsKey(variableId) && _variables.TryGetValue(variableId, out var variable))
             {
-                _states[variableId] = new VariableState(isInitialized, borrowLifetime);
+                _states[variableId] = VariableState.Initialized(borrowLifetime, CreateAggregateState(variable.Type, isInitialized: true));
+            }
+        }
+
+        public void MarkFieldInitialized(int variableId, string fieldName)
+        {
+            if (!_states.TryGetValue(variableId, out var currentState)
+                || !_variables.TryGetValue(variableId, out var variable)
+                || !TryGetNamedAggregate(variable.Type, out var namedType))
+            {
+                return;
+            }
+
+            var aggregateState = (currentState.AggregateState ?? AggregateFieldState.Empty).MarkInitialized(fieldName);
+            var isFullyInitialized = aggregateState.IsComplete(namedType);
+            _states[variableId] = isFullyInitialized
+                ? VariableState.Initialized(currentState.BorrowLifetime, aggregateState)
+                : VariableState.PartiallyInitialized(currentState.BorrowLifetime, aggregateState);
+        }
+
+        public void MarkFieldMoved(int variableId, string fieldName, BorrowLifetime borrowLifetime, SourceLocation unavailableLocation)
+        {
+            if (!_states.TryGetValue(variableId, out var currentState)
+                || !_variables.TryGetValue(variableId, out var variable)
+                || !TryGetNamedAggregate(variable.Type, out var namedType))
+            {
+                return;
+            }
+
+            var aggregateState = (currentState.AggregateState ?? AggregateFieldState.Empty).MarkMoved(fieldName, unavailableLocation);
+            var isFullyInitialized = aggregateState.IsComplete(namedType);
+            _states[variableId] = isFullyInitialized
+                ? VariableState.Initialized(borrowLifetime, aggregateState)
+                : VariableState.PartiallyInitialized(borrowLifetime, aggregateState);
+        }
+
+        public void SetMoved(int variableId, BorrowLifetime borrowLifetime, SourceLocation unavailableLocation)
+        {
+            if (_states.ContainsKey(variableId) && _variables.TryGetValue(variableId, out var variable))
+            {
+                _states[variableId] = VariableState.Moved(
+                    borrowLifetime,
+                    CreateAggregateState(variable.Type, isInitialized: false),
+                    unavailableLocation);
             }
         }
 
@@ -1554,6 +2109,7 @@ internal sealed class OwnershipValidator
             var currentScope = CloneScope(CurrentScope);
             var scopes = scopeMap.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             return new FlowState(
+                _namedTypes,
                 _variables.ToDictionary(static pair => pair.Key, static pair => pair.Value),
                 _states.ToDictionary(static pair => pair.Key, static pair => pair.Value),
                 scopes,
@@ -1567,14 +2123,14 @@ internal sealed class OwnershipValidator
             var visibleIds = GetVisibleVariableIds();
             foreach (var id in visibleIds)
             {
-                var left = thenState._states.TryGetValue(id, out var thenVar) ? thenVar : new VariableState(false, BorrowLifetime.None);
+                var left = thenState._states.TryGetValue(id, out var thenVar)
+                    ? thenVar
+                    : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
                 var right = elseState is null
-                    ? _states.TryGetValue(id, out var original) ? original : new VariableState(false, BorrowLifetime.None)
-                    : elseState._states.TryGetValue(id, out var elseVar) ? elseVar : new VariableState(false, BorrowLifetime.None);
+                    ? _states.TryGetValue(id, out var original) ? original : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null)
+                    : elseState._states.TryGetValue(id, out var elseVar) ? elseVar : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
 
-                _states[id] = new VariableState(
-                    left.IsInitialized && right.IsInitialized,
-                    BorrowLifetime.Merge(left.BorrowLifetime, right.BorrowLifetime));
+                _states[id] = VariableState.Merge(left, right, BorrowLifetime.Merge(left.BorrowLifetime, right.BorrowLifetime));
             }
         }
 
@@ -1590,20 +2146,29 @@ internal sealed class OwnershipValidator
             foreach (var id in visibleIds)
             {
                 var initialized = true;
+                var mayBeInitialized = false;
                 BorrowLifetime lifetime = BorrowLifetime.None;
+                var unavailableKind = UnavailableValueKind.None;
                 var first = true;
 
                 foreach (var branch in branchList)
                 {
                     var state = branch._states.TryGetValue(id, out var stateValue)
                         ? stateValue
-                        : new VariableState(false, BorrowLifetime.None);
-                    initialized &= state.IsInitialized;
+                        : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
+                    initialized &= state.IsDefinitelyInitialized;
                     lifetime = first ? state.BorrowLifetime : BorrowLifetime.Merge(lifetime, state.BorrowLifetime);
+                    mayBeInitialized |= state.MayBeInitialized;
+                    unavailableKind = first ? state.UnavailableKind : unavailableKind == state.UnavailableKind ? unavailableKind : UnavailableValueKind.ControlFlow;
                     first = false;
                 }
 
-                _states[id] = new VariableState(initialized, lifetime);
+                var aggregateState = branchList
+                    .Select(branch => branch._states.TryGetValue(id, out var stateValue) ? stateValue.AggregateState : null)
+                    .Aggregate(AggregateFieldState.Merge);
+                _states[id] = initialized
+                    ? VariableState.Initialized(lifetime, aggregateState)
+                    : new VariableState(false, mayBeInitialized, lifetime, mayBeInitialized ? UnavailableValueKind.ControlFlow : unavailableKind, aggregateState);
             }
         }
 
@@ -1612,11 +2177,9 @@ internal sealed class OwnershipValidator
             var visibleIds = GetVisibleVariableIds();
             foreach (var id in visibleIds)
             {
-                var before = _states.TryGetValue(id, out var beforeState) ? beforeState : new VariableState(false, BorrowLifetime.None);
-                var after = loopState._states.TryGetValue(id, out var afterState) ? afterState : new VariableState(false, BorrowLifetime.None);
-                _states[id] = new VariableState(
-                    before.IsInitialized && after.IsInitialized,
-                    BorrowLifetime.Merge(before.BorrowLifetime, after.BorrowLifetime));
+                var before = _states.TryGetValue(id, out var beforeState) ? beforeState : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
+                var after = loopState._states.TryGetValue(id, out var afterState) ? afterState : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
+                _states[id] = VariableState.Merge(before, after, BorrowLifetime.Merge(before.BorrowLifetime, after.BorrowLifetime));
             }
         }
 
@@ -1656,6 +2219,157 @@ internal sealed class OwnershipValidator
             }
 
             return ids;
+        }
+
+        private AggregateFieldState? CreateAggregateState(StarkTypeSymbol type, bool isInitialized)
+        {
+            if (!TryGetNamedAggregate(type, out var namedType))
+            {
+                return null;
+            }
+
+            return isInitialized
+                ? AggregateFieldState.Full(namedType)
+                : AggregateFieldState.EmptyFor(namedType);
+        }
+
+        private bool TryGetNamedAggregate(StarkTypeSymbol type, out NamedTypeSymbol namedType)
+        {
+            namedType = null!;
+            if (type.NamedType is null || !_namedTypes.TryGetValue(type.NamedType, out var candidate))
+            {
+                return false;
+            }
+
+            namedType = candidate;
+            return namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record;
+        }
+    }
+
+    private sealed record AggregateFieldState(IReadOnlyDictionary<string, AggregateFieldAvailability> Fields)
+    {
+        public static readonly AggregateFieldState Empty = new(new Dictionary<string, AggregateFieldAvailability>(StringComparer.Ordinal));
+
+        public bool MayHaveAnyAvailableFields => Fields.Values.Any(static state => state.MayBeAvailable);
+
+        public bool HasDefinitelyUnavailableUninitializedFields =>
+            Fields.Values.Any(static state => !state.IsDefinitelyAvailable && state.UnavailableKind == UnavailableValueKind.NeverInitialized);
+
+        public bool HasDefinitelyUnavailableMovedFields =>
+            Fields.Values.Any(static state => !state.IsDefinitelyAvailable && state.UnavailableKind == UnavailableValueKind.Moved);
+
+        public AggregateFieldAvailability GetFieldState(string fieldName) =>
+            Fields.TryGetValue(fieldName, out var state)
+                ? state
+                : AggregateFieldAvailability.Uninitialized();
+
+        public bool IsComplete(NamedTypeSymbol namedType) =>
+            namedType.OrderedFields.All(field => GetFieldState(field.Name).IsDefinitelyAvailable);
+
+        public AggregateFieldState MarkInitialized(string fieldName)
+        {
+            var fields = CloneFields();
+            fields[fieldName] = AggregateFieldAvailability.Initialized();
+            return new AggregateFieldState(fields);
+        }
+
+        public AggregateFieldState MarkMoved(string fieldName, SourceLocation unavailableLocation)
+        {
+            var fields = CloneFields();
+            fields[fieldName] = AggregateFieldAvailability.Moved(unavailableLocation);
+            return new AggregateFieldState(fields);
+        }
+
+        public IEnumerable<(string Name, UnavailableValueKind UnavailableKind, SourceLocation? UnavailableLocation)> GetDefinitelyUnavailableFields()
+        {
+            return Fields
+                .Where(static pair => !pair.Value.IsDefinitelyAvailable)
+                .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+                .Select(static pair => (pair.Key, pair.Value.UnavailableKind, pair.Value.UnavailableLocation));
+        }
+
+        public IEnumerable<(string Name, UnavailableValueKind UnavailableKind, SourceLocation? UnavailableLocation)> GetDefinitelyUnavailableFields(UnavailableValueKind kind)
+        {
+            return GetDefinitelyUnavailableFields().Where(field => field.UnavailableKind == kind);
+        }
+
+        public static AggregateFieldState Full(NamedTypeSymbol namedType)
+        {
+            var fields = new Dictionary<string, AggregateFieldAvailability>(StringComparer.Ordinal);
+            foreach (var field in namedType.OrderedFields)
+            {
+                fields[field.Name] = AggregateFieldAvailability.Initialized();
+            }
+
+            return new AggregateFieldState(fields);
+        }
+
+        public static AggregateFieldState EmptyFor(NamedTypeSymbol namedType)
+        {
+            var fields = new Dictionary<string, AggregateFieldAvailability>(StringComparer.Ordinal);
+            foreach (var field in namedType.OrderedFields)
+            {
+                fields[field.Name] = AggregateFieldAvailability.Uninitialized();
+            }
+
+            return new AggregateFieldState(fields);
+        }
+
+        public static AggregateFieldState? Merge(AggregateFieldState? left, AggregateFieldState? right)
+        {
+            if (left is null)
+            {
+                return right;
+            }
+
+            if (right is null)
+            {
+                return left;
+            }
+
+            var merged = new Dictionary<string, AggregateFieldAvailability>(StringComparer.Ordinal);
+            foreach (var fieldName in left.Fields.Keys.Concat(right.Fields.Keys).Distinct(StringComparer.Ordinal))
+            {
+                merged[fieldName] = AggregateFieldAvailability.Merge(left.GetFieldState(fieldName), right.GetFieldState(fieldName));
+            }
+
+            return new AggregateFieldState(merged);
+        }
+
+        private Dictionary<string, AggregateFieldAvailability> CloneFields()
+        {
+            return Fields.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+        }
+    }
+
+    private sealed record AggregateFieldAvailability(
+        bool IsDefinitelyAvailable,
+        bool MayBeAvailable,
+        UnavailableValueKind UnavailableKind,
+        SourceLocation? UnavailableLocation = null)
+    {
+        public static AggregateFieldAvailability Initialized() => new(true, true, UnavailableValueKind.None);
+
+        public static AggregateFieldAvailability Uninitialized() => new(false, false, UnavailableValueKind.NeverInitialized);
+
+        public static AggregateFieldAvailability Moved(SourceLocation unavailableLocation) => new(false, false, UnavailableValueKind.Moved, unavailableLocation);
+
+        public static AggregateFieldAvailability Merge(AggregateFieldAvailability left, AggregateFieldAvailability right)
+        {
+            var isDefinitelyAvailable = left.IsDefinitelyAvailable && right.IsDefinitelyAvailable;
+            var mayBeAvailable = left.MayBeAvailable || right.MayBeAvailable;
+
+            if (isDefinitelyAvailable)
+            {
+                return Initialized();
+            }
+
+            if (mayBeAvailable || left.UnavailableKind != right.UnavailableKind)
+            {
+                return new AggregateFieldAvailability(false, mayBeAvailable, UnavailableValueKind.ControlFlow);
+            }
+
+            return new AggregateFieldAvailability(false, false, left.UnavailableKind, left.UnavailableLocation ?? right.UnavailableLocation);
         }
     }
 

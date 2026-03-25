@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--emit-lib|--emit-exe] [-I dir|--search-dir dir]* [-o output]";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--emit-lib|--emit-exe] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--linker tool] [--archiver tool] [--save-temps dir]";
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -10,10 +10,24 @@ internal static class CompilerCli
         string? inputPath = null;
         string? outputPath = null;
         var searchDirectories = new List<string>();
+        var librarySearchDirectories = new List<string>();
+        var linkArguments = new List<string>();
+        string? targetTriple = null;
+        string? targetDataLayout = null;
+        string? linkerTool = null;
+        string? archiverTool = null;
+        string? saveTempsDirectory = null;
+        var showHelp = false;
 
         for (var index = 0; index < args.Length; index++)
         {
             var argument = args[index];
+
+            if (argument is "-h" or "--help")
+            {
+                showHelp = true;
+                continue;
+            }
 
             if (TryParseMode(argument, out var parsedMode))
             {
@@ -25,6 +39,42 @@ internal static class CompilerCli
                 }
 
                 mode = parsedMode;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--target", args, ref index, out var targetValue))
+            {
+                targetTriple = targetValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--target-data-layout", args, ref index, out var targetDataLayoutValue))
+            {
+                targetDataLayout = targetDataLayoutValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--linker", args, ref index, out var linkerValue))
+            {
+                linkerTool = linkerValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--archiver", args, ref index, out var archiverValue))
+            {
+                archiverTool = archiverValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--link-arg", args, ref index, out var linkArgumentValue))
+            {
+                linkArguments.Add(linkArgumentValue);
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--save-temps", args, ref index, out var saveTempsValue))
+            {
+                saveTempsDirectory = saveTempsValue;
                 continue;
             }
 
@@ -53,6 +103,19 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (string.Equals(argument, "-L", StringComparison.Ordinal)
+                || string.Equals(argument, "--library-dir", StringComparison.Ordinal))
+            {
+                if (index + 1 >= args.Length)
+                {
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                librarySearchDirectories.Add(args[++index]);
+                continue;
+            }
+
             if (argument.StartsWith("--", StringComparison.Ordinal))
             {
                 await stderr.WriteLineAsync($"Unknown option '{argument}'.");
@@ -69,6 +132,12 @@ internal static class CompilerCli
             inputPath = argument;
         }
 
+        if (showHelp)
+        {
+            await WriteHelpAsync(stdout);
+            return 0;
+        }
+
         var source = inputPath is not null
             ? await File.ReadAllTextAsync(inputPath)
             : await stdin.ReadToEndAsync();
@@ -77,8 +146,10 @@ internal static class CompilerCli
         var pipeline = DefaultCompilerPipeline.Create();
         var requiresTargetInfo = mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable;
         var targetInfo = requiresTargetInfo
-            && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo)
-                ? detectedTargetInfo
+            ? CreateTargetInfo(targetTriple, targetDataLayout)
+                ?? (NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo)
+                    ? detectedTargetInfo
+                    : null)
                 : null;
         var compilerOptions = new CompilerOptions(
             EmitLlvmIr: mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
@@ -86,6 +157,12 @@ internal static class CompilerCli
             StopAfterPassId: ResolveStopAfterPassId(mode),
             ModuleResolver: moduleResolver,
             QualifyModuleSymbols: mode == CliMode.EmitLibrary);
+        var toolchainOptions = new ToolchainCliOptions(
+            linkerTool,
+            archiverTool,
+            librarySearchDirectories,
+            linkArguments,
+            saveTempsDirectory);
         var result = pipeline.Run(
             new CompilationInput(source, inputPath),
             compilerOptions);
@@ -112,11 +189,11 @@ internal static class CompilerCli
             case CliMode.EmitLlvmIr:
                 return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.LlvmIrModule, static module => module.Text);
             case CliMode.EmitObject:
-                return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result);
+                return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, toolchainOptions);
             case CliMode.EmitLibrary:
-                return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions);
+                return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitExecutable:
-                return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions);
+                return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             default:
                 var executedPasses = result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed);
                 await stdout.WriteLineAsync($"Compilation pipeline succeeded. Executed {executedPasses} passes.");
@@ -130,7 +207,8 @@ internal static class CompilerCli
         TextWriter stdout,
         TextWriter stderr,
         CompilationResult result,
-        CompilerOptions compilerOptions)
+        CompilerOptions compilerOptions,
+        ToolchainCliOptions toolchainOptions)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -141,12 +219,13 @@ internal static class CompilerCli
         var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result);
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-link-");
+        var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
 
         try
         {
-            var rootObjectPath = Path.Combine(tempDirectory.FullName, $"root{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
-            var rootObjectResult = NativeToolchain.EmitObject(llvmModule.Text, rootObjectPath);
+            var rootObjectPath = Path.Combine(intermediateDirectory, $"root{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
+            var rootLlvmPath = toolchainOptions.SaveTempsDirectory is null ? null : Path.Combine(intermediateDirectory, "root.ll");
+            var rootObjectResult = NativeToolchain.EmitObject(llvmModule.Text, rootObjectPath, preservedLlvmOutputPath: rootLlvmPath);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -171,7 +250,7 @@ internal static class CompilerCli
                         continue;
                     }
 
-                    var dependencyResult = CompileDependencyObject(module, compilerOptions, tempDirectory.FullName);
+                    var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
                     if (!dependencyResult.Success)
                     {
                         foreach (var diagnostic in dependencyResult.Diagnostics)
@@ -194,7 +273,12 @@ internal static class CompilerCli
                 }
             }
 
-            var toolchainResult = NativeToolchain.LinkExecutable(linkInputs, resolvedOutputPath);
+            var toolchainResult = NativeToolchain.LinkExecutable(
+                linkInputs,
+                resolvedOutputPath,
+                toolchainOptions.LinkerTool,
+                toolchainOptions.LibrarySearchDirectories,
+                toolchainOptions.LinkArguments);
             if (!toolchainResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, toolchainResult);
@@ -218,7 +302,7 @@ internal static class CompilerCli
         {
             try
             {
-                tempDirectory.Delete(recursive: true);
+                cleanupDirectory?.Delete(recursive: true);
             }
             catch
             {
@@ -233,7 +317,8 @@ internal static class CompilerCli
         TextWriter stdout,
         TextWriter stderr,
         CompilationResult result,
-        CompilerOptions compilerOptions)
+        CompilerOptions compilerOptions,
+        ToolchainCliOptions toolchainOptions)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -243,12 +328,13 @@ internal static class CompilerCli
 
         var resolvedOutputPath = outputPath ?? DeriveLibraryOutputPath(inputPath, result);
         var objectPaths = new List<string>();
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-lib-");
+        var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-lib-", out var cleanupDirectory);
 
         try
         {
-            var rootObjectPath = Path.Combine(tempDirectory.FullName, $"root{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
-            var rootObjectResult = NativeToolchain.EmitObject(llvmModule.Text, rootObjectPath);
+            var rootObjectPath = Path.Combine(intermediateDirectory, $"root{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
+            var rootLlvmPath = toolchainOptions.SaveTempsDirectory is null ? null : Path.Combine(intermediateDirectory, "root.ll");
+            var rootObjectResult = NativeToolchain.EmitObject(llvmModule.Text, rootObjectPath, preservedLlvmOutputPath: rootLlvmPath);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -262,7 +348,7 @@ internal static class CompilerCli
             {
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
-                    var dependencyResult = CompileDependencyObject(module, compilerOptions, tempDirectory.FullName);
+                    var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
                     if (!dependencyResult.Success)
                     {
                         foreach (var diagnostic in dependencyResult.Diagnostics)
@@ -285,7 +371,7 @@ internal static class CompilerCli
                 }
             }
 
-            var toolchainResult = NativeToolchain.CreateStaticLibrary(objectPaths, resolvedOutputPath);
+            var toolchainResult = NativeToolchain.CreateStaticLibrary(objectPaths, resolvedOutputPath, toolchainOptions.ArchiverTool);
             if (!toolchainResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, toolchainResult);
@@ -314,7 +400,7 @@ internal static class CompilerCli
         {
             try
             {
-                tempDirectory.Delete(recursive: true);
+                cleanupDirectory?.Delete(recursive: true);
             }
             catch
             {
@@ -328,7 +414,8 @@ internal static class CompilerCli
         string? inputPath,
         TextWriter stdout,
         TextWriter stderr,
-        CompilationResult result)
+        CompilationResult result,
+        ToolchainCliOptions toolchainOptions)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -337,7 +424,12 @@ internal static class CompilerCli
         }
 
         var resolvedOutputPath = outputPath ?? DeriveObjectOutputPath(inputPath, result);
-        var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, resolvedOutputPath);
+        var preservedLlvmPath = toolchainOptions.SaveTempsDirectory is null
+            ? null
+            : Path.Combine(
+                CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-obj-", out _),
+                $"{Path.GetFileNameWithoutExtension(resolvedOutputPath)}.ll");
+        var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, resolvedOutputPath, preservedLlvmOutputPath: preservedLlvmPath);
         if (!toolchainResult.Succeeded)
         {
             if (!string.IsNullOrWhiteSpace(toolchainResult.StandardOutput))
@@ -413,7 +505,8 @@ internal static class CompilerCli
     private static DependencyCompileResult CompileDependencyObject(
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
-        string tempDirectory)
+        string intermediateDirectory,
+        bool preserveTemps)
     {
         var dependencyPipeline = DefaultCompilerPipeline.Create();
         var dependencyResult = dependencyPipeline.Run(
@@ -438,12 +531,62 @@ internal static class CompilerCli
         }
 
         var objectPath = Path.Combine(
-            tempDirectory,
+            intermediateDirectory,
             $"{module.SyntaxModel.ModuleName.Replace(".", "_", StringComparison.Ordinal)}{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
-        var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, objectPath);
+        var llvmPath = preserveTemps
+            ? Path.Combine(intermediateDirectory, $"{module.SyntaxModel.ModuleName.Replace(".", "_", StringComparison.Ordinal)}.ll")
+            : null;
+        var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, objectPath, preservedLlvmOutputPath: llvmPath);
         return toolchainResult.Succeeded
             ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], toolchainResult)
             : new DependencyCompileResult(false, null, [], toolchainResult);
+    }
+
+    private static string CreateIntermediateDirectory(string? requestedDirectory, string tempPrefix, out DirectoryInfo? cleanupDirectory)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedDirectory))
+        {
+            var fullPath = Path.GetFullPath(requestedDirectory);
+            Directory.CreateDirectory(fullPath);
+            cleanupDirectory = null;
+            return fullPath;
+        }
+
+        cleanupDirectory = Directory.CreateTempSubdirectory(tempPrefix);
+        return cleanupDirectory.FullName;
+    }
+
+    private static async Task WriteHelpAsync(TextWriter stdout)
+    {
+        await stdout.WriteLineAsync(Usage);
+        await stdout.WriteLineAsync();
+        await stdout.WriteLineAsync("Workflows:");
+        await stdout.WriteLineAsync("  --check       Validate through ownership/lifetime analysis");
+        await stdout.WriteLineAsync("  --emit-mir    Print lowered MIR");
+        await stdout.WriteLineAsync("  --emit-ssa    Print lowered SSA");
+        await stdout.WriteLineAsync("  --emit-llvm   Print emitted LLVM IR");
+        await stdout.WriteLineAsync("  --emit-obj    Compile LLVM IR to an object file");
+        await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package manifest");
+        await stdout.WriteLineAsync("  --emit-exe    Build a native executable");
+        await stdout.WriteLineAsync();
+        await stdout.WriteLineAsync("Inputs and Outputs:");
+        await stdout.WriteLineAsync("  [path]                 Read a Stark source file instead of stdin");
+        await stdout.WriteLineAsync("  -o <path>              Write the selected output artifact to <path>");
+        await stdout.WriteLineAsync("  -I, --search-dir <dir> Add a Stark module/package search directory");
+        await stdout.WriteLineAsync("  -L, --library-dir <dir> Add a native library search directory for linking");
+        await stdout.WriteLineAsync();
+        await stdout.WriteLineAsync("Targeting and Native Toolchain:");
+        await stdout.WriteLineAsync("  --target <triple>              Override the LLVM target triple");
+        await stdout.WriteLineAsync("  --target-data-layout <layout>  Override the LLVM target data layout");
+        await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
+        await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
+        await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
+        await stdout.WriteLineAsync("  --save-temps <dir>             Preserve intermediate LLVM and object files in <dir>");
+        await stdout.WriteLineAsync();
+        await stdout.WriteLineAsync("Notes:");
+        await stdout.WriteLineAsync("  --emit-obj is compile-only.");
+        await stdout.WriteLineAsync("  --emit-lib and --emit-exe perform link/archive steps.");
+        await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable.");
     }
 
     private static async Task<int> EmitTextArtifactAsync<T>(
@@ -486,6 +629,40 @@ internal static class CompilerCli
         };
 
         return mode != CliMode.Default;
+    }
+
+    private static bool TryReadOptionValue(string argument, string optionName, string[] args, ref int index, out string value)
+    {
+        if (argument.StartsWith($"{optionName}=", StringComparison.Ordinal))
+        {
+            value = argument[(optionName.Length + 1)..];
+            return true;
+        }
+
+        if (!string.Equals(argument, optionName, StringComparison.Ordinal))
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        if (index + 1 >= args.Length)
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        value = args[++index];
+        return true;
+    }
+
+    private static LlvmTargetInfo? CreateTargetInfo(string? targetTriple, string? targetDataLayout)
+    {
+        if (string.IsNullOrWhiteSpace(targetTriple))
+        {
+            return null;
+        }
+
+        return new LlvmTargetInfo(targetTriple, string.IsNullOrWhiteSpace(targetDataLayout) ? null : targetDataLayout);
     }
 
     private static string? ResolveStopAfterPassId(CliMode mode)
@@ -584,4 +761,11 @@ internal static class CompilerCli
         string? ObjectPath,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
         NativeToolchainResult? ToolchainResult);
+
+    private sealed record ToolchainCliOptions(
+        string? LinkerTool,
+        string? ArchiverTool,
+        IReadOnlyList<string> LibrarySearchDirectories,
+        IReadOnlyList<string> LinkArguments,
+        string? SaveTempsDirectory);
 }

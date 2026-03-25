@@ -526,8 +526,16 @@ internal sealed class MidLevelIrLowerer
                 return false;
             }
 
-            var nativeLabels = parsedSections
+            var allLabels = parsedSections
                 .SelectMany(static section => section.Labels)
+                .ToArray();
+
+            if (allLabels.Any(static label => label.IsMatchAll && !label.IsDefault))
+            {
+                return false;
+            }
+
+            var nativeLabels = allLabels
                 .Where(static label => !label.IsMatchAll)
                 .ToArray();
 
@@ -753,13 +761,20 @@ internal sealed class MidLevelIrLowerer
 
                     if (pattern.DISCARD() is not null)
                     {
-                        if (label.whenClause() is not null)
+                        if (label.whenClause() is null)
                         {
-                            return false;
+                            labels.Add(new LowerableSwitchLabel(pattern.GetText(), null, null, IsDefault: true, IsMatchAll: true, CaptureName: null));
+                            defaultSectionCount++;
+                            continue;
                         }
 
-                        labels.Add(new LowerableSwitchLabel(pattern.GetText(), null, null, IsDefault: true, IsMatchAll: true, CaptureName: null));
-                        defaultSectionCount++;
+                        labels.Add(new LowerableSwitchLabel(
+                            pattern.GetText(),
+                            Literal: null,
+                            GuardExpression: label.whenClause()?.expression(),
+                            IsDefault: false,
+                            IsMatchAll: true,
+                            CaptureName: null));
                         continue;
                     }
 
@@ -1664,8 +1679,8 @@ internal sealed class MidLevelIrLowerer
             var literalType = LookupLiteralType(literal);
             if (literal.CharacterLiteral() is not null)
             {
-                MarkUnsupported();
-                return null;
+                var characterOperand = new MidLevelIrStringConstantOperand(literal.GetText(), literalType);
+                return expectedType is null ? characterOperand : CoerceOperand(characterOperand, expectedType);
             }
 
             var operand = CreateLiteralOperand(literal, literalType);

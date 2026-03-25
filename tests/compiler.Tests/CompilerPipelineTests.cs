@@ -30,7 +30,7 @@ public sealed class CompilerPipelineTests
         Assert.Contains("ModuleID = 'Demo'", llvmModule.Text);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssaModule));
         Assert.NotNull(ssaModule);
-        Assert.Equal(15, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
+        Assert.Equal(16, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
     }
 
     [Fact]

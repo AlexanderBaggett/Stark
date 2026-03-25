@@ -45,6 +45,8 @@ internal sealed class SsaLowerer
         private readonly Dictionary<string, StarkTypeSymbol> _variableTypes;
         private readonly HashSet<string> _addressableLocals;
         private readonly Dictionary<string, SsaValueReference> _parameterValues;
+        private readonly Dictionary<string, SsaValue> _sharedValueNumbers = new(StringComparer.Ordinal);
+        private Dictionary<string, SsaValue>? _currentValueNumbers;
         private int _nextValueId;
 
         public FunctionSsaBuilder(MidLevelIrFunction function)
@@ -101,6 +103,8 @@ internal sealed class SsaLowerer
                 SealBlock(blockId);
             }
 
+            var phiReplacements = ComputeTrivialPhiReplacements();
+
             return new SsaFunction(
                 _function.Name,
                 _function.ReturnType,
@@ -108,20 +112,29 @@ internal sealed class SsaLowerer
                 _function.HasBody,
                 SupportsDirectCodeGeneration: true,
                 _function.EntryBlockId,
-                _reachableOrder.Select(blockId => _blocks[blockId].Build()).ToArray());
+                _reachableOrder.Select(blockId => _blocks[blockId].Build(phiReplacements)).ToArray());
         }
 
         private void LowerBlock(int blockId)
         {
-            var source = _sourceBlocks[blockId];
-            var target = _blocks[blockId];
+            _currentValueNumbers = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
 
-            foreach (var statement in source.Statements)
+            try
             {
-                LowerStatement(blockId, target, statement);
-            }
+                var source = _sourceBlocks[blockId];
+                var target = _blocks[blockId];
 
-            target.Terminator = LowerTerminator(blockId, target, source.Terminator);
+                foreach (var statement in source.Statements)
+                {
+                    LowerStatement(blockId, target, statement);
+                }
+
+                target.Terminator = LowerTerminator(blockId, target, source.Terminator);
+            }
+            finally
+            {
+                _currentValueNumbers = null;
+            }
         }
 
         private void LowerStatement(int blockId, SsaBlockBuilder block, MidLevelIrStatement statement)
@@ -234,10 +247,7 @@ internal sealed class SsaLowerer
                     call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
                     call.Type,
                     call.Text)),
-                MidLevelIrConvertRValue convert => EmitValue(block, new SsaConvertRValue(
-                    LowerOperand(blockId, block, convert.Operand),
-                    convert.TargetType,
-                    convert.Text)),
+                MidLevelIrConvertRValue convert => LowerConvertRValue(blockId, block, convert),
                 MidLevelIrExtractFieldRValue extract => EmitValue(block, new SsaExtractFieldRValue(
                     LowerOperand(blockId, block, extract.Target),
                     extract.FieldName,
@@ -304,6 +314,17 @@ internal sealed class SsaLowerer
             };
         }
 
+        private SsaValue LowerConvertRValue(int blockId, SsaBlockBuilder block, MidLevelIrConvertRValue convert)
+        {
+            var convertedOperand = LowerOperand(blockId, block, convert.Operand);
+            return convertedOperand.Type == convert.TargetType
+                ? convertedOperand
+                : EmitValue(block, new SsaConvertRValue(
+                    convertedOperand,
+                    convert.TargetType,
+                    convert.Text));
+        }
+
         private SsaValue LowerOperand(int blockId, SsaBlockBuilder block, MidLevelIrOperand operand)
         {
             return operand switch
@@ -325,9 +346,36 @@ internal sealed class SsaLowerer
 
         private SsaValue EmitValue(SsaBlockBuilder block, SsaRValue value)
         {
+            if (_currentValueNumbers is not null
+                && TryGetPureValueNumberingKey(value, out var key)
+                && _currentValueNumbers.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            if (TryGetPureValueNumberingKey(value, out var sharedKey)
+                && _sharedValueNumbers.TryGetValue(sharedKey, out var sharedExisting))
+            {
+                return sharedExisting;
+            }
+
             var name = $"v{_nextValueId++}";
+            var result = new SsaValueReference(name, value.Type);
             block.Instructions.Add(new SsaValueInstruction(name, value));
-            return new SsaValueReference(name, value.Type);
+
+            if (_currentValueNumbers is not null
+                && TryGetPureValueNumberingKey(value, out var emittedKey))
+            {
+                _currentValueNumbers[emittedKey] = result;
+            }
+
+            if (block.Id == _function.EntryBlockId
+                && TryGetPureValueNumberingKey(value, out var sharedEmittedKey))
+            {
+                _sharedValueNumbers[sharedEmittedKey] = result;
+            }
+
+            return result;
         }
 
         private void WriteVariable(int blockId, string name, SsaValue value)
@@ -500,6 +548,162 @@ internal sealed class SsaLowerer
             return predecessors;
         }
 
+        private Dictionary<string, SsaValue> ComputeTrivialPhiReplacements()
+        {
+            var replacements = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
+            var changed = true;
+
+            while (changed)
+            {
+                changed = false;
+
+                foreach (var blockId in _reachableOrder)
+                {
+                    foreach (var phi in _blocks[blockId].Phis)
+                    {
+                        if (replacements.ContainsKey(phi.Result.Name))
+                        {
+                            continue;
+                        }
+
+                        var rewrittenIncomings = phi.Incomings
+                            .Select(incoming => RewriteValue(incoming.Value, replacements))
+                            .ToArray();
+
+                        if (rewrittenIncomings.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        var first = rewrittenIncomings[0];
+                        if (!rewrittenIncomings.All(value => EqualityComparer<SsaValue>.Default.Equals(value, first)))
+                        {
+                            continue;
+                        }
+
+                        if (first is SsaValueReference reference
+                            && string.Equals(reference.Name, phi.Result.Name, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        if (!replacements.TryGetValue(phi.Result.Name, out var existing)
+                            || !EqualityComparer<SsaValue>.Default.Equals(existing, first))
+                        {
+                            replacements[phi.Result.Name] = first;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            return replacements;
+        }
+
+        private static SsaValue RewriteValue(SsaValue value, IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            while (value is SsaValueReference reference
+                && replacements.TryGetValue(reference.Name, out var replacement)
+                && seen.Add(reference.Name))
+            {
+                value = replacement;
+            }
+
+            return value;
+        }
+
+        private static bool TryGetPureValueNumberingKey(SsaRValue value, out string key)
+        {
+            switch (value)
+            {
+                case SsaUnaryRValue unary:
+                    key = $"unary|{unary.Operator}|{ValueKey(unary.Operand)}|{TypeKey(unary.Type)}";
+                    return true;
+                case SsaBinaryRValue binary:
+                    var left = ValueKey(binary.Left);
+                    var right = ValueKey(binary.Right);
+                    if (IsCommutative(binary.Operator) && string.CompareOrdinal(right, left) < 0)
+                    {
+                        (left, right) = (right, left);
+                    }
+
+                    key = $"binary|{binary.Operator}|{left}|{right}|{TypeKey(binary.Type)}";
+                    return true;
+                case SsaConvertRValue convert:
+                    key = $"convert|{ValueKey(convert.Operand)}|{TypeKey(convert.TargetType)}";
+                    return true;
+                case SsaExtractFieldRValue extractField:
+                    key = $"extract-field|{ValueKey(extractField.Target)}|{extractField.FieldName}|{extractField.FieldIndex}|{TypeKey(extractField.Type)}";
+                    return true;
+                case SsaInsertFieldRValue insertField:
+                    key = $"insert-field|{ValueKey(insertField.Target)}|{insertField.FieldName}|{insertField.FieldIndex}|{ValueKey(insertField.Value)}|{TypeKey(insertField.Type)}";
+                    return true;
+                case SsaExtractIndexRValue extractIndex:
+                    key = $"extract-index|{ValueKey(extractIndex.Target)}|{extractIndex.ElementIndex}|{TypeKey(extractIndex.Type)}";
+                    return true;
+                case SsaInsertIndexRValue insertIndex:
+                    key = $"insert-index|{ValueKey(insertIndex.Target)}|{insertIndex.ElementIndex}|{ValueKey(insertIndex.Value)}|{TypeKey(insertIndex.Type)}";
+                    return true;
+                case SsaMakeSliceFromLocalRValue makeSlice:
+                    key = $"make-slice|{makeSlice.LocalName}|{TypeKey(makeSlice.SourceType)}|{TypeKey(makeSlice.Type)}";
+                    return true;
+                case SsaAddressOfLocalRValue addressOfLocal:
+                    key = $"address-of-local|{addressOfLocal.LocalName}|{TypeKey(addressOfLocal.PointeeType)}|{TypeKey(addressOfLocal.Type)}";
+                    return true;
+                case SsaFieldAddressRValue fieldAddress:
+                    key = $"field-address|{ValueKey(fieldAddress.Address)}|{TypeKey(fieldAddress.AggregateType)}|{fieldAddress.FieldName}|{fieldAddress.FieldIndex}|{TypeKey(fieldAddress.Type)}";
+                    return true;
+                case SsaElementAddressRValue elementAddress:
+                    key = $"element-address|{ValueKey(elementAddress.Address)}|{TypeKey(elementAddress.AggregateType)}|{ValueKey(elementAddress.Index)}|{elementAddress.ConstantIndex}|{TypeKey(elementAddress.Type)}";
+                    return true;
+                case SsaSliceElementAddressRValue sliceElementAddress:
+                    key = $"slice-element-address|{ValueKey(sliceElementAddress.Slice)}|{ValueKey(sliceElementAddress.Index)}|{TypeKey(sliceElementAddress.Type)}";
+                    return true;
+                default:
+                    key = string.Empty;
+                    return false;
+            }
+        }
+
+        private static bool IsCommutative(SsaBinaryOperator operatorKind)
+        {
+            return operatorKind switch
+            {
+                SsaBinaryOperator.Add => true,
+                SsaBinaryOperator.Multiply => true,
+                SsaBinaryOperator.BitwiseAnd => true,
+                SsaBinaryOperator.BitwiseXor => true,
+                SsaBinaryOperator.BitwiseOr => true,
+                SsaBinaryOperator.Equal => true,
+                SsaBinaryOperator.NotEqual => true,
+                _ => false
+            };
+        }
+
+        private static string ValueKey(SsaValue? value)
+        {
+            return value switch
+            {
+                null => "<null>",
+                SsaValueReference reference => $"ref:{reference.Name}:{TypeKey(reference.Type)}",
+                SsaIntegerConstant integer => $"int:{integer.Value}:{TypeKey(integer.Type)}",
+                SsaFloatConstant floating => $"float:{floating.LiteralText}:{TypeKey(floating.Type)}",
+                SsaStringConstant text => $"string:{text.LiteralText}:{TypeKey(text.Type)}",
+                SsaBoolConstant boolean => $"bool:{boolean.Value}",
+                SsaNullConstant nullValue => $"null:{TypeKey(nullValue.Type)}",
+                SsaUndefValue undef => $"undef:{TypeKey(undef.Type)}",
+                SsaZeroInitializerValue zero => $"zero:{TypeKey(zero.Type)}",
+                _ => $"{value.GetType().Name}:{value.Text}:{TypeKey(value.Type)}"
+            };
+        }
+
+        private static string TypeKey(StarkTypeSymbol type)
+        {
+            return type.ToString();
+        }
+
         private static SsaUnaryOperator MapUnaryOperator(MidLevelIrUnaryOperator operatorKind)
         {
             return operatorKind switch
@@ -556,9 +760,15 @@ internal sealed class SsaLowerer
 
             public List<SsaPhiIncoming> Incomings { get; } = [];
 
-            public SsaPhi Build()
+            public SsaPhi Build(IReadOnlyDictionary<string, SsaValue> replacements)
             {
-                return new SsaPhi(Result.Name, VariableName, Type, Incomings.ToArray());
+                return new SsaPhi(
+                    Result.Name,
+                    VariableName,
+                    Type,
+                    Incomings.Select(incoming => new SsaPhiIncoming(
+                        incoming.PredecessorBlockId,
+                        RewriteValue(incoming.Value, replacements))).ToArray());
             }
         }
 
@@ -580,15 +790,145 @@ internal sealed class SsaLowerer
 
             public SsaTerminator? Terminator { get; set; }
 
-            public SsaBasicBlock Build()
+            public SsaBasicBlock Build(IReadOnlyDictionary<string, SsaValue> replacements)
             {
                 return new SsaBasicBlock(
                     Id,
                     Label,
-                    Phis.Select(static phi => phi.Build()).ToArray(),
-                    Instructions.ToArray(),
-                    Terminator ?? new SsaTerminator(SsaTerminatorKind.Unreachable, []));
+                    Phis.Where(phi => !replacements.ContainsKey(phi.Result.Name))
+                        .Select(phi => phi.Build(replacements))
+                        .ToArray(),
+                    Instructions.Select(instruction => RewriteInstruction(instruction, replacements)).ToArray(),
+                    RewriteTerminator(Terminator ?? new SsaTerminator(SsaTerminatorKind.Unreachable, []), replacements));
             }
+        }
+
+        private static SsaInstruction RewriteInstruction(
+            SsaInstruction instruction,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            return instruction switch
+            {
+                SsaValueInstruction valueInstruction => new SsaValueInstruction(
+                    valueInstruction.ResultName,
+                    RewriteRValue(valueInstruction.Value, replacements)),
+                SsaAllocateLocalInstruction allocateLocal => allocateLocal,
+                SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
+                    storeLocal.LocalName,
+                    storeLocal.LocalType,
+                    RewriteValue(storeLocal.Value, replacements)),
+                SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
+                    RewriteValue(storeIndirect.Address, replacements),
+                    storeIndirect.ValueType,
+                    RewriteValue(storeIndirect.Value, replacements)),
+                SsaStoreGlobalInstruction storeGlobal => new SsaStoreGlobalInstruction(
+                    storeGlobal.GlobalName,
+                    storeGlobal.GlobalType,
+                    RewriteValue(storeGlobal.Value, replacements)),
+                _ => instruction
+            };
+        }
+
+        private static SsaRValue RewriteRValue(
+            SsaRValue value,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            return value switch
+            {
+                SsaUnaryRValue unary => new SsaUnaryRValue(
+                    unary.Operator,
+                    RewriteValue(unary.Operand, replacements),
+                    unary.Type,
+                    unary.Text),
+                SsaBinaryRValue binary => new SsaBinaryRValue(
+                    binary.Operator,
+                    RewriteValue(binary.Left, replacements),
+                    RewriteValue(binary.Right, replacements),
+                    binary.Type,
+                    binary.Text),
+                SsaCallRValue call => new SsaCallRValue(
+                    call.FunctionName,
+                    call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
+                    call.Type,
+                    call.Text),
+                SsaConvertRValue convert => new SsaConvertRValue(
+                    RewriteValue(convert.Operand, replacements),
+                    convert.TargetType,
+                    convert.Text),
+                SsaExtractFieldRValue extractField => new SsaExtractFieldRValue(
+                    RewriteValue(extractField.Target, replacements),
+                    extractField.FieldName,
+                    extractField.FieldIndex,
+                    extractField.Type,
+                    extractField.Text),
+                SsaInsertFieldRValue insertField => new SsaInsertFieldRValue(
+                    RewriteValue(insertField.Target, replacements),
+                    insertField.FieldName,
+                    insertField.FieldIndex,
+                    RewriteValue(insertField.Value, replacements),
+                    insertField.Type,
+                    insertField.Text),
+                SsaExtractIndexRValue extractIndex => new SsaExtractIndexRValue(
+                    RewriteValue(extractIndex.Target, replacements),
+                    extractIndex.ElementIndex,
+                    extractIndex.Type,
+                    extractIndex.Text),
+                SsaInsertIndexRValue insertIndex => new SsaInsertIndexRValue(
+                    RewriteValue(insertIndex.Target, replacements),
+                    insertIndex.ElementIndex,
+                    RewriteValue(insertIndex.Value, replacements),
+                    insertIndex.Type,
+                    insertIndex.Text),
+                SsaMakeSliceFromLocalRValue makeSlice => makeSlice,
+                SsaLoadSliceElementRValue loadSlice => new SsaLoadSliceElementRValue(
+                    RewriteValue(loadSlice.Slice, replacements),
+                    RewriteValue(loadSlice.Index, replacements),
+                    loadSlice.Type,
+                    loadSlice.Text),
+                SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
+                SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
+                    RewriteValue(fieldAddress.Address, replacements),
+                    fieldAddress.AggregateType,
+                    fieldAddress.FieldName,
+                    fieldAddress.FieldIndex,
+                    fieldAddress.Type,
+                    fieldAddress.Text),
+                SsaElementAddressRValue elementAddress => new SsaElementAddressRValue(
+                    RewriteValue(elementAddress.Address, replacements),
+                    elementAddress.AggregateType,
+                    elementAddress.Index is null ? null : RewriteValue(elementAddress.Index, replacements),
+                    elementAddress.ConstantIndex,
+                    elementAddress.Type,
+                    elementAddress.Text),
+                SsaSliceElementAddressRValue sliceElementAddress => new SsaSliceElementAddressRValue(
+                    RewriteValue(sliceElementAddress.Slice, replacements),
+                    RewriteValue(sliceElementAddress.Index, replacements),
+                    sliceElementAddress.Type,
+                    sliceElementAddress.Text),
+                SsaLoadIndirectRValue loadIndirect => new SsaLoadIndirectRValue(
+                    RewriteValue(loadIndirect.Address, replacements),
+                    loadIndirect.Type,
+                    loadIndirect.Text),
+                SsaLoadGlobalRValue loadGlobal => loadGlobal,
+                SsaLoadLocalRValue loadLocal => loadLocal,
+                _ => value
+            };
+        }
+
+        private static SsaTerminator RewriteTerminator(
+            SsaTerminator terminator,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            return new SsaTerminator(
+                terminator.Kind,
+                terminator.Targets,
+                Condition: terminator.Condition is null ? null : RewriteValue(terminator.Condition, replacements),
+                Value: terminator.Value is null ? null : RewriteValue(terminator.Value, replacements),
+                SwitchCases: terminator.SwitchCases?.Select(switchCase => new SsaSwitchCase(
+                    switchCase.Label,
+                    switchCase.TargetBlockId,
+                    RewriteValue(switchCase.MatchValue, replacements))).ToArray(),
+                DefaultTarget: terminator.DefaultTarget);
         }
     }
 }

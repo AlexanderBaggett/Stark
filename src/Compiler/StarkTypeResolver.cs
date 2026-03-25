@@ -8,7 +8,6 @@ internal sealed class StarkTypeResolver
 {
     private readonly CompilerPassContext _context;
     private readonly string _stage;
-    private readonly ModuleGraph _moduleGraph;
     private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
 
     public StarkTypeResolver(
@@ -19,7 +18,6 @@ internal sealed class StarkTypeResolver
     {
         _context = context;
         _stage = stage;
-        _moduleGraph = moduleGraph;
         _namedTypes = namedTypes;
     }
 
@@ -101,11 +99,6 @@ internal sealed class StarkTypeResolver
         {
             ReportError("STK3004", $"Unknown type '{qualifiedName}'.", token);
             return StarkTypeSymbols.Error;
-        }
-
-        if (HasImportedModulePrefix(qualifiedName))
-        {
-            return StarkTypeSymbols.Named(qualifiedName);
         }
 
         ReportError("STK3004", $"Unknown type '{qualifiedName}'.", token);
@@ -244,21 +237,6 @@ internal sealed class StarkTypeResolver
         }
 
         return next;
-    }
-
-    private bool HasImportedModulePrefix(string qualifiedName)
-    {
-        var segments = qualifiedName.Split('.');
-        for (var length = segments.Length - 1; length >= 1; length--)
-        {
-            var candidate = string.Join(".", segments.Take(length));
-            if (_moduleGraph.HasModule(candidate))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private void ReportError(string code, string message, ParserRuleContext context)

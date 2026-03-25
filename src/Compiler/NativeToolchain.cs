@@ -96,24 +96,37 @@ internal static class NativeToolchain
         }
     }
 
-    public static NativeToolchainResult EmitObject(string llvmIr, string outputPath)
+    public static NativeToolchainResult EmitObject(string llvmIr, string outputPath, string? preservedLlvmOutputPath = null)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath);
     }
 
     public static NativeToolchainResult EmitExecutable(string llvmIr, string outputPath)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null);
     }
 
-    public static NativeToolchainResult LinkExecutable(IEnumerable<string> objectPaths, string outputPath)
+    public static NativeToolchainResult LinkExecutable(
+        IEnumerable<string> objectPaths,
+        string outputPath,
+        string? linkerTool = null,
+        IEnumerable<string>? librarySearchPaths = null,
+        IEnumerable<string>? extraArguments = null)
     {
-        return RunTool("clang", BuildLinkExecutableArguments(objectPaths, outputPath), outputPath);
+        return RunTool(
+            string.IsNullOrWhiteSpace(linkerTool) ? "clang" : linkerTool,
+            BuildLinkExecutableArguments(objectPaths, outputPath, librarySearchPaths, extraArguments),
+            outputPath);
     }
 
-    public static NativeToolchainResult CreateStaticLibrary(IEnumerable<string> objectPaths, string outputPath)
+    public static NativeToolchainResult CreateStaticLibrary(IEnumerable<string> objectPaths, string outputPath, string? archiverTool = null)
     {
         var arguments = BuildStaticLibraryArguments(objectPaths, outputPath);
+
+        if (!string.IsNullOrWhiteSpace(archiverTool))
+        {
+            return RunTool(archiverTool, arguments, outputPath);
+        }
 
         if (OperatingSystem.IsWindows())
         {
@@ -123,15 +136,18 @@ internal static class NativeToolchain
         return RunFirstAvailableTool(["llvm-ar", "ar"], arguments, outputPath);
     }
 
-    private static NativeToolchainResult CompileLlvmIr(string llvmIr, string outputPath, bool compileOnly)
+    private static NativeToolchainResult CompileLlvmIr(string llvmIr, string outputPath, bool compileOnly, string? preservedLlvmOutputPath)
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
 
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-llvm-");
+        DirectoryInfo? tempDirectory = null;
         try
         {
-            var llvmPath = Path.Combine(tempDirectory.FullName, "module.ll");
+            var llvmPath = string.IsNullOrWhiteSpace(preservedLlvmOutputPath)
+                ? Path.Combine((tempDirectory = Directory.CreateTempSubdirectory("stark-llvm-")).FullName, "module.ll")
+                : Path.GetFullPath(preservedLlvmOutputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(llvmPath) ?? Environment.CurrentDirectory);
             File.WriteAllText(llvmPath, llvmIr);
 
             var startInfo = new ProcessStartInfo
@@ -169,7 +185,7 @@ internal static class NativeToolchain
         {
             try
             {
-                tempDirectory.Delete(recursive: true);
+                tempDirectory?.Delete(recursive: true);
             }
             catch
             {
@@ -178,11 +194,32 @@ internal static class NativeToolchain
         }
     }
 
-    private static IEnumerable<string> BuildLinkExecutableArguments(IEnumerable<string> objectPaths, string outputPath)
+    private static IEnumerable<string> BuildLinkExecutableArguments(
+        IEnumerable<string> objectPaths,
+        string outputPath,
+        IEnumerable<string>? librarySearchPaths,
+        IEnumerable<string>? extraArguments)
     {
         foreach (var objectPath in objectPaths)
         {
             yield return Path.GetFullPath(objectPath);
+        }
+
+        if (librarySearchPaths is not null)
+        {
+            foreach (var searchPath in librarySearchPaths)
+            {
+                yield return "-L";
+                yield return Path.GetFullPath(searchPath);
+            }
+        }
+
+        if (extraArguments is not null)
+        {
+            foreach (var argument in extraArguments)
+            {
+                yield return argument;
+            }
         }
 
         yield return "-o";

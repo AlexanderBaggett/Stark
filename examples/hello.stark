@@ -1,0 +1,7 @@
+import System
+module Hello
+
+export ffi fn i32 main() {
+    System.Console.WriteLine("Hello, world!");
+    return 0;
+}

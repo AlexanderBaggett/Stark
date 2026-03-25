@@ -16,6 +16,7 @@ internal sealed class TypeChecker
     private readonly LoadedModuleSet _loadedModules;
 
     private readonly Dictionary<string, NamedTypeSymbol> _namedTypes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<ConstructorShape>> _constructors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypedFunctionSignature> _functions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VariableSymbol> _globals = new(StringComparer.Ordinal);
     private readonly List<LiteralTypingRecord> _literals = [];
@@ -40,6 +41,7 @@ internal sealed class TypeChecker
         SeedNamedTypes();
         _typeResolver = new StarkTypeResolver(_context, "type-check", _moduleGraph, _namedTypes);
         PopulateNamedTypeFields();
+        BuildConstructorShapes();
         BuildFunctionSignatures();
         CheckGlobalDeclarations();
         CheckFunctionBodies();
@@ -278,6 +280,109 @@ internal sealed class TypeChecker
         }
     }
 
+    private void BuildConstructorShapes()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
+                        candidate => candidate.Kind == DeclarationKind.Struct && string.Equals(candidate.Name, structDeclaration.Identifier().GetText(), StringComparison.Ordinal));
+                    if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
+                    {
+                        continue;
+                    }
+
+                    var typeName = QualifyName(module, structDeclaration.Identifier().GetText());
+                    var genericParameters = GetGenericParameterNames(structDeclaration.typeParameterList());
+                    RegisterConstructors(
+                        typeName,
+                        structDeclaration.Identifier().GetText(),
+                        genericParameters,
+                        structDeclaration.structBody().structMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!,
+                        primaryConstructorParameters: null,
+                        module.SyntaxModel.ModuleName);
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
+                        candidate => candidate.Kind == DeclarationKind.Record && string.Equals(candidate.Name, recordDeclaration.Identifier().GetText(), StringComparison.Ordinal));
+                    if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
+                    {
+                        continue;
+                    }
+
+                    var typeName = QualifyName(module, recordDeclaration.Identifier().GetText());
+                    var genericParameters = GetGenericParameterNames(recordDeclaration.typeParameterList());
+                    RegisterConstructors(
+                        typeName,
+                        recordDeclaration.Identifier().GetText(),
+                        genericParameters,
+                        recordDeclaration.recordBody().recordMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!,
+                        recordDeclaration.primaryConstructorParameters(),
+                        module.SyntaxModel.ModuleName);
+                }
+            }
+        }
+    }
+
+    private void RegisterConstructors(
+        string qualifiedTypeName,
+        string localTypeName,
+        ISet<string>? genericParameters,
+        IEnumerable<StarkParser.ConstructorDeclarationContext> constructorDeclarations,
+        StarkParser.PrimaryConstructorParametersContext? primaryConstructorParameters,
+        string currentModuleName)
+    {
+        var constructors = new List<ConstructorShape>();
+
+        if (primaryConstructorParameters is not null)
+        {
+            constructors.Add(new ConstructorShape(
+                localTypeName,
+                BuildTypedParameters(primaryConstructorParameters.parameterList().parameter(), genericParameters, currentModuleName),
+                IsPrimaryShape: true));
+        }
+
+        foreach (var constructor in constructorDeclarations)
+        {
+            if (!string.Equals(constructor.Identifier().GetText(), localTypeName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            constructors.Add(new ConstructorShape(
+                localTypeName,
+                BuildTypedParameters(constructor.parameterList().parameter(), genericParameters, currentModuleName),
+                IsPrimaryShape: false));
+        }
+
+        if (constructors.Count != 0)
+        {
+            _constructors[qualifiedTypeName] = constructors;
+        }
+    }
+
+    private TypedParameterSymbol[] BuildTypedParameters(
+        IEnumerable<StarkParser.ParameterContext> parameters,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        return parameters
+            .Select(parameter => new TypedParameterSymbol(
+                parameter.Identifier().GetText(),
+                ResolveType(parameter.type_(), genericParameters, currentModuleName)))
+            .ToArray();
+    }
+
     private void CheckGlobalDeclarations()
     {
         RegisterImportedGlobals();
@@ -290,7 +395,12 @@ internal sealed class TypeChecker
                 foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                 {
                     var valueType = EvaluateExpression(declarator.expression(), Scope.CreateRoot(_globals), allowFunctionReference: false).Type;
-                    EnsureAssignable(declaredType, valueType, declarator.expression(), $"cannot assign '{valueType.DisplayName}' to constant '{declarator.Identifier().GetText()}' of type '{declaredType.DisplayName}'");
+                    EnsureAssignmentCompatible(
+                        declarator.Identifier().GetText(),
+                        declaredType,
+                        valueType,
+                        declarator.expression(),
+                        isConstant: true);
                     _globals[declarator.Identifier().GetText()] = new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: false, IsConstant: true);
                 }
 
@@ -428,7 +538,12 @@ internal sealed class TypeChecker
             foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
             {
                 var valueType = EvaluateExpression(declarator.expression(), scope, allowFunctionReference: false).Type;
-                EnsureAssignable(declaredType, valueType, declarator.expression(), $"cannot assign '{valueType.DisplayName}' to constant '{declarator.Identifier().GetText()}' of type '{declaredType.DisplayName}'");
+                EnsureAssignmentCompatible(
+                    declarator.Identifier().GetText(),
+                    declaredType,
+                    valueType,
+                    declarator.expression(),
+                    isConstant: true);
                 scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: false, IsConstant: true));
             }
 
@@ -542,7 +657,7 @@ internal sealed class TypeChecker
             }
 
             var valueType = EvaluateExpression(returnStatement.expression(), scope, allowFunctionReference: false).Type;
-            EnsureAssignable(returnType, valueType, returnStatement.expression(), $"cannot return '{valueType.DisplayName}' from a function returning '{returnType.DisplayName}'");
+            EnsureReturnCompatible(returnType, valueType, returnStatement.expression());
             return;
         }
 
@@ -557,7 +672,13 @@ internal sealed class TypeChecker
         if (pattern.literal() is { } literal)
         {
             var literalType = EvaluateLiteral(literal).Type;
-            EnsureAssignable(switchType, literalType, literal, $"switch pattern '{literal.GetText()}' is not compatible with '{switchType.DisplayName}'");
+            if (!CanAssign(switchType, literalType))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Switch pattern '{literal.GetText()}' expects '{switchType.DisplayName}' but found '{literalType.DisplayName}'.{GetExplicitConversionHint(switchType, literalType)}",
+                    literal);
+            }
             return;
         }
 
@@ -580,10 +701,6 @@ internal sealed class TypeChecker
         {
             if (declarator.variableInitializer() is null)
             {
-                ReportError(
-                    "STK3001",
-                    $"Variable '{declarator.Identifier().GetText()}' requires an initializer.",
-                    declarator);
                 scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false));
                 continue;
             }
@@ -598,13 +715,13 @@ internal sealed class TypeChecker
         if (initializer.expression() is { } expression)
         {
             var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
-            EnsureAssignable(declaredType, valueType, expression, $"cannot assign '{valueType.DisplayName}' to '{declaredType.DisplayName}'");
+            EnsureAssignmentCompatible(variableName: null, declaredType, valueType, expression, isConstant: false);
             return;
         }
 
         if (initializer.objectInitializer() is { } objectInitializer)
         {
-            CheckObjectInitializer(objectInitializer, declaredType, scope);
+            CheckObjectInitializer(objectInitializer, declaredType, scope, preInitializedMembers: null);
             return;
         }
 
@@ -614,7 +731,11 @@ internal sealed class TypeChecker
         }
     }
 
-    private void CheckObjectInitializer(StarkParser.ObjectInitializerContext objectInitializer, StarkTypeSymbol targetType, Scope scope)
+    private void CheckObjectInitializer(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        StarkTypeSymbol targetType,
+        Scope scope,
+        ISet<string>? preInitializedMembers)
     {
         if (targetType.Kind != StarkTypeKind.Named)
         {
@@ -623,23 +744,36 @@ internal sealed class TypeChecker
         }
 
         _namedTypes.TryGetValue(targetType.NamedType!, out var namedType);
+        var initializedMembers = preInitializedMembers is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(preInitializedMembers, StringComparer.Ordinal);
 
         foreach (var initializer in objectInitializer.memberInitializer())
         {
             var valueType = EvaluateExpression(initializer.expression(), scope, allowFunctionReference: false).Type;
+            var memberName = initializer.Identifier().GetText();
 
             if (namedType is null)
             {
                 continue;
             }
 
-            if (!namedType.Fields.TryGetValue(initializer.Identifier().GetText(), out var field))
+            if (!namedType.Fields.TryGetValue(memberName, out var field))
             {
-                ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{initializer.Identifier().GetText()}'.", initializer);
+                ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", initializer);
                 continue;
             }
 
-            EnsureAssignable(field.Type, valueType, initializer.expression(), $"cannot assign '{valueType.DisplayName}' to field '{initializer.Identifier().GetText()}' of type '{field.Type.DisplayName}'");
+            if (!initializedMembers.Add(memberName))
+            {
+                var duplicateMessage = preInitializedMembers?.Contains(memberName) == true
+                    ? $"Object initializer member '{memberName}' is already supplied by the constructor for '{namedType.Name}'."
+                    : $"Object initializer member '{memberName}' is assigned more than once.";
+                ReportError("STK3006", duplicateMessage, initializer);
+                continue;
+            }
+
+            EnsureObjectInitializerCompatible(memberName, field.Type, valueType, initializer.expression());
         }
     }
 
@@ -655,7 +789,7 @@ internal sealed class TypeChecker
         foreach (var expression in arrayInitializer.expression())
         {
             var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
-            EnsureAssignable(elementType, valueType, expression, $"cannot assign '{valueType.DisplayName}' to array element of type '{elementType.DisplayName}'");
+            EnsureArrayElementCompatible(elementType, valueType, expression);
         }
 
         if (targetType.Kind == StarkTypeKind.FixedArray
@@ -693,20 +827,19 @@ internal sealed class TypeChecker
 
         if (assignmentOperator == "=")
         {
-            EnsureAssignable(left.Type, right.Type, expression.assignmentExpression(), $"cannot assign '{right.Type.DisplayName}' to '{left.Type.DisplayName}'");
-            return new ExpressionBinding(left.Type, left.IsAssignable, left.NamedType, left.Function);
+            EnsureAssignmentTargetCompatible(left, right.Type, expression.assignmentExpression());
+            return new ExpressionBinding(left.Type, left.IsAssignable, left.NamedType, left.Function, left.NamespaceName, left.DiagnosticName);
         }
 
-        if (IsDeferredExplicitArithmeticOperator(assignmentOperator))
+        if (IsExplicitArithmeticAssignmentOperator(assignmentOperator))
         {
-            ReportError(
-                "STK3008",
-                $"Operator '{assignmentOperator}' is part of the Stark language surface but is not implemented in the current compiler yet.",
-                expression);
-            return new ExpressionBinding(StarkTypeSymbols.Error);
+            if (left.Type.Kind != StarkTypeKind.Integer || right.Type.Kind != StarkTypeKind.Integer)
+            {
+                ReportError("STK3002", $"Operator '{assignmentOperator}' requires integer operands.", expression);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
         }
-
-        if (IsBitwiseAssignmentOperator(assignmentOperator))
+        else if (IsBitwiseAssignmentOperator(assignmentOperator))
         {
             if (left.Type.Kind != StarkTypeKind.Integer || right.Type.Kind != StarkTypeKind.Integer)
             {
@@ -720,8 +853,15 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        EnsureAssignable(left.Type, right.Type, expression.assignmentExpression(), $"cannot apply '{assignmentOperator}' using '{left.Type.DisplayName}' and '{right.Type.DisplayName}'");
-        return new ExpressionBinding(left.Type, left.IsAssignable, left.NamedType, left.Function);
+        if (!CanAssign(left.Type, right.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Operator '{assignmentOperator}' cannot assign '{right.Type.DisplayName}' to '{left.Type.DisplayName}'.{GetExplicitConversionHint(left.Type, right.Type)}",
+                expression.assignmentExpression());
+        }
+
+        return new ExpressionBinding(left.Type, left.IsAssignable, left.NamedType, left.Function, left.NamespaceName, left.DiagnosticName);
     }
 
     private ExpressionBinding EvaluateConditionalExpression(StarkParser.ConditionalExpressionContext expression, Scope scope, bool allowFunctionReference)
@@ -870,32 +1010,14 @@ internal sealed class TypeChecker
     {
         var operands = expression.multiplicativeExpression().Select(item => EvaluateMultiplicativeExpression(item, scope, allowFunctionReference)).ToArray();
         var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(expression);
-        if (operators.Any(IsDeferredExplicitArithmeticOperator))
-        {
-            ReportError(
-                "STK3008",
-                $"Operator '{operators.First(IsDeferredExplicitArithmeticOperator)}' is part of the Stark language surface but is not implemented in the current compiler yet.",
-                expression);
-            return new ExpressionBinding(StarkTypeSymbols.Error);
-        }
-
-        return EvaluateBinaryChain(operands, operators, expression, "Additive operator");
+        return EvaluateArithmeticChain(operands, operators, expression, "Additive operator");
     }
 
     private ExpressionBinding EvaluateMultiplicativeExpression(StarkParser.MultiplicativeExpressionContext expression, Scope scope, bool allowFunctionReference)
     {
         var operands = expression.unaryExpression().Select(item => EvaluateUnaryExpression(item, scope, allowFunctionReference)).ToArray();
         var operators = ExtractOperators<StarkParser.UnaryExpressionContext>(expression);
-        if (operators.Any(IsDeferredExplicitArithmeticOperator))
-        {
-            ReportError(
-                "STK3008",
-                $"Operator '{operators.First(IsDeferredExplicitArithmeticOperator)}' is part of the Stark language surface but is not implemented in the current compiler yet.",
-                expression);
-            return new ExpressionBinding(StarkTypeSymbols.Error);
-        }
-
-        return EvaluateBinaryChain(operands, operators, expression, "Multiplicative operator");
+        return EvaluateArithmeticChain(operands, operators, expression, "Multiplicative operator");
     }
 
     private ExpressionBinding EvaluateUnaryExpression(StarkParser.UnaryExpressionContext expression, Scope scope, bool allowFunctionReference)
@@ -908,19 +1030,11 @@ internal sealed class TypeChecker
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
         var op = expression.GetChild(0).GetText();
 
-        if (IsDeferredExplicitArithmeticOperator(op))
-        {
-            ReportError(
-                "STK3008",
-                $"Operator '{op}' is part of the Stark language surface but is not implemented in the current compiler yet.",
-                expression);
-            return new ExpressionBinding(StarkTypeSymbols.Error);
-        }
-
         return op switch
         {
             "!" => EnsureBooleanUnary(operand, expression),
             "~" => EnsureIntegerUnary(operand, expression, op),
+            "-%" => EnsureIntegerUnary(operand, expression, op),
             "+" or "-" => EnsureNumericUnary(operand, expression, op),
             _ => new ExpressionBinding(StarkTypeSymbols.Error)
         };
@@ -964,8 +1078,15 @@ internal sealed class TypeChecker
                 continue;
             }
 
-            if (postfixPart.expressionList() is { } expressionList)
+            if (postfixPart.GetChild(0).GetText() == "[")
             {
+                if (postfixPart.expressionList() is not { } expressionList)
+                {
+                    ReportError("STK3002", "Index access requires at least one index expression.", postfixPart);
+                    binding = new ExpressionBinding(StarkTypeSymbols.Error, DiagnosticName: "indexed element");
+                    continue;
+                }
+
                 binding = ApplyIndex(binding, expressionList, scope, postfixPart);
                 continue;
             }
@@ -1004,28 +1125,26 @@ internal sealed class TypeChecker
     private ExpressionBinding EvaluateObjectCreation(StarkParser.ObjectCreationExpressionContext expression, Scope scope)
     {
         var createdType = ResolveType(expression.type_());
+        ConstructorShape? matchedConstructor = null;
 
         if (expression.argumentList() is { } argumentList)
         {
-            foreach (var argument in argumentList.argument())
-            {
-                EvaluateExpression(argument.expression(), scope, allowFunctionReference: false);
-            }
+            matchedConstructor = CheckObjectCreationArguments(argumentList, createdType, scope);
         }
 
         if (expression.objectInitializer() is { } objectInitializer)
         {
-            CheckObjectInitializer(objectInitializer, createdType, scope);
+            CheckObjectInitializer(objectInitializer, createdType, scope, matchedConstructor?.InitializedMembers);
         }
 
-        return new ExpressionBinding(createdType, NamedType: ResolveNamedTypeSymbol(createdType));
+        return new ExpressionBinding(createdType, NamedType: ResolveNamedTypeSymbol(createdType), DiagnosticName: $"new '{createdType.DisplayName}'");
     }
 
     private ExpressionBinding InvokeCall(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
     {
         if (target.Function is null)
         {
-            ReportError("STK3008", "Only functions are callable.", arguments);
+            ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
@@ -1041,10 +1160,10 @@ internal sealed class TypeChecker
         {
             var parameter = target.Function.Parameters[index];
             var argumentType = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
-            EnsureAssignable(parameter.Type, argumentType, arguments.argument(index).expression(), $"argument {index + 1} for '{target.Function.Name}' must be '{parameter.Type.DisplayName}', but got '{argumentType.DisplayName}'");
+            EnsureCallArgumentCompatible(target.Function.Name, index + 1, parameter.Type, argumentType, arguments.argument(index).expression());
         }
 
-        return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
+        return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType), DiagnosticName: $"call to '{target.Function.Name}'");
     }
 
     private ExpressionBinding ApplyIndex(ExpressionBinding target, StarkParser.ExpressionListContext indexes, Scope scope, ParserRuleContext context)
@@ -1056,7 +1175,10 @@ internal sealed class TypeChecker
             var indexType = EvaluateExpression(indexExpression, scope, allowFunctionReference: false).Type;
             if (indexType.Kind != StarkTypeKind.Integer)
             {
-                ReportError("STK3002", $"Index expressions must be integers, but got '{indexType.DisplayName}'.", indexExpression);
+                ReportError(
+                    "STK3002",
+                    $"Index access on {DescribeExpressionTarget(target)} expects an integer index but found '{indexType.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(32), indexType)}",
+                    indexExpression);
             }
 
             if (currentType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Slice && currentType.ElementType is not null)
@@ -1065,11 +1187,15 @@ internal sealed class TypeChecker
                 continue;
             }
 
-            ReportError("STK3010", $"Type '{currentType.DisplayName}' is not indexable.", context);
+            ReportError("STK3010", $"{DescribeExpressionTarget(target)} is not indexable.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        return new ExpressionBinding(currentType, IsAssignable: target.IsAssignable, NamedType: ResolveNamedTypeSymbol(currentType));
+        return new ExpressionBinding(
+            currentType,
+            IsAssignable: target.IsAssignable,
+            NamedType: ResolveNamedTypeSymbol(currentType),
+            DiagnosticName: target.DiagnosticName is null ? "indexed element" : $"indexed element of {target.DiagnosticName}");
     }
 
     private ExpressionBinding ApplyMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -1079,17 +1205,21 @@ internal sealed class TypeChecker
             var qualifiedName = $"{target.NamespaceName}.{memberName}";
             if (_moduleGraph.HasModule(qualifiedName))
             {
-                return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+                return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"module '{qualifiedName}'");
             }
 
             if (_globals.TryGetValue(qualifiedName, out var global))
             {
-                return new ExpressionBinding(global.Type, IsAssignable: global.IsMutable, NamedType: ResolveNamedTypeSymbol(global.Type));
+                return new ExpressionBinding(
+                    global.Type,
+                    IsAssignable: global.IsMutable,
+                    NamedType: ResolveNamedTypeSymbol(global.Type),
+                    DiagnosticName: global.IsConstant ? $"constant '{qualifiedName}'" : $"variable '{qualifiedName}'");
             }
 
             if (_functions.TryGetValue(qualifiedName, out var function))
             {
-                return new ExpressionBinding(function.ReturnType, Function: function);
+                return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{qualifiedName}'");
             }
 
             ReportError("STK3003", $"Unknown symbol '{qualifiedName}'.", context);
@@ -1099,7 +1229,7 @@ internal sealed class TypeChecker
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
-            ReportError("STK3011", $"Type '{target.Type.DisplayName}' does not support member access.", context);
+            ReportError("STK3011", $"Cannot access member '{memberName}' on {DescribeExpressionTarget(target)}.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
@@ -1109,19 +1239,27 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        return new ExpressionBinding(field.Type, IsAssignable: target.IsAssignable, NamedType: ResolveNamedTypeSymbol(field.Type));
+        return new ExpressionBinding(field.Type, IsAssignable: target.IsAssignable, NamedType: ResolveNamedTypeSymbol(field.Type), DiagnosticName: $"member '{memberName}'");
     }
 
     private ExpressionBinding ResolveValue(string name, IToken token, Scope scope, bool allowFunctionReference)
     {
         if (scope.TryLookup(name, out var local))
         {
-            return new ExpressionBinding(local.Type, IsAssignable: !local.IsConstant, NamedType: ResolveNamedTypeSymbol(local.Type));
+            return new ExpressionBinding(
+                local.Type,
+                IsAssignable: !local.IsConstant,
+                NamedType: ResolveNamedTypeSymbol(local.Type),
+                DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'");
         }
 
         if (_globals.TryGetValue(name, out var global))
         {
-            return new ExpressionBinding(global.Type, IsAssignable: global.IsMutable, NamedType: ResolveNamedTypeSymbol(global.Type));
+            return new ExpressionBinding(
+                global.Type,
+                IsAssignable: global.IsMutable,
+                NamedType: ResolveNamedTypeSymbol(global.Type),
+                DiagnosticName: global.IsConstant ? $"constant '{name}'" : $"variable '{name}'");
         }
 
         if (_functions.TryGetValue(name, out var function))
@@ -1132,12 +1270,12 @@ internal sealed class TypeChecker
                 return new ExpressionBinding(StarkTypeSymbols.Error);
             }
 
-            return new ExpressionBinding(function.ReturnType, Function: function);
+            return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{name}'");
         }
 
         if (_moduleGraph.HasModule(name))
         {
-            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name);
+            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"module '{name}'");
         }
 
         ReportError("STK3003", $"Unknown symbol '{name}'.", token);
@@ -1264,6 +1402,52 @@ internal sealed class TypeChecker
         return new ExpressionBinding(currentType);
     }
 
+    private ExpressionBinding EvaluateArithmeticChain(
+        IReadOnlyList<ExpressionBinding> operands,
+        IReadOnlyList<string> operators,
+        ParserRuleContext context,
+        string operatorFamily)
+    {
+        if (operators.Count == 0)
+        {
+            return operands[0];
+        }
+
+        var currentType = operands[0].Type;
+
+        for (var index = 1; index < operands.Count; index++)
+        {
+            var nextType = operands[index].Type;
+            var operatorText = operators[index - 1];
+
+            if (IsExplicitArithmeticOperator(operatorText))
+            {
+                if (currentType.Kind != StarkTypeKind.Integer || nextType.Kind != StarkTypeKind.Integer)
+                {
+                    ReportError("STK3002", $"Operator '{operatorText}' requires integer operands.", context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+            }
+            else if (!IsNumeric(currentType) || !IsNumeric(nextType))
+            {
+                ReportError("STK3002", $"{operatorFamily} requires numeric operands.", context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            currentType = FindCommonType(currentType, nextType);
+            if (currentType.Kind == StarkTypeKind.Error)
+            {
+                ReportError(
+                    "STK3002",
+                    $"Operator '{operatorText}' is not defined for '{operands[index - 1].Type.DisplayName}' and '{nextType.DisplayName}'.",
+                    context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+        }
+
+        return new ExpressionBinding(currentType);
+    }
+
     private ExpressionBinding EnsureBooleanUnary(ExpressionBinding operand, ParserRuleContext context)
     {
         EnsureBoolean(operand.Type, context, "Logical negation requires a 'bool' operand");
@@ -1300,12 +1484,235 @@ internal sealed class TypeChecker
         }
     }
 
-    private void EnsureAssignable(StarkTypeSymbol target, StarkTypeSymbol source, ParserRuleContext context, string message)
+    private ConstructorShape? CheckObjectCreationArguments(
+        StarkParser.ArgumentListContext arguments,
+        StarkTypeSymbol createdType,
+        Scope scope)
     {
-        if (!CanAssign(target, source))
+        if (arguments.argument().Length == 0)
         {
-            ReportError("STK3002", message, context);
+            return null;
         }
+
+        var argumentTypes = new StarkTypeSymbol[arguments.argument().Length];
+        for (var index = 0; index < arguments.argument().Length; index++)
+        {
+            argumentTypes[index] = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
+        }
+
+        if (createdType.Kind != StarkTypeKind.Named || createdType.NamedType is null)
+        {
+            ReportError(
+                "STK3009",
+                $"Type '{createdType.DisplayName}' does not declare constructors and cannot be created with arguments.",
+                arguments);
+            return null;
+        }
+
+        if (!_namedTypes.ContainsKey(createdType.NamedType))
+        {
+            return null;
+        }
+
+        if (!_constructors.TryGetValue(createdType.NamedType, out var constructors) || constructors.Count == 0)
+        {
+            ReportError(
+                "STK3009",
+                $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {arguments.argument().Length} argument{Pluralize(arguments.argument().Length)}.",
+                arguments);
+            return null;
+        }
+
+        var arityMatches = constructors
+            .Where(candidate => candidate.Parameters.Count == argumentTypes.Length)
+            .ToArray();
+
+        if (arityMatches.Length == 0)
+        {
+            var availableArities = string.Join(", ", constructors.Select(static candidate => candidate.Parameters.Count).Distinct().OrderBy(static value => value));
+            ReportError(
+                "STK3009",
+                $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentTypes.Length} argument{Pluralize(argumentTypes.Length)}. Available constructor arities: {availableArities}.",
+                arguments);
+            return null;
+        }
+
+        var matchedConstructor = arityMatches
+            .OrderBy(candidate => CountMismatchedParameters(candidate.Parameters, argumentTypes))
+            .First();
+        var hadMismatch = false;
+
+        for (var index = 0; index < matchedConstructor.Parameters.Count; index++)
+        {
+            var parameter = matchedConstructor.Parameters[index];
+            var argumentType = argumentTypes[index];
+            if (CanAssign(parameter.Type, argumentType))
+            {
+                continue;
+            }
+
+            hadMismatch = true;
+            ReportError(
+                "STK3002",
+                $"Constructor argument {index + 1} for '{createdType.DisplayName}' expects '{parameter.Type.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameter.Type, argumentType)}",
+                arguments.argument(index).expression());
+        }
+
+        return hadMismatch ? null : matchedConstructor;
+    }
+
+    private int CountMismatchedParameters(IReadOnlyList<TypedParameterSymbol> parameters, IReadOnlyList<StarkTypeSymbol> arguments)
+    {
+        var mismatches = 0;
+        for (var index = 0; index < parameters.Count; index++)
+        {
+            if (!CanAssign(parameters[index].Type, arguments[index]))
+            {
+                mismatches++;
+            }
+        }
+
+        return mismatches;
+    }
+
+    private void EnsureAssignmentCompatible(
+        string? variableName,
+        StarkTypeSymbol targetType,
+        StarkTypeSymbol valueType,
+        ParserRuleContext context,
+        bool isConstant)
+    {
+        if (CanAssign(targetType, valueType))
+        {
+            return;
+        }
+
+        var subject = variableName is null
+            ? "Assignment"
+            : isConstant
+                ? $"Assignment to constant '{variableName}'"
+                : $"Assignment to variable '{variableName}'";
+        ReportError("STK3002", $"{subject} expects '{targetType.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(targetType, valueType)}", context);
+    }
+
+    private void EnsureAssignmentTargetCompatible(ExpressionBinding target, StarkTypeSymbol valueType, ParserRuleContext context)
+    {
+        if (CanAssign(target.Type, valueType))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Assignment to {target.DiagnosticName ?? "target"} expects '{target.Type.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(target.Type, valueType)}",
+            context);
+    }
+
+    private void EnsureReturnCompatible(StarkTypeSymbol returnType, StarkTypeSymbol valueType, ParserRuleContext context)
+    {
+        if (CanAssign(returnType, valueType))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Return statement expects '{returnType.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(returnType, valueType)}",
+            context);
+    }
+
+    private void EnsureCallArgumentCompatible(
+        string functionName,
+        int position,
+        StarkTypeSymbol parameterType,
+        StarkTypeSymbol argumentType,
+        ParserRuleContext context)
+    {
+        if (CanAssign(parameterType, argumentType))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Argument {position} for '{functionName}' expects '{parameterType.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameterType, argumentType)}",
+            context);
+    }
+
+    private void EnsureObjectInitializerCompatible(
+        string memberName,
+        StarkTypeSymbol memberType,
+        StarkTypeSymbol valueType,
+        ParserRuleContext context)
+    {
+        if (CanAssign(memberType, valueType))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Object initializer member '{memberName}' expects '{memberType.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(memberType, valueType)}",
+            context);
+    }
+
+    private void EnsureArrayElementCompatible(StarkTypeSymbol elementType, StarkTypeSymbol valueType, ParserRuleContext context)
+    {
+        if (CanAssign(elementType, valueType))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Array initializer element expects '{elementType.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(elementType, valueType)}",
+            context);
+    }
+
+    private static string GetExplicitConversionHint(StarkTypeSymbol target, StarkTypeSymbol source)
+    {
+        if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
+        {
+            return string.Empty;
+        }
+
+        if (target.Kind == StarkTypeKind.Integer && source.Kind == StarkTypeKind.Float)
+        {
+            return " An explicit conversion is required to convert a floating-point value to an integer.";
+        }
+
+        if (target.Kind == StarkTypeKind.Integer
+            && source.Kind == StarkTypeKind.Integer
+            && (source.BitWidth > target.BitWidth || !IsRangeContained(source.RangeMin, source.RangeMax, target.RangeMin, target.RangeMax)))
+        {
+            return " An explicit narrowing conversion is required.";
+        }
+
+        if (target.Kind == StarkTypeKind.Float && source.Kind == StarkTypeKind.Float && source.BitWidth > target.BitWidth)
+        {
+            return " An explicit narrowing conversion is required.";
+        }
+
+        if (target.Kind == StarkTypeKind.Ascii && source.Kind == StarkTypeKind.Unicode)
+        {
+            return " An explicit conversion is required to convert 'unicode' text to 'ascii'.";
+        }
+
+        return string.Empty;
+    }
+
+    private static string Pluralize(int count) => count == 1 ? string.Empty : "s";
+
+    private static string DescribeExpressionTarget(ExpressionBinding binding)
+    {
+        if (binding.NamespaceName is not null)
+        {
+            return $"module '{binding.NamespaceName}'";
+        }
+
+        return binding.DiagnosticName is not null
+            ? $"{binding.DiagnosticName} of type '{binding.Type.DisplayName}'"
+            : $"expression of type '{binding.Type.DisplayName}'";
     }
 
     private bool CanAssign(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -1553,9 +1960,14 @@ internal sealed class TypeChecker
         return assignmentOperator is "&=" or "|=" or "^=";
     }
 
-    private static bool IsDeferredExplicitArithmeticOperator(string op)
+    private static bool IsExplicitArithmeticOperator(string op)
     {
-        return op is "+%" or "-%" or "*%" or "+|" or "-|" or "*|" or "+%=" or "-%=" or "*%=" or "+|=" or "-|=" or "*|=";
+        return op is "+%" or "-%" or "*%" or "+|" or "-|" or "*|";
+    }
+
+    private static bool IsExplicitArithmeticAssignmentOperator(string assignmentOperator)
+    {
+        return assignmentOperator is "+%=" or "-%=" or "*%=" or "+|=" or "-|=" or "*|=";
     }
 
     private static BigInteger ParseSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)
@@ -1681,7 +2093,19 @@ internal sealed class TypeChecker
         bool IsAssignable = false,
         NamedTypeSymbol? NamedType = null,
         TypedFunctionSignature? Function = null,
-        string? NamespaceName = null);
+        string? NamespaceName = null,
+        string? DiagnosticName = null);
+
+    private sealed record ConstructorShape(
+        string Name,
+        IReadOnlyList<TypedParameterSymbol> Parameters,
+        bool IsPrimaryShape)
+    {
+        public ISet<string>? InitializedMembers =>
+            IsPrimaryShape
+                ? Parameters.Select(static parameter => parameter.Name).ToHashSet(StringComparer.Ordinal)
+                : null;
+    }
 
     private sealed class Scope
     {

@@ -1,0 +1,111 @@
+using Stark.Compiler;
+
+namespace compiler.Tests;
+
+public sealed class DiagnosticRegressionTests
+{
+    [Fact]
+    public void MalformedSyntaxProducesAStableParseDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Main() {
+                stack i32 value = 1
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK1000", "missing ';'");
+    }
+
+    [Fact]
+    public void SelfImportsProduceAStableFrontEndDiagnostic()
+    {
+        var result = Compile(
+            """
+            import Demo
+            module Demo
+
+            fn void Main() {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK2001", "cannot import itself");
+    }
+
+    [Fact]
+    public void MissingMembersProduceTypeDiagnostics()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Main() {
+                stack Box box = new Box() { Value = 1 };
+                return box.Missing;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3005", "does not contain a field named 'Missing'");
+    }
+
+    [Fact]
+    public void LawsRejectOutParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law i32 Read(out i32 value) {
+                return 0;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4101", "cannot declare 'out' or 'init' parameters");
+    }
+
+    [Fact]
+    public void StaticOwnedValuesCannotBeMovedOut()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static Box Current = new Box() { Value = 1 };
+
+            fn Box Take() {
+                return Current;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4204", "Cannot move out of global or static storage 'Current'");
+    }
+
+    private static CompilationResult Compile(string source)
+    {
+        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
+    }
+
+    private static void AssertDiagnostic(CompilationResult result, string code, params string[] messageFragments)
+    {
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == code
+                && messageFragments.All(fragment => diagnostic.Message.Contains(fragment, StringComparison.Ordinal)));
+    }
+}

@@ -19,6 +19,7 @@ public static class DefaultCompilerPipeline
             .Add(new OwnershipValidationPass())
             .Add(new LowerToHighLevelIrPass())
             .Add(new LowerToMidLevelIrPass())
+            .Add(new NonLexicalBorrowLifetimeValidationPass())
             .Add(new LowerToSsaIrPass())
             .Add(new LowerToAbiPass())
             .Add(new EmitLlvmIrPass())
@@ -533,6 +534,27 @@ public static class DefaultCompilerPipeline
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
             var mir = new MidLevelIrLowerer(context, parseResult, moduleGraph, typeModel).Lower(hir);
             context.Artifacts.Set(CompilerArtifactKeys.MidLevelIr, mir);
+        }
+    }
+
+    private sealed class NonLexicalBorrowLifetimeValidationPass : ICompilerPass
+    {
+        public string Id => "borrow-liveness";
+
+        public CompilerPhase Phase => CompilerPhase.Semantics;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["type-check", "ownership-validate", "lower-mir"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var mir = context.Artifacts.GetRequired(CompilerArtifactKeys.MidLevelIr);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var ownershipModel = context.Artifacts.GetRequired(CompilerArtifactKeys.OwnershipValidation);
+
+            var refinedOwnership = new NonLexicalBorrowLifetimeValidator(context, mir, typeModel, ownershipModel).Validate();
+            context.Artifacts.Set(CompilerArtifactKeys.OwnershipValidation, refinedOwnership);
         }
     }
 

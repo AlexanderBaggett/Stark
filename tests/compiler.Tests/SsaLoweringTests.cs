@@ -33,6 +33,59 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void CommutativeRepeatedExpressionsShareAValueNumber()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Main(i32 a, i32 b) {
+                stack i32 first = a + b;
+                stack i32 second = b + a;
+                return first + second;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var addCount = function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Count(static instruction => instruction.Value is SsaBinaryRValue { Operator: SsaBinaryOperator.Add });
+
+        Assert.Equal(2, addCount);
+    }
+
+    [Fact]
+    public void TrivialPhiNodesAreRemovedAndRewritten()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Main(bool flag) {
+                stack mut i32 value = 7;
+                if (flag) {
+                    value = 7;
+                } else {
+                    value = 7;
+                }
+
+                return value;
+            }
+        """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+
+        Assert.All(function.Blocks, static block => Assert.Empty(block.Phis));
+        Assert.Contains(
+            function.Blocks,
+            static block => block.Label.Contains("if_join", StringComparison.Ordinal)
+                && block.Terminator.Value is SsaValueReference);
+    }
+
+    [Fact]
     public void LoopHeaderProducesPhiForBackedgeValue()
     {
         var result = Compile(

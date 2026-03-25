@@ -29,6 +29,24 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task HelpOutputGroupsOptionsByWorkflow()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(["--help"], new StringReader(string.Empty), stdout, stderr);
+
+        Assert.Equal(0, exitCode);
+        var text = stdout.ToString();
+        Assert.Contains("Workflows:", text);
+        Assert.Contains("Inputs and Outputs:", text);
+        Assert.Contains("Targeting and Native Toolchain:", text);
+        Assert.Contains("--link-arg <arg>", text);
+        Assert.Contains("--save-temps <dir>", text);
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
     public async Task EmitMirModePrintsMirModule()
     {
         var stdout = new StringWriter();
@@ -492,5 +510,174 @@ public sealed class CompilerCliTests
                 // Best effort cleanup only.
             }
         }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeSupportsCustomLinkerLinkArgsAndSavedTemps()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-linker-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var librarySearchPath = Path.Combine(tempDirectory.FullName, "native-libs");
+        var tempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        Directory.CreateDirectory(librarySearchPath);
+
+        var linkerLogPath = Path.Combine(tempDirectory.FullName, "linker.log");
+        var linkerPath = await CreateUnixCaptureLinkerAsync(tempDirectory.FullName, linkerLogPath);
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export ffi fn i32 main() {
+                    return 7;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-o", outputPath,
+                    "--linker", linkerPath,
+                    "-L", librarySearchPath,
+                    "--link-arg=-Wl,--gc-sections",
+                    "--save-temps", tempsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
+            Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
+
+            var linkerLog = await File.ReadAllTextAsync(linkerLogPath);
+            Assert.Contains("-L", linkerLog);
+            Assert.Contains(Path.GetFullPath(librarySearchPath), linkerLog);
+            Assert.Contains("-Wl,--gc-sections", linkerLog);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitLibraryModeSupportsCustomArchiverTool()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-archiver-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "libFacade.a");
+        var archiverLogPath = Path.Combine(tempDirectory.FullName, "archiver.log");
+        var archiverPath = await CreateUnixCaptureArchiverAsync(tempDirectory.FullName, archiverLogPath);
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32 Double(i32 value) {
+                    return value + value;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var archiverLog = await File.ReadAllTextAsync(archiverLogPath);
+            Assert.Contains("rcs", archiverLog);
+            Assert.Contains(Path.GetFullPath(outputPath), archiverLog);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    private static async Task<string> CreateUnixCaptureLinkerAsync(string directory, string logPath)
+    {
+        var path = Path.Combine(directory, "capture-linker.sh");
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf '%s\n' "$@" > "{{logPath}}"
+            out=""
+            prev=""
+            for arg in "$@"; do
+              if [ "$prev" = "-o" ]; then
+                out="$arg"
+                break
+              fi
+              prev="$arg"
+            done
+            : > "$out"
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
+    }
+
+    private static async Task<string> CreateUnixCaptureArchiverAsync(string directory, string logPath)
+    {
+        var path = Path.Combine(directory, "capture-archiver.sh");
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf '%s\n' "$@" > "{{logPath}}"
+            out="${2:-}"
+            : > "$out"
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
     }
 }

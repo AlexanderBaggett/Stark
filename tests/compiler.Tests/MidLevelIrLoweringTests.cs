@@ -136,6 +136,59 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void GuardedDiscardSwitchLowersToBranchBasedCfg()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Main(i32 value, bool allow) {
+                switch (value) {
+                    case _ when allow:
+                        return 10;
+                    default:
+                        return 20;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(function.Blocks, block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch && block.Terminator.ConditionText == "allow");
+    }
+
+    [Fact]
+    public void MultiLabelSectionWithGuardedDiscardLowersInOrder()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Main(i32 value, bool allow) {
+                switch (value) {
+                    case 1:
+                    case _ when allow:
+                        return 10;
+                    default:
+                        return 20;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_test_1", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch && block.Terminator.ConditionText == "allow");
+        Assert.True(function.Blocks.Count(static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch) >= 2);
+    }
+
+    [Fact]
     public void CaptureSwitchPatternLowersToMatchLocalAndBody()
     {
         var result = Compile(
@@ -303,6 +356,37 @@ public sealed class MidLevelIrLoweringTests
 
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Equal(MidLevelIrBinaryOperator.Exponent, ((MidLevelIrBinaryRValue)binary.Value!).Operator);
+    }
+
+    [Fact]
+    public void CharacterLiteralsLowerToMirStringConstants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii MainAscii() {
+                return 'a';
+            }
+
+            fn unicode MainUnicode() {
+                return '\u03B1';
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var functions = GetMir(result).Functions.ToArray();
+
+        Assert.Equal(2, functions.Length);
+        Assert.All(functions, function => Assert.True(function.SupportsDirectCodeGeneration));
+
+        var asciiReturn = Assert.Single(functions, function => function.Name == "MainAscii").Blocks.Single().Terminator.Value;
+        Assert.IsType<MidLevelIrStringConstantOperand>(asciiReturn);
+        Assert.Equal(StarkTypeKind.Ascii, asciiReturn!.Type.Kind);
+
+        var unicodeReturn = Assert.Single(functions, function => function.Name == "MainUnicode").Blocks.Single().Terminator.Value;
+        Assert.IsType<MidLevelIrStringConstantOperand>(unicodeReturn);
+        Assert.Equal(StarkTypeKind.Unicode, unicodeReturn!.Type.Kind);
     }
 
     [Fact]

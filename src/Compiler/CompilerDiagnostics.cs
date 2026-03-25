@@ -65,4 +65,15 @@ public sealed class DiagnosticBag
         Add(diagnostic);
         return diagnostic;
     }
+
+    public CompilerDiagnostic Info(
+        string code,
+        string message,
+        string? stage = null,
+        SourceLocation? location = null)
+    {
+        var diagnostic = new CompilerDiagnostic(code, DiagnosticSeverity.Info, message, stage, location);
+        Add(diagnostic);
+        return diagnostic;
+    }
 }

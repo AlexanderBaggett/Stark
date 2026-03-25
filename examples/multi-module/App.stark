@@ -1,0 +1,6 @@
+import Math
+module App
+
+export ffi fn i32 main() {
+    return Math.Add(3, 4);
+}

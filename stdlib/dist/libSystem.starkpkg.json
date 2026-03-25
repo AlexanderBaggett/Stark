@@ -1,0 +1,175 @@
+{
+  "RootModule": "System",
+  "LibraryFileName": "libSystem.a",
+  "Modules": [
+    {
+      "ModuleName": "System",
+      "ReExports": [
+        {
+          "ModuleName": "System.Console"
+        },
+        {
+          "ModuleName": "System.IO.Stderr"
+        },
+        {
+          "ModuleName": "System.IO.Stdout"
+        }
+      ],
+      "Functions": [],
+      "Types": [],
+      "Globals": []
+    },
+    {
+      "ModuleName": "System.Console",
+      "ReExports": [],
+      "Functions": [
+        {
+          "Name": "Write",
+          "QualifiedName": "System.Console.Write",
+          "Visibility": "public",
+          "SymbolName": "System.Console.Write",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteError",
+          "QualifiedName": "System.Console.WriteError",
+          "Visibility": "public",
+          "SymbolName": "System.Console.WriteError",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteErrorLine",
+          "QualifiedName": "System.Console.WriteErrorLine",
+          "Visibility": "public",
+          "SymbolName": "System.Console.WriteErrorLine",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteLine",
+          "QualifiedName": "System.Console.WriteLine",
+          "Visibility": "public",
+          "SymbolName": "System.Console.WriteLine",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        }
+      ],
+      "Types": [],
+      "Globals": []
+    },
+    {
+      "ModuleName": "System.IO.Stderr",
+      "ReExports": [],
+      "Functions": [
+        {
+          "Name": "Write",
+          "QualifiedName": "System.IO.Stderr.Write",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Stderr.Write",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteLine",
+          "QualifiedName": "System.IO.Stderr.WriteLine",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Stderr.WriteLine",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        }
+      ],
+      "Types": [],
+      "Globals": []
+    },
+    {
+      "ModuleName": "System.IO.Stdout",
+      "ReExports": [],
+      "Functions": [
+        {
+          "Name": "Write",
+          "QualifiedName": "System.IO.Stdout.Write",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Stdout.Write",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteLine",
+          "QualifiedName": "System.IO.Stdout.WriteLine",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Stdout.WriteLine",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        }
+      ],
+      "Types": [],
+      "Globals": []
+    }
+  ]
+}

@@ -49,6 +49,7 @@ internal sealed class SemanticValidator
         }
 
         ValidateFiniteCallCycles();
+        FinalizeMemoryEffectsAndValidateCalls();
 
         return new SemanticValidationModel(
             _syntaxModel.ModuleName,
@@ -89,6 +90,8 @@ internal sealed class SemanticValidator
         }
 
         var summary = GetOrCreateSummary(name);
+        summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody);
+        summary.SetParameters(signature.Parameters, _typeModel.NamedTypes);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
         if (functionDeclaration.functionBody().block() is not { } block)
@@ -189,7 +192,7 @@ internal sealed class SemanticValidator
             {
                 if (declarator.expression() is { } initializer)
                 {
-                    EvaluateExpression(initializer, scope, function, effects, summary, allowFunctionReference: false);
+                    EvaluateExpression(initializer, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
                 }
 
                 scope.Declare(new VariableSymbol(
@@ -236,7 +239,7 @@ internal sealed class SemanticValidator
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            EvaluateExpression(ifStatement.expression(), scope, function, effects, summary, allowFunctionReference: false);
+            EvaluateExpression(ifStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             CheckStatement(ifStatement.statement(0), new ValidationScope(scope), function, effects, summary);
             if (ifStatement.statement().Length > 1)
             {
@@ -248,7 +251,7 @@ internal sealed class SemanticValidator
 
         if (statement.switchStatement() is { } switchStatement)
         {
-            var switchValue = EvaluateExpression(switchStatement.expression(), scope, function, effects, summary, allowFunctionReference: false);
+            var switchValue = EvaluateExpression(switchStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
 
             foreach (var section in switchStatement.switchSection())
             {
@@ -262,7 +265,7 @@ internal sealed class SemanticValidator
 
                     if (label.whenClause() is { } whenClause)
                     {
-                        EvaluateExpression(whenClause.expression(), sectionScope, function, effects, summary, allowFunctionReference: false);
+                        EvaluateExpression(whenClause.expression(), sectionScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
                     }
                 }
 
@@ -282,7 +285,7 @@ internal sealed class SemanticValidator
                 EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", whileStatement.loopBehavior());
             }
 
-            EvaluateExpression(whileStatement.expression(), scope, function, effects, summary, allowFunctionReference: false);
+            EvaluateExpression(whileStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             CheckStatement(whileStatement.statement(), new ValidationScope(scope), function, effects, summary);
             return;
         }
@@ -327,20 +330,20 @@ internal sealed class SemanticValidator
             {
                 foreach (var expression in initializerExpressions.expression())
                 {
-                    EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false);
+                    EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
                 }
             }
 
             if (forStatement.forCondition() is { } condition)
             {
-                EvaluateExpression(condition.expression(), loopScope, function, effects, summary, allowFunctionReference: false);
+                EvaluateExpression(condition.expression(), loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             }
 
             if (forStatement.forIterator() is { } iterator)
             {
                 foreach (var expression in iterator.expressionList().expression())
                 {
-                    EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false);
+                    EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
                 }
             }
 
@@ -352,7 +355,15 @@ internal sealed class SemanticValidator
         {
             if (returnStatement.expression() is not null)
             {
-                EvaluateExpression(returnStatement.expression(), scope, function, effects, summary, allowFunctionReference: false);
+                var returnedValue = EvaluateExpression(
+                    returnStatement.expression(),
+                    scope,
+                    function,
+                    effects,
+                    summary,
+                    allowFunctionReference: false,
+                    ExpressionObservation.Read);
+                RecordReturnCapture(returnedValue, function, summary);
             }
 
             return;
@@ -360,7 +371,14 @@ internal sealed class SemanticValidator
 
         if (statement.expressionStatement() is { } expressionStatement)
         {
-            EvaluateExpression(expressionStatement.expression(), scope, function, effects, summary, allowFunctionReference: false);
+            EvaluateExpression(
+                expressionStatement.expression(),
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
         }
     }
 
@@ -373,7 +391,7 @@ internal sealed class SemanticValidator
     {
         if (initializer.expression() is { } expression)
         {
-            EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false);
+            EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             return;
         }
 
@@ -381,7 +399,7 @@ internal sealed class SemanticValidator
         {
             foreach (var memberInitializer in objectInitializer.memberInitializer())
             {
-                EvaluateExpression(memberInitializer.expression(), scope, function, effects, summary, allowFunctionReference: false);
+                EvaluateExpression(memberInitializer.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             }
 
             return;
@@ -391,7 +409,7 @@ internal sealed class SemanticValidator
         {
             foreach (var item in arrayInitializer.expression())
             {
-                EvaluateExpression(item, scope, function, effects, summary, allowFunctionReference: false);
+                EvaluateExpression(item, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             }
         }
     }
@@ -402,9 +420,10 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
-        return EvaluateAssignmentExpression(expression.assignmentExpression(), scope, function, effects, summary, allowFunctionReference);
+        return EvaluateAssignmentExpression(expression.assignmentExpression(), scope, function, effects, summary, allowFunctionReference, observation);
     }
 
     private ValidationValue EvaluateAssignmentExpression(
@@ -413,15 +432,32 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         if (expression.conditionalExpression() is { } conditionalExpression)
         {
-            return EvaluateConditionalExpression(conditionalExpression, scope, function, effects, summary, allowFunctionReference);
+            return EvaluateConditionalExpression(conditionalExpression, scope, function, effects, summary, allowFunctionReference, observation);
         }
 
-        var left = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: true);
-        var right = EvaluateAssignmentExpression(expression.assignmentExpression(), scope, function, effects, summary, allowFunctionReference: false);
+        var left = EvaluateUnaryExpression(
+            expression.unaryExpression(),
+            scope,
+            function,
+            effects,
+            summary,
+            allowFunctionReference: true,
+            ExpressionObservation.WriteTarget);
+        var right = EvaluateAssignmentExpression(
+            expression.assignmentExpression(),
+            scope,
+            function,
+            effects,
+            summary,
+            allowFunctionReference: false,
+            ExpressionObservation.Read);
+
+        RecordObservedMemoryWrite(left, summary);
 
         if (effects.IsPure && IsVisibleMemoryWrite(left))
         {
@@ -437,16 +473,17 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
-        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), scope, function, effects, summary, allowFunctionReference);
+        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), scope, function, effects, summary, allowFunctionReference, ExpressionObservation.Read);
         if (expression.expression().Length == 0)
         {
             return condition;
         }
 
-        var whenTrue = EvaluateExpression(expression.expression(0), scope, function, effects, summary, allowFunctionReference: false);
-        var whenFalse = EvaluateExpression(expression.expression(1), scope, function, effects, summary, allowFunctionReference: false);
+        var whenTrue = EvaluateExpression(expression.expression(0), scope, function, effects, summary, allowFunctionReference: false, observation);
+        var whenFalse = EvaluateExpression(expression.expression(1), scope, function, effects, summary, allowFunctionReference: false, observation);
         return new ValidationValue(FindCommonType(whenTrue.Type, whenFalse.Type));
     }
 
@@ -456,10 +493,11 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         var operands = expression.logicalAndExpression()
-            .Select(item => EvaluateLogicalAndExpression(item, scope, function, effects, summary, allowFunctionReference))
+            .Select(item => EvaluateLogicalAndExpression(item, scope, function, effects, summary, allowFunctionReference, observation))
             .ToArray();
 
         return operands.Length == 1 ? operands[0] : new ValidationValue(StarkTypeSymbols.Bool);
@@ -471,10 +509,11 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         var operands = expression.bitwiseOrExpression()
-            .Select(item => EvaluateBitwiseOrExpression(item, scope, function, effects, summary, allowFunctionReference))
+            .Select(item => EvaluateBitwiseOrExpression(item, scope, function, effects, summary, allowFunctionReference, observation))
             .ToArray();
 
         return operands.Length == 1 ? operands[0] : new ValidationValue(StarkTypeSymbols.Bool);
@@ -486,11 +525,12 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         return EvaluateBinaryChain(
             expression.bitwiseXorExpression(),
-            item => EvaluateBitwiseXorExpression(item, scope, function, effects, summary, allowFunctionReference));
+            item => EvaluateBitwiseXorExpression(item, scope, function, effects, summary, allowFunctionReference, observation));
     }
 
     private ValidationValue EvaluateBitwiseXorExpression(
@@ -499,11 +539,12 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         return EvaluateBinaryChain(
             expression.bitwiseAndExpression(),
-            item => EvaluateBitwiseAndExpression(item, scope, function, effects, summary, allowFunctionReference));
+            item => EvaluateBitwiseAndExpression(item, scope, function, effects, summary, allowFunctionReference, observation));
     }
 
     private ValidationValue EvaluateBitwiseAndExpression(
@@ -512,11 +553,12 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         return EvaluateBinaryChain(
             expression.equalityExpression(),
-            item => EvaluateEqualityExpression(item, scope, function, effects, summary, allowFunctionReference));
+            item => EvaluateEqualityExpression(item, scope, function, effects, summary, allowFunctionReference, observation));
     }
 
     private ValidationValue EvaluateEqualityExpression(
@@ -525,10 +567,11 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         var operands = expression.relationalExpression()
-            .Select(item => EvaluateRelationalExpression(item, scope, function, effects, summary, allowFunctionReference))
+            .Select(item => EvaluateRelationalExpression(item, scope, function, effects, summary, allowFunctionReference, observation))
             .ToArray();
 
         return operands.Length == 1 ? operands[0] : new ValidationValue(StarkTypeSymbols.Bool);
@@ -540,10 +583,11 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         var operands = expression.shiftExpression()
-            .Select(item => EvaluateShiftExpression(item, scope, function, effects, summary, allowFunctionReference))
+            .Select(item => EvaluateShiftExpression(item, scope, function, effects, summary, allowFunctionReference, observation))
             .ToArray();
 
         return operands.Length == 1 ? operands[0] : new ValidationValue(StarkTypeSymbols.Bool);
@@ -555,11 +599,12 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         return EvaluateBinaryChain(
             expression.additiveExpression(),
-            item => EvaluateAdditiveExpression(item, scope, function, effects, summary, allowFunctionReference));
+            item => EvaluateAdditiveExpression(item, scope, function, effects, summary, allowFunctionReference, observation));
     }
 
     private ValidationValue EvaluateAdditiveExpression(
@@ -568,11 +613,12 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         return EvaluateBinaryChain(
             expression.multiplicativeExpression(),
-            item => EvaluateMultiplicativeExpression(item, scope, function, effects, summary, allowFunctionReference));
+            item => EvaluateMultiplicativeExpression(item, scope, function, effects, summary, allowFunctionReference, observation));
     }
 
     private ValidationValue EvaluateMultiplicativeExpression(
@@ -581,11 +627,12 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         return EvaluateBinaryChain(
             expression.unaryExpression(),
-            item => EvaluateUnaryExpression(item, scope, function, effects, summary, allowFunctionReference));
+            item => EvaluateUnaryExpression(item, scope, function, effects, summary, allowFunctionReference, observation));
     }
 
     private ValidationValue EvaluateUnaryExpression(
@@ -594,14 +641,15 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         if (expression.powerExpression() is { } powerExpression)
         {
-            return EvaluatePowerExpression(powerExpression, scope, function, effects, summary, allowFunctionReference);
+            return EvaluatePowerExpression(powerExpression, scope, function, effects, summary, allowFunctionReference, observation);
         }
 
-        return EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false);
+        return EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, observation);
     }
 
     private ValidationValue EvaluatePowerExpression(
@@ -610,15 +658,16 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
-        var left = EvaluatePostfixExpression(expression.postfixExpression(), scope, function, effects, summary, allowFunctionReference);
+        var left = EvaluatePostfixExpression(expression.postfixExpression(), scope, function, effects, summary, allowFunctionReference, observation);
         if (expression.unaryExpression() is not { } rightExpression)
         {
             return left;
         }
 
-        var right = EvaluateUnaryExpression(rightExpression, scope, function, effects, summary, allowFunctionReference: false);
+        var right = EvaluateUnaryExpression(rightExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
         return new ValidationValue(FindCommonType(left.Type, right.Type));
     }
 
@@ -628,10 +677,11 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
-        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), scope, function, effects, summary, allowFunctionReference || requiresCallableTarget);
+        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), scope, function, effects, summary, allowFunctionReference || requiresCallableTarget, observation);
 
         foreach (var postfixPart in expression.postfixPart())
         {
@@ -650,6 +700,11 @@ internal sealed class SemanticValidator
             binding = ApplyMemberAccess(binding, postfixPart.Identifier().GetText());
         }
 
+        if (observation == ExpressionObservation.Read)
+        {
+            RecordObservedMemoryRead(binding, summary);
+        }
+
         return binding;
     }
 
@@ -659,7 +714,8 @@ internal sealed class SemanticValidator
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        ExpressionObservation observation)
     {
         if (expression.literal() is { } literal)
         {
@@ -668,12 +724,12 @@ internal sealed class SemanticValidator
 
         if (expression.Identifier() is { } identifier)
         {
-            return ResolveValue(identifier.GetText(), scope, function, effects, summary, allowFunctionReference, identifier.Symbol);
+            return ResolveValue(identifier.GetText(), scope, function, effects, summary, allowFunctionReference, observation, identifier.Symbol);
         }
 
         if (expression.qualifiedName() is { } qualifiedName)
         {
-            return ResolveValue(qualifiedName.GetText(), scope, function, effects, summary, allowFunctionReference, qualifiedName.Start);
+            return ResolveValue(qualifiedName.GetText(), scope, function, effects, summary, allowFunctionReference, observation, qualifiedName.Start);
         }
 
         if (expression.objectCreationExpression() is { } objectCreationExpression)
@@ -681,7 +737,7 @@ internal sealed class SemanticValidator
             return EvaluateObjectCreation(objectCreationExpression, scope, function, effects, summary);
         }
 
-        return EvaluateExpression(expression.expression(), scope, function, effects, summary, allowFunctionReference: false);
+        return EvaluateExpression(expression.expression(), scope, function, effects, summary, allowFunctionReference: false, observation);
     }
 
     private ValidationValue EvaluateObjectCreation(
@@ -697,7 +753,7 @@ internal sealed class SemanticValidator
         {
             foreach (var argument in argumentList.argument())
             {
-                EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false);
+                EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             }
         }
 
@@ -705,7 +761,7 @@ internal sealed class SemanticValidator
         {
             foreach (var memberInitializer in objectInitializer.memberInitializer())
             {
-                EvaluateExpression(memberInitializer.expression(), scope, function, effects, summary, allowFunctionReference: false);
+                EvaluateExpression(memberInitializer.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             }
         }
 
@@ -719,6 +775,7 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary,
         bool allowFunctionReference,
+        ExpressionObservation observation,
         IToken token)
     {
         if (scope.TryLookup(name, out var local))
@@ -728,7 +785,7 @@ internal sealed class SemanticValidator
 
         if (_typeModel.Globals.TryGetValue(name, out var globalType))
         {
-            if (effects.IsPure)
+            if (effects.IsPure && observation == ExpressionObservation.Read)
             {
                 EffectError(summary, "STK4105", $"Law '{function.Name}' cannot read global state.", token);
             }
@@ -797,7 +854,14 @@ internal sealed class SemanticValidator
             {
                 for (var index = 0; index < Math.Min(target.Function.Parameters.Count, arguments.argument().Length); index++)
                 {
-                    var argumentValue = EvaluateExpression(arguments.argument(index).expression(), scope, currentFunction, currentEffects, summary, allowFunctionReference: false);
+                    var argumentValue = EvaluateExpression(
+                        arguments.argument(index).expression(),
+                        scope,
+                        currentFunction,
+                        currentEffects,
+                        summary,
+                        allowFunctionReference: false,
+                        ExpressionObservation.Read);
                     if (argumentValue.Type.BorrowKind != StarkBorrowKind.None)
                     {
                         BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument {index + 1} to '{target.Function.Name}' must use a raw pointer form instead.", arguments.argument(index));
@@ -808,17 +872,35 @@ internal sealed class SemanticValidator
             }
         }
 
+        var pendingArguments = new List<PendingCallArgument>();
         for (var index = 0; index < Math.Min(target.Function.Parameters.Count, arguments.argument().Length); index++)
         {
             var parameter = target.Function.Parameters[index];
-            var argumentValue = EvaluateExpression(arguments.argument(index).expression(), scope, currentFunction, currentEffects, summary, allowFunctionReference: false);
+            var argumentValue = EvaluateExpression(
+                arguments.argument(index).expression(),
+                scope,
+                currentFunction,
+                currentEffects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
             ValidateBorrowArgumentFlow(argumentValue.Type, parameter.Type, target.Function.Name, index, summary, arguments.argument(index));
+            pendingArguments.Add(CreatePendingCallArgument(index, argumentValue, parameter, target.Function.ReturnType));
         }
 
         for (var index = target.Function.Parameters.Count; index < arguments.argument().Length; index++)
         {
-            EvaluateExpression(arguments.argument(index).expression(), scope, currentFunction, currentEffects, summary, allowFunctionReference: false);
+            EvaluateExpression(
+                arguments.argument(index).expression(),
+                scope,
+                currentFunction,
+                currentEffects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
         }
+
+        summary.PendingCalls.Add(new PendingCall(target.Function.Name, pendingArguments, arguments.Start));
 
         return new ValidationValue(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
     }
@@ -860,7 +942,7 @@ internal sealed class SemanticValidator
         var currentType = target.Type;
         foreach (var indexExpression in indexes.expression())
         {
-            EvaluateExpression(indexExpression, scope, function, effects, summary, allowFunctionReference: false);
+            EvaluateExpression(indexExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             currentType = currentType.ElementType ?? StarkTypeSymbols.Error;
         }
 
@@ -911,6 +993,164 @@ internal sealed class SemanticValidator
             RootSymbol: target.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(field.Type),
             IsIndirectStorageAccess: true);
+    }
+
+    private PendingCallArgument CreatePendingCallArgument(
+        int argumentIndex,
+        ValidationValue argumentValue,
+        TypedParameterSymbol calleeParameter,
+        StarkTypeSymbol calleeReturnType)
+    {
+        var aliasing = CanAliasCalleeParameterMemory(calleeParameter.Type);
+        var callerParameterName = aliasing && argumentValue.RootSymbol?.Origin == SymbolOrigin.Parameter
+            ? argumentValue.RootSymbol.Name
+            : null;
+        var fallbackEffects = DeriveFallbackArgumentEffects(calleeParameter, calleeReturnType, hasBody: false);
+        return new PendingCallArgument(argumentIndex, callerParameterName, calleeParameter.Name, aliasing, argumentValue.RootSymbol, fallbackEffects);
+    }
+
+    private void RecordObservedMemoryRead(ValidationValue value, FunctionValidationBuilder summary)
+    {
+        if (value.RootSymbol?.Origin != SymbolOrigin.Parameter || !value.IsIndirectStorageAccess)
+        {
+            return;
+        }
+
+        summary.MarkParameterRead(value.RootSymbol.Name);
+    }
+
+    private void RecordObservedMemoryWrite(ValidationValue value, FunctionValidationBuilder summary)
+    {
+        if (value.RootSymbol?.Origin != SymbolOrigin.Parameter || !value.IsIndirectStorageAccess)
+        {
+            return;
+        }
+
+        summary.MarkParameterWrite(value.RootSymbol.Name);
+    }
+
+    private void RecordReturnCapture(ValidationValue value, FunctionDeclarationModel function, FunctionValidationBuilder summary)
+    {
+        if (value.RootSymbol?.Origin != SymbolOrigin.Parameter)
+        {
+            return;
+        }
+
+        var captureKind = function.ReturnType switch
+        {
+            var returnType when returnType.Contains("storeborrow", StringComparison.Ordinal) => ParameterCaptureKind.Escape,
+            var returnType when returnType.Contains("retborrow", StringComparison.Ordinal) => ParameterCaptureKind.Return,
+            _ => ParameterCaptureKind.None
+        };
+
+        if (captureKind != ParameterCaptureKind.None)
+        {
+            summary.MarkParameterCapture(value.RootSymbol.Name, captureKind);
+        }
+    }
+
+    private void FinalizeMemoryEffectsAndValidateCalls()
+    {
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+
+            foreach (var summary in _summaries.Values)
+            {
+                foreach (var pendingCall in summary.PendingCalls)
+                {
+                    foreach (var argument in pendingCall.Arguments)
+                    {
+                        if (!argument.AliasesCalleeMemory || argument.CallerParameterName is null)
+                        {
+                            continue;
+                        }
+
+                        var propagated = GetCallArgumentEffects(pendingCall.CalleeName, argument.CalleeParameterName, argument.FallbackEffects);
+                        changed |= summary.ApplyArgumentEffects(argument.CallerParameterName, propagated);
+                    }
+                }
+            }
+        }
+
+        foreach (var summary in _summaries.Values)
+        {
+            if (!_effectModel.Functions.TryGetValue(summary.Name, out var effects) || !effects.IsPure)
+            {
+                summary.BuildResolvedCalls(call =>
+                    BuildResolvedCallSummary(call));
+                continue;
+            }
+
+            foreach (var pendingCall in summary.PendingCalls)
+            {
+                foreach (var argument in pendingCall.Arguments)
+                {
+                    if (argument.RootSymbol is null || !IsExternallyVisibleMemory(argument.RootSymbol))
+                    {
+                        continue;
+                    }
+
+                    var propagated = GetCallArgumentEffects(pendingCall.CalleeName, argument.CalleeParameterName, argument.FallbackEffects);
+                    if (!propagated.Writes && propagated.CaptureKind == ParameterCaptureKind.None)
+                    {
+                        continue;
+                    }
+
+                    var operation = propagated.Writes && propagated.CaptureKind != ParameterCaptureKind.None
+                        ? "perform externally visible writes or captures"
+                        : propagated.Writes
+                            ? "perform externally visible writes"
+                            : "capture externally visible memory";
+                    EffectError(
+                        summary,
+                        "STK4104",
+                        $"Law '{summary.Name}' cannot {operation} through call '{pendingCall.CalleeName}'.",
+                        pendingCall.Location);
+                }
+            }
+
+            summary.BuildResolvedCalls(call =>
+                BuildResolvedCallSummary(call));
+        }
+    }
+
+    private ArgumentEffects GetCallArgumentEffects(string calleeName, string calleeParameterName, ArgumentEffects fallback)
+    {
+        if (_summaries.TryGetValue(calleeName, out var summary)
+            && summary.TryGetParameter(calleeParameterName, out var parameter))
+        {
+            return parameter.GetEffectiveEffects(summary.HasBody);
+        }
+
+        return fallback;
+    }
+
+    private CallMemoryEffectSummary BuildResolvedCallSummary(PendingCall call)
+    {
+        var argumentSummaries = call.Arguments
+            .OrderBy(static argument => argument.ArgumentIndex)
+            .Select(argument =>
+            {
+                var effects = GetCallArgumentEffects(call.CalleeName, argument.CalleeParameterName, argument.FallbackEffects);
+                return new CallArgumentMemoryEffectSummary(
+                    argument.ArgumentIndex,
+                    argument.CallerParameterName,
+                    argument.CalleeParameterName,
+                    effects.Reads,
+                    effects.Writes,
+                    effects.CaptureKind);
+            })
+            .ToArray();
+
+        return new CallMemoryEffectSummary(
+            call.CalleeName,
+            new FunctionMemoryEffectSummary(
+                argumentSummaries.Any(static argument => argument.Reads),
+                argumentSummaries.Any(static argument => argument.Writes),
+                argumentSummaries.Any(static argument => argument.CaptureKind != ParameterCaptureKind.None)),
+            argumentSummaries);
     }
 
     private void ValidateFiniteCallCycles()
@@ -1039,15 +1279,20 @@ internal sealed class SemanticValidator
             return true;
         }
 
-        if (!target.IsIndirectStorageAccess)
+        return target.IsIndirectStorageAccess && IsExternallyVisibleMemory(target.RootSymbol);
+    }
+
+    private static bool IsExternallyVisibleMemory(VariableSymbol symbol)
+    {
+        if (symbol.Origin == SymbolOrigin.Global)
         {
-            return false;
+            return true;
         }
 
-        return target.RootSymbol.Type.Kind == StarkTypeKind.RawPointer
-            || target.RootSymbol.Type.BorrowKind != StarkBorrowKind.None
-            || target.RootSymbol.Type.InitializationKind != StarkInitializationKind.None
-            || target.RootSymbol.StorageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static;
+        return symbol.Type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice
+            || symbol.Type.BorrowKind != StarkBorrowKind.None
+            || symbol.Type.InitializationKind != StarkInitializationKind.None
+            || symbol.StorageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static;
     }
 
     private StarkTypeSymbol EvaluateLiteralType(StarkParser.LiteralContext literal)
@@ -1199,6 +1444,82 @@ internal sealed class SemanticValidator
         return true;
     }
 
+    private static bool IsMemoryBackedType(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.RawPointer => true,
+            StarkTypeKind.FixedArray => true,
+            StarkTypeKind.Slice => true,
+            StarkTypeKind.Ascii => true,
+            StarkTypeKind.Unicode => true,
+            StarkTypeKind.Named => true,
+            _ => type.BorrowKind != StarkBorrowKind.None || type.InitializationKind != StarkInitializationKind.None
+        };
+    }
+
+    private static bool DeriveGuaranteedNonNull(StarkTypeSymbol type)
+    {
+        return type.BorrowKind != StarkBorrowKind.None || type.InitializationKind != StarkInitializationKind.None;
+    }
+
+    private static bool DeriveGuaranteedReadOnly(StarkTypeSymbol type)
+    {
+        if (type.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        return (type.Kind == StarkTypeKind.RawPointer && !type.IsMutablePointer)
+            || type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            || (type.BorrowKind != StarkBorrowKind.None && !type.IsMutableView)
+            || type.AccessKind is StarkAccessKind.Shared or StarkAccessKind.Frozen;
+    }
+
+    private static bool DeriveGuaranteedNoAlias(StarkTypeSymbol type)
+    {
+        return type.InitializationKind != StarkInitializationKind.None;
+    }
+
+    private static bool CanAliasCalleeParameterMemory(StarkTypeSymbol parameterType)
+    {
+        return parameterType.BorrowKind != StarkBorrowKind.None
+            || parameterType.InitializationKind != StarkInitializationKind.None
+            || parameterType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    private static ArgumentEffects DeriveFallbackArgumentEffects(
+        TypedParameterSymbol parameter,
+        StarkTypeSymbol calleeReturnType,
+        bool hasBody)
+    {
+        var isAliasing = CanAliasCalleeParameterMemory(parameter.Type);
+        var writes = parameter.Type.InitializationKind != StarkInitializationKind.None;
+        var reads = isAliasing && !writes;
+        var captureKind = ParameterCaptureKind.None;
+
+        if (parameter.Type.BorrowKind == StarkBorrowKind.StoreBorrow)
+        {
+            captureKind = ParameterCaptureKind.Escape;
+        }
+        else if (parameter.Type.BorrowKind == StarkBorrowKind.RetBorrow
+                 && calleeReturnType.BorrowKind != StarkBorrowKind.None)
+        {
+            captureKind = calleeReturnType.BorrowKind == StarkBorrowKind.StoreBorrow
+                ? ParameterCaptureKind.Escape
+                : ParameterCaptureKind.Return;
+        }
+
+        if (hasBody)
+        {
+            reads = false;
+            writes = false;
+            captureKind = ParameterCaptureKind.None;
+        }
+
+        return new ArgumentEffects(reads, writes, captureKind);
+    }
+
     private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type)
     {
         return type.NamedType is not null && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
@@ -1283,6 +1604,12 @@ internal sealed class SemanticValidator
         Local
     }
 
+    private enum ExpressionObservation
+    {
+        Read,
+        WriteTarget
+    }
+
     private enum VisitState
     {
         Visiting,
@@ -1362,6 +1689,126 @@ internal sealed class SemanticValidator
         }
     }
 
+    private sealed record ArgumentEffects(
+        bool Reads,
+        bool Writes,
+        ParameterCaptureKind CaptureKind);
+
+    private sealed record PendingCallArgument(
+        int ArgumentIndex,
+        string? CallerParameterName,
+        string CalleeParameterName,
+        bool AliasesCalleeMemory,
+        VariableSymbol? RootSymbol,
+        ArgumentEffects FallbackEffects);
+
+    private sealed record PendingCall(
+        string CalleeName,
+        IReadOnlyList<PendingCallArgument> Arguments,
+        IToken Location);
+
+    private sealed class ParameterSummaryBuilder
+    {
+        public ParameterSummaryBuilder(TypedParameterSymbol parameter, IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        {
+            Name = parameter.Name;
+            Type = parameter.Type;
+            IsMemoryBacked = IsMemoryBackedType(parameter.Type);
+            GuaranteedNonNull = DeriveGuaranteedNonNull(parameter.Type);
+            GuaranteedReadOnly = DeriveGuaranteedReadOnly(parameter.Type);
+            GuaranteedWriteOnly = parameter.Type.InitializationKind != StarkInitializationKind.None;
+            GuaranteedNoAlias = DeriveGuaranteedNoAlias(parameter.Type);
+            var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(parameter.Type, namedTypes);
+            DereferenceableBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.SizeBytes : null;
+            AlignmentBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.AlignmentBytes : null;
+        }
+
+        public string Name { get; }
+
+        public StarkTypeSymbol Type { get; }
+
+        public bool IsMemoryBacked { get; }
+
+        public bool GuaranteedNonNull { get; }
+
+        public bool GuaranteedReadOnly { get; }
+
+        public bool GuaranteedWriteOnly { get; }
+
+        public bool GuaranteedNoAlias { get; }
+
+        public int? DereferenceableBytes { get; }
+
+        public int? AlignmentBytes { get; }
+
+        public bool Reads { get; set; }
+
+        public bool Writes { get; set; }
+
+        public ParameterCaptureKind CaptureKind { get; set; }
+
+        public ArgumentEffects GetEffectiveEffects(bool hasBody)
+        {
+            var reads = Reads || (!hasBody && IsMemoryBacked && !GuaranteedWriteOnly);
+            var writes = Writes || (!hasBody && GuaranteedWriteOnly);
+            var captureKind = CaptureKind;
+
+            if (!hasBody && captureKind == ParameterCaptureKind.None)
+            {
+                captureKind = Type.BorrowKind switch
+                {
+                    StarkBorrowKind.StoreBorrow => ParameterCaptureKind.Escape,
+                    StarkBorrowKind.RetBorrow => ParameterCaptureKind.Return,
+                    _ => ParameterCaptureKind.None
+                };
+            }
+
+            return new ArgumentEffects(reads, writes, captureKind);
+        }
+
+        public ParameterMemoryEffectSummary Build(bool hasBody)
+        {
+            var effects = GetEffectiveEffects(hasBody);
+            return new ParameterMemoryEffectSummary(
+                Name,
+                Type.DisplayName,
+                IsMemoryBacked,
+                GuaranteedNonNull,
+                GuaranteedReadOnly,
+                GuaranteedWriteOnly,
+                GuaranteedNoAlias,
+                DereferenceableBytes,
+                AlignmentBytes,
+                effects.Reads,
+                effects.Writes,
+                effects.CaptureKind);
+        }
+
+        public bool Apply(ArgumentEffects effects)
+        {
+            var changed = false;
+            if (effects.Reads && !Reads)
+            {
+                Reads = true;
+                changed = true;
+            }
+
+            if (effects.Writes && !Writes)
+            {
+                Writes = true;
+                changed = true;
+            }
+
+            if ((int)effects.CaptureKind > (int)CaptureKind)
+            {
+                CaptureKind = effects.CaptureKind;
+                changed = true;
+            }
+
+            return changed;
+        }
+    }
+
     private sealed class FunctionValidationBuilder
     {
         public FunctionValidationBuilder(string name)
@@ -1371,15 +1818,95 @@ internal sealed class SemanticValidator
 
         public string Name { get; }
 
+        public StarkTypeSymbol ReturnType { get; private set; } = StarkTypeSymbols.Error;
+
+        public bool HasBody { get; private set; }
+
         public bool EffectsValid { get; set; } = true;
 
         public bool BorrowingValid { get; set; } = true;
 
         public HashSet<string> CalledFunctions { get; } = new(StringComparer.Ordinal);
 
+        public Dictionary<string, ParameterSummaryBuilder> Parameters { get; } = new(StringComparer.Ordinal);
+
+        public List<PendingCall> PendingCalls { get; } = [];
+
+        public List<CallMemoryEffectSummary> ResolvedCalls { get; } = [];
+
+        public void Configure(StarkTypeSymbol returnType, bool hasBody)
+        {
+            ReturnType = returnType;
+            HasBody = hasBody;
+        }
+
+        public void SetParameters(IReadOnlyList<TypedParameterSymbol> parameters, IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        {
+            foreach (var parameter in parameters)
+            {
+                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, namedTypes);
+            }
+        }
+
+        public void MarkParameterRead(string name)
+        {
+            if (Parameters.TryGetValue(name, out var parameter))
+            {
+                parameter.Reads = true;
+            }
+        }
+
+        public void MarkParameterWrite(string name)
+        {
+            if (Parameters.TryGetValue(name, out var parameter))
+            {
+                parameter.Writes = true;
+            }
+        }
+
+        public void MarkParameterCapture(string name, ParameterCaptureKind captureKind)
+        {
+            if (Parameters.TryGetValue(name, out var parameter) && (int)captureKind > (int)parameter.CaptureKind)
+            {
+                parameter.CaptureKind = captureKind;
+            }
+        }
+
+        public bool ApplyArgumentEffects(string parameterName, ArgumentEffects effects)
+        {
+            return Parameters.TryGetValue(parameterName, out var parameter) && parameter.Apply(effects);
+        }
+
+        public bool TryGetParameter(string name, out ParameterSummaryBuilder parameter)
+        {
+            return Parameters.TryGetValue(name, out parameter!);
+        }
+
+        public void BuildResolvedCalls(Func<PendingCall, CallMemoryEffectSummary> projector)
+        {
+            ResolvedCalls.Clear();
+            ResolvedCalls.AddRange(PendingCalls.Select(projector));
+        }
+
         public FunctionValidationSummary Build()
         {
-            return new FunctionValidationSummary(Name, EffectsValid, BorrowingValid, CalledFunctions.OrderBy(static item => item, StringComparer.Ordinal).ToArray());
+            var parameterSummaries = Parameters.Values
+                .OrderBy(static parameter => parameter.Name, StringComparer.Ordinal)
+                .Select(parameter => parameter.Build(HasBody))
+                .ToArray();
+            var memoryEffects = new FunctionMemoryEffectSummary(
+                parameterSummaries.Any(static parameter => parameter.Reads),
+                parameterSummaries.Any(static parameter => parameter.Writes),
+                parameterSummaries.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None));
+
+            return new FunctionValidationSummary(
+                Name,
+                EffectsValid,
+                BorrowingValid,
+                CalledFunctions.OrderBy(static item => item, StringComparer.Ordinal).ToArray(),
+                memoryEffects,
+                parameterSummaries,
+                ResolvedCalls.ToArray());
         }
     }
 }

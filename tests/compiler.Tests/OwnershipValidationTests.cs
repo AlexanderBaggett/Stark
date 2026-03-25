@@ -49,7 +49,12 @@ public sealed class OwnershipValidationTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4200");
+        AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4200"
+                && diagnostic.Severity == DiagnosticSeverity.Info
+                && diagnostic.Message.Contains("was moved here", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -148,7 +153,7 @@ public sealed class OwnershipValidationTests
     }
 
     [Fact]
-    public void MovingOutOfAFieldIsRejected()
+    public void MovingOutOfATopLevelFieldIsAllowed()
     {
         var result = Compile(
             """
@@ -156,16 +161,44 @@ public sealed class OwnershipValidationTests
 
             struct Container {
                 ascii Name;
+                ascii Label;
             }
 
             fn ascii Main() {
-                stack Container value = new Container() { Name = "hi" };
+                stack Container value = new Container() { Name = "hi", Label = "there" };
                 return value.Name;
             }
             """);
 
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.Contains("value.Name", ownership.Functions["Main"].Moves);
+        Assert.Contains("value", ownership.Functions["Main"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void MovingOutOfANestedFieldIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct NameBox {
+                ascii Value;
+            }
+
+            struct Container {
+                NameBox Name;
+            }
+
+            fn ascii Main() {
+                stack Container value = new Container() { Name = new NameBox() { Value = "hi" } };
+                return value.Name.Value;
+            }
+            """);
+
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4203");
+        AssertDiagnostic(result, "STK4203", "Cannot move out of field or indexed place");
     }
 
     private static CompilationResult Compile(string source)
@@ -180,8 +213,11 @@ public sealed class OwnershipValidationTests
         return ownership;
     }
 
-    private static void AssertDiagnostic(CompilationResult result, string code)
+    private static void AssertDiagnostic(CompilationResult result, string code, params string[] messageFragments)
     {
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == code);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == code
+                && messageFragments.All(fragment => diagnostic.Message.Contains(fragment, StringComparison.Ordinal)));
     }
 }
