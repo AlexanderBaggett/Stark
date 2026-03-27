@@ -743,26 +743,164 @@ Everything before this point is frozen
 
 ## Milestone v1.2: Expand Standard Library
 
-### Expand Standard Library Definition For Full IO/Threading/Collections
+### Expand Standard Library Definition For Full IO/Threading/Collections/TCP/HTTP
 
-### Linux Standard Libary Implementation with SysCall
+- [ ] Define the public module layout for `System.IO`
+- [ ] Define the public module layout for `System.FileSystem`
+- [ ] Define the public module layout for `System.Threading`
+- [ ] Define the public module layout for `System.Collections`
+- [ ] Define the public module layout for `System.Net.Tcp`
+- [ ] Define the public module layout for `System.Net.Http`
+- [ ] Define the error/result model used by stdlib APIs that can fail
+- [ ] Define the allocator contract used by collections, buffering, and text-building APIs
+- [ ] Define the text and buffer model used by IO and networking APIs
+- [ ] Define ownership and borrowing rules for file handles, sockets, iterators, and collection views
+- [ ] Decide the blocking and non-blocking API story for TCP and HTTP
+- [ ] Define the minimum thread primitives Stark ships in `v1.2`
+- [ ] Define the initial collection set Stark ships in `v1.2`
+- [ ] Add packaged-consumption tests for every new public stdlib module family
+- [ ] Add reference documentation for every new stdlib module family
 
-### Windows Standard Library
+### Linux Standard Libary Implementation with SysCall (not libc)
 
+- [ ] Introduce a Linux syscall boundary module that the rest of the stdlib builds on
+- [ ] Implement stdout and stderr text output without libc
+- [ ] Implement stdin input without libc
+- [ ] Implement file open, read, write, close, and seek primitives
+- [ ] Implement directory iteration and metadata queries
+- [ ] Implement path helpers required by the file APIs
+- [ ] Implement process exit and basic process information helpers
+- [ ] Implement allocator backing with the chosen Linux virtual memory strategy
+- [ ] Implement TCP socket create, connect, bind, listen, accept, send, and receive
+- [ ] Implement event waiting with the chosen Linux polling primitive
+- [ ] Implement thread creation, join, and the selected synchronization primitives
+- [ ] Add Linux integration tests that verify the stdlib package works without libc wrappers
+
+### Windows Standard Library Implementation
+
+- [ ] Introduce a Windows OS boundary module that mirrors the Linux stdlib shape
+- [ ] Implement console input and output on Windows
+- [ ] Implement file open, read, write, close, and seek primitives on Windows
+- [ ] Implement directory iteration and metadata queries on Windows
+- [ ] Implement path behavior and normalization rules on Windows
+- [ ] Implement process exit and basic process information helpers on Windows
+- [ ] Implement allocator backing with the chosen Windows virtual memory or heap API
+- [ ] Implement TCP socket support through the chosen Winsock surface
+- [ ] Implement thread creation, join, and the selected synchronization primitives on Windows
+- [ ] Add Windows integration tests for packaged stdlib consumption
+- [ ] Verify the public API shape matches Linux except where platform differences are explicitly documented
 
 ## Milestone v1.3 Examples and Website
 
 ### Create Simple Exammples Demonstrating syntax
 
-### Create Intermediate Examples of semi-realworld usage 
+- [ ] Basic syntax
+- [ ] Type system
+- [ ] Modules
+- [ ] Borrowing
+- [ ] FFI
+- [ ] Standard library
 
-### Create equivalent of the Rust Book for this language
+### Create Intermediate Examples of semi-realworld usage 
+- [ ] Build your own Git
+- [ ] Build a neural network
+- [ ] Build a simple Database based on https://cstack.github.io/db_tutorial/
+- [ ] Build a Bit-torrent Client
+- [ ] Build a Breakout Clone with Stark and Raylib
 
 ### Create Website to showcase language
 
+- [ ] Choose Hugo and Caddy as the official docs website stack
+- [ ] Build the site with a pinned Hugo binary
+- [ ] Keep all site assets vendored in the repository
+- [ ] Avoid npm and Python as required build dependencies for the website
+- [ ] Serve the generated `public/` output directly from Caddy
+- [ ] Deploy over SSH with `rsync`
+- [x] Choose OVHcloud as the low-cost VPS vendor
+- [ ] Choose the OVHcloud deployment region
+- [x] Choose Cloudflare Registrar as the domain registrar
+- [ ] Choose the primary Stark domain
+- [ ] Configure Caddy for HTTPS, redirects, compression, and caching headers
+- [ ] Configure VPS hardening: SSH keys only, firewall, automatic security updates, and log rotation
+- [ ] Add backup and restore procedures for site content, generated output, and server config
+- [ ] Add CI checks that build the website and verify internal links
+- [ ] Publish pages for docs, examples, roadmap, benchmark results, and downloads
+
+## Milestone v1.35: The Stark Book
+
+### Book Architecture
+
+- [ ] Define the target reader and prerequisites
+- [ ] Define the chapter outline and learning path
+- [ ] Split the book into concept chapters and project chapters
+- [ ] Define how the book relates to the Language Reference and Standard Library docs
+- [ ] Ensure every chapter has stable anchors and standalone Markdown sources
+- [ ] Ensure every code sample is stored as a real file or generated from one
+- [ ] Add CI that validates every code sample in the book
+- [ ] Version the book alongside language milestones
+
+### Core Language Chapters
+
+- [ ] Introduction: what Stark is and why it exists
+- [ ] Installing Stark and using the compiler and package toolchain
+- [ ] Your first Stark program
+- [ ] Variables, functions, and control flow
+- [ ] Ownership, borrowing, and move semantics
+- [ ] Storage classes: `stack`, `heap`, `arena`, and globals
+- [ ] Structs, records, initialization, and layout-aware design
+- [ ] Modules, visibility, packages, and manifests
+- [ ] Arrays, slices, text types, and views
+- [ ] Errors as values, assertions, traps, and no-unwinding semantics
+- [ ] Traits, doctrines, generics, and specialization
+- [ ] FFI, raw pointers, and strict boundaries
+
+### Performance and Systems Chapters
+
+- [ ] The Stark performance model
+- [ ] Undefined behavior, explicit wrapping and saturating arithmetic, and overflow rules
+- [ ] `strictfp`, floating-point policy, and optimizer contracts
+- [ ] Closed-world optimization and what Stark guarantees to LLVM
+- [ ] Memory layout, ABI shape, and interop expectations
+- [ ] Diagnostics: how to read and act on Stark compiler errors
+
+### Project Chapters
+
+- [ ] Project: build a command-line text tool
+- [ ] Project: build a small multi-module package
+- [ ] Project: build a file-processing utility using the standard library
+- [ ] Project: build a networking tool once TCP and HTTP land
+- [ ] Project: build one performance-oriented example and analyze the generated IR
+
+### Publication and Dataset Quality
+
+- [ ] Cross-link every chapter to the Language Reference where appropriate
+- [ ] Cross-link every chapter to the standard library docs and canonical examples
+- [ ] Keep chapter source in plain Markdown or MDX for easy indexing
+- [ ] Add chapter metadata so sections are easy to ingest and version
+- [ ] Add a printable or exportable build of the book
+- [ ] Add a “what changed since last version” page
 
 ## Milestone v1.4 Performance benchmarking vs C and Rust
 
 ### Create the benchmarks
 
-### Optimize IL Code Gen Based on Results
+- [ ] Define benchmark fairness rules for Stark vs C vs Rust
+- [ ] Lock compiler flags and optimization levels for all benchmarked languages
+- [ ] Create microbenchmarks for arithmetic, branching, calls, and memory access
+- [ ] Create collection benchmarks for append, lookup, iteration, and resize
+- [ ] Create IO benchmarks for file read, file write, and buffered output
+- [ ] Create networking benchmarks for TCP client and server throughput
+- [ ] Create parser or text-processing benchmarks
+- [ ] Automate benchmark execution and result capture
+- [ ] Record machine and hardware configuration with every benchmark run
+- [ ] Add regression thresholds so performance drops are caught automatically
+
+### Optimize For Performance Based on Results
+
+- [ ] Rank the worst benchmark gaps against C and Rust
+- [ ] Classify each gap as frontend, IR, LLVM, runtime, or stdlib overhead
+- [ ] Add a concrete optimization task for each top-tier regression
+- [ ] Compare generated LLVM IR and final assembly for representative failures
+- [ ] Re-run benchmarks after every optimization batch
+- [ ] Track which optimizations materially changed results
+- [ ] Add permanent regression tests for every fixed benchmark cliff
