@@ -436,7 +436,27 @@ multiplicativeExpression
 
 unaryExpression
     : powerExpression
-    | (PLUS | MINUS | WRAP_SUB | BANG | TILDE) unaryExpression
+    | LPAREN conversionType RPAREN unaryExpression
+    | unaryOperator unaryExpression
+    ;
+
+unaryOperator
+    : PLUS
+    | MINUS
+    | WRAP_SUB
+    | BANG
+    | TILDE
+    | AND
+    | STAR
+    ;
+
+conversionType
+    : typeQualifier* conversionNonArrayType arraySuffix*
+    ;
+
+conversionNonArrayType
+    : rawPointerType
+    | builtinType rangeConstraint?
     ;
 
 powerExpression

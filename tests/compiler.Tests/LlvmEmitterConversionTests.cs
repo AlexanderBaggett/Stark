@@ -46,6 +46,35 @@ public sealed class LlvmEmitterConversionTests
         Assert.Contains("ret i64", llvm);
     }
 
+    [Fact]
+    public void RawPointerToRawPointerConversionEmitsZeroOffsetGep()
+    {
+        var sourceType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: true);
+        var targetType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false);
+        var llvm = EmitSingleConversion(
+            targetType,
+            new SsaNullConstant(sourceType));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Run()", llvm);
+        Assert.Contains("getelementptr inbounds i8, ptr null, i64 0", llvm);
+        Assert.Contains("ret ptr", llvm);
+    }
+
+    [Fact]
+    public void AsciiToUnicodeConversionRebuildsTextAggregate()
+    {
+        var llvm = EmitSingleConversion(
+            StarkTypeSymbols.Unicode,
+            new SsaStringConstant("hello", StarkTypeSymbols.Ascii));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Run()", llvm);
+        Assert.Contains("extractvalue %stark_ascii", llvm);
+        Assert.Contains("insertvalue %stark_unicode zeroinitializer, ptr", llvm);
+        Assert.Contains("ret %stark_unicode", llvm);
+    }
+
     private static string EmitSingleConversion(
         StarkTypeSymbol targetType,
         SsaValue operand)

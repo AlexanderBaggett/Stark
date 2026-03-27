@@ -6,17 +6,19 @@ Stark should treat parsing as the beginning of compilation, not the compiler arc
 
 The compiler pipeline should be organized around explicit passes, typed artifacts, and clear phase boundaries. Each pass should consume a small number of well-defined artifacts and publish a new artifact for the next stage. This keeps the frontend flexible while the language is still evolving and makes it practical to replace or split passes later without rewriting the entire compiler.
 
-The pass system should support:
+The current pass system supports:
 
 - dependency-based pass ordering
 - a typed artifact store instead of a loose string dictionary
 - execution history for debugging and profiling
 - fail-fast behavior after diagnostics
+- optional stop-after-pass execution for debugging and CLI emit modes
+- optional continue-after-error execution when investigating crashes or cascading issues
 - the ability to insert new analysis or lowering passes between existing stages
 
 ## Default Stages
 
-The current planned pipeline after parsing is:
+The current default compilation pipeline contains 18 passes and is dependency-ordered rather than hard-coded as one giant method:
 
 1. `parse`
    Reads source text and produces the ANTLR parse result plus syntax diagnostics.
@@ -40,54 +42,68 @@ The current planned pipeline after parsing is:
    Imported declarations are loaded into the same typed world, so qualified Stark calls and type references can flow across modules before LLVM lowering.
 9. `semantic-validate`
    Validates Stark-specific semantic contracts after typing.
-   This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, and recursive finite-call cycles are checked.
+   This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, recursive finite-call cycles, parameter memory summaries, and call-memory summaries are checked.
 10. `ownership-validate`
    Validates deterministic ownership and lifetime rules after the higher-level semantic checks.
    This is where move tracking, use-after-move rejection, implicit drop scopes, branch-sensitive ownership state, and basic borrow lifetime sources are checked so safe code remains non-GC and leak-resistant by construction.
 11. `lower-hir`
-   Produces a high-level IR that is still close to the source structure but no longer depends on ANTLR parse-tree APIs.
+   Produces the current compiler-owned HIR shell.
+   Today this is intentionally shallow: it packages root-module functions with their typed signatures, body presence, and derived effect profiles so later lowering passes stop depending on declaration-model details.
 12. `lower-mir`
    Produces a mid-level IR with explicit locals, basic blocks, typed operands, typed rvalues, and terminators.
-   This is where structured source bodies become control-flow-aware CFG form suitable for ownership precision and explicit value lowering.
-13. `lower-ssa`
+   This is where structured source bodies become control-flow-aware CFG form suitable for ownership precision and explicit value lowering, including aggregate field/index operations, slice formation, raw address formation, indirect load/store, and explicit conversions.
+13. `borrow-liveness`
+   Refines ownership validation with non-lexical-style lifetime analysis over normalized MIR.
+   This pass computes borrow-local liveness across the CFG and updates the ownership model when a move, overwrite, or return would conflict with still-live borrows.
+14. `lower-ssa`
    Produces SSA form from MIR, prunes unreachable CFG blocks, and inserts phi nodes where control-flow paths merge.
-   This is where mutable Stark locals stop looking like stack slots and start looking like compiler values.
-14. `lower-abi`
+   This is where mutable Stark locals stop looking like source variables and start looking like compiler values, while addressable locals still surface as explicit allocate/store/lifetime operations.
+15. `cleanup-ssa`
+   Canonicalizes and simplifies SSA before later consumers use it.
+   This pass removes trivial copy instructions, collapses identity phi nodes, collapses trampoline blocks, and performs value-numbering-style reuse of repeated SSA computations when memory ordering allows it.
+16. `const-prop`
+   Runs constant propagation over the cleaned SSA graph.
+   This pass folds constant arithmetic, conversions, compares, branches, and simple `switch` decisions and republishes the optimized SSA artifact consumed by LLVM emission.
+17. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
-15. `emit-llvm`
-   Produces LLVM IR from the stabilized SSA form and semantic metadata.
-   The current emitter generates real register-based function bodies for the supported SSA subset, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations for unsupported constructs.
+18. `emit-llvm`
+   Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
+   The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
 
 ## Near-Term Missing Passes
 
-The current pass skeleton leaves room for the next real compiler work:
+The current pass skeleton still leaves room for the next substantial compiler work:
 
 - doctrine and trait constraint solving
-- CFG refinement for switch and pattern matching
-- SSA value numbering and cleanup
-- constant folding and compile-time evaluation
-- concrete LLVM type lowering
+- deeper dead-code elimination beyond the current cleanup/constant-propagation passes
+- richer aggregate copy/move lowering
+- fuller object creation and initializer lowering
+- debug-info and source-span propagation through MIR, SSA, and LLVM
 - monomorphization or specialization planning
 
 These should fit naturally as additional passes between `symbol-catalog` and `emit-llvm`.
 
-## Recommended IR Boundary
+## Current IR Boundary
 
 Stark should not lower directly from the parse tree to LLVM IR.
 
-The recommended ownership split is:
+The current ownership split is:
 
 - parse tree:
   ANTLR-owned syntax structure
 - syntax model:
   Stark-owned representation of modules, declarations, and signatures
+- typed and semantic models:
+  type information, effect summaries, semantic validation, ownership validation, and ABI facts live as explicit artifacts instead of being hidden inside one monolithic IR
 - HIR:
-  good for name binding, type checking, effect analysis, and borrow analysis
+  currently a shallow compiler-owned function catalog for lowering orchestration
 - MIR:
-  good for normalized control flow, explicit temporaries, and control-flow-aware lowering
+  the first real body IR, good for normalized control flow, explicit temporaries, address-based memory operations, and control-flow-aware lowering
 - SSA:
   good for phi-aware dataflow, register-style values, and direct LLVM emission
+- optimized SSA:
+  cleanup and constant-propagation result used by code generation
 - LLVM IR:
   backend representation only
 

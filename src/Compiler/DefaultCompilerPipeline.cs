@@ -598,12 +598,13 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["lower-mir"];
+        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir"];
 
         public void Execute(CompilerPassContext context)
         {
             var mir = context.Artifacts.GetRequired(CompilerArtifactKeys.MidLevelIr);
-            var ssa = new SsaLowerer().Lower(mir);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var ssa = new SsaLowerer(typeModel).Lower(mir);
             context.Artifacts.Set(CompilerArtifactKeys.SsaIr, ssa);
         }
     }

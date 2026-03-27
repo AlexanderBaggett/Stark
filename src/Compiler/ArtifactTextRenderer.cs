@@ -161,6 +161,7 @@ internal static class ArtifactTextRenderer
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
             SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaStoreLocalInstruction storeLocal => $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",
+            SsaCopyMemoryInstruction copyMemory => $"{(copyMemory.TransferKind == SsaMemoryTransferKind.Move ? "move" : "copy")} {FormatSsaValue(copyMemory.SourceAddress)} -> {FormatSsaValue(copyMemory.DestinationAddress)} : {copyMemory.CopyType.DisplayName}",
             SsaStoreIndirectInstruction storeIndirect => $"store {FormatSsaValue(storeIndirect.Value)} -> {FormatSsaValue(storeIndirect.Address)}",
             SsaStoreGlobalInstruction storeGlobal => $"store {FormatSsaValue(storeGlobal.Value)} -> @{storeGlobal.GlobalName}",
             _ => instruction.ToString() ?? instruction.GetType().Name
@@ -209,6 +210,7 @@ internal static class ArtifactTextRenderer
             SsaStringConstant text => text.LiteralText,
             SsaBoolConstant boolean => boolean.Value ? "true" : "false",
             SsaNullConstant => "null",
+            SsaGlobalAddressValue globalAddress => $"@{globalAddress.GlobalName}",
             SsaUndefValue => "undef",
             _ => value.Text
         };

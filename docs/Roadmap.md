@@ -224,16 +224,16 @@ Goal: Stark lowers through multiple IR stages and can produce native executables
   - [x] lower value-receiver method calls
   - [x] lower borrow/reference receiver calls
   - [x] add ABI and codegen tests for receiver passing
-- [ ] pointer/address operations beyond the current subset
-  - [ ] raw address-of for locals, fields, and globals
-  - [ ] element and field address formation as first-class lowered values
-  - [ ] raw load/store through pointer values
-  - [ ] explicit null/raw boundary conversions that the language permits
-- [ ] complete conversion lowering
-  - [ ] integer widening and narrowing conversions
-  - [ ] integer/float conversion paths
-  - [ ] raw-pointer conversion paths
-  - [ ] array/slice/string view conversions that are semantically allowed
+- [x] pointer/address operations beyond the current subset
+  - [x] raw address-of for locals, fields, and globals
+  - [x] element and field address formation as first-class lowered values
+  - [x] raw load/store through pointer values
+  - [x] explicit null/raw boundary conversions that the language permits
+- [x] complete conversion lowering
+  - [x] integer widening and narrowing conversions
+  - [x] integer/float conversion paths
+  - [x] raw-pointer conversion paths
+  - [x] array/slice/string view conversions that are semantically allowed
 
 ### LLVM IR and Toolchain
 
@@ -285,16 +285,16 @@ This is the most important remaining compiler milestone.
 - [x] Address-of / element-address lowering
 - [x] Array indexing lowering
 - [x] Slice indexing lowering
-- [ ] Aggregate local allocation/lifetime strategy
+- [x] Aggregate local allocation/lifetime strategy
   - [x] choose stack-slot vs scalarized lowering per aggregate shape
   - [x] emit LLVM lifetime markers when valid
   - [x] preserve stable addresses for borrowed aggregate locals
-  - [ ] add copy-elision rules for aggregate temporaries
-- [ ] Aggregate copy/move semantics in lowering
-  - [ ] distinguish trivial bitwise copy from semantic move
-  - [ ] lower small fixed-size aggregate copies efficiently
-  - [ ] lower large copies with memcpy-style helpers when appropriate
-  - [ ] invalidate moved-from aggregate places in lowering state
+  - [x] add copy-elision rules for aggregate temporaries
+- [x] Aggregate copy/move semantics in lowering
+  - [x] distinguish trivial bitwise copy from semantic move
+  - [x] lower small fixed-size aggregate copies efficiently
+  - [x] lower large copies with memcpy-style helpers when appropriate
+  - [x] invalidate moved-from aggregate places in lowering state
 
 ### ABI and Calling Convention
 

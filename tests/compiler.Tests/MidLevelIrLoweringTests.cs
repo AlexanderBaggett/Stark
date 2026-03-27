@@ -635,6 +635,78 @@ public sealed class MidLevelIrLoweringTests
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
     }
 
+    [Fact]
+    public void ExplicitPointerOperatorsAndConversionsLowerToMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i64 bits) {
+                stack mut i32 value = 1;
+                stack rawmutptr<i32> ptr = &value;
+                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
+                *ptr = (i32)bits;
+                return *readonlyPtr;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, local => local.Name == "value" && local.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrConvertRValue convert
+                && convert.TargetType.Kind == StarkTypeKind.RawPointer
+                && convert.Operand.Type.Kind == StarkTypeKind.RawPointer);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrConvertRValue convert
+                && convert.TargetType.Kind == StarkTypeKind.Integer
+                && convert.Operand.Type.Kind == StarkTypeKind.Integer);
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+    }
+
+    [Fact]
+    public void FieldAndGlobalAddressExpressionsLowerToMirAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static i32 Counter = 0;
+
+            fn i32 Run(i32 input) {
+                stack mut Box box = new Box() { Value = 1 };
+                *(&(box.Value)) = input;
+                Counter = *(&(box.Value));
+                return *(&Counter);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, local => local.Name == "box" && local.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrFieldAddressRValue);
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(
+            statements,
+            statement => statement.Value is MidLevelIrLoadIndirectRValue load
+                && load.Address is MidLevelIrGlobalAddressOperand { Name: "Counter" });
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

@@ -518,6 +518,151 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void SmallAddressableAggregateCopyUsesDirectLoadStore()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn i32 Run() {
+                stack Pair source = new Pair() { Left = 1, Right = 2 };
+                stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
+                stack rawptr<Pair> sourcePtr = &source;
+                stack rawptr<Pair> destPtr = &dest;
+                dest = source;
+                return dest.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Pair = type { i32, i32 }", llvm);
+        Assert.Contains("getelementptr inbounds %Pair, ptr %slot_source", llvm);
+        Assert.Contains("getelementptr inbounds %Pair, ptr %slot_dest", llvm);
+        Assert.Contains("load %Pair, ptr %v", llvm);
+        Assert.Contains("store %Pair %abi_copy_load_", llvm);
+        Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm);
+    }
+
+    [Fact]
+    public void LargeAddressableAggregateCopyUsesMemcpy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Large {
+                i32 A0;
+                i32 A1;
+                i32 A2;
+                i32 A3;
+                i32 A4;
+                i32 A5;
+                i32 A6;
+                i32 A7;
+                i32 A8;
+            }
+
+            fn i32 Run() {
+                stack Large source = new Large() {
+                    A0 = 1,
+                    A1 = 2,
+                    A2 = 3,
+                    A3 = 4,
+                    A4 = 5,
+                    A5 = 6,
+                    A6 = 7,
+                    A7 = 8,
+                    A8 = 9
+                };
+                stack mut Large dest = new Large() {
+                    A0 = 0,
+                    A1 = 0,
+                    A2 = 0,
+                    A3 = 0,
+                    A4 = 0,
+                    A5 = 0,
+                    A6 = 0,
+                    A7 = 0,
+                    A8 = 0
+                };
+                stack rawptr<Large> sourcePtr = &source;
+                stack rawptr<Large> destPtr = &dest;
+                dest = source;
+                return dest.A8;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %v", llvm);
+        Assert.Contains("i64 36, i1 false)", llvm);
+    }
+
+    [Fact]
+    public void AggregateMoveInvalidatesAddressableSourceStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn i32 Run() {
+                stack Pair source = new Pair() { Left = 1, Right = 2 };
+                stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
+                stack rawptr<Pair> sourcePtr = &source;
+                stack rawptr<Pair> destPtr = &dest;
+                dest = source;
+                source = new Pair() { Left = 3, Right = 4 };
+                return source.Right + dest.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("store %Pair undef, ptr %slot_source", llvm);
+    }
+
+    [Fact]
+    public void AddressableAggregateConditionalUsesSingleAggregateAlloca()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn i32 Run(bool flag) {
+                stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
+                stack rawptr<Pair> ptr = &value;
+                return value.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, llvm.Split('\n').Count(static line => line.Contains("alloca %Pair", StringComparison.Ordinal)));
+        Assert.DoesNotContain("slot__tmp", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void InternalAggregateReturnUsesDirectValueAbi()
     {
         var result = Compile(
@@ -1053,6 +1198,36 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("phi i1", llvm);
         Assert.Contains("phi i32", llvm);
         Assert.Contains("br i1", llvm);
+    }
+
+    [Fact]
+    public void PointerOperatorsAndExplicitConversionsEmitRawMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static i32 Counter = 0;
+
+            fn i32 Run(i64 bits) {
+                stack mut i32 value = 1;
+                stack rawmutptr<i32> ptr = &value;
+                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
+                *ptr = (i32)bits;
+                Counter = *readonlyPtr;
+                return *(&Counter);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("trunc i64 %arg_bits to i32", llvm);
+        Assert.Contains("getelementptr inbounds i32, ptr %slot_value, i32 0", llvm);
+        Assert.Contains("getelementptr inbounds i8, ptr %", llvm);
+        Assert.Contains("store i32", llvm);
+        Assert.Contains("ptr @Counter", llvm);
+        Assert.Contains("load i32, ptr @Counter", llvm);
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

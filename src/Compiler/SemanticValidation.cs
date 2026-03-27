@@ -647,6 +647,33 @@ internal sealed class SemanticValidator
             return EvaluatePowerExpression(powerExpression, scope, function, effects, summary, allowFunctionReference, observation);
         }
 
+        if (expression.conversionType() is { } conversionType)
+        {
+            var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            var targetType = _typeResolver.ResolveConversionType(conversionType);
+            return CreateConvertedValidationValue(targetType, operand);
+        }
+
+        var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
+
+        if (op == "&")
+        {
+            var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.WriteTarget);
+            return CreateAddressOfValidationValue(operand);
+        }
+
+        if (op == "*")
+        {
+            var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            var result = CreateDereferenceValidationValue(operand);
+            if (observation == ExpressionObservation.Read)
+            {
+                RecordObservedMemoryRead(result, summary);
+            }
+
+            return result;
+        }
+
         return EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, observation);
     }
 
@@ -993,8 +1020,6 @@ internal sealed class SemanticValidator
             {
                 return new ValidationValue(function.ReturnType, Function: function);
             }
-
-            return new ValidationValue(StarkTypeSymbols.Error);
         }
 
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
@@ -1025,6 +1050,48 @@ internal sealed class SemanticValidator
 
         return new ValidationValue(
             StarkTypeSymbols.Error);
+    }
+
+    private ValidationValue CreateConvertedValidationValue(StarkTypeSymbol targetType, ValidationValue operand)
+    {
+        return PreservesStorageView(targetType, operand.Type)
+            ? new ValidationValue(
+                targetType,
+                RootSymbol: operand.RootSymbol,
+                NamedType: ResolveNamedTypeSymbol(targetType),
+                IsIndirectStorageAccess: operand.IsIndirectStorageAccess)
+            : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
+    }
+
+    private ValidationValue CreateAddressOfValidationValue(ValidationValue operand)
+    {
+        if (operand.RootSymbol is null)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        var pointerType = StarkTypeSymbols.RawPointer(operand.Type, operand.IsAssignable);
+        return new ValidationValue(
+            pointerType,
+            RootSymbol: operand.RootSymbol,
+            NamedType: ResolveNamedTypeSymbol(pointerType),
+            IsIndirectStorageAccess: true);
+    }
+
+    private ValidationValue CreateDereferenceValidationValue(ValidationValue operand)
+    {
+        if (operand.Type.Kind != StarkTypeKind.RawPointer || operand.Type.ElementType is null)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        var pointeeType = operand.Type.ElementType;
+        return new ValidationValue(
+            pointeeType,
+            IsAssignable: operand.Type.IsMutablePointer,
+            RootSymbol: operand.RootSymbol,
+            NamedType: ResolveNamedTypeSymbol(pointeeType),
+            IsIndirectStorageAccess: true);
     }
 
     private PendingCallArgument CreatePendingCallArgument(
@@ -1312,6 +1379,22 @@ internal sealed class SemanticValidator
         }
 
         return target.IsIndirectStorageAccess && IsExternallyVisibleMemory(target.RootSymbol);
+    }
+
+    private static bool PreservesStorageView(StarkTypeSymbol target, StarkTypeSymbol source)
+    {
+        if (target.Kind == StarkTypeKind.RawPointer && source.Kind == StarkTypeKind.RawPointer)
+        {
+            return true;
+        }
+
+        if (target.Kind == StarkTypeKind.Slice && source.Kind == StarkTypeKind.FixedArray)
+        {
+            return true;
+        }
+
+        return (target.Kind == StarkTypeKind.Ascii && source.Kind == StarkTypeKind.Unicode)
+            || (target.Kind == StarkTypeKind.Unicode && source.Kind == StarkTypeKind.Ascii);
     }
 
     private static bool IsExternallyVisibleMemory(VariableSymbol symbol)

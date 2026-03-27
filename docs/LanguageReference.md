@@ -376,6 +376,8 @@ Operator families include:
 - saturating integer arithmetic: `+|`, `-|`, `*|`
 - comparisons: `<`, `>`, `<=`, `>=`, `==`, `!=`
 - logical: `&&`, `||`, `!`
+- raw pointer address-of: unary `&`
+- raw pointer dereference: unary `*`
 - unary bitwise not: `~`
 - unary wrapping negate: `-%`
 - conditional: `?:`
@@ -386,12 +388,23 @@ Operator families include:
 
 `**` is the exponent operator.
 
+Explicit conversions use C-style syntax: `(targetType)expression`.
+
+This is the required surface for conversions that Stark keeps explicit, including:
+
+- integer widening and narrowing
+- integer/float conversions
+- raw pointer to integer and integer to raw pointer conversions
+- raw pointer to raw pointer conversions
+- fixed-array to slice view conversions
+- ascii/unicode text view conversions
+
 ### 11.2 Precedence
 
 From highest to lowest, the intended precedence is:
 
 1. postfix: calls, indexing, member access
-2. unary: unary `+`, unary `-`, `!`, `~`
+2. unary: explicit conversions, unary `+`, unary `-`, `!`, `~`, raw `&`, raw `*`
 3. exponentiation: `**` with right-associative parsing
 4. multiplicative: `*`, `/`, `%`
 5. additive: `+`, `-`

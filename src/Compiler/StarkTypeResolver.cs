@@ -61,6 +61,39 @@ internal sealed class StarkTypeResolver
         return ApplyQualifiers(result, type.typeQualifier());
     }
 
+    public StarkTypeSymbol ResolveConversionType(StarkParser.ConversionTypeContext type, ISet<string>? genericParameters = null, string? currentModuleName = null)
+    {
+        var result = ResolveConversionNonArrayType(type.conversionNonArrayType(), genericParameters, currentModuleName);
+
+        foreach (var suffix in type.arraySuffix())
+        {
+            if (suffix.expression() is null)
+            {
+                result = StarkTypeSymbols.Slice(result);
+                continue;
+            }
+
+            var length = TryEvaluateConstantInteger(suffix.expression());
+            if (length is null)
+            {
+                ReportError("STK3014", "Fixed array lengths must currently be constant integer expressions.", suffix.expression());
+                result = StarkTypeSymbols.FixedArray(result, fixedLength: null);
+                continue;
+            }
+
+            if (length < 0 || length > int.MaxValue)
+            {
+                ReportError("STK3014", $"Fixed array length '{length}' is out of range.", suffix.expression());
+                result = StarkTypeSymbols.FixedArray(result, fixedLength: null);
+                continue;
+            }
+
+            result = StarkTypeSymbols.FixedArray(result, (int)length.Value);
+        }
+
+        return ApplyQualifiers(result, type.typeQualifier());
+    }
+
     public HashSet<string>? GetGenericParameterNames(StarkParser.TypeParameterListContext? typeParameterList)
     {
         if (typeParameterList is null)
@@ -124,24 +157,48 @@ internal sealed class StarkTypeResolver
         return simpleType;
     }
 
+    private StarkTypeSymbol ResolveConversionNonArrayType(StarkParser.ConversionNonArrayTypeContext type, ISet<string>? genericParameters, string? currentModuleName)
+    {
+        if (type.rawPointerType() is { } rawPointerType)
+        {
+            var elementType = ResolveType(rawPointerType.type_(), genericParameters, currentModuleName);
+            return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
+        }
+
+        var builtinType = ResolveBuiltinType(type.builtinType());
+        if (type.rangeConstraint() is { } rangeConstraint && builtinType.Kind == StarkTypeKind.Integer)
+        {
+            var min = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(0));
+            var max = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(1));
+            builtinType = StarkTypeSymbols.Integer(builtinType.BitWidth!.Value, min, max);
+        }
+
+        return builtinType;
+    }
+
     private StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters, string? currentModuleName)
     {
         if (simpleType.builtinType() is { } builtinType)
         {
-            var text = builtinType.GetText();
-            return text switch
-            {
-                "void" => StarkTypeSymbols.Void,
-                "bool" => StarkTypeSymbols.Bool,
-                "ascii" => StarkTypeSymbols.Ascii,
-                "unicode" => StarkTypeSymbols.Unicode,
-                _ when text.StartsWith("i", StringComparison.Ordinal) => StarkTypeSymbols.Integer(int.Parse(text[1..])),
-                _ when text.StartsWith("f", StringComparison.Ordinal) => StarkTypeSymbols.Float(int.Parse(text[1..])),
-                _ => StarkTypeSymbols.Error
-            };
+            return ResolveBuiltinType(builtinType);
         }
 
         return ResolveQualifiedType(simpleType.qualifiedName().GetText(), genericParameters, simpleType.Start, currentModuleName);
+    }
+
+    private static StarkTypeSymbol ResolveBuiltinType(StarkParser.BuiltinTypeContext builtinType)
+    {
+        var text = builtinType.GetText();
+        return text switch
+        {
+            "void" => StarkTypeSymbols.Void,
+            "bool" => StarkTypeSymbols.Bool,
+            "ascii" => StarkTypeSymbols.Ascii,
+            "unicode" => StarkTypeSymbols.Unicode,
+            _ when text.StartsWith("i", StringComparison.Ordinal) => StarkTypeSymbols.Integer(int.Parse(text[1..])),
+            _ when text.StartsWith("f", StringComparison.Ordinal) => StarkTypeSymbols.Float(int.Parse(text[1..])),
+            _ => StarkTypeSymbols.Error
+        };
     }
 
     private StarkTypeSymbol ApplyQualifiers(StarkTypeSymbol type, IReadOnlyList<StarkParser.TypeQualifierContext> qualifiers)

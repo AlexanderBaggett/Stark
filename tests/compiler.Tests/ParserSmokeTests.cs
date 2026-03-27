@@ -139,6 +139,26 @@ public sealed class ParserSmokeTests
                 return left +| right *| 2;
             }
             """
+        },
+        {
+            "explicit conversions and raw pointer operators",
+            """
+            module UnsafeDemo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static i32 Counter = 0;
+
+            fn i32 Run(rawmutptr<i32> input, i64 bits) {
+                stack mut Box box = new Box() { Value = 1 };
+                *(&(box.Value)) = (i32)bits;
+                stack rawptr<i32> alias = (rawptr<i32>)input;
+                Counter = *alias;
+                return *(&Counter);
+            }
+            """
         }
     };
 

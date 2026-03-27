@@ -686,6 +686,9 @@ public sealed record MidLevelIrParameterOperand(string Name, StarkTypeSymbol Typ
 public sealed record MidLevelIrGlobalOperand(string Name, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, Name);
 
+public sealed record MidLevelIrGlobalAddressOperand(string Name, StarkTypeSymbol PointeeType, StarkTypeSymbol Type)
+    : MidLevelIrOperand(Type, $"&{Name}");
+
 public sealed record MidLevelIrIntegerConstantOperand(BigInteger Value, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, Value.ToString());
 
@@ -886,6 +889,9 @@ public sealed record SsaBoolConstant(bool Value)
 
 public sealed record SsaNullConstant(StarkTypeSymbol Type)
     : SsaValue(Type, "null");
+
+public sealed record SsaGlobalAddressValue(string GlobalName, StarkTypeSymbol PointeeType, StarkTypeSymbol Type)
+    : SsaValue(Type, $"&{GlobalName}");
 
 public sealed record SsaUndefValue(StarkTypeSymbol Type)
     : SsaValue(Type, "undef");
@@ -1096,6 +1102,19 @@ public sealed record SsaStoreIndirectInstruction(
     SsaValue Address,
     StarkTypeSymbol ValueType,
     SsaValue Value)
+    : SsaInstruction;
+
+public enum SsaMemoryTransferKind
+{
+    Copy,
+    Move
+}
+
+public sealed record SsaCopyMemoryInstruction(
+    SsaValue DestinationAddress,
+    SsaValue SourceAddress,
+    StarkTypeSymbol CopyType,
+    SsaMemoryTransferKind TransferKind = SsaMemoryTransferKind.Copy)
     : SsaInstruction;
 
 public sealed record SsaStoreGlobalInstruction(

@@ -783,6 +783,39 @@ internal sealed class OwnershipValidator
             return EvaluatePowerExpression(powerExpression, state, signature, summary, use, allowFunctionReference);
         }
 
+        if (expression.conversionType() is { } conversionType)
+        {
+            var convertedOperand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            var targetType = _typeResolver.ResolveConversionType(conversionType);
+            return ApplyUse(new ExpressionInfo(targetType), state, summary, use, expression);
+        }
+
+        var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
+        if (op == "&")
+        {
+            var addressOperand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Place, allowFunctionReference: false);
+            var pointerType = StarkTypeSymbols.RawPointer(addressOperand.Type, addressOperand.IsPlace);
+            return ApplyUse(new ExpressionInfo(pointerType), state, summary, use, expression);
+        }
+
+        if (op == "*")
+        {
+            var dereferenceOperand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            var pointeeType = dereferenceOperand.Type.Kind == StarkTypeKind.RawPointer && dereferenceOperand.Type.ElementType is not null
+                ? dereferenceOperand.Type.ElementType
+                : StarkTypeSymbols.Error;
+            return ApplyUse(
+                new ExpressionInfo(
+                    pointeeType,
+                    BorrowLifetime: BorrowLifetime.None,
+                    IsPlace: true,
+                    IsIndirectPlace: true),
+                state,
+                summary,
+                use,
+                expression);
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
         return ApplyUse(operand with { Variable = null, IsPlace = false, IsIndirectPlace = false }, state, summary, use, expression);
     }

@@ -229,6 +229,38 @@ public sealed class TypeTypingDiagnosticsTests
         AssertDiagnostic(result, "STK3010", "member 'Value' of type 'i32'", "not indexable");
     }
 
+    [Fact]
+    public void AddressOfRequiresAnAddressableOperand()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn rawptr<i32> Run() {
+                return &(1 + 2);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Operator '&' requires an addressable value");
+    }
+
+    [Fact]
+    public void DereferenceRequiresARawPointerOperand()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run() {
+                return *1;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Operator '*'", "requires a raw pointer operand");
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

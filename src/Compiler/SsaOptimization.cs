@@ -166,6 +166,7 @@ internal sealed class SsaCleanupOptimizer
                         break;
 
                     case SsaStoreLocalInstruction:
+                    case SsaCopyMemoryInstruction:
                     case SsaStoreIndirectInstruction:
                     case SsaStoreGlobalInstruction:
                     case SsaLifetimeStartInstruction:
@@ -475,6 +476,7 @@ internal sealed class SsaCleanupOptimizer
             SsaLifetimeStartInstruction => [],
             SsaLifetimeEndInstruction => [],
             SsaStoreLocalInstruction storeLocal => [storeLocal.Value],
+            SsaCopyMemoryInstruction copyMemory => [copyMemory.DestinationAddress, copyMemory.SourceAddress],
             SsaStoreIndirectInstruction storeIndirect => [storeIndirect.Address, storeIndirect.Value],
             SsaStoreGlobalInstruction storeGlobal => [storeGlobal.Value],
             _ => []
@@ -799,6 +801,11 @@ internal sealed class SsaCleanupOptimizer
                 storeLocal.LocalName,
                 storeLocal.LocalType,
                 RewriteValue(storeLocal.Value, replacements)),
+            SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
+                RewriteValue(copyMemory.DestinationAddress, replacements),
+                RewriteValue(copyMemory.SourceAddress, replacements),
+                copyMemory.CopyType,
+                copyMemory.TransferKind),
             SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                 RewriteValue(storeIndirect.Address, replacements),
                 storeIndirect.ValueType,
@@ -1747,6 +1754,11 @@ internal sealed class SsaConstantPropagator
                 storeLocal.LocalName,
                 storeLocal.LocalType,
                 RewriteValue(storeLocal.Value, replacements)),
+            SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
+                RewriteValue(copyMemory.DestinationAddress, replacements),
+                RewriteValue(copyMemory.SourceAddress, replacements),
+                copyMemory.CopyType,
+                copyMemory.TransferKind),
             SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                 RewriteValue(storeIndirect.Address, replacements),
                 storeIndirect.ValueType,

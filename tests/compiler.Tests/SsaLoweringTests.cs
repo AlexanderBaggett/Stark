@@ -243,6 +243,156 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void AddressableAggregateAssignmentLowersToMemoryCopy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn i32 Run() {
+                stack Pair source = new Pair() { Left = 1, Right = 2 };
+                stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
+                stack rawptr<Pair> sourcePtr = &source;
+                stack rawptr<Pair> destPtr = &dest;
+                dest = source;
+                return dest.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaCopyMemoryInstruction
+            {
+                CopyType.Kind: StarkTypeKind.Named,
+                TransferKind: SsaMemoryTransferKind.Move
+            });
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaStoreLocalInstruction
+            {
+                LocalName: "source",
+                Value: SsaUndefValue { Type.Kind: StarkTypeKind.Named }
+            });
+    }
+
+    [Fact]
+    public void AggregateByValueCallInvalidatesMovedAddressableSource()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn void Touch(Pair value) {
+            }
+
+            fn i32 Run() {
+                stack Pair source = new Pair() { Left = 1, Right = 2 };
+                stack rawptr<Pair> sourcePtr = &source;
+                Touch(source);
+                source = new Pair() { Left = 3, Right = 4 };
+                return source.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions, static function => function.Name == "Run");
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaCallRValue { FunctionName: "Touch" } });
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaStoreLocalInstruction
+            {
+                LocalName: "source",
+                Value: SsaUndefValue { Type.Kind: StarkTypeKind.Named }
+            });
+    }
+
+    [Fact]
+    public void AddressableAggregateInitializerDoesNotMaterializeAggregateTempLocals()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn i32 Run() {
+                stack Pair value = new Pair() { Left = 1, Right = 2 };
+                stack rawptr<Pair> ptr = &value;
+                return value.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "value", LocalType.Kind: StarkTypeKind.Named });
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaAllocateLocalInstruction { LocalType.Kind: StarkTypeKind.Named } allocate
+                && allocate.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaStoreLocalInstruction { LocalType.Kind: StarkTypeKind.Named } store
+                && store.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaCopyMemoryInstruction { CopyType.Kind: StarkTypeKind.Named });
+    }
+
+    [Fact]
+    public void AddressableAggregateConditionalDoesNotMaterializeAggregateTempLocals()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            fn i32 Run(bool flag) {
+                stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
+                stack rawptr<Pair> ptr = &value;
+                return value.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "value", LocalType.Kind: StarkTypeKind.Named });
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaAllocateLocalInstruction { LocalType.Kind: StarkTypeKind.Named } allocate
+                && allocate.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaStoreLocalInstruction { LocalType.Kind: StarkTypeKind.Named } store
+                && store.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaCopyMemoryInstruction { CopyType.Kind: StarkTypeKind.Named });
+    }
+
+    [Fact]
     public void FixedArrayIndexOperationsLowerToSsaExtractAndInsert()
     {
         var result = Compile(
@@ -342,6 +492,83 @@ public sealed class SsaLoweringTests
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaSliceElementAddressRValue });
         Assert.Contains(instructions, static instruction => instruction is SsaStoreIndirectInstruction);
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaLoadIndirectRValue });
+    }
+
+    [Fact]
+    public void ExplicitPointerOperatorsAndConversionsLowerToSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i64 bits) {
+                stack mut i32 value = 1;
+                stack rawmutptr<i32> ptr = &value;
+                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
+                *ptr = (i32)bits;
+                return *readonlyPtr;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "value" });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaAddressOfLocalRValue });
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaConvertRValue { TargetType.Kind: StarkTypeKind.RawPointer, Operand.Type.Kind: StarkTypeKind.RawPointer }
+            });
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaConvertRValue { TargetType.Kind: StarkTypeKind.Integer, Operand.Type.Kind: StarkTypeKind.Integer }
+            });
+        Assert.Contains(instructions, static instruction => instruction is SsaStoreIndirectInstruction);
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaLoadIndirectRValue });
+    }
+
+    [Fact]
+    public void FieldAndGlobalAddressExpressionsLowerToSsaAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static i32 Counter = 0;
+
+            fn i32 Run(i32 input) {
+                stack mut Box box = new Box() { Value = 1 };
+                *(&(box.Value)) = input;
+                Counter = *(&(box.Value));
+                return *(&Counter);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "box" });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaFieldAddressRValue });
+        Assert.Contains(instructions, static instruction => instruction is SsaStoreIndirectInstruction);
+        Assert.Contains(
+            instructions,
+            instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaLoadIndirectRValue
+                {
+                    Address: SsaGlobalAddressValue { GlobalName: "Counter" }
+                }
+            });
     }
 
     private static CompilationResult Compile(string source)

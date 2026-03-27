@@ -6,6 +6,7 @@ internal sealed class LlvmIrEmitter
 {
     private const string AsciiStringTypeName = "stark_ascii";
     private const string UnicodeStringTypeName = "stark_unicode";
+    private const int AggregateMemcpyThresholdBytes = 32;
     private readonly CompilationInput _input;
     private readonly SyntaxModel _syntaxModel;
     private readonly FunctionEffectModel _effectModel;
@@ -159,6 +160,11 @@ internal sealed class LlvmIrEmitter
             declarations.Add("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)");
         }
 
+        if (UsesMemcpyIntrinsic())
+        {
+            declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+        }
+
         foreach (var declaration in declarations)
         {
             builder.AppendLine(declaration);
@@ -176,6 +182,15 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .Any(static instruction => instruction is SsaLifetimeStartInstruction or SsaLifetimeEndInstruction);
+    }
+
+    private bool UsesMemcpyIntrinsic()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaCopyMemoryInstruction>()
+            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout && layout.SizeBytes > AggregateMemcpyThresholdBytes);
     }
 
     private static void EmitBuiltinTypeDefinitions(StringBuilder builder)
@@ -798,6 +813,9 @@ internal sealed class LlvmIrEmitter
                 case SsaStoreLocalInstruction storeLocal:
                     EmitStoreLocal(storeLocal);
                     return;
+                case SsaCopyMemoryInstruction copyMemory:
+                    EmitCopyMemory(copyMemory);
+                    return;
                 case SsaStoreIndirectInstruction storeIndirect:
                     EmitStoreIndirect(storeIndirect);
                     return;
@@ -924,9 +942,29 @@ internal sealed class LlvmIrEmitter
                 return;
             }
 
+            if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
+            {
+                AppendLine($"  {result} = getelementptr inbounds i8, ptr {FormatValue(convert.Operand)}, i64 0");
+                return;
+            }
+
             if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.Integer)
             {
                 AppendLine($"  {result} = ptrtoint ptr {FormatValue(convert.Operand)} to {MapType(targetType)}");
+                return;
+            }
+
+            if ((sourceType.Kind == StarkTypeKind.Ascii && targetType.Kind == StarkTypeKind.Unicode)
+                || (sourceType.Kind == StarkTypeKind.Unicode && targetType.Kind == StarkTypeKind.Ascii))
+            {
+                var data = $"%{EscapeIdentifier($"{result.TrimStart('%')}_data")}";
+                var length = $"%{EscapeIdentifier($"{result.TrimStart('%')}_len")}";
+                var withPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_with_ptr")}";
+
+                AppendLine($"  {data} = extractvalue {MapType(sourceType)} {FormatValue(convert.Operand)}, 0");
+                AppendLine($"  {length} = extractvalue {MapType(sourceType)} {FormatValue(convert.Operand)}, 1");
+                AppendLine($"  {withPointer} = insertvalue {MapType(targetType)} zeroinitializer, ptr {data}, 0");
+                AppendLine($"  {result} = insertvalue {MapType(targetType)} {withPointer}, i64 {length}, 1");
                 return;
             }
 
@@ -1187,6 +1225,21 @@ internal sealed class LlvmIrEmitter
             AppendLine($"  store {MapType(storeLocal.LocalType)} {FormatValue(storeLocal.Value)}, ptr %{EscapeIdentifier($"slot_{storeLocal.LocalName}")}");
         }
 
+        private void EmitCopyMemory(SsaCopyMemoryInstruction copyMemory)
+        {
+            if (_tryGetConcreteTypeLayout(copyMemory.CopyType) is { } layout
+                && layout.SizeBytes > AggregateMemcpyThresholdBytes)
+            {
+                AppendLine(
+                    $"  call void @llvm.memcpy.p0.p0.i64(ptr {FormatValue(copyMemory.DestinationAddress)}, ptr {FormatValue(copyMemory.SourceAddress)}, i64 {layout.SizeBytes}, i1 false)");
+                return;
+            }
+
+            var loadedValue = $"%{EscapeIdentifier(CreateAbiTempName("copy_load"))}";
+            AppendLine($"  {loadedValue} = load {MapType(copyMemory.CopyType)}, ptr {FormatValue(copyMemory.SourceAddress)}");
+            AppendLine($"  store {MapType(copyMemory.CopyType)} {loadedValue}, ptr {FormatValue(copyMemory.DestinationAddress)}");
+        }
+
         private void EmitStoreIndirect(SsaStoreIndirectInstruction storeIndirect)
         {
             AppendLine($"  store {MapType(storeIndirect.ValueType)} {FormatValue(storeIndirect.Value)}, ptr {FormatValue(storeIndirect.Address)}");
@@ -1369,6 +1422,7 @@ internal sealed class LlvmIrEmitter
                 SsaStringConstant text => FormatStringConstantValue(text),
                 SsaBoolConstant boolean => boolean.Value ? "true" : "false",
                 SsaNullConstant => "null",
+                SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(globalAddress.GlobalName)}",
                 SsaZeroInitializerValue => "zeroinitializer",
                 SsaUndefValue => "undef",
                 _ => throw new UnsupportedBodyEmissionException($"Unsupported SSA value '{value.GetType().Name}'.")

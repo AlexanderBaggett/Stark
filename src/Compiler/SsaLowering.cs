@@ -2,6 +2,20 @@ namespace Stark.Compiler;
 
 internal sealed class SsaLowerer
 {
+    private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
+
+    public SsaLowerer()
+        : this(typeModel: null)
+    {
+    }
+
+    public SsaLowerer(TypeCheckModel? typeModel)
+    {
+        _signatures = typeModel is null
+            ? new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
+            : new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
+    }
+
     public SsaIrModule Lower(MidLevelIrModule mir)
     {
         var functions = mir.Functions
@@ -11,7 +25,7 @@ internal sealed class SsaLowerer
         return new SsaIrModule(mir.ModuleName, functions);
     }
 
-    private static SsaFunction LowerFunction(MidLevelIrFunction function)
+    private SsaFunction LowerFunction(MidLevelIrFunction function)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {
@@ -25,13 +39,14 @@ internal sealed class SsaLowerer
                 []);
         }
 
-        var builder = new FunctionSsaBuilder(function);
+        var builder = new FunctionSsaBuilder(function, _signatures);
         return builder.Lower();
     }
 
     private sealed class FunctionSsaBuilder
     {
         private readonly MidLevelIrFunction _function;
+        private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
         private readonly Dictionary<int, MidLevelIrBasicBlock> _sourceBlocks;
         private readonly IReadOnlyList<int> _reachableOrder;
         private readonly Dictionary<int, List<int>> _predecessors;
@@ -49,9 +64,12 @@ internal sealed class SsaLowerer
         private Dictionary<string, SsaValue>? _currentValueNumbers;
         private int _nextValueId;
 
-        public FunctionSsaBuilder(MidLevelIrFunction function)
+        public FunctionSsaBuilder(
+            MidLevelIrFunction function,
+            IReadOnlyDictionary<string, TypedFunctionSignature> signatures)
         {
             _function = function;
+            _signatures = signatures;
             _sourceBlocks = function.Blocks.ToDictionary(static block => block.Id);
             _successors = BuildSuccessors(function.Blocks);
             _reachableOrder = ComputeReachableOrder(function.EntryBlockId, function.Blocks, _successors);
@@ -175,6 +193,21 @@ internal sealed class SsaLowerer
                         throw new InvalidOperationException($"MIR assignment '{statement.Text}' is missing typed information.");
                     }
 
+                    if (_addressableLocals.Contains(statement.TargetName)
+                        && TryLowerAggregateCopy(
+                            blockId,
+                            block,
+                            statement.TargetType,
+                            statement.Value,
+                            destinationAddressFactory: () => CreateLocalAddress(block, statement.TargetName, statement.TargetType),
+                            out var aggregateCopy,
+                            out var assignmentMovedSource))
+                    {
+                        block.Instructions.Add(aggregateCopy);
+                        InvalidateMovedAggregateSource(blockId, block, assignmentMovedSource, statement.TargetName);
+                        return;
+                    }
+
                     var assignedValue = LowerRValue(blockId, block, statement.Value);
                     if (_addressableLocals.Contains(statement.TargetName))
                     {
@@ -189,6 +222,7 @@ internal sealed class SsaLowerer
                         block.Instructions.Add(new SsaStoreGlobalInstruction(statement.TargetName, statement.TargetType, assignedValue));
                     }
 
+                    InvalidateConsumedAggregateValue(blockId, block, statement.TargetType, statement.Value, statement.TargetName);
                     return;
                 case MidLevelIrStatementKind.StoreIndirect:
                     if (statement.Address is null || statement.TargetType is null || statement.Value is null)
@@ -196,10 +230,25 @@ internal sealed class SsaLowerer
                         throw new InvalidOperationException($"MIR indirect store '{statement.Text}' is missing typed information.");
                     }
 
+                    if (TryLowerAggregateCopy(
+                            blockId,
+                            block,
+                            statement.TargetType,
+                            statement.Value,
+                            destinationAddressFactory: () => LowerOperand(blockId, block, statement.Address),
+                            out var indirectAggregateCopy,
+                            out var indirectMovedSource))
+                    {
+                        block.Instructions.Add(indirectAggregateCopy);
+                        InvalidateMovedAggregateSource(blockId, block, indirectMovedSource);
+                        return;
+                    }
+
                     block.Instructions.Add(new SsaStoreIndirectInstruction(
                         LowerOperand(blockId, block, statement.Address),
                         statement.TargetType,
                         LowerRValue(blockId, block, statement.Value)));
+                    InvalidateConsumedAggregateValue(blockId, block, statement.TargetType, statement.Value);
                     return;
                 case MidLevelIrStatementKind.Evaluate:
                     if (statement.Value is not null)
@@ -259,12 +308,7 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, binary.Right),
                     binary.Type,
                     binary.Text)),
-                MidLevelIrCallRValue call => EmitValue(block, new SsaCallRValue(
-                    call.FunctionName,
-                    call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
-                    call.Type,
-                    call.Text,
-                    call.IndirectArgumentLocalNames)),
+                MidLevelIrCallRValue call => LowerCallRValue(blockId, block, call),
                 MidLevelIrConvertRValue convert => LowerConvertRValue(blockId, block, convert),
                 MidLevelIrExtractFieldRValue extract => EmitValue(block, new SsaExtractFieldRValue(
                     LowerOperand(blockId, block, extract.Target),
@@ -343,6 +387,19 @@ internal sealed class SsaLowerer
                     convert.Text));
         }
 
+        private SsaValue LowerCallRValue(int blockId, SsaBlockBuilder block, MidLevelIrCallRValue call)
+        {
+            var loweredCall = EmitValue(block, new SsaCallRValue(
+                call.FunctionName,
+                call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                call.Type,
+                call.Text,
+                call.IndirectArgumentLocalNames));
+
+            InvalidateMovedAggregateCallArguments(blockId, block, call);
+            return loweredCall;
+        }
+
         private SsaValue LowerOperand(int blockId, SsaBlockBuilder block, MidLevelIrOperand operand)
         {
             return operand switch
@@ -352,6 +409,7 @@ internal sealed class SsaLowerer
                 MidLevelIrLocalOperand local => ReadVariable(blockId, local.Name, local.Type),
                 MidLevelIrParameterOperand parameter => ReadVariable(blockId, parameter.Name, parameter.Type),
                 MidLevelIrGlobalOperand global => EmitValue(block, new SsaLoadGlobalRValue(global.Name, global.Type)),
+                MidLevelIrGlobalAddressOperand globalAddress => new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type),
                 MidLevelIrIntegerConstantOperand integer => new SsaIntegerConstant(integer.Value, integer.Type),
                 MidLevelIrFloatConstantOperand floating => new SsaFloatConstant(floating.LiteralText, floating.Type),
                 MidLevelIrStringConstantOperand text => new SsaStringConstant(text.LiteralText, text.Type),
@@ -394,6 +452,211 @@ internal sealed class SsaLowerer
             }
 
             return result;
+        }
+
+        private bool TryLowerAggregateCopy(
+            int blockId,
+            SsaBlockBuilder block,
+            StarkTypeSymbol targetType,
+            MidLevelIrRValue value,
+            Func<SsaValue> destinationAddressFactory,
+            out SsaCopyMemoryInstruction aggregateCopy,
+            out AggregateMoveSource? movedSource)
+        {
+            aggregateCopy = default!;
+            movedSource = null;
+
+            if (!SupportsAggregateMemoryCopy(targetType)
+                || value is not MidLevelIrUseRValue use
+                || !TryGetAggregateCopySourceAddress(blockId, block, targetType, use.Operand, out var sourceAddress))
+            {
+                return false;
+            }
+
+            var transferKind = DetermineAggregateTransferKind(targetType, use.Operand, out movedSource);
+            aggregateCopy = new SsaCopyMemoryInstruction(destinationAddressFactory(), sourceAddress, targetType, transferKind);
+            return true;
+        }
+
+        private bool TryGetAggregateCopySourceAddress(
+            int blockId,
+            SsaBlockBuilder block,
+            StarkTypeSymbol targetType,
+            MidLevelIrOperand operand,
+            out SsaValue sourceAddress)
+        {
+            sourceAddress = default!;
+
+            if (operand.Type != targetType)
+            {
+                return false;
+            }
+
+            switch (operand)
+            {
+                case MidLevelIrLocalOperand local when _addressableLocals.Contains(local.Name):
+                    sourceAddress = CreateLocalAddress(block, local.Name, local.Type);
+                    return true;
+                case MidLevelIrGlobalOperand global:
+                    sourceAddress = new SsaGlobalAddressValue(
+                        global.Name,
+                        global.Type,
+                        StarkTypeSymbols.RawPointer(global.Type, isMutable: true));
+                    return true;
+                case MidLevelIrGlobalAddressOperand globalAddress when globalAddress.PointeeType == targetType:
+                    sourceAddress = new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool SupportsAggregateMemoryCopy(StarkTypeSymbol type)
+        {
+            return type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
+        }
+
+        private static bool IsMoveOnly(StarkTypeSymbol type)
+        {
+            if (type.Kind == StarkTypeKind.Error || type.Kind == StarkTypeKind.Void)
+            {
+                return false;
+            }
+
+            if (type.BorrowKind != StarkBorrowKind.None)
+            {
+                return type.IsMutableView;
+            }
+
+            return type.Kind switch
+            {
+                StarkTypeKind.Bool => false,
+                StarkTypeKind.Integer => false,
+                StarkTypeKind.Float => false,
+                StarkTypeKind.RawPointer => false,
+                StarkTypeKind.Null => false,
+                _ => true
+            };
+        }
+
+        private static bool ConsumesAssignmentSource(StarkTypeSymbol targetType)
+        {
+            return IsMoveOnly(targetType);
+        }
+
+        private static bool ConsumesCallArgument(StarkTypeSymbol parameterType)
+        {
+            return parameterType.BorrowKind == StarkBorrowKind.None
+                && parameterType.Kind != StarkTypeKind.RawPointer
+                && IsMoveOnly(parameterType);
+        }
+
+        private SsaMemoryTransferKind DetermineAggregateTransferKind(
+            StarkTypeSymbol targetType,
+            MidLevelIrOperand sourceOperand,
+            out AggregateMoveSource? movedSource)
+        {
+            movedSource = null;
+
+            if (!ConsumesAssignmentSource(targetType)
+                || !TryGetOwnedAggregateMoveSource(targetType, sourceOperand, out var resolvedSource))
+            {
+                return SsaMemoryTransferKind.Copy;
+            }
+
+            movedSource = resolvedSource;
+            return SsaMemoryTransferKind.Move;
+        }
+
+        private bool TryGetOwnedAggregateMoveSource(
+            StarkTypeSymbol expectedType,
+            MidLevelIrOperand operand,
+            out AggregateMoveSource source)
+        {
+            switch (operand)
+            {
+                case MidLevelIrLocalOperand local when local.Type == expectedType:
+                    source = new AggregateMoveSource(local.Name, local.Type, _addressableLocals.Contains(local.Name));
+                    return true;
+                case MidLevelIrParameterOperand parameter when parameter.Type == expectedType:
+                    source = new AggregateMoveSource(parameter.Name, parameter.Type, IsAddressable: false);
+                    return true;
+                default:
+                    source = default;
+                    return false;
+            }
+        }
+
+        private void InvalidateConsumedAggregateValue(
+            int blockId,
+            SsaBlockBuilder block,
+            StarkTypeSymbol targetType,
+            MidLevelIrRValue value,
+            string? destinationLocalName = null)
+        {
+            if (!SupportsAggregateMemoryCopy(targetType)
+                || !ConsumesAssignmentSource(targetType)
+                || value is not MidLevelIrUseRValue use
+                || !TryGetOwnedAggregateMoveSource(targetType, use.Operand, out var movedSource))
+            {
+                return;
+            }
+
+            InvalidateMovedAggregateSource(blockId, block, movedSource, destinationLocalName);
+        }
+
+        private void InvalidateMovedAggregateCallArguments(int blockId, SsaBlockBuilder block, MidLevelIrCallRValue call)
+        {
+            if (!_signatures.TryGetValue(call.FunctionName, out var signature))
+            {
+                return;
+            }
+
+            var argumentCount = Math.Min(call.Arguments.Count, signature.Parameters.Count);
+            for (var index = 0; index < argumentCount; index++)
+            {
+                var parameterType = signature.Parameters[index].Type;
+                if (!SupportsAggregateMemoryCopy(parameterType)
+                    || !ConsumesCallArgument(parameterType)
+                    || !TryGetOwnedAggregateMoveSource(parameterType, call.Arguments[index], out var movedSource))
+                {
+                    continue;
+                }
+
+                InvalidateMovedAggregateSource(blockId, block, movedSource);
+            }
+        }
+
+        private void InvalidateMovedAggregateSource(
+            int blockId,
+            SsaBlockBuilder block,
+            AggregateMoveSource? movedSource,
+            string? destinationLocalName = null)
+        {
+            if (movedSource is not { } source
+                || (destinationLocalName is not null
+                    && string.Equals(source.Name, destinationLocalName, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            var undef = new SsaUndefValue(source.Type);
+            if (source.IsAddressable)
+            {
+                block.Instructions.Add(new SsaStoreLocalInstruction(source.Name, source.Type, undef));
+                return;
+            }
+
+            WriteVariable(blockId, source.Name, undef);
+        }
+
+        private SsaValue CreateLocalAddress(SsaBlockBuilder block, string localName, StarkTypeSymbol localType)
+        {
+            return EmitValue(block, new SsaAddressOfLocalRValue(
+                localName,
+                localType,
+                StarkTypeSymbols.RawPointer(localType, isMutable: true),
+                $"&{localName}"));
         }
 
         private void WriteVariable(int blockId, string name, SsaValue value)
@@ -849,6 +1112,11 @@ internal sealed class SsaLowerer
             };
         }
 
+        private readonly record struct AggregateMoveSource(
+            string Name,
+            StarkTypeSymbol Type,
+            bool IsAddressable);
+
         private sealed class PhiBuilder
         {
             public PhiBuilder(int blockId, string variableName, StarkTypeSymbol type, SsaValueReference result)
@@ -937,6 +1205,11 @@ internal sealed class SsaLowerer
                     storeLocal.LocalName,
                     storeLocal.LocalType,
                     RewriteValue(storeLocal.Value, replacements)),
+                SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
+                    RewriteValue(copyMemory.DestinationAddress, replacements),
+                    RewriteValue(copyMemory.SourceAddress, replacements),
+                    copyMemory.CopyType,
+                    copyMemory.TransferKind),
                 SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                     RewriteValue(storeIndirect.Address, replacements),
                     storeIndirect.ValueType,

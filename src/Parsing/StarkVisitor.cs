@@ -573,6 +573,24 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitUnaryExpression([NotNull] StarkParser.UnaryExpressionContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.unaryOperator"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitUnaryOperator([NotNull] StarkParser.UnaryOperatorContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.conversionType"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitConversionType([NotNull] StarkParser.ConversionTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.conversionNonArrayType"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitConversionNonArrayType([NotNull] StarkParser.ConversionNonArrayTypeContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.powerExpression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

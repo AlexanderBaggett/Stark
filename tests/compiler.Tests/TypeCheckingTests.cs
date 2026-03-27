@@ -83,6 +83,34 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("strictfp", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void ExplicitConversionsAndPointerOperatorsTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i64 bits, ascii text) {
+                stack mut i32 value = 7;
+                stack rawmutptr<i32> ptr = &value;
+                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
+                *ptr = (i32)bits;
+                stack i64 address = (i64)readonlyPtr;
+                stack rawmutptr<i32> roundTrip = (rawmutptr<i32>)address;
+                stack unicode wide = (unicode)text;
+                stack ascii narrow = (ascii)wide;
+                stack i32[2] values = { 1, 2 };
+                stack i32[] view = (i32[])values;
+                return *roundTrip + view[0];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

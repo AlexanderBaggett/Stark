@@ -1017,8 +1017,16 @@ internal sealed class TypeChecker
             return EvaluatePowerExpression(powerExpression, scope, allowFunctionReference);
         }
 
+        if (expression.conversionType() is { } conversionType)
+        {
+            var convertedOperand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
+            var targetType = _typeResolver!.ResolveConversionType(conversionType);
+            EnsureExplicitConversionCompatible(targetType, convertedOperand, expression);
+            return new ExpressionBinding(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
-        var op = expression.GetChild(0).GetText();
+        var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
 
         return op switch
         {
@@ -1026,6 +1034,8 @@ internal sealed class TypeChecker
             "~" => EnsureIntegerUnary(operand, expression, op),
             "-%" => EnsureIntegerUnary(operand, expression, op),
             "+" or "-" => EnsureNumericUnary(operand, expression, op),
+            "&" => EnsureAddressOfUnary(operand, expression),
+            "*" => EnsureDereferenceUnary(operand, expression),
             _ => new ExpressionBinding(StarkTypeSymbols.Error)
         };
     }
@@ -1198,7 +1208,8 @@ internal sealed class TypeChecker
             currentType,
             IsAssignable: target.IsAssignable,
             NamedType: ResolveNamedTypeSymbol(currentType),
-            DiagnosticName: target.DiagnosticName is null ? "indexed element" : $"indexed element of {target.DiagnosticName}");
+            DiagnosticName: target.DiagnosticName is null ? "indexed element" : $"indexed element of {target.DiagnosticName}",
+            IsAddressable: target.IsAddressable);
     }
 
     private ExpressionBinding ApplyMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -1217,7 +1228,8 @@ internal sealed class TypeChecker
                     global.Type,
                     IsAssignable: global.IsMutable,
                     NamedType: ResolveNamedTypeSymbol(global.Type),
-                    DiagnosticName: global.IsConstant ? $"constant '{qualifiedName}'" : $"variable '{qualifiedName}'");
+                    DiagnosticName: global.IsConstant ? $"constant '{qualifiedName}'" : $"variable '{qualifiedName}'",
+                    IsAddressable: true);
             }
 
             if (_functions.TryGetValue(qualifiedName, out var function))
@@ -1238,7 +1250,12 @@ internal sealed class TypeChecker
 
         if (namedType.Fields.TryGetValue(memberName, out var field))
         {
-            return new ExpressionBinding(field.Type, IsAssignable: target.IsAssignable, NamedType: ResolveNamedTypeSymbol(field.Type), DiagnosticName: $"member '{memberName}'");
+            return new ExpressionBinding(
+                field.Type,
+                IsAssignable: target.IsAssignable,
+                NamedType: ResolveNamedTypeSymbol(field.Type),
+                DiagnosticName: $"member '{memberName}'",
+                IsAddressable: target.IsAddressable);
         }
 
         if (_functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
@@ -1264,7 +1281,8 @@ internal sealed class TypeChecker
                 local.Type,
                 IsAssignable: !local.IsConstant,
                 NamedType: ResolveNamedTypeSymbol(local.Type),
-                DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'");
+                DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
+                IsAddressable: true);
         }
 
         if (_globals.TryGetValue(name, out var global))
@@ -1273,7 +1291,8 @@ internal sealed class TypeChecker
                 global.Type,
                 IsAssignable: global.IsMutable,
                 NamedType: ResolveNamedTypeSymbol(global.Type),
-                DiagnosticName: global.IsConstant ? $"constant '{name}'" : $"variable '{name}'");
+                DiagnosticName: global.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
+                IsAddressable: true);
         }
 
         if (_functions.TryGetValue(name, out var function))
@@ -1490,6 +1509,35 @@ internal sealed class TypeChecker
         return new ExpressionBinding(operand.Type);
     }
 
+    private ExpressionBinding EnsureAddressOfUnary(ExpressionBinding operand, ParserRuleContext context)
+    {
+        if (!operand.IsAddressable)
+        {
+            ReportError("STK3002", "Operator '&' requires an addressable value.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var pointerType = StarkTypeSymbols.RawPointer(operand.Type, operand.IsAssignable);
+        return new ExpressionBinding(pointerType, NamedType: ResolveNamedTypeSymbol(pointerType));
+    }
+
+    private ExpressionBinding EnsureDereferenceUnary(ExpressionBinding operand, ParserRuleContext context)
+    {
+        if (operand.Type.Kind != StarkTypeKind.RawPointer || operand.Type.ElementType is null)
+        {
+            ReportError("STK3002", "Operator '*' requires a raw pointer operand.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var pointeeType = operand.Type.ElementType;
+        return new ExpressionBinding(
+            pointeeType,
+            IsAssignable: operand.Type.IsMutablePointer,
+            NamedType: ResolveNamedTypeSymbol(pointeeType),
+            DiagnosticName: "dereferenced value",
+            IsAddressable: true);
+    }
+
     private void EnsureBoolean(StarkTypeSymbol type, ParserRuleContext context, string message)
     {
         if (type.Kind != StarkTypeKind.Bool && type.Kind != StarkTypeKind.Error)
@@ -1683,6 +1731,19 @@ internal sealed class TypeChecker
             context);
     }
 
+    private void EnsureExplicitConversionCompatible(StarkTypeSymbol targetType, ExpressionBinding source, ParserRuleContext context)
+    {
+        if (CanExplicitlyConvert(targetType, source))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported.",
+            context);
+    }
+
     private static string GetExplicitConversionHint(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
@@ -1814,6 +1875,63 @@ internal sealed class TypeChecker
         return target.Kind == StarkTypeKind.Named
             && source.Kind == StarkTypeKind.Named
             && string.Equals(target.NamedType, source.NamedType, StringComparison.Ordinal);
+    }
+
+    private bool CanExplicitlyConvert(StarkTypeSymbol target, ExpressionBinding source)
+    {
+        if (CanAssign(target, source.Type))
+        {
+            return true;
+        }
+
+        if (!AreQualifiersAssignable(target, source.Type)
+            && !(target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.RawPointer)
+            && !(target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Null))
+        {
+            return false;
+        }
+
+        if (target.Kind == StarkTypeKind.Integer && source.Type.Kind == StarkTypeKind.Integer)
+        {
+            return true;
+        }
+
+        if (target.Kind == StarkTypeKind.Float && source.Type.Kind == StarkTypeKind.Float)
+        {
+            return true;
+        }
+
+        if ((target.Kind == StarkTypeKind.Integer && source.Type.Kind == StarkTypeKind.Float)
+            || (target.Kind == StarkTypeKind.Float && source.Type.Kind == StarkTypeKind.Integer))
+        {
+            return true;
+        }
+
+        if ((target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Integer)
+            || (target.Kind == StarkTypeKind.Integer && source.Type.Kind == StarkTypeKind.RawPointer)
+            || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.RawPointer)
+            || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Null))
+        {
+            return true;
+        }
+
+        if ((target.Kind == StarkTypeKind.Unicode && source.Type.Kind == StarkTypeKind.Ascii)
+            || (target.Kind == StarkTypeKind.Ascii && source.Type.Kind == StarkTypeKind.Unicode))
+        {
+            return true;
+        }
+
+        if (target.Kind == StarkTypeKind.Slice
+            && source.Type.Kind == StarkTypeKind.FixedArray
+            && source.IsAddressable
+            && target.ElementType is not null
+            && source.Type.ElementType is not null)
+        {
+            return CanAssign(target.ElementType, source.Type.ElementType)
+                || CanExplicitlyConvert(target.ElementType, new ExpressionBinding(source.Type.ElementType));
+        }
+
+        return false;
     }
 
     private static bool AreQualifiersAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -2109,7 +2227,8 @@ internal sealed class TypeChecker
         TypedFunctionSignature? Function = null,
         string? NamespaceName = null,
         string? DiagnosticName = null,
-        ExpressionBinding? Receiver = null);
+        ExpressionBinding? Receiver = null,
+        bool IsAddressable = false);
 
     private sealed record ConstructorShape(
         string Name,

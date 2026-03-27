@@ -4,29 +4,20 @@ using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal sealed class MidLevelIrLowerer
+internal sealed class MidLevelIrLowerer(
+    CompilerPassContext context,
+    ParseResult parseResult,
+    ModuleGraph moduleGraph,
+    TypeCheckModel typeModel)
 {
-    private readonly ParseResult _parseResult;
-    private readonly TypeCheckModel _typeModel;
-    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionsByName;
-    private readonly StarkTypeResolver _typeResolver;
-    private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
-
-    public MidLevelIrLowerer(
-        CompilerPassContext context,
-        ParseResult parseResult,
-        ModuleGraph moduleGraph,
-        TypeCheckModel typeModel)
-    {
-        _parseResult = parseResult;
-        _typeModel = typeModel;
-        _functionsByName = DeclaredFunctionSyntaxCollector.Collect(parseResult)
+    private readonly ParseResult _parseResult = parseResult;
+    private readonly TypeCheckModel _typeModel = typeModel;
+    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionsByName = DeclaredFunctionSyntaxCollector.Collect(parseResult)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
-        _typeResolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
-        _literalTypes = typeModel.Literals
+    private readonly StarkTypeResolver _typeResolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
+    private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes = typeModel.Literals
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Type);
-    }
 
     public MidLevelIrModule Lower(HighLevelIrModule hir)
     {
@@ -391,8 +382,18 @@ internal sealed class MidLevelIrLowerer
         {
             assignment = default!;
 
-            if (expression.assignmentOperator() is null
-                || !TryResolveAssignmentTarget(expression.unaryExpression(), out var target))
+            if (expression.assignmentOperator() is null)
+            {
+                return false;
+            }
+
+            if (TryResolveIndirectPointerAssignmentTarget(expression.unaryExpression(), out var pointerAddress, out var pointeeType))
+            {
+                assignment = LowerIndirectPointerAssignment(expression, pointerAddress, pointeeType);
+                return true;
+            }
+
+            if (!TryResolveAssignmentTarget(expression.unaryExpression(), out var target))
             {
                 return false;
             }
@@ -454,6 +455,118 @@ internal sealed class MidLevelIrLowerer
                 MarkUnsupported();
             }
 
+            return true;
+        }
+
+        private LoweredAssignment LowerIndirectPointerAssignment(
+            StarkParser.AssignmentExpressionContext expression,
+            MidLevelIrOperand address,
+            StarkTypeSymbol pointeeType)
+        {
+            var assignmentText = $"{expression.unaryExpression().GetText()} {expression.assignmentOperator().GetText()} {expression.assignmentExpression().GetText()}";
+
+            if (expression.assignmentOperator().GetText() == "=")
+            {
+                var assignedValue = LowerAssignmentExpressionToOperand(expression.assignmentExpression(), pointeeType);
+                if (assignedValue is null)
+                {
+                    MarkUnsupported();
+                    return default;
+                }
+
+                return new LoweredAssignment(
+                    assignmentText,
+                    TargetName: null,
+                    pointeeType,
+                    DirectValue: null,
+                    ResultValue: assignedValue,
+                    Address: address);
+            }
+
+            var currentValue = EmitTemporary(
+                new MidLevelIrLoadIndirectRValue(address, pointeeType, $"{address.Text}:load"),
+                "load");
+            if (currentValue is null)
+            {
+                MarkUnsupported();
+                return default;
+            }
+
+            var right = LowerAssignmentExpressionToOperand(expression.assignmentExpression(), currentValue.Type);
+            if (right is null)
+            {
+                MarkUnsupported();
+                return default;
+            }
+
+            var @operator = expression.assignmentOperator().GetText() switch
+            {
+                "+=" => MidLevelIrBinaryOperator.Add,
+                "-=" => MidLevelIrBinaryOperator.Subtract,
+                "*=" => MidLevelIrBinaryOperator.Multiply,
+                "/=" => MidLevelIrBinaryOperator.Divide,
+                "%=" => MidLevelIrBinaryOperator.Modulo,
+                "&=" => MidLevelIrBinaryOperator.BitwiseAnd,
+                "^=" => MidLevelIrBinaryOperator.BitwiseXor,
+                "|=" => MidLevelIrBinaryOperator.BitwiseOr,
+                _ => throw new InvalidOperationException($"Unsupported assignment operator '{expression.assignmentOperator().GetText()}'.")
+            };
+
+            var commonType = FindCommonType(currentValue.Type, right.Type);
+            var leftValue = CoerceOperand(currentValue, commonType);
+            var rightValue = CoerceOperand(right, commonType);
+            if (leftValue is null || rightValue is null)
+            {
+                MarkUnsupported();
+                return default;
+            }
+
+            var temp = EmitTemporary(
+                new MidLevelIrBinaryRValue(@operator, leftValue, rightValue, commonType, assignmentText),
+                "compound");
+            if (temp is null)
+            {
+                MarkUnsupported();
+                return default;
+            }
+
+            return new LoweredAssignment(
+                assignmentText,
+                TargetName: null,
+                pointeeType,
+                DirectValue: null,
+                ResultValue: CoerceOperand(temp, pointeeType) ?? temp,
+                Address: address);
+        }
+
+        private bool TryResolveIndirectPointerAssignmentTarget(
+            StarkParser.UnaryExpressionContext expression,
+            out MidLevelIrOperand address,
+            out StarkTypeSymbol pointeeType)
+        {
+            address = default!;
+            pointeeType = StarkTypeSymbols.Error;
+
+            if (expression.conversionType() is not null || expression.powerExpression() is not null)
+            {
+                return false;
+            }
+
+            if (!string.Equals(expression.unaryOperator()?.GetText(), "*", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var loweredAddress = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
+            if (loweredAddress is null
+                || loweredAddress.Type.Kind != StarkTypeKind.RawPointer
+                || loweredAddress.Type.ElementType is null)
+            {
+                return false;
+            }
+
+            address = loweredAddress;
+            pointeeType = loweredAddress.Type.ElementType;
             return true;
         }
 
@@ -1279,14 +1392,27 @@ internal sealed class MidLevelIrLowerer
                 return LowerPowerExpression(powerExpression, expectedType);
             }
 
-            var operand = LowerUnaryExpression(expression.unaryExpression(), expectedType);
+            if (expression.conversionType() is { } conversionType)
+            {
+                var targetType = _typeResolver.ResolveConversionType(conversionType);
+                var convertedOperand = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
+                if (convertedOperand is null)
+                {
+                    return null;
+                }
+
+                var converted = CoerceOperand(convertedOperand, targetType);
+                return expectedType is null ? converted : CoerceOperand(converted, expectedType);
+            }
+
+            var operand = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
             if (operand is null)
             {
                 return null;
             }
 
-            var op = expression.GetChild(0).GetText();
-            return op switch
+            var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
+            var result = op switch
             {
                 "+" => operand,
                 "-" => EmitTemporary(
@@ -1298,8 +1424,46 @@ internal sealed class MidLevelIrLowerer
                 "~" => EmitTemporary(
                     new MidLevelIrUnaryRValue(MidLevelIrUnaryOperator.BitwiseNot, operand, operand.Type, expression.GetText()),
                     "bitnot"),
+                "&" => LowerAddressOfUnary(expression.unaryExpression(), operand),
+                "*" => LowerDereferenceUnary(expression, operand),
                 _ => UnsupportedOperand()
             };
+
+            return expectedType is null ? result : CoerceOperand(result, expectedType);
+        }
+
+        private MidLevelIrOperand? LowerAddressOfUnary(StarkParser.UnaryExpressionContext operandExpression, MidLevelIrOperand operand)
+        {
+            if (operandExpression.conversionType() is null
+                && operandExpression.powerExpression() is null
+                && string.Equals(operandExpression.unaryOperator()?.GetText(), "*", StringComparison.Ordinal))
+            {
+                return operand;
+            }
+
+            if (!TryResolveAssignmentTarget(operandExpression, out var target))
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            return BuildAddress(target);
+        }
+
+        private MidLevelIrOperand? LowerDereferenceUnary(StarkParser.UnaryExpressionContext expression, MidLevelIrOperand operand)
+        {
+            if (operand.Type.Kind != StarkTypeKind.RawPointer || operand.Type.ElementType is null)
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            return EmitTemporary(
+                new MidLevelIrLoadIndirectRValue(
+                    operand,
+                    operand.Type.ElementType,
+                    expression.GetText()),
+                "load");
         }
 
         private MidLevelIrOperand? LowerPowerExpression(StarkParser.PowerExpressionContext expression, StarkTypeSymbol? expectedType)
@@ -2030,6 +2194,11 @@ internal sealed class MidLevelIrLowerer
             {
                 root = ResolveNamedOperand(qualifiedName.GetText());
             }
+            else if (postfixExpression.primaryExpression().expression() is { } groupedExpression
+                && TryExtractSimpleUnaryExpression(groupedExpression, out var groupedUnary))
+            {
+                return TryResolveAssignmentTarget(groupedUnary, out target);
+            }
             else
             {
                 return false;
@@ -2142,6 +2311,114 @@ internal sealed class MidLevelIrLowerer
 
             target = new PlaceTarget(root.Text, root.Type, currentType, path, usesAddressModel);
             return true;
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.ExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+
+            if (expression.assignmentExpression() is not { } assignmentExpression
+                || assignmentExpression.unaryExpression() is not null
+                || assignmentExpression.assignmentOperator() is not null
+                || assignmentExpression.conditionalExpression() is not { } conditionalExpression
+                || conditionalExpression.expression().Length != 0)
+            {
+                return false;
+            }
+
+            return TryExtractSimpleUnaryExpression(conditionalExpression.logicalOrExpression(), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.LogicalOrExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.logicalAndExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.logicalAndExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.LogicalAndExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.bitwiseOrExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.bitwiseOrExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.BitwiseOrExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.bitwiseXorExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.bitwiseXorExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.BitwiseXorExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.bitwiseAndExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.bitwiseAndExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.BitwiseAndExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.equalityExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.equalityExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.EqualityExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.relationalExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.relationalExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.RelationalExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.shiftExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.shiftExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.ShiftExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.additiveExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.additiveExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.AdditiveExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.multiplicativeExpression().Length == 1
+                && TryExtractSimpleUnaryExpression(expression.multiplicativeExpression(0), out unaryExpression);
+        }
+
+        private static bool TryExtractSimpleUnaryExpression(
+            StarkParser.MultiplicativeExpressionContext expression,
+            out StarkParser.UnaryExpressionContext unaryExpression)
+        {
+            unaryExpression = default!;
+            return expression.unaryExpression().Length == 1
+                && (unaryExpression = expression.unaryExpression(0)) is not null;
         }
 
         private MidLevelIrOperand ReadPlace(PlaceTarget target)
@@ -2289,9 +2566,12 @@ internal sealed class MidLevelIrLowerer
         private MidLevelIrOperand? BuildAddress(PlaceTarget target)
         {
             MidLevelIrOperand? currentValue = ResolveNamedOperand(target.RootName);
-            MidLevelIrOperand? currentAddress = currentValue is MidLevelIrLocalOperand local
-                ? CreateAddressOfLocal(local.Name, local.Type)
-                : null;
+            MidLevelIrOperand? currentAddress = currentValue switch
+            {
+                MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, local.Type),
+                MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, global.Type),
+                _ => null
+            };
             var currentType = target.RootType;
 
             foreach (var segment in target.Path)
@@ -2559,7 +2839,7 @@ internal sealed class MidLevelIrLowerer
                 return operand;
             }
 
-            if (HasSameStorageType(operand.Type, targetType))
+            if (operand.Type == targetType)
             {
                 return operand;
             }
@@ -2597,6 +2877,29 @@ internal sealed class MidLevelIrLowerer
                     "floatcast");
             }
 
+            if ((operand.Type.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.RawPointer)
+                || (operand.Type.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.Integer))
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    targetType.Kind == StarkTypeKind.RawPointer ? "ptrcast" : "intcast");
+            }
+
+            if (operand.Type.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    "ptrcast");
+            }
+
+            if ((operand.Type.Kind == StarkTypeKind.Ascii && targetType.Kind == StarkTypeKind.Unicode)
+                || (operand.Type.Kind == StarkTypeKind.Unicode && targetType.Kind == StarkTypeKind.Ascii))
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    "textcast");
+            }
+
             if (operand.Type.Kind == StarkTypeKind.FixedArray
                 && targetType.Kind == StarkTypeKind.Slice
                 && operand is MidLevelIrLocalOperand localOperand)
@@ -2609,6 +2912,11 @@ internal sealed class MidLevelIrLowerer
                         targetType,
                         $"{localOperand.Name}:slice"),
                     "slice");
+            }
+
+            if (HasSameStorageType(operand.Type, targetType))
+            {
+                return operand;
             }
 
             if (targetType.Kind == StarkTypeKind.Bool && operand.Type.Kind == StarkTypeKind.Bool)
@@ -3172,6 +3480,11 @@ internal sealed class MidLevelIrLowerer
             return EmitTemporary(
                 new MidLevelIrAddressOfLocalRValue(name, type, AddressType(type), $"&{name}"),
                 "addr");
+        }
+
+        private static MidLevelIrOperand CreateAddressOfGlobal(string name, StarkTypeSymbol type)
+        {
+            return new MidLevelIrGlobalAddressOperand(name, type, AddressType(type));
         }
 
         private static bool ShouldAddressLocal(StarkTypeSymbol type, string storageClass)
