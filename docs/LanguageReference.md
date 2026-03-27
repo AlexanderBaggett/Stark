@@ -160,6 +160,9 @@ Range-constrained integers are written as:
 i32[0 255]
 ```
 
+ALL Declared integers are range constrained.
+It is an error to declare an integer without a range constraint.
+
 `void` is not a first-class Stark value type. It is valid only as a function return type.
 
 ### 6.2 Aggregates and Views
