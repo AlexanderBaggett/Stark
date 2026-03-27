@@ -308,26 +308,37 @@ This is the most important remaining compiler milestone.
 ### Globals and Constants
 
 - [x] String global emission for supported literals
-- [ ] Real immutable global constant emission
-  - [ ] scalar immutable globals
-  - [ ] array and slice immutable globals
-  - [ ] struct and record immutable globals
+- [ ] Three-class global binding model
+  - [ ] parse and represent `const`, bare, and `mut` globals distinctly
+  - [ ] enforce immutable-binding vs mutable-rebinding rules
+  - [ ] define `const` as a fully frozen reachable object graph
+  - [ ] diagnostics that distinguish illegal rebinding from illegal mutation
+- [ ] Real fully frozen `const` global emission
+  - [ ] scalar frozen globals
+  - [ ] array and slice frozen globals
+  - [ ] struct and record frozen globals
+  - [ ] nested frozen object graphs
   - [ ] correct `constant` and `unnamed_addr` style flags where valid
-- [ ] Real mutable global data emission
+- [ ] Real immutable global binding emission
+  - [ ] plain immutable scalar/value globals
+  - [ ] immutable globals pointing at mutable heap objects
+  - [ ] aggregate immutable bindings with stable addresses
+  - [ ] tests for immutable global load/address lowering
+- [ ] Real mutable global rebinding emission
   - [ ] zero-initialized mutable globals
   - [ ] scalar-initialized mutable globals
   - [ ] aggregate-initialized mutable globals
   - [ ] tests for mutable global load/store lowering
 - [ ] Better linkage/visibility lowering for globals
   - [ ] module-private/internal/public/export mapping for globals
-  - [ ] linkage defaults for mutable vs immutable globals
+  - [ ] linkage defaults for frozen vs immutable-binding vs mutable-rebinding globals
   - [ ] package-boundary behavior for manifest-backed libraries
   - [x] regression tests over emitted LLVM/global symbol visibility
-- [ ] Constant aggregate initializers
+- [ ] Frozen aggregate initializers for `const` globals
   - [ ] array literal constants
   - [ ] nested aggregate constants
   - [ ] struct and record constants
-  - [ ] folding aggregate literals into global initializers
+  - [ ] folding aggregate literals into frozen global initializers
 
 ## Milestone 4: Modules, Standard Library, and Runtime Surface
 

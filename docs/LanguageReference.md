@@ -281,12 +281,30 @@ Doctrines have the following properties:
 
 ## 9. Globals and Storage Classes
 
-Globals come in two forms:
+Top-level globals do not use local storage-class syntax. Global lifetime is implied by being a top-level declaration.
+
+Stark has three classes of globals:
 
 - `const T name = ...;`
-- `<storage-class> mut? T name = ...;`
+  A fully frozen global object graph. `const` is stronger than an immutable binding: the value and everything transitively reachable through it are deeply immutable for the lifetime of the program.
+- `mut T name = ...;`
+  A mutable global rebinding. The global binding itself may be reassigned after initialization.
+- `T name = ...;`
+  An immutable global binding. The binding itself cannot be rebound, but the referenced value may still contain mutable heap state or other mutability that the type permits. This form also covers ordinary plain immutable global values.
 
-Local variables also require an explicit storage class.
+The intended distinction is:
+
+- `const` means fully frozen global object graph
+- bare global means immutable binding, not deep freeze
+- `mut` means mutable global rebinding
+
+This gives Stark the following source-level global model:
+
+- mutable global rebinding
+- immutable global pointer to mutable heap object
+- fully frozen global object graph
+
+Local variables still require an explicit storage class.
 
 The storage classes are:
 
@@ -303,10 +321,11 @@ The standardized allocation-backed storage classes are:
 - `arena`
   Uses a region allocator intended for fast bump-style allocation with bulk reclamation when the lexical arena region ends.
 
-Mutability is opt-in:
+Mutability remains opt-in:
 
 - bindings are immutable by default
-- `mut` enables reassignment or mutation where the type permits it
+- `mut` enables reassignment where the binding form permits it
+- `const` on a global freezes the reachable object graph rather than merely freezing the top-level name
 
 ## 10. Control Flow
 
