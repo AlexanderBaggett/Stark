@@ -5,7 +5,7 @@ namespace compiler.Tests;
 public sealed class LlvmIrEmissionTests
 {
     [Fact]
-    public void StraightLineFunctionEmitsConcreteLlvmBody()
+    public void StraightLineFunctionEmitsOptimizedLlvmBody()
     {
         var result = Compile(
             """
@@ -22,14 +22,14 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Main()", llvm);
-        Assert.Contains("add i32", llvm);
-        Assert.Contains("ret i32", llvm);
+        Assert.Contains("ret i32 2", llvm);
+        Assert.DoesNotContain("add i32", llvm);
         Assert.DoesNotContain("alloca i32", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Main()", llvm);
     }
 
     [Fact]
-    public void BranchingFunctionEmitsConditionalBranch()
+    public void ConstantBranchConditionsFoldToUnconditionalBranches()
     {
         var result = Compile(
             """
@@ -47,8 +47,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("br i1 true, label %bb1, label %bb2", llvm);
-        Assert.Contains("ret i32", llvm);
+        Assert.Contains("br label %bb1", llvm);
+        Assert.Contains("ret i32 1", llvm);
+        Assert.DoesNotContain("br i1", llvm);
     }
 
     [Fact]
@@ -74,7 +75,34 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("phi i32", llvm);
-        Assert.Contains("[ %v1, %bb1 ], [ %v2, %bb2 ]", llvm);
+        Assert.Contains("[ 1, %bb1 ], [ 2, %bb2 ]", llvm);
+    }
+
+    [Fact]
+    public void GlobalsUseVisibilityAwareLinkageAndConstantKinds()
+    {
+        var result = Compile(
+            """
+            module Globals
+
+            public const i32 Answer = 42;
+            internal static rawptr<i8> Buffer = null;
+            export static rawptr<i8> Visible = null;
+
+            fn i32 Main() {
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("; visibility: public", llvm);
+        Assert.Contains("@Answer = external constant i32", llvm);
+        Assert.Contains("; visibility: internal", llvm);
+        Assert.Contains("@Buffer = external global ptr", llvm);
+        Assert.Contains("; visibility: export", llvm);
+        Assert.Contains("@Visible = external global ptr", llvm);
     }
 
     [Fact]
@@ -97,7 +125,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void FloatExponentEmitsLlvmPowIntrinsicCall()
+    public void ConstantFloatExponentExpressionsFoldBeforeLlvmEmission()
     {
         var result = Compile(
             """
@@ -111,9 +139,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("declare float @llvm.pow.f32(float, float)", llvm);
         Assert.Contains("define fastcc float @Main()", llvm);
-        Assert.Contains("call float @llvm.pow.f32(float 2.0, float 3.0)", llvm);
+        Assert.Contains("ret float 8", llvm);
+        Assert.DoesNotContain("@llvm.pow.f32", llvm);
     }
 
     [Fact]
@@ -142,7 +170,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void LiteralSwitchBodyEmitsConcreteLlvmSwitch()
+    public void ConstantLiteralSwitchesFoldBeforeLlvmEmission()
     {
         var result = Compile(
             """
@@ -163,7 +191,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Main()", llvm);
-        Assert.Contains("switch i32", llvm);
+        Assert.Contains("ret i32 1", llvm);
+        Assert.DoesNotContain("switch i32", llvm);
         Assert.DoesNotContain("icmp eq i32", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Main()", llvm);
     }

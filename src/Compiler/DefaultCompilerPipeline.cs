@@ -21,6 +21,8 @@ public static class DefaultCompilerPipeline
             .Add(new LowerToMidLevelIrPass())
             .Add(new NonLexicalBorrowLifetimeValidationPass())
             .Add(new LowerToSsaIrPass())
+            .Add(new CleanupSsaIrPass())
+            .Add(new PropagateSsaConstantsPass())
             .Add(new LowerToAbiPass())
             .Add(new EmitLlvmIrPass())
             .Build();
@@ -566,7 +568,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "function-effects", "type-check", "lower-ssa", "lower-abi"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "function-effects", "type-check", "const-prop", "lower-abi"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -574,7 +576,7 @@ public static class DefaultCompilerPipeline
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
-            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaIr);
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var llvmModule = new LlvmIrEmitter(
                 context.Input,
                 syntaxModel,
@@ -603,6 +605,42 @@ public static class DefaultCompilerPipeline
             var mir = context.Artifacts.GetRequired(CompilerArtifactKeys.MidLevelIr);
             var ssa = new SsaLowerer().Lower(mir);
             context.Artifacts.Set(CompilerArtifactKeys.SsaIr, ssa);
+        }
+    }
+
+    private sealed class CleanupSsaIrPass : ICompilerPass
+    {
+        public string Id => "cleanup-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["lower-ssa"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaIr);
+            var optimized = new SsaCleanupOptimizer().Optimize(ssa);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
+        }
+    }
+
+    private sealed class PropagateSsaConstantsPass : ICompilerPass
+    {
+        public string Id => "const-prop";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["cleanup-ssa"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var optimized = new SsaConstantPropagator().Optimize(ssa);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
 

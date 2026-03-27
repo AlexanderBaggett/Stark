@@ -1,0 +1,57 @@
+module System.IO.File
+
+ffi fn rawptr<i8> fopen(ascii path, ascii mode);
+ffi fn i32 fclose(rawptr<i8> handle);
+ffi fn i32 fflush(rawptr<i8> handle);
+ffi fn i64 fread(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
+ffi fn i64 fwrite(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
+ffi fn i32 remove(ascii path);
+ffi fn i32 rename(ascii oldPath, ascii newPath);
+ffi fn i32 fputs(ascii text, rawptr<i8> handle);
+
+public fn rawptr<i8> OpenRead(ascii path) {
+    return fopen(path, "rb");
+}
+
+public fn rawptr<i8> OpenWrite(ascii path) {
+    return fopen(path, "wb");
+}
+
+public fn rawptr<i8> OpenAppend(ascii path) {
+    return fopen(path, "ab");
+}
+
+public fn i32 Close(rawptr<i8> handle) {
+    return fclose(handle);
+}
+
+public fn i32 Flush(rawptr<i8> handle) {
+    return fflush(handle);
+}
+
+public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+    return fread(buffer, size, count, handle);
+}
+
+public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+    return fwrite(buffer, size, count, handle);
+}
+
+public fn void WriteText(rawptr<i8> handle, ascii text) {
+    fputs(text, handle);
+    return;
+}
+
+public fn void WriteLine(rawptr<i8> handle, ascii text) {
+    WriteText(handle, text);
+    WriteText(handle, "\n");
+    return;
+}
+
+public fn i32 Delete(ascii path) {
+    return remove(path);
+}
+
+public fn i32 Move(ascii oldPath, ascii newPath) {
+    return rename(oldPath, newPath);
+}

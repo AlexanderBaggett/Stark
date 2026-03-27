@@ -18,6 +18,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<HighLevelIrModule> HighLevelIr = new("lowering.hir");
     public static readonly ArtifactKey<MidLevelIrModule> MidLevelIr = new("lowering.mir");
     public static readonly ArtifactKey<SsaIrModule> SsaIr = new("lowering.ssa");
+    public static readonly ArtifactKey<SsaIrModule> OptimizedSsaIr = new("lowering.ssa.optimized");
     public static readonly ArtifactKey<AbiModel> AbiModel = new("lowering.abi");
     public static readonly ArtifactKey<LlvmIrModule> LlvmIrModule = new("codegen.llvm-ir");
 }

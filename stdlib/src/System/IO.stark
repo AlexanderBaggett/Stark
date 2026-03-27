@@ -1,0 +1,5 @@
+export import System.IO.Stdout
+export import System.IO.Stderr
+export import System.IO.File
+export import System.IO.Path
+module System.IO

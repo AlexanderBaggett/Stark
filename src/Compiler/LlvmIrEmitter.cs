@@ -135,7 +135,8 @@ internal sealed class LlvmIrEmitter
             }
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
-            builder.AppendLine($"@{declaration.Name} = external global {MapType(type)}");
+            var storage = declaration.Kind == DeclarationKind.GlobalConstant ? "constant" : "global";
+            builder.AppendLine($"@{declaration.Name} = external {storage} {MapType(type)}");
             builder.AppendLine();
         }
     }

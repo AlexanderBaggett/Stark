@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--emit-lib|--emit-exe] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--linker tool] [--archiver tool] [--save-temps dir]";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--linker tool] [--archiver tool] [--save-temps dir]";
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -185,7 +185,7 @@ internal static class CompilerCli
             case CliMode.EmitMir:
                 return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.MidLevelIr, ArtifactTextRenderer.Render);
             case CliMode.EmitSsa:
-                return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.SsaIr, ArtifactTextRenderer.Render);
+                return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.OptimizedSsaIr, ArtifactTextRenderer.Render);
             case CliMode.EmitLlvmIr:
                 return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.LlvmIrModule, static module => module.Text);
             case CliMode.EmitObject:
@@ -566,8 +566,10 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-ssa    Print lowered SSA");
         await stdout.WriteLineAsync("  --emit-llvm   Print emitted LLVM IR");
         await stdout.WriteLineAsync("  --emit-obj    Compile LLVM IR to an object file");
+        await stdout.WriteLineAsync("  --compile-only Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package manifest");
         await stdout.WriteLineAsync("  --emit-exe    Build a native executable");
+        await stdout.WriteLineAsync("  --link-only   Build a native executable from the current compilation output");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Inputs and Outputs:");
         await stdout.WriteLineAsync("  [path]                 Read a Stark source file instead of stdin");
@@ -622,9 +624,9 @@ internal static class CompilerCli
             "--emit-mir" => CliMode.EmitMir,
             "--emit-ssa" => CliMode.EmitSsa,
             "--emit-llvm" => CliMode.EmitLlvmIr,
-            "--emit-obj" => CliMode.EmitObject,
+            "--emit-obj" or "--compile-only" => CliMode.EmitObject,
             "--emit-lib" => CliMode.EmitLibrary,
-            "--emit-exe" => CliMode.EmitExecutable,
+            "--emit-exe" or "--link-only" => CliMode.EmitExecutable,
             _ => CliMode.Default
         };
 
@@ -671,7 +673,7 @@ internal static class CompilerCli
         {
             CliMode.Check => "ownership-validate",
             CliMode.EmitMir => "lower-mir",
-            CliMode.EmitSsa => "lower-ssa",
+            CliMode.EmitSsa => "const-prop",
             _ => null
         };
     }

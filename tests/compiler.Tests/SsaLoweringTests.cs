@@ -86,6 +86,55 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void EmptyTrampolineBlocksAreCollapsed()
+    {
+        var mir = new MidLevelIrModule(
+            "Demo",
+            [
+                new MidLevelIrFunction(
+                    "Main",
+                    "Main() -> i32",
+                    StarkTypeSymbols.Integer(32),
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Locals: [],
+                    Blocks:
+                    [
+                        new MidLevelIrBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [1])),
+                        new MidLevelIrBasicBlock(
+                            1,
+                            "bb1_trampoline",
+                            [],
+                            new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [2])),
+                        new MidLevelIrBasicBlock(
+                            2,
+                            "bb2_exit",
+                            [],
+                            new MidLevelIrTerminator(
+                                MidLevelIrTerminatorKind.Return,
+                                [],
+                                Value: new MidLevelIrIntegerConstantOperand(0, StarkTypeSymbols.Integer(32))))
+                    ])
+            ]);
+
+        var lowered = new SsaLowerer().Lower(mir);
+        var function = Assert.Single(lowered.Functions);
+
+        Assert.Equal(2, function.Blocks.Count);
+        Assert.DoesNotContain(function.Blocks, static block => block.Label.Contains("trampoline", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, static block => block.Id == 0);
+        Assert.Contains(function.Blocks, static block => block.Id == 2);
+        var entry = Assert.Single(function.Blocks, static block => block.Id == 0);
+        Assert.Equal(2, entry.Terminator.Targets.Single());
+    }
+
+    [Fact]
     public void LoopHeaderProducesPhiForBackedgeValue()
     {
         var result = Compile(

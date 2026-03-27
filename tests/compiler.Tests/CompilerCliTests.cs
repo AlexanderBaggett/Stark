@@ -43,6 +43,8 @@ public sealed class CompilerCliTests
         Assert.Contains("Targeting and Native Toolchain:", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
+        Assert.Contains("--compile-only", text);
+        Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
     }
 
@@ -156,6 +158,50 @@ public sealed class CompilerCliTests
 
             var exitCode = await CompilerCli.RunAsync(
                 ["--emit-obj", "-o", outputPath],
+                new StringReader(
+                    """
+                    module Demo
+
+                    fn i32 Main() {
+                        return 7;
+                    }
+                    """),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted object file:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(new FileInfo(outputPath).Length > 0);
+        }
+        finally
+        {
+            if (File.Exists(outputPath))
+            {
+                File.Delete(outputPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileOnlyAliasWritesObjectFile()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var extension = OperatingSystem.IsWindows() ? ".obj" : ".o";
+        var outputPath = Path.Combine(Path.GetTempPath(), $"stark-obj-{Guid.NewGuid():N}{extension}");
+
+        try
+        {
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                ["--compile-only", "-o", outputPath],
                 new StringReader(
                     """
                     module Demo
@@ -549,6 +595,78 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
+                    "-o", outputPath,
+                    "--linker", linkerPath,
+                    "-L", librarySearchPath,
+                    "--link-arg=-Wl,--gc-sections",
+                    "--save-temps", tempsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
+            Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
+
+            var linkerLog = await File.ReadAllTextAsync(linkerLogPath);
+            Assert.Contains("-L", linkerLog);
+            Assert.Contains(Path.GetFullPath(librarySearchPath), linkerLog);
+            Assert.Contains("-Wl,--gc-sections", linkerLog);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task LinkOnlyAliasSupportsCustomLinkerLinkArgsAndSavedTemps()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-linkonly-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var librarySearchPath = Path.Combine(tempDirectory.FullName, "native-libs");
+        var tempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        Directory.CreateDirectory(librarySearchPath);
+
+        var linkerLogPath = Path.Combine(tempDirectory.FullName, "linker.log");
+        var linkerPath = await CreateUnixCaptureLinkerAsync(tempDirectory.FullName, linkerLogPath);
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export ffi fn i32 main() {
+                    return 7;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--link-only",
                     "-o", outputPath,
                     "--linker", linkerPath,
                     "-L", librarySearchPath,

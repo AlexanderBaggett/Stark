@@ -104,6 +104,9 @@ internal sealed class SsaLowerer
             }
 
             var phiReplacements = ComputeTrivialPhiReplacements();
+            var trampolineRedirects = ComputeTrampolineRedirects();
+            var targetCache = new Dictionary<int, int>();
+            var predecessorCache = new Dictionary<int, int>();
 
             return new SsaFunction(
                 _function.Name,
@@ -112,7 +115,13 @@ internal sealed class SsaLowerer
                 _function.HasBody,
                 SupportsDirectCodeGeneration: true,
                 _function.EntryBlockId,
-                _reachableOrder.Select(blockId => _blocks[blockId].Build(phiReplacements)).ToArray());
+                _reachableOrder
+                    .Where(blockId => !trampolineRedirects.ContainsKey(blockId))
+                    .Select(blockId => _blocks[blockId].Build(
+                        phiReplacements,
+                        blockId => ResolveCollapsedTarget(blockId, trampolineRedirects, targetCache),
+                        blockId => ResolveCollapsedPredecessor(blockId, trampolineRedirects, predecessorCache)))
+                    .ToArray());
         }
 
         private void LowerBlock(int blockId)
@@ -600,6 +609,48 @@ internal sealed class SsaLowerer
             return replacements;
         }
 
+        private Dictionary<int, int> ComputeTrampolineRedirects()
+        {
+            var redirects = new Dictionary<int, int>();
+
+            foreach (var blockId in _reachableOrder)
+            {
+                if (blockId == _function.EntryBlockId)
+                {
+                    continue;
+                }
+
+                if (!_blocks.TryGetValue(blockId, out var block))
+                {
+                    continue;
+                }
+
+                if (block.Phis.Count != 0 || block.Instructions.Count != 0)
+                {
+                    continue;
+                }
+
+                if (block.Terminator is not { Kind: SsaTerminatorKind.Goto, Targets.Count: 1 })
+                {
+                    continue;
+                }
+
+                if (_predecessors.GetValueOrDefault(blockId, []).Count != 1)
+                {
+                    continue;
+                }
+
+                if (block.Terminator.Targets[0] == blockId)
+                {
+                    continue;
+                }
+
+                redirects[blockId] = block.Terminator.Targets[0];
+            }
+
+            return redirects;
+        }
+
         private static SsaValue RewriteValue(SsaValue value, IReadOnlyDictionary<string, SsaValue> replacements)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -612,6 +663,55 @@ internal sealed class SsaLowerer
             }
 
             return value;
+        }
+
+        private int ResolveCollapsedTarget(
+            int blockId,
+            IReadOnlyDictionary<int, int> redirects,
+            Dictionary<int, int> cache)
+        {
+            if (cache.TryGetValue(blockId, out var resolved))
+            {
+                return resolved;
+            }
+
+            if (!redirects.TryGetValue(blockId, out var target))
+            {
+                cache[blockId] = blockId;
+                return blockId;
+            }
+
+            resolved = ResolveCollapsedTarget(target, redirects, cache);
+            cache[blockId] = resolved;
+            return resolved;
+        }
+
+        private int ResolveCollapsedPredecessor(
+            int blockId,
+            IReadOnlyDictionary<int, int> redirects,
+            Dictionary<int, int> cache)
+        {
+            if (cache.TryGetValue(blockId, out var resolved))
+            {
+                return resolved;
+            }
+
+            if (!redirects.ContainsKey(blockId))
+            {
+                cache[blockId] = blockId;
+                return blockId;
+            }
+
+            var predecessors = _predecessors.GetValueOrDefault(blockId, []);
+            if (predecessors.Count != 1)
+            {
+                cache[blockId] = blockId;
+                return blockId;
+            }
+
+            resolved = ResolveCollapsedPredecessor(predecessors[0], redirects, cache);
+            cache[blockId] = resolved;
+            return resolved;
         }
 
         private static bool TryGetPureValueNumberingKey(SsaRValue value, out string key)
@@ -760,14 +860,17 @@ internal sealed class SsaLowerer
 
             public List<SsaPhiIncoming> Incomings { get; } = [];
 
-            public SsaPhi Build(IReadOnlyDictionary<string, SsaValue> replacements)
+            public SsaPhi Build(
+                IReadOnlyDictionary<string, SsaValue> replacements,
+                Func<int, int> resolveTarget,
+                Func<int, int> resolvePredecessor)
             {
                 return new SsaPhi(
                     Result.Name,
                     VariableName,
                     Type,
                     Incomings.Select(incoming => new SsaPhiIncoming(
-                        incoming.PredecessorBlockId,
+                        resolvePredecessor(incoming.PredecessorBlockId),
                         RewriteValue(incoming.Value, replacements))).ToArray());
             }
         }
@@ -790,16 +893,22 @@ internal sealed class SsaLowerer
 
             public SsaTerminator? Terminator { get; set; }
 
-            public SsaBasicBlock Build(IReadOnlyDictionary<string, SsaValue> replacements)
+            public SsaBasicBlock Build(
+                IReadOnlyDictionary<string, SsaValue> replacements,
+                Func<int, int> resolveTarget,
+                Func<int, int> resolvePredecessor)
             {
                 return new SsaBasicBlock(
                     Id,
                     Label,
                     Phis.Where(phi => !replacements.ContainsKey(phi.Result.Name))
-                        .Select(phi => phi.Build(replacements))
+                        .Select(phi => phi.Build(replacements, resolveTarget, resolvePredecessor))
                         .ToArray(),
                     Instructions.Select(instruction => RewriteInstruction(instruction, replacements)).ToArray(),
-                    RewriteTerminator(Terminator ?? new SsaTerminator(SsaTerminatorKind.Unreachable, []), replacements));
+                    RewriteTerminator(
+                        Terminator ?? new SsaTerminator(SsaTerminatorKind.Unreachable, []),
+                        replacements,
+                        resolveTarget));
             }
         }
 
@@ -917,18 +1026,21 @@ internal sealed class SsaLowerer
 
         private static SsaTerminator RewriteTerminator(
             SsaTerminator terminator,
-            IReadOnlyDictionary<string, SsaValue> replacements)
+            IReadOnlyDictionary<string, SsaValue> replacements,
+            Func<int, int> resolveTarget)
         {
             return new SsaTerminator(
                 terminator.Kind,
-                terminator.Targets,
+                terminator.Targets.Select(resolveTarget).ToArray(),
                 Condition: terminator.Condition is null ? null : RewriteValue(terminator.Condition, replacements),
                 Value: terminator.Value is null ? null : RewriteValue(terminator.Value, replacements),
                 SwitchCases: terminator.SwitchCases?.Select(switchCase => new SsaSwitchCase(
                     switchCase.Label,
-                    switchCase.TargetBlockId,
+                    resolveTarget(switchCase.TargetBlockId),
                     RewriteValue(switchCase.MatchValue, replacements))).ToArray(),
-                DefaultTarget: terminator.DefaultTarget);
+                DefaultTarget: terminator.DefaultTarget is null
+                    ? null
+                    : resolveTarget(terminator.DefaultTarget.Value));
         }
     }
 }

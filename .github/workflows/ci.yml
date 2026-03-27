@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install parser generator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-jre antlr4
+
+      - name: Verify parser generation is up to date
+        run: |
+          ./scripts/regenerate-parser.sh
+          git diff --exit-code -- src/Parsing/StarkLexer.cs src/Parsing/StarkParser.cs src/Parsing/StarkVisitor.cs src/Parsing/StarkBaseVisitor.cs
+
+      - name: Build
+        run: dotnet build Stark.slnx --configuration Release
+
+      - name: Test
+        run: dotnet test Stark.slnx --configuration Release --no-build

@@ -41,3 +41,6 @@ artifacts/
 # OS noise
 .DS_Store
 Thumbs.db
+
+
+BasicAgentCommand.txt

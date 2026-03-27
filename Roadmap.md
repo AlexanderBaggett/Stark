@@ -171,21 +171,21 @@ Goal: Stark lowers through multiple IR stages and can produce native executables
 - [x] SSA lowering
 - [x] Phi node insertion
 - [x] Unreachable block pruning
-- [ ] SSA cleanup / canonicalization pass
-  - [ ] remove trivial copies and identity phi nodes
-  - [ ] collapse empty or trampoline blocks
-  - [ ] canonicalize compare-and-branch shapes
-  - [ ] rerun unreachable-block pruning after cleanup
-- [ ] Value numbering / common subexpression cleanup
+- [x] SSA cleanup / canonicalization pass
+  - [x] remove trivial copies and identity phi nodes
+  - [x] collapse empty or trampoline blocks
+  - [x] canonicalize compare-and-branch shapes
+  - [x] rerun unreachable-block pruning after cleanup
+- [x] Value numbering / common subexpression cleanup
   - [x] local value numbering within a basic block
   - [x] deduplicate repeated arithmetic and comparison expressions
-  - [ ] reuse identical materialized constants and temporaries
+  - [x] reuse identical materialized constants and temporaries
   - [x] add regression tests for eliminated duplicate work
-- [ ] Constant propagation pass
-  - [ ] implement a scalar constant lattice over SSA values
-  - [ ] fold branches and switches with constant conditions
-  - [ ] replace known constant expressions and values
-  - [ ] prune dead blocks and instructions after propagation
+- [x] Constant propagation pass
+  - [x] implement a scalar constant lattice over SSA values
+  - [x] fold branches and switches with constant conditions
+  - [x] replace known constant expressions and values
+  - [x] prune dead blocks and instructions after propagation
 
 ### Control Flow Lowering
 
@@ -252,9 +252,9 @@ Goal: Stark lowers through multiple IR stages and can produce native executables
 - [x] native `Hello World` path
 - [x] target triple detection
 - [x] target data layout emission
-- [ ] object-file and link-step configurability
+- [x] object-file and link-step configurability
   - [x] linker and archiver path overrides
-  - [ ] explicit compile-only vs link-only command modes
+  - [x] explicit compile-only vs link-only command modes
   - [x] pass-through link arguments and library search paths
   - [x] option to preserve intermediate object and LLVM files
 
@@ -322,7 +322,7 @@ This is the most important remaining compiler milestone.
   - [ ] module-private/internal/public/export mapping for globals
   - [ ] linkage defaults for mutable vs immutable globals
   - [ ] package-boundary behavior for manifest-backed libraries
-  - [ ] regression tests over emitted LLVM/global symbol visibility
+  - [x] regression tests over emitted LLVM/global symbol visibility
 - [ ] Constant aggregate initializers
   - [ ] array literal constants
   - [ ] nested aggregate constants
@@ -537,11 +537,11 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
 
 - [x] function-level `nounwind`/`nofree`/`nosync`/`willreturn`/`mustprogress` style emission for the supported cases
 - [x] `hot` / `cold` / inline preference emission
-- [ ] parameter-level `noalias`
-- [ ] parameter-level `readonly` / `writeonly`
-- [ ] parameter-level `nonnull`
-- [ ] parameter-level `align`
-- [ ] parameter-level `dereferenceable`
+- [x] parameter-level `noalias`
+- [x] parameter-level `readonly` / `writeonly`
+- [x] parameter-level `nonnull`
+- [x] parameter-level `align`
+- [x] parameter-level `dereferenceable`
 - [ ] `captures(...)` style escape-derived lowering
 - [ ] better `memory(...)` precision
 
@@ -598,8 +598,8 @@ Goal: Stark is pleasant to work on and pleasant to use.
   - [x] re-export and visibility integration tests
 - [ ] compile-and-run program suite
   - [ ] arithmetic and control-flow sample programs
-  - [ ] multi-module sample programs
-  - [ ] stdlib and native executable sample programs
+  - [x] multi-module sample programs
+  - [x] stdlib and native executable sample programs
 - [x] diagnostics regression tests
   - [x] syntax diagnostic snapshots
   - [x] type-check diagnostic snapshots
@@ -676,8 +676,8 @@ Goal: Stark is not just a compiler experiment, but a coherent language/toolchain
   - [ ] release tagging and version-numbering process
   - [ ] upgrade-notes section for breaking changes
 - [ ] Add CI for build and tests
-  - [ ] Linux build/test workflow
-  - [ ] parser-regeneration drift check
+  - [x] Linux build/test workflow
+  - [x] parser-regeneration drift check
   - [ ] test artifact or failure-log upload
 - [ ] Add sample projects that compile end-to-end
   - [ ] hello-world application

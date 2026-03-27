@@ -1,0 +1,21 @@
+module System.IO.Path
+
+public fn ascii DirectorySeparator() {
+    return "/";
+}
+
+public fn ascii AlternateDirectorySeparator() {
+    return "/";
+}
+
+public fn ascii PathSeparator() {
+    return ":";
+}
+
+public fn ascii CurrentDirectory() {
+    return ".";
+}
+
+public fn ascii ParentDirectory() {
+    return "..";
+}

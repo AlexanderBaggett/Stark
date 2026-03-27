@@ -40,14 +40,23 @@ public sealed class StandardLibraryTests
 
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Console");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Stdout");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Stderr");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.File");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Path");
 
             var rootModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System");
             var reExports = rootModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
             Assert.Contains("System.Console", reExports);
-            Assert.Contains("System.IO.Stdout", reExports);
-            Assert.Contains("System.IO.Stderr", reExports);
+            Assert.Contains("System.IO", reExports);
+
+            var ioModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.IO");
+            var ioReExports = ioModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
+            Assert.Contains("System.IO.Stdout", ioReExports);
+            Assert.Contains("System.IO.Stderr", ioReExports);
+            Assert.Contains("System.IO.File", ioReExports);
+            Assert.Contains("System.IO.Path", ioReExports);
         }
         finally
         {
@@ -103,10 +112,10 @@ public sealed class StandardLibraryTests
                 module App
 
                 export ffi fn i32 main() {
-                    System.Console.Write("Hello");
-                    System.Console.WriteLine(" World");
-                    System.Console.WriteError("Err");
-                    System.Console.WriteErrorLine("!");
+                    stack rawptr<i8> handle = System.IO.File.OpenWrite("io-test.txt");
+                    System.IO.File.WriteLine(handle, "Stark IO");
+                    System.IO.File.Close(handle);
+                    System.Console.WriteLine(System.IO.Path.DirectorySeparator());
                     return 0;
                 }
                 """);
@@ -128,6 +137,7 @@ public sealed class StandardLibraryTests
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = outputPath,
+                WorkingDirectory = appDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -140,8 +150,9 @@ public sealed class StandardLibraryTests
             await process.WaitForExitAsync();
 
             Assert.Equal(0, process.ExitCode);
-            Assert.Equal("Hello World\n", processStdout);
-            Assert.Equal("Err!\n", processStderr);
+            Assert.Equal("/\n", processStdout);
+            Assert.Equal(string.Empty, processStderr);
+            Assert.Equal("Stark IO\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "io-test.txt")));
         }
         finally
         {
