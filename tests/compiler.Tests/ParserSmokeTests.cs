@@ -164,7 +164,7 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 while (true) { }
             }
             """
@@ -172,7 +172,7 @@ public sealed class ParserSmokeTests
         {
             "compilation units require a module declaration",
             """
-            public fn void Main();
+            public fn void Run();
             """
         },
         {
@@ -180,7 +180,7 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 i32 value = 0;
             }
             """
@@ -222,7 +222,7 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 stack [i32; 3] values = {1, 2, 3};
             }
             """
@@ -236,7 +236,7 @@ public sealed class ParserSmokeTests
                 i32 Value;
             }
 
-            fn i32 Main(Boxed value) {
+            fn i32 Run(Boxed value) {
                 switch (value) {
                     case Boxed boxed:
                         return 1;

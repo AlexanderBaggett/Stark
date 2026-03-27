@@ -11,7 +11,7 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn i32 Main(i32 left, i32 right) {
+            fn i32 Run(i32 left, i32 right) {
                 stack mut i32 value = left;
                 value = right;
                 value += 1;
@@ -31,7 +31,7 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn i32 Main(i32 value) {
+            fn i32 Run(i32 value) {
                 stack i32 negated = -value;
                 stack i32 complemented = ~value;
                 stack f32 powered = 2.0 ** 3.0;
@@ -50,7 +50,7 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn i32 Main(i32 left, i32 right) {
+            fn i32 Run(i32 left, i32 right) {
                 stack i32 mixed = left + right * 2 - 1;
                 stack i32 shifted = mixed << 1 >> 1;
                 return shifted;
@@ -68,7 +68,7 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn bool Main(i32 left, i32 right, bool flag) {
+            fn bool Run(i32 left, i32 right, bool flag) {
                 return ((left & right) == 0 && (left ^ right) != 1) || flag ? true : false;
             }
             """,
@@ -92,7 +92,7 @@ public sealed class TypeTypingExpressionFamilyTests
                 return value;
             }
 
-            fn i32 Main(Box box, i32[2] values, bool flag) {
+            fn i32 Run(Box box, i32[2] values, bool flag) {
                 stack Box created = new Box() { Value = 1 };
                 return flag ? Echo(box.Value + created.Value) : values[0];
             }

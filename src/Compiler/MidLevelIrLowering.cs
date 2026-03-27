@@ -8,7 +8,7 @@ internal sealed class MidLevelIrLowerer
 {
     private readonly ParseResult _parseResult;
     private readonly TypeCheckModel _typeModel;
-    private readonly Dictionary<string, StarkParser.FunctionDeclarationContext> _functionsByName;
+    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionsByName;
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
 
@@ -20,10 +20,8 @@ internal sealed class MidLevelIrLowerer
     {
         _parseResult = parseResult;
         _typeModel = typeModel;
-        _functionsByName = parseResult.Root.topLevelDeclaration()
-            .Select(static declaration => declaration.functionDeclaration())
-            .Where(static declaration => declaration is not null)!
-            .ToDictionary(static declaration => declaration.Identifier().GetText(), StringComparer.Ordinal);
+        _functionsByName = DeclaredFunctionSyntaxCollector.Collect(parseResult)
+            .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _typeResolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
         _literalTypes = typeModel.Literals
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
@@ -42,7 +40,7 @@ internal sealed class MidLevelIrLowerer
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
     {
         if (!_functionsByName.TryGetValue(function.Name, out var declaration)
-            || declaration.functionBody().block() is not { } body)
+            || declaration.Body.block() is not { } body)
         {
             return new MidLevelIrFunction(
                 function.Name,
@@ -123,6 +121,11 @@ internal sealed class MidLevelIrLowerer
             MidLevelIrOperand ResultValue,
             MidLevelIrOperand? Address);
 
+        private sealed class ScopeFrame
+        {
+            public List<(string Name, StarkTypeSymbol Type)> Locals { get; } = [];
+        }
+
         private readonly HighLevelIrFunction _function;
         private readonly TypeCheckModel _typeModel;
         private readonly StarkTypeResolver _typeResolver;
@@ -132,6 +135,7 @@ internal sealed class MidLevelIrLowerer
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
         private readonly List<BasicBlockBuilder> _blocks = [];
         private readonly Stack<LoopTargets> _loops = [];
+        private readonly Stack<ScopeFrame> _scopes = [];
         private int _nextBlockId;
         private int _nextTempId;
 
@@ -175,10 +179,15 @@ internal sealed class MidLevelIrLowerer
 
         private void LowerBlock(StarkParser.BlockContext block)
         {
+            _scopes.Push(new ScopeFrame());
+
             foreach (var statement in block.statement())
             {
                 LowerStatement(statement);
             }
+
+            var scope = _scopes.Pop();
+            EmitStorageDead(scope);
         }
 
         private void LowerStatement(StarkParser.StatementContext statement)
@@ -239,6 +248,7 @@ internal sealed class MidLevelIrLowerer
             if (statement.breakStatement() is not null)
             {
                 var loop = _loops.Peek();
+                EmitStorageDeadBeyondDepth(loop.ScopeDepth);
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [loop.BreakTarget]);
                 return;
             }
@@ -246,6 +256,7 @@ internal sealed class MidLevelIrLowerer
             if (statement.continueStatement() is not null)
             {
                 var loop = _loops.Peek();
+                EmitStorageDeadBeyondDepth(loop.ScopeDepth);
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [loop.ContinueTarget]);
                 return;
             }
@@ -263,6 +274,7 @@ internal sealed class MidLevelIrLowerer
             {
                 var name = declarator.Identifier().GetText();
                 RegisterLocal(name, declaredType, storageClass: "local", isMutable: false, isConstant: true);
+                TrackDeclaredLocal(name, declaredType);
                 Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
                 EmitAssignmentFromExpression(name, declaredType, declarator.expression(), declarator.expression().GetText());
             }
@@ -277,6 +289,7 @@ internal sealed class MidLevelIrLowerer
             {
                 var name = declarator.Identifier().GetText();
                 RegisterLocal(name, declaredType, storageClass, declaration.MUT() is not null, isConstant: false);
+                TrackDeclaredLocal(name, declaredType);
                 Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
 
                 if (declarator.variableInitializer() is { } initializer)
@@ -330,6 +343,7 @@ internal sealed class MidLevelIrLowerer
         {
             if (returnStatement.expression() is null)
             {
+                EmitStorageDeadBeyondDepth(0);
                 CurrentBlock.Terminator = new MidLevelIrTerminator(
                     MidLevelIrTerminatorKind.Return,
                     Targets: [],
@@ -339,6 +353,7 @@ internal sealed class MidLevelIrLowerer
             }
 
             var operand = LowerExpressionToOperand(returnStatement.expression(), _function.Signature.ReturnType);
+            EmitStorageDeadBeyondDepth(0);
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Return,
                 Targets: [],
@@ -931,7 +946,7 @@ internal sealed class MidLevelIrLowerer
                 ConditionText: whileStatement.expression().GetText(),
                 Condition: LowerExpressionToOperand(whileStatement.expression(), StarkTypeSymbols.Bool));
 
-            _loops.Push(new LoopTargets(conditionBlock.Id, exitBlock.Id));
+            _loops.Push(new LoopTargets(conditionBlock.Id, exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
             LowerStatement(whileStatement.statement());
             _loops.Pop();
@@ -987,7 +1002,7 @@ internal sealed class MidLevelIrLowerer
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bodyBlock.Id]);
             }
 
-            _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id));
+            _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
             LowerStatement(forStatement.statement());
             _loops.Pop();
@@ -1382,6 +1397,32 @@ internal sealed class MidLevelIrLowerer
             return expectedType is null ? current : CoerceOperand(current, expectedType);
         }
 
+        private bool TryInitializePostfixState(
+            StarkParser.PrimaryExpressionContext expression,
+            out MidLevelIrOperand? currentValue,
+            out string? currentName)
+        {
+            currentValue = null;
+            currentName = null;
+
+            if (expression.Identifier() is { } identifier)
+            {
+                currentValue = TryResolveNamedValueOperand(identifier.GetText());
+                currentName = currentValue is null ? identifier.GetText() : null;
+                return true;
+            }
+
+            if (expression.qualifiedName() is { } qualifiedName)
+            {
+                currentValue = TryResolveNamedValueOperand(qualifiedName.GetText());
+                currentName = currentValue is null ? qualifiedName.GetText() : null;
+                return true;
+            }
+
+            currentValue = LowerPrimaryExpression(expression, expectedType: null);
+            return currentValue is not null;
+        }
+
         private MidLevelIrOperand? LowerPrimaryExpression(StarkParser.PrimaryExpressionContext expression, StarkTypeSymbol? expectedType)
         {
             if (expression.literal() is { } literal)
@@ -1564,11 +1605,13 @@ internal sealed class MidLevelIrLowerer
                         continue;
                     }
 
-                    if (current is not MidLevelIrLocalOperand local || !IsAddressableLocal(local.Name) || current.Type.ElementType is null)
+                    if (current is not MidLevelIrLocalOperand local || current.Type.ElementType is null)
                     {
                         MarkUnsupported();
                         return null;
                     }
+
+                    EnsureAddressableLocal(local.Name);
 
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
@@ -1577,9 +1620,7 @@ internal sealed class MidLevelIrLowerer
                         return null;
                     }
 
-                    var baseAddress = EmitTemporary(
-                        new MidLevelIrAddressOfLocalRValue(local.Name, local.Type, AddressType(local.Type), $"&{local.Name}"),
-                        "addr");
+                    var baseAddress = CreateAddressOfLocal(local.Name, local.Type);
                     if (baseAddress is null)
                     {
                         return null;
@@ -1667,59 +1708,205 @@ internal sealed class MidLevelIrLowerer
                 return false;
             }
 
-            string? functionName = null;
-            if (expression.primaryExpression().Identifier() is { } identifier)
-            {
-                functionName = identifier.GetText();
-            }
-            else if (expression.primaryExpression().qualifiedName() is { } qualifiedName)
-            {
-                functionName = qualifiedName.GetText();
-            }
-
-            if (functionName is null)
+            if (!TryInitializePostfixState(expression.primaryExpression(), out var currentValue, out var currentName))
             {
                 return false;
             }
 
-            for (var index = 0; index < expression.postfixPart().Length - 1; index++)
+            for (var index = 0; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
-                if (postfixPart.argumentList() is not null || postfixPart.expressionList() is not null || postfixPart.Identifier() is null)
+
+                if (postfixPart.argumentList() is { } argumentList)
+                {
+                    if (currentName is null
+                        || !TryBuildCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var directCall))
+                    {
+                        return false;
+                    }
+
+                    if (index == expression.postfixPart().Length - 1)
+                    {
+                        call = directCall;
+                        return true;
+                    }
+
+                    if (directCall.Type.Kind == StarkTypeKind.Void)
+                    {
+                        return false;
+                    }
+
+                    currentValue = EmitTemporary(directCall, "call");
+                    currentName = null;
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (postfixPart.expressionList() is { } expressionList)
+                {
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    currentValue = LowerIndexAccess(currentValue, expressionList);
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                var memberName = postfixPart.Identifier()?.GetText();
+                if (memberName is null)
                 {
                     return false;
                 }
 
-                functionName = $"{functionName}.{postfixPart.Identifier().GetText()}";
+                if (currentValue is not null
+                    && index + 1 < expression.postfixPart().Length
+                    && expression.postfixPart()[index + 1].argumentList() is { } memberArguments)
+                {
+                    if (!TryBuildMemberCall(currentValue, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out var memberCall))
+                    {
+                        return false;
+                    }
+
+                    if (index + 1 == expression.postfixPart().Length - 1)
+                    {
+                        call = memberCall;
+                        return true;
+                    }
+
+                    if (memberCall.Type.Kind == StarkTypeKind.Void)
+                    {
+                        return false;
+                    }
+
+                    currentValue = EmitTemporary(memberCall, "call");
+                    currentName = null;
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    index++;
+                    continue;
+                }
+
+                if (currentValue is not null)
+                {
+                    currentValue = LowerFieldAccess(currentValue, memberName);
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (currentName is null)
+                {
+                    return false;
+                }
+
+                currentName = $"{currentName}.{memberName}";
             }
 
-            if (functionName is null || !_typeModel.Functions.TryGetValue(functionName, out var signature))
+            return false;
+        }
+
+        private bool TryBuildCall(
+            string functionName,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+
+            if (!_typeModel.Functions.TryGetValue(functionName, out var signature))
             {
-                MarkUnsupported();
                 return false;
             }
 
-            var loweredArguments = new List<MidLevelIrOperand>();
-            for (var index = 0; index < Math.Min(arguments.argument().Length, signature.Parameters.Count); index++)
+            return TryBuildCall(functionName, signature, receiver: null, arguments, text, out call);
+        }
+
+        private bool TryBuildMemberCall(
+            MidLevelIrOperand receiver,
+            string memberName,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+
+            if (receiver.Type.NamedType is not { } namedTypeName
+                || !_typeModel.Functions.TryGetValue($"{namedTypeName}.{memberName}", out var signature)
+                || signature.Parameters.Count == 0)
             {
-                var parameterType = signature.Parameters[index].Type;
+                return false;
+            }
+
+            return TryBuildCall(signature.Name, signature, receiver, arguments, text, out call);
+        }
+
+        private bool TryBuildCall(
+            string functionName,
+            TypedFunctionSignature signature,
+            MidLevelIrOperand? receiver,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+
+            var loweredArguments = new List<MidLevelIrOperand>();
+            var indirectArgumentLocals = new List<string?>();
+            var receiverOffset = receiver is null ? 0 : 1;
+            var explicitParameterCount = Math.Max(0, signature.Parameters.Count - receiverOffset);
+
+            if (receiver is not null)
+            {
+                var receiverOperand = CoerceOperand(receiver, signature.Parameters[0].Type);
+                if (receiverOperand is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(receiverOperand);
+                indirectArgumentLocals.Add(ResolveIndirectArgumentLocal(signature.Parameters[0].Type, receiverOperand));
+            }
+
+            for (var index = 0; index < Math.Min(arguments.argument().Length, explicitParameterCount); index++)
+            {
+                var parameterType = signature.Parameters[index + receiverOffset].Type;
                 var argument = LowerExpressionToOperand(arguments.argument(index).expression(), parameterType);
                 if (argument is null)
                 {
-                    MarkUnsupported();
                     return false;
                 }
 
                 loweredArguments.Add(argument);
+                indirectArgumentLocals.Add(ResolveIndirectArgumentLocal(parameterType, argument));
             }
 
-            if (arguments.argument().Length != signature.Parameters.Count)
+            if (arguments.argument().Length != explicitParameterCount)
             {
-                MarkUnsupported();
                 return false;
             }
 
-            call = new MidLevelIrCallRValue(functionName, loweredArguments, signature.ReturnType, expression.GetText());
+            call = new MidLevelIrCallRValue(
+                functionName,
+                loweredArguments,
+                signature.ReturnType,
+                text,
+                indirectArgumentLocals);
             return true;
         }
 
@@ -1787,6 +1974,24 @@ internal sealed class MidLevelIrLowerer
 
         private MidLevelIrOperand? ResolveNamedOperand(string name)
         {
+            var operand = TryResolveNamedValueOperand(name);
+            if (operand is not null)
+            {
+                return operand;
+            }
+
+            if (_typeModel.Functions.ContainsKey(name))
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            MarkUnsupported();
+            return null;
+        }
+
+        private MidLevelIrOperand? TryResolveNamedValueOperand(string name)
+        {
             if (_localsByName.TryGetValue(name, out var local))
             {
                 return new MidLevelIrLocalOperand(local.Name, local.Type);
@@ -1802,13 +2007,6 @@ internal sealed class MidLevelIrLowerer
                 return new MidLevelIrGlobalOperand(name, global);
             }
 
-            if (_typeModel.Functions.ContainsKey(name))
-            {
-                MarkUnsupported();
-                return null;
-            }
-
-            MarkUnsupported();
             return null;
         }
 
@@ -1844,7 +2042,7 @@ internal sealed class MidLevelIrLowerer
 
             var path = new List<PlacePathSegment>();
             var currentType = root.Type;
-            var supportsAddressModel = root is MidLevelIrLocalOperand localRoot && IsAddressableLocal(localRoot.Name);
+            var supportsAddressModel = root is MidLevelIrLocalOperand;
             var usesAddressModel = false;
 
             foreach (var postfixPart in postfixExpression.postfixPart())
@@ -1874,8 +2072,14 @@ internal sealed class MidLevelIrLowerer
 
                         if (currentType.Kind == StarkTypeKind.FixedArray && supportsAddressModel)
                         {
+                            if (root is not MidLevelIrLocalOperand localRoot || currentType.ElementType is null)
+                            {
+                                return false;
+                            }
+
+                            EnsureAddressableLocal(localRoot.Name);
                             var indexOperand = LowerExpressionToOperand(indexExpression);
-                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer || currentType.ElementType is null)
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
                             {
                                 return false;
                             }
@@ -2085,10 +2289,8 @@ internal sealed class MidLevelIrLowerer
         private MidLevelIrOperand? BuildAddress(PlaceTarget target)
         {
             MidLevelIrOperand? currentValue = ResolveNamedOperand(target.RootName);
-            MidLevelIrOperand? currentAddress = currentValue is MidLevelIrLocalOperand local && IsAddressableLocal(local.Name)
-                ? EmitTemporary(
-                    new MidLevelIrAddressOfLocalRValue(local.Name, local.Type, AddressType(local.Type), $"&{local.Name}"),
-                    "addr")
+            MidLevelIrOperand? currentAddress = currentValue is MidLevelIrLocalOperand local
+                ? CreateAddressOfLocal(local.Name, local.Type)
                 : null;
             var currentType = target.RootType;
 
@@ -2397,9 +2599,9 @@ internal sealed class MidLevelIrLowerer
 
             if (operand.Type.Kind == StarkTypeKind.FixedArray
                 && targetType.Kind == StarkTypeKind.Slice
-                && operand is MidLevelIrLocalOperand localOperand
-                && IsAddressableLocal(localOperand.Name))
+                && operand is MidLevelIrLocalOperand localOperand)
             {
+                EnsureAddressableLocal(localOperand.Name);
                 return EmitTemporary(
                     new MidLevelIrMakeSliceFromLocalRValue(
                         localOperand.Name,
@@ -2683,6 +2885,73 @@ internal sealed class MidLevelIrLowerer
             _localsByName[name] = local;
         }
 
+        private void TrackDeclaredLocal(string name, StarkTypeSymbol type)
+        {
+            if (_scopes.Count == 0)
+            {
+                return;
+            }
+
+            _scopes.Peek().Locals.Add((name, type));
+        }
+
+        private void EmitStorageDead(ScopeFrame scope)
+        {
+            if (CurrentBlock.HasTerminator)
+            {
+                return;
+            }
+
+            for (var index = scope.Locals.Count - 1; index >= 0; index--)
+            {
+                var (name, type) = scope.Locals[index];
+                Emit(MidLevelIrStatementKind.StorageDead, name, name, type);
+            }
+        }
+
+        private void EmitStorageDeadBeyondDepth(int depth)
+        {
+            if (CurrentBlock.HasTerminator)
+            {
+                return;
+            }
+
+            var currentDepth = _scopes.Count;
+            foreach (var scope in _scopes)
+            {
+                if (currentDepth <= depth)
+                {
+                    break;
+                }
+
+                for (var index = scope.Locals.Count - 1; index >= 0; index--)
+                {
+                    var (name, type) = scope.Locals[index];
+                    Emit(MidLevelIrStatementKind.StorageDead, name, name, type);
+                }
+
+                currentDepth--;
+            }
+        }
+
+        private string? ResolveIndirectArgumentLocal(StarkTypeSymbol parameterType, MidLevelIrOperand argument)
+        {
+            if (!RequiresIndirectArgument(parameterType)
+                || argument is not MidLevelIrLocalOperand localOperand)
+            {
+                return null;
+            }
+
+            EnsureAddressableLocal(localOperand.Name);
+            return localOperand.Name;
+        }
+
+        private static bool RequiresIndirectArgument(StarkTypeSymbol type)
+        {
+            return type.BorrowKind != StarkBorrowKind.None
+                || type.InitializationKind != StarkInitializationKind.None;
+        }
+
         private void EmitAssignment(LoweredAssignment assignment)
         {
             if (assignment.Address is not null)
@@ -2877,9 +3146,37 @@ internal sealed class MidLevelIrLowerer
             return _localsByName.TryGetValue(name, out var local) && local.IsAddressable;
         }
 
+        private void EnsureAddressableLocal(string name)
+        {
+            if (!_localsByName.TryGetValue(name, out var local) || local.IsAddressable)
+            {
+                return;
+            }
+
+            var addressableLocal = local with { IsAddressable = true };
+            _localsByName[name] = addressableLocal;
+
+            for (var index = 0; index < _locals.Count; index++)
+            {
+                if (string.Equals(_locals[index].Name, name, StringComparison.Ordinal))
+                {
+                    _locals[index] = addressableLocal;
+                    break;
+                }
+            }
+        }
+
+        private MidLevelIrOperand? CreateAddressOfLocal(string name, StarkTypeSymbol type)
+        {
+            EnsureAddressableLocal(name);
+            return EmitTemporary(
+                new MidLevelIrAddressOfLocalRValue(name, type, AddressType(type), $"&{name}"),
+                "addr");
+        }
+
         private static bool ShouldAddressLocal(StarkTypeSymbol type, string storageClass)
         {
-            return storageClass != "temp" && type.Kind == StarkTypeKind.FixedArray;
+            return false;
         }
 
         private static StarkTypeSymbol AddressType(StarkTypeSymbol pointeeType)
@@ -2952,6 +3249,6 @@ internal sealed class MidLevelIrLowerer
             }
         }
 
-        private readonly record struct LoopTargets(int ContinueTarget, int BreakTarget);
+        private readonly record struct LoopTargets(int ContinueTarget, int BreakTarget, int ScopeDepth);
     }
 }

@@ -19,7 +19,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 Consume(box);
                 box = new Box() { Value = 2 };
@@ -29,9 +29,9 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
-        Assert.Contains("box", ownership.Functions["Main"].Moves);
-        Assert.Contains("box", ownership.Functions["Main"].ImplicitDrops);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("box", ownership.Functions["Run"].Moves);
+        Assert.Contains("box", ownership.Functions["Run"].ImplicitDrops);
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
 
                 if (true) {
@@ -63,7 +63,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 stack i32 count = 0;
 
@@ -97,7 +97,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
 
                 if (true) {
@@ -143,7 +143,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box;
                 return 1;
             }
@@ -151,7 +151,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.DoesNotContain("box", ownership.Functions["Main"].ImplicitDrops);
+        Assert.DoesNotContain("box", ownership.Functions["Run"].ImplicitDrops);
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box;
                 return box.Value;
             }
@@ -187,7 +187,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 i32 Right;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Pair pair;
                 pair.Left = 1;
                 pair.Right = 2;
@@ -197,7 +197,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -216,7 +216,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Pair pair;
                 pair.Left = 1;
                 Consume(pair);
@@ -240,7 +240,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 i32 Right;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Pair pair;
                 pair.Left = 1;
                 return 0;
@@ -267,7 +267,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
                 stack ascii left = pair.Left;
                 Consume(pair);
@@ -300,7 +300,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
                 stack ascii left = pair.Left;
                 pair.Left = "c";
@@ -311,7 +311,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -326,7 +326,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 ascii Right;
             }
 
-            fn i32 Main(bool choose) {
+            fn i32 Run(bool choose) {
                 stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
 
                 if (choose) {
@@ -354,7 +354,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 ascii Right;
             }
 
-            fn i32 Main(bool choose) {
+            fn i32 Run(bool choose) {
                 stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
 
                 if (choose) {
@@ -369,7 +369,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -384,7 +384,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 i32 Right;
             }
 
-            fn i32 Main(bool choose) {
+            fn i32 Run(bool choose) {
                 stack mut Pair pair;
 
                 if (choose) {
@@ -400,7 +400,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -415,7 +415,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 i32 Right;
             }
 
-            fn i32 Main(bool choose) {
+            fn i32 Run(bool choose) {
                 stack mut Pair pair;
 
                 if (choose) {
@@ -482,7 +482,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32 Source();
 
-            fn void Main() {
+            fn void Run() {
                 stack retborrow i32 alias = Source();
                 alias = Source();
 
@@ -503,7 +503,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32 Source();
 
-            fn void Main() {
+            fn void Run() {
                 stack retborrow i32 outer;
 
                 {
@@ -533,7 +533,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32 Source();
 
-            fn retborrow i32 Main() {
+            fn retborrow i32 Run() {
                 {
                     stack retborrow i32 alias = Source();
                     return alias;

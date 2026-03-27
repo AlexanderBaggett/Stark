@@ -13,7 +13,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             record Pair(i32 Left, i32 Right) { }
 
-            fn void Main() {
+            fn void Run() {
                 stack Pair pair = new Pair(1, false);
             }
             """);
@@ -31,7 +31,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             record Pair(i32 Left, i32 Right) { }
 
-            fn void Main() {
+            fn void Run() {
                 stack Pair pair = new Pair(1);
             }
             """);
@@ -51,7 +51,7 @@ public sealed class TypeTypingDiagnosticsTests
                 i32 Value;
             }
 
-            fn void Main() {
+            fn void Run() {
                 stack Box box = new Box() { Value = 1, Value = 2 };
             }
             """);
@@ -69,7 +69,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             record Pair(i32 Left, i32 Right) { }
 
-            fn void Main() {
+            fn void Run() {
                 stack Pair pair = new Pair(1, 2) { Left = 3 };
             }
             """);
@@ -85,7 +85,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 stack i32[2] values = { 1, false };
             }
             """);
@@ -101,7 +101,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return 1.5;
             }
             """);
@@ -121,7 +121,7 @@ public sealed class TypeTypingDiagnosticsTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = false;
                 return 0;
@@ -143,7 +143,7 @@ public sealed class TypeTypingDiagnosticsTests
                 return value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return Echo(false);
             }
             """);
@@ -159,7 +159,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn f32 Main() {
+            fn f32 Run() {
                 return 1.0 +% 2.0;
             }
             """,
@@ -176,7 +176,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32[2] values = { 1, 2 };
                 values[];
                 return 0;
@@ -198,7 +198,7 @@ public sealed class TypeTypingDiagnosticsTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Value();
             }
@@ -219,7 +219,7 @@ public sealed class TypeTypingDiagnosticsTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Value[0];
             }

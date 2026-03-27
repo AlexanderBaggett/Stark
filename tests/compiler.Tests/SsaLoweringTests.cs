@@ -11,7 +11,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main(bool flag) {
+            fn i32 Run(bool flag) {
                 stack mut i32 value = 0;
                 if (flag) {
                     value = 1;
@@ -39,9 +39,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 a, i32 b) {
-                stack i32 first = a + b;
-                stack i32 second = b + a;
+            fn i32 Run(i32 left, i32 right) {
+                stack i32 first = left + right;
+                stack i32 second = right + left;
                 return first + second;
             }
             """);
@@ -63,7 +63,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main(bool flag) {
+            fn i32 Run(bool flag) {
                 stack mut i32 value = 7;
                 if (flag) {
                     value = 7;
@@ -92,8 +92,8 @@ public sealed class SsaLoweringTests
             "Demo",
             [
                 new MidLevelIrFunction(
-                    "Main",
-                    "Main() -> i32",
+                    "Run",
+                    "Run() -> i32",
                     StarkTypeSymbols.Integer(32),
                     [],
                     HasBody: true,
@@ -141,7 +141,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32 i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
@@ -161,13 +161,46 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void AggregateBranchJoinProducesByValuePhi()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run(bool flag) {
+                stack mut Box box = new Box() { Value = 0 };
+                if (flag) {
+                    box = new Box() { Value = 1 };
+                } else {
+                    box = new Box() { Value = 2 };
+                }
+
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+
+        var joinBlock = Assert.Single(function.Blocks, static block => block.Phis.Count == 1);
+        var phi = Assert.Single(joinBlock.Phis);
+        Assert.Equal("box", phi.VariableName);
+        Assert.Equal(StarkTypeKind.Named, phi.Type.Kind);
+        Assert.Equal(2, phi.Incomings.Count);
+    }
+
+    [Fact]
     public void UnreachableJoinBlocksArePrunedFromSsa()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -194,7 +227,7 @@ public sealed class SsaLoweringTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -216,7 +249,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32[3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
@@ -227,6 +260,10 @@ public sealed class SsaLoweringTests
         var function = Assert.Single(GetSsa(result).Functions);
         var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
 
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "values" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "values" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeStartInstruction { LocalName: "values" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeEndInstruction { LocalName: "values" });
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaInsertIndexRValue });
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaExtractIndexRValue });
     }
@@ -238,7 +275,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack i32[3] values = { 4, 7, 9 };
                 stack i32[] view = values;
                 return view[index];
@@ -250,6 +287,8 @@ public sealed class SsaLoweringTests
         var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
 
         Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "values" });
+        Assert.Contains(instructions, static instruction => instruction is SsaLifetimeStartInstruction { LocalName: "values" });
+        Assert.Contains(instructions, static instruction => instruction is SsaLifetimeEndInstruction { LocalName: "values" });
         Assert.Contains(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "values" });
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaMakeSliceFromLocalRValue });
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaSliceElementAddressRValue });
@@ -263,7 +302,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack mut i32[3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
@@ -275,6 +314,8 @@ public sealed class SsaLoweringTests
         var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
 
         Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "values" });
+        Assert.Contains(instructions, static instruction => instruction is SsaLifetimeStartInstruction { LocalName: "values" });
+        Assert.Contains(instructions, static instruction => instruction is SsaLifetimeEndInstruction { LocalName: "values" });
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaAddressOfLocalRValue });
         Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaElementAddressRValue });
         Assert.Contains(instructions, static instruction => instruction is SsaStoreIndirectInstruction);
@@ -288,7 +329,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32[] view, i32 index) {
+            fn i32 Run(i32[] view, i32 index) {
                 view[index] = 9;
                 return view[index];
             }

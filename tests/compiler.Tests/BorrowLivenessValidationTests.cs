@@ -25,7 +25,7 @@ public sealed class BorrowLivenessValidationTests
             result.Diagnostics,
             diagnostic => diagnostic.Code == "STK4201"
                 && diagnostic.Message.Contains("cannot move 'box' into call 'Consume'", StringComparison.Ordinal));
-        Assert.False(result.Model.Functions["Main"].OwnershipValid);
+        Assert.False(result.Model.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public sealed class BorrowLivenessValidationTests
         ]));
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK4201");
-        Assert.True(result.Model.Functions["Main"].OwnershipValid);
+        Assert.True(result.Model.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public sealed class BorrowLivenessValidationTests
             result.Diagnostics,
             diagnostic => diagnostic.Code == "STK4201"
                 && diagnostic.Message.Contains("cannot overwrite 'box'", StringComparison.Ordinal));
-        Assert.False(result.Model.Functions["Main"].OwnershipValid);
+        Assert.False(result.Model.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public sealed class BorrowLivenessValidationTests
         var result = Validate(module);
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK4201");
-        Assert.True(result.Model.Functions["Main"].OwnershipValid);
+        Assert.True(result.Model.Functions["Run"].OwnershipValid);
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public sealed class BorrowLivenessValidationTests
             result.Diagnostics,
             diagnostic => diagnostic.Code == "STK4201"
                 && diagnostic.Message.Contains("cannot move 'box' into call 'Consume'", StringComparison.Ordinal));
-        Assert.False(result.Model.Functions["Main"].OwnershipValid);
+        Assert.False(result.Model.Functions["Run"].OwnershipValid);
     }
 
     private static ValidationResult Validate(MidLevelIrModule module)
@@ -95,7 +95,7 @@ public sealed class BorrowLivenessValidationTests
             NamedTypes: new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal),
             Functions: new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
             {
-                ["Main"] = new TypedFunctionSignature("Main", StarkTypeSymbols.Integer(32), [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)]),
+                ["Run"] = new TypedFunctionSignature("Run", StarkTypeSymbols.Integer(32), [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)]),
                 ["Consume"] = new TypedFunctionSignature("Consume", StarkTypeSymbols.Void, [new TypedParameterSymbol("value", BoxType)])
             },
             Globals: new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal),
@@ -104,7 +104,7 @@ public sealed class BorrowLivenessValidationTests
             "Demo",
             new Dictionary<string, FunctionOwnershipSummary>(StringComparer.Ordinal)
             {
-                ["Main"] = new FunctionOwnershipSummary("Main", OwnershipValid: true, ImplicitDrops: [], Moves: [])
+                ["Run"] = new FunctionOwnershipSummary("Run", OwnershipValid: true, ImplicitDrops: [], Moves: [])
             });
 
         var model = new NonLexicalBorrowLifetimeValidator(context, module, typeModel, ownership).Validate();
@@ -114,8 +114,8 @@ public sealed class BorrowLivenessValidationTests
     private static MidLevelIrModule BuildLinearModule(IReadOnlyList<MidLevelIrStatement> statements)
     {
         var function = new MidLevelIrFunction(
-            "Main",
-            "i32 Main()",
+            "Run",
+            "i32 Run()",
             StarkTypeSymbols.Integer(32),
             Parameters: [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)],
             HasBody: true,
@@ -162,8 +162,8 @@ public sealed class BorrowLivenessValidationTests
         }
 
         var function = new MidLevelIrFunction(
-            "Main",
-            "i32 Main(bool choose)",
+            "Run",
+            "i32 Run(bool choose)",
             StarkTypeSymbols.Integer(32),
             Parameters: [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)],
             HasBody: true,

@@ -168,6 +168,8 @@ internal sealed class SsaCleanupOptimizer
                     case SsaStoreLocalInstruction:
                     case SsaStoreIndirectInstruction:
                     case SsaStoreGlobalInstruction:
+                    case SsaLifetimeStartInstruction:
+                    case SsaLifetimeEndInstruction:
                         memoryVersion++;
                         break;
                 }
@@ -470,6 +472,8 @@ internal sealed class SsaCleanupOptimizer
         return instruction switch
         {
             SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
+            SsaLifetimeStartInstruction => [],
+            SsaLifetimeEndInstruction => [],
             SsaStoreLocalInstruction storeLocal => [storeLocal.Value],
             SsaStoreIndirectInstruction storeIndirect => [storeIndirect.Address, storeIndirect.Value],
             SsaStoreGlobalInstruction storeGlobal => [storeGlobal.Value],
@@ -789,6 +793,8 @@ internal sealed class SsaCleanupOptimizer
                 valueInstruction.ResultName,
                 RewriteRValue(valueInstruction.Value, replacements)),
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
+            SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
+            SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
             SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                 storeLocal.LocalName,
                 storeLocal.LocalType,
@@ -827,7 +833,8 @@ internal sealed class SsaCleanupOptimizer
                 call.FunctionName,
                 call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
                 call.Type,
-                call.Text),
+                call.Text,
+                call.IndirectArgumentLocalNames),
             SsaConvertRValue convert => new SsaConvertRValue(
                 RewriteValue(convert.Operand, replacements),
                 convert.TargetType,
@@ -1734,6 +1741,8 @@ internal sealed class SsaConstantPropagator
                 valueInstruction.ResultName,
                 RewriteRValue(valueInstruction.Value, replacements)),
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
+            SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
+            SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
             SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                 storeLocal.LocalName,
                 storeLocal.LocalType,
@@ -1772,7 +1781,8 @@ internal sealed class SsaConstantPropagator
                 call.FunctionName,
                 call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
                 call.Type,
-                call.Text),
+                call.Text,
+                call.IndirectArgumentLocalNames),
             SsaConvertRValue convert => new SsaConvertRValue(
                 RewriteValue(convert.Operand, replacements),
                 convert.TargetType,

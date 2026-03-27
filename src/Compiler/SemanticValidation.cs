@@ -14,7 +14,7 @@ internal sealed class SemanticValidator
     private readonly TypeCheckModel _typeModel;
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<string, TopLevelDeclarationModel> _syntaxDeclarations;
-    private readonly Dictionary<string, StarkParser.FunctionDeclarationContext> _functionDeclarations;
+    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
 
     public SemanticValidator(
@@ -33,10 +33,8 @@ internal sealed class SemanticValidator
         _typeModel = typeModel;
         _typeResolver = new StarkTypeResolver(context, "semantic-validate", moduleGraph, typeModel.NamedTypes);
         _syntaxDeclarations = syntaxModel.Declarations.ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
-        _functionDeclarations = parseResult.Root.topLevelDeclaration()
-            .Select(static declaration => declaration.functionDeclaration())
-            .Where(static declaration => declaration is not null)!
-            .ToDictionary(static declaration => declaration.Identifier().GetText(), StringComparer.Ordinal);
+        _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult)
+            .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
     }
 
     public SemanticValidationModel Validate()
@@ -78,9 +76,9 @@ internal sealed class SemanticValidator
         }
     }
 
-    private void ValidateFunction(StarkParser.FunctionDeclarationContext functionDeclaration)
+    private void ValidateFunction(DeclaredFunctionSyntax functionDeclaration)
     {
-        var name = functionDeclaration.Identifier().GetText();
+        var name = functionDeclaration.Name;
         if (!_typeModel.Functions.TryGetValue(name, out var signature)
             || !_effectModel.Functions.TryGetValue(name, out var effects)
             || !_syntaxDeclarations.TryGetValue(name, out var syntaxDeclaration)
@@ -94,7 +92,7 @@ internal sealed class SemanticValidator
         summary.SetParameters(signature.Parameters, _typeModel.NamedTypes);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
-        if (functionDeclaration.functionBody().block() is not { } block)
+        if (functionDeclaration.Body.block() is not { } block)
         {
             return;
         }
@@ -116,13 +114,13 @@ internal sealed class SemanticValidator
     }
 
     private void ValidateFunctionSignature(
-        StarkParser.FunctionDeclarationContext functionDeclaration,
+        DeclaredFunctionSyntax functionDeclaration,
         FunctionDeclarationModel declaration,
         TypedFunctionSignature signature,
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
-        ValidateTypeUsage(signature.ReturnType, TypeUsage.Return, functionDeclaration.returnType(), declaration.Modifiers.IsFfi);
+        ValidateTypeUsage(signature.ReturnType, TypeUsage.Return, functionDeclaration.ReturnType, declaration.Modifiers.IsFfi);
 
         if (signature.ReturnType.BorrowKind == StarkBorrowKind.Borrow)
         {
@@ -130,17 +128,17 @@ internal sealed class SemanticValidator
                 summary,
                 "STK4000",
                 $"Function '{signature.Name}' cannot return a plain 'borrow' value. Use 'retborrow' or 'storeborrow'.",
-                functionDeclaration.returnType());
+                functionDeclaration.ReturnType);
         }
 
         if (effects.IsPure && signature.ReturnType.InitializationKind != StarkInitializationKind.None)
         {
-            EffectError(summary, "STK4100", $"Law '{signature.Name}' cannot return an 'out' or 'init' type.", functionDeclaration.returnType());
+            EffectError(summary, "STK4100", $"Law '{signature.Name}' cannot return an 'out' or 'init' type.", functionDeclaration.ReturnType);
         }
 
-        for (var index = 0; index < functionDeclaration.parameterList().parameter().Length; index++)
+        for (var index = 0; index < functionDeclaration.ParameterList.parameter().Length; index++)
         {
-            var parameterContext = functionDeclaration.parameterList().parameter(index);
+            var parameterContext = functionDeclaration.ParameterList.parameter(index);
             var parameter = signature.Parameters[index];
 
             ValidateTypeUsage(parameter.Type, TypeUsage.Parameter, parameterContext.type_(), declaration.Modifiers.IsFfi);
@@ -836,6 +834,9 @@ internal sealed class SemanticValidator
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
+        var receiverOffset = target.Receiver is null ? 0 : 1;
+        var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
+
         if (_effectModel.Functions.TryGetValue(target.Function.Name, out var calleeEffects))
         {
             summary.CalledFunctions.Add(target.Function.Name);
@@ -852,7 +853,14 @@ internal sealed class SemanticValidator
 
             if (calleeEffects.IsFfi)
             {
-                for (var index = 0; index < Math.Min(target.Function.Parameters.Count, arguments.argument().Length); index++)
+                if (target.Receiver is not null
+                    && target.Function.Parameters.Count != 0
+                    && target.Receiver.Type.BorrowKind != StarkBorrowKind.None)
+                {
+                    BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument 1 to '{target.Function.Name}' must use a raw pointer form instead.", arguments);
+                }
+
+                for (var index = 0; index < Math.Min(explicitParameterCount, arguments.argument().Length); index++)
                 {
                     var argumentValue = EvaluateExpression(
                         arguments.argument(index).expression(),
@@ -864,7 +872,7 @@ internal sealed class SemanticValidator
                         ExpressionObservation.Read);
                     if (argumentValue.Type.BorrowKind != StarkBorrowKind.None)
                     {
-                        BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument {index + 1} to '{target.Function.Name}' must use a raw pointer form instead.", arguments.argument(index));
+                        BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument {index + receiverOffset + 1} to '{target.Function.Name}' must use a raw pointer form instead.", arguments.argument(index));
                     }
                 }
 
@@ -873,9 +881,17 @@ internal sealed class SemanticValidator
         }
 
         var pendingArguments = new List<PendingCallArgument>();
-        for (var index = 0; index < Math.Min(target.Function.Parameters.Count, arguments.argument().Length); index++)
+
+        if (target.Receiver is not null && target.Function.Parameters.Count != 0)
         {
-            var parameter = target.Function.Parameters[index];
+            var receiverParameter = target.Function.Parameters[0];
+            ValidateBorrowArgumentFlow(target.Receiver.Type, receiverParameter.Type, target.Function.Name, 0, summary, arguments);
+            pendingArguments.Add(CreatePendingCallArgument(0, target.Receiver, receiverParameter, target.Function.ReturnType));
+        }
+
+        for (var index = 0; index < Math.Min(explicitParameterCount, arguments.argument().Length); index++)
+        {
+            var parameter = target.Function.Parameters[index + receiverOffset];
             var argumentValue = EvaluateExpression(
                 arguments.argument(index).expression(),
                 scope,
@@ -884,11 +900,11 @@ internal sealed class SemanticValidator
                 summary,
                 allowFunctionReference: false,
                 ExpressionObservation.Read);
-            ValidateBorrowArgumentFlow(argumentValue.Type, parameter.Type, target.Function.Name, index, summary, arguments.argument(index));
-            pendingArguments.Add(CreatePendingCallArgument(index, argumentValue, parameter, target.Function.ReturnType));
+            ValidateBorrowArgumentFlow(argumentValue.Type, parameter.Type, target.Function.Name, index + receiverOffset, summary, arguments.argument(index));
+            pendingArguments.Add(CreatePendingCallArgument(index + receiverOffset, argumentValue, parameter, target.Function.ReturnType));
         }
 
-        for (var index = target.Function.Parameters.Count; index < arguments.argument().Length; index++)
+        for (var index = explicitParameterCount; index < arguments.argument().Length; index++)
         {
             EvaluateExpression(
                 arguments.argument(index).expression(),
@@ -982,17 +998,33 @@ internal sealed class SemanticValidator
         }
 
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
-        if (namedType is null || !namedType.Fields.TryGetValue(memberName, out var field))
+        if (namedType is null)
         {
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
+        if (namedType.Fields.TryGetValue(memberName, out var field))
+        {
+            return new ValidationValue(
+                field.Type,
+                IsAssignable: target.IsAssignable,
+                RootSymbol: target.RootSymbol,
+                NamedType: ResolveNamedTypeSymbol(field.Type),
+                IsIndirectStorageAccess: true);
+        }
+
+        if (_typeModel.Functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
+            && method.Parameters.Count != 0)
+        {
+            return new ValidationValue(
+                method.ReturnType,
+                Function: method,
+                NamedType: ResolveNamedTypeSymbol(method.ReturnType),
+                Receiver: target);
+        }
+
         return new ValidationValue(
-            field.Type,
-            IsAssignable: target.IsAssignable,
-            RootSymbol: target.RootSymbol,
-            NamedType: ResolveNamedTypeSymbol(field.Type),
-            IsIndirectStorageAccess: true);
+            StarkTypeSymbols.Error);
     }
 
     private PendingCallArgument CreatePendingCallArgument(
@@ -1174,7 +1206,7 @@ internal sealed class SemanticValidator
             if (_functionDeclarations.TryGetValue(function, out var declaration))
             {
                 var summary = GetOrCreateSummary(function);
-                EffectError(summary, "STK4108", $"Finite function '{function}' participates in a recursive call cycle and cannot be proven finite.", declaration.Identifier().Symbol);
+                EffectError(summary, "STK4108", $"Finite function '{function}' participates in a recursive call cycle and cannot be proven finite.", declaration.NameToken);
             }
         }
 
@@ -1648,7 +1680,8 @@ internal sealed class SemanticValidator
         TypedFunctionSignature? Function = null,
         NamedTypeSymbol? NamedType = null,
         bool IsIndirectStorageAccess = false,
-        string? NamespaceName = null);
+        string? NamespaceName = null,
+        ValidationValue? Receiver = null);
 
     private sealed class ValidationScope
     {

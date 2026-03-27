@@ -11,7 +11,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 stack i32 value = 1
             }
             """);
@@ -28,7 +28,7 @@ public sealed class DiagnosticRegressionTests
             import Demo
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 return;
             }
             """);
@@ -48,7 +48,7 @@ public sealed class DiagnosticRegressionTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Missing;
             }

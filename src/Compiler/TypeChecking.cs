@@ -239,14 +239,9 @@ internal sealed class TypeChecker
     {
         foreach (var module in _loadedModules.Modules.Values)
         {
-            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
             {
-                if (declaration.functionDeclaration() is not { } functionDeclaration)
-                {
-                    continue;
-                }
-
-                var localName = functionDeclaration.Identifier().GetText();
+                var localName = functionSyntax.Name;
                 var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
                     candidate => candidate.Kind == DeclarationKind.Function && string.Equals(candidate.Name, localName, StringComparison.Ordinal));
 
@@ -255,17 +250,17 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                if (functionDeclaration.functionModifier().Any(static modifier => string.Equals(modifier.GetText(), "strictfp", StringComparison.Ordinal)))
+                if (functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "strictfp", StringComparison.Ordinal)))
                 {
                     ReportError(
                         "STK3008",
                         $"Function '{localName}' uses 'strictfp', but strict floating-point lowering is not implemented in the current compiler yet.",
-                        functionDeclaration);
+                        functionSyntax.DeclarationContext);
                 }
 
-                var genericParameters = GetGenericParameterNames(functionDeclaration.typeParameterList());
-                var returnType = ResolveReturnType(functionDeclaration.returnType(), genericParameters, module.SyntaxModel.ModuleName);
-                var parameters = functionDeclaration.parameterList().parameter()
+                var genericParameters = GetGenericParameterNames(functionSyntax.TypeParameters);
+                var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
+                var parameters = functionSyntax.ParameterList.parameter()
                     .Select(parameter => new TypedParameterSymbol(
                         parameter.Identifier().GetText(),
                         ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName)))
@@ -488,19 +483,14 @@ internal sealed class TypeChecker
 
     private void CheckFunctionBodies()
     {
-        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(_parseResult))
         {
-            if (declaration.functionDeclaration() is not { } functionDeclaration)
+            if (functionSyntax.Body.block() is not { } block)
             {
                 continue;
             }
 
-            if (functionDeclaration.functionBody().block() is not { } block)
-            {
-                continue;
-            }
-
-            if (!_functions.TryGetValue(functionDeclaration.Identifier().GetText(), out var signature))
+            if (!_functions.TryGetValue(functionSyntax.Name, out var signature))
             {
                 continue;
             }
@@ -1148,19 +1138,32 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        if (target.Function.Parameters.Count != arguments.argument().Length)
+        var receiverOffset = target.Receiver is null ? 0 : 1;
+        var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
+
+        if (explicitParameterCount != arguments.argument().Length)
         {
             ReportError(
                 "STK3009",
-                $"Function '{target.Function.Name}' expects {target.Function.Parameters.Count} arguments but received {arguments.argument().Length}.",
+                $"Function '{target.Function.Name}' expects {explicitParameterCount} arguments but received {arguments.argument().Length}.",
                 arguments);
         }
 
-        for (var index = 0; index < Math.Min(target.Function.Parameters.Count, arguments.argument().Length); index++)
+        if (target.Receiver is not null && target.Function.Parameters.Count != 0)
         {
-            var parameter = target.Function.Parameters[index];
+            EnsureCallArgumentCompatible(
+                target.Function.Name,
+                1,
+                target.Function.Parameters[0].Type,
+                target.Receiver.Type,
+                arguments);
+        }
+
+        for (var index = 0; index < Math.Min(explicitParameterCount, arguments.argument().Length); index++)
+        {
+            var parameter = target.Function.Parameters[index + receiverOffset];
             var argumentType = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
-            EnsureCallArgumentCompatible(target.Function.Name, index + 1, parameter.Type, argumentType, arguments.argument(index).expression());
+            EnsureCallArgumentCompatible(target.Function.Name, index + receiverOffset + 1, parameter.Type, argumentType, arguments.argument(index).expression());
         }
 
         return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType), DiagnosticName: $"call to '{target.Function.Name}'");
@@ -1233,13 +1236,24 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        if (!namedType.Fields.TryGetValue(memberName, out var field))
+        if (namedType.Fields.TryGetValue(memberName, out var field))
         {
-            ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
-            return new ExpressionBinding(StarkTypeSymbols.Error);
+            return new ExpressionBinding(field.Type, IsAssignable: target.IsAssignable, NamedType: ResolveNamedTypeSymbol(field.Type), DiagnosticName: $"member '{memberName}'");
         }
 
-        return new ExpressionBinding(field.Type, IsAssignable: target.IsAssignable, NamedType: ResolveNamedTypeSymbol(field.Type), DiagnosticName: $"member '{memberName}'");
+        if (_functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
+            && method.Parameters.Count != 0)
+        {
+            return new ExpressionBinding(
+                method.ReturnType,
+                NamedType: ResolveNamedTypeSymbol(method.ReturnType),
+                Function: method,
+                DiagnosticName: $"method '{method.Name}'",
+                Receiver: target);
+        }
+
+        ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
+        return new ExpressionBinding(StarkTypeSymbols.Error);
     }
 
     private ExpressionBinding ResolveValue(string name, IToken token, Scope scope, bool allowFunctionReference)
@@ -2094,7 +2108,8 @@ internal sealed class TypeChecker
         NamedTypeSymbol? NamedType = null,
         TypedFunctionSignature? Function = null,
         string? NamespaceName = null,
-        string? DiagnosticName = null);
+        string? DiagnosticName = null,
+        ExpressionBinding? Receiver = null);
 
     private sealed record ConstructorShape(
         string Name,

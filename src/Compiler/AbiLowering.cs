@@ -45,7 +45,7 @@ internal sealed class AbiLowerer
         var visibility = LookupVisibility(moduleName, sourceName);
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
-        var returnsIndirect = !isFfi && RequiresIndirectAggregateAbi(function.ReturnType);
+        var returnsIndirect = !isFfi && RequiresIndirectReturnAbi(function.ReturnType);
         var symbolName = ComputeSymbolName(function.Name, moduleName, sourceName, visibility, isFfi);
 
         if (returnsIndirect)
@@ -60,7 +60,7 @@ internal sealed class AbiLowerer
 
         foreach (var parameter in function.Parameters)
         {
-            var kind = !isFfi && RequiresIndirectAggregateAbi(parameter.Type)
+            var kind = !isFfi && RequiresIndirectParameterAbi(parameter.Type)
                 ? AbiParameterKind.IndirectIn
                 : AbiParameterKind.Direct;
 
@@ -100,16 +100,15 @@ internal sealed class AbiLowerer
         };
     }
 
-    private bool RequiresIndirectAggregateAbi(StarkTypeSymbol type)
+    private static bool RequiresIndirectParameterAbi(StarkTypeSymbol type)
     {
-        return type.Kind switch
-        {
-            StarkTypeKind.FixedArray => true,
-            StarkTypeKind.Named when type.NamedType is not null
-                                      && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
-                                      && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record => true,
-            _ => false
-        };
+        return type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None;
+    }
+
+    private static bool RequiresIndirectReturnAbi(StarkTypeSymbol type)
+    {
+        return false;
     }
 
     private (string ModuleName, string SourceName) SplitFunctionName(string functionName)

@@ -7,11 +7,17 @@ internal static class SyntaxModelFactory
     public static SyntaxModel Create(ParseResult parseResult)
     {
         var root = parseResult.Root;
+        var declarations = new List<TopLevelDeclarationModel>();
+
+        foreach (var declaration in root.topLevelDeclaration())
+        {
+            AddDeclarationModels(declarations, declaration);
+        }
 
         return new SyntaxModel(
             ModuleName: root.moduleDeclaration().qualifiedName().GetText(),
             Imports: root.importDeclaration().Select(CreateImportModel).ToArray(),
-            Declarations: root.topLevelDeclaration().Select(CreateDeclarationModel).ToArray());
+            Declarations: declarations);
     }
 
     private static ImportDeclarationModel CreateImportModel(StarkParser.ImportDeclarationContext importDeclaration)
@@ -21,77 +27,125 @@ internal static class SyntaxModelFactory
             importDeclaration.EXPORT() is not null);
     }
 
-    private static TopLevelDeclarationModel CreateDeclarationModel(StarkParser.TopLevelDeclarationContext declaration)
+    private static void AddDeclarationModels(List<TopLevelDeclarationModel> declarations, StarkParser.TopLevelDeclarationContext declaration)
     {
         var visibility = ParseVisibility(declaration.visibilityModifier());
 
         if (declaration.functionDeclaration() is { } function)
         {
-            return new TopLevelDeclarationModel(
+            declarations.Add(new TopLevelDeclarationModel(
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
                 visibility,
-                CreateFunctionModel(function));
+                CreateFunctionModel(function.Identifier().GetText(), function.functionKind(), function.returnType(), function.parameterList(), function.functionModifier(), function.functionBody())));
+            return;
         }
 
         if (declaration.structDeclaration() is { } structDeclaration)
         {
-            return new TopLevelDeclarationModel(
+            declarations.Add(new TopLevelDeclarationModel(
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
                 visibility,
-                null);
+                null));
+
+            foreach (var method in structDeclaration.structBody().structMember()
+                         .Select(static member => member.methodDeclaration())
+                         .Where(static method => method is not null)!)
+            {
+                declarations.Add(new TopLevelDeclarationModel(
+                    $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                    DeclarationKind.Function,
+                    visibility,
+                    CreateFunctionModel(
+                        $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                        method.functionKind(),
+                        method.returnType(),
+                        method.parameterList(),
+                        method.functionModifier(),
+                        method.functionBody())));
+            }
+
+            return;
         }
 
         if (declaration.recordDeclaration() is { } recordDeclaration)
         {
-            return new TopLevelDeclarationModel(
+            declarations.Add(new TopLevelDeclarationModel(
                 recordDeclaration.Identifier().GetText(),
                 DeclarationKind.Record,
                 visibility,
-                null);
+                null));
+
+            foreach (var method in recordDeclaration.recordBody().recordMember()
+                         .Select(static member => member.methodDeclaration())
+                         .Where(static method => method is not null)!)
+            {
+                declarations.Add(new TopLevelDeclarationModel(
+                    $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                    DeclarationKind.Function,
+                    visibility,
+                    CreateFunctionModel(
+                        $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                        method.functionKind(),
+                        method.returnType(),
+                        method.parameterList(),
+                        method.functionModifier(),
+                        method.functionBody())));
+            }
+
+            return;
         }
 
         if (declaration.traitDeclaration() is { } traitDeclaration)
         {
-            return new TopLevelDeclarationModel(
+            declarations.Add(new TopLevelDeclarationModel(
                 traitDeclaration.Identifier().GetText(),
                 DeclarationKind.Trait,
                 visibility,
-                null);
+                null));
+            return;
         }
 
         if (declaration.doctrineDeclaration() is { } doctrineDeclaration)
         {
-            return new TopLevelDeclarationModel(
+            declarations.Add(new TopLevelDeclarationModel(
                 doctrineDeclaration.Identifier().GetText(),
                 DeclarationKind.Doctrine,
                 visibility,
-                null);
+                null));
+            return;
         }
 
         if (declaration.globalConstantDeclaration() is { } constantDeclaration)
         {
-            return new TopLevelDeclarationModel(
+            declarations.Add(new TopLevelDeclarationModel(
                 constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText(),
                 DeclarationKind.GlobalConstant,
                 visibility,
-                null);
+                null));
+            return;
         }
 
         var variableDeclaration = declaration.globalVariableDeclaration()
             ?? throw new InvalidOperationException("Unsupported top-level declaration shape.");
 
-        return new TopLevelDeclarationModel(
+        declarations.Add(new TopLevelDeclarationModel(
             variableDeclaration.variableDeclarators().variableDeclarator(0).Identifier().GetText(),
             DeclarationKind.GlobalVariable,
             visibility,
-            null);
+            null));
     }
 
-    private static FunctionDeclarationModel CreateFunctionModel(StarkParser.FunctionDeclarationContext function)
+    private static FunctionDeclarationModel CreateFunctionModel(
+        string name,
+        StarkParser.FunctionKindContext functionKind,
+        StarkParser.ReturnTypeContext returnType,
+        StarkParser.ParameterListContext parameterList,
+        IReadOnlyList<StarkParser.FunctionModifierContext> modifiersList,
+        StarkParser.FunctionBodyContext functionBody)
     {
-        var modifiers = function.functionModifier().Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
+        var modifiers = modifiersList.Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
         var inlinePreference = modifiers.Contains("inline")
             ? InlinePreference.Inline
             : modifiers.Contains("noinline")
@@ -99,10 +153,10 @@ internal static class SyntaxModelFactory
                 : InlinePreference.InlineHint;
 
         return new FunctionDeclarationModel(
-            Name: function.Identifier().GetText(),
-            Kind: ParseFunctionKind(function.functionKind()),
-            ReturnType: function.returnType().GetText(),
-            Parameters: function.parameterList().parameter()
+            Name: name,
+            Kind: ParseFunctionKind(functionKind),
+            ReturnType: returnType.GetText(),
+            Parameters: parameterList.parameter()
                 .Select(static parameter => new ParameterModel(
                     parameter.Identifier().GetText(),
                     parameter.type_().GetText()))
@@ -112,7 +166,7 @@ internal static class SyntaxModelFactory
                 modifiers.Contains("hot"),
                 modifiers.Contains("cold"),
                 modifiers.Contains("ffi")),
-            HasBody: function.functionBody().block() is not null);
+            HasBody: functionBody.block() is not null);
     }
 
     private static StarkVisibility ParseVisibility(StarkParser.VisibilityModifierContext? visibilityModifier)

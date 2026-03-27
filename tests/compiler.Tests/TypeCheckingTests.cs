@@ -11,7 +11,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return 2 ** 3;
             }
             """);
@@ -30,7 +30,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn f32 Main() {
+            fn f32 Run() {
                 return 1.0 ^ 2.0;
             }
             """);
@@ -49,7 +49,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Main(i32 left, i32 right) {
+            fn i32 Run(i32 left, i32 right) {
                 stack mut i32 value = left;
                 value +%= right;
                 stack i32 product = left *| right;
@@ -71,7 +71,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            strictfp fn f32 Main(f32 left, f32 right) {
+            strictfp fn f32 Run(f32 left, f32 right) {
                 return left + right;
             }
             """);

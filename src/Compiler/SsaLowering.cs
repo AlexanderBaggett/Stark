@@ -156,10 +156,18 @@ internal sealed class SsaLowerer
                         && _addressableLocals.Contains(statement.TargetName))
                     {
                         block.Instructions.Add(new SsaAllocateLocalInstruction(statement.TargetName, statement.TargetType));
+                        block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType));
                     }
 
                     return;
                 case MidLevelIrStatementKind.StorageDead:
+                    if (statement.TargetName is not null
+                        && statement.TargetType is not null
+                        && _addressableLocals.Contains(statement.TargetName))
+                    {
+                        block.Instructions.Add(new SsaLifetimeEndInstruction(statement.TargetName, statement.TargetType));
+                    }
+
                     return;
                 case MidLevelIrStatementKind.Assign:
                     if (statement.TargetName is null || statement.TargetType is null || statement.Value is null)
@@ -255,7 +263,8 @@ internal sealed class SsaLowerer
                     call.FunctionName,
                     call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
                     call.Type,
-                    call.Text)),
+                    call.Text,
+                    call.IndirectArgumentLocalNames)),
                 MidLevelIrConvertRValue convert => LowerConvertRValue(blockId, block, convert),
                 MidLevelIrExtractFieldRValue extract => EmitValue(block, new SsaExtractFieldRValue(
                     LowerOperand(blockId, block, extract.Target),
@@ -922,6 +931,8 @@ internal sealed class SsaLowerer
                     valueInstruction.ResultName,
                     RewriteRValue(valueInstruction.Value, replacements)),
                 SsaAllocateLocalInstruction allocateLocal => allocateLocal,
+                SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
+                SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
                 SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                     storeLocal.LocalName,
                     storeLocal.LocalType,
@@ -959,7 +970,8 @@ internal sealed class SsaLowerer
                     call.FunctionName,
                     call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
                     call.Type,
-                    call.Text),
+                    call.Text,
+                    call.IndirectArgumentLocalNames),
                 SsaConvertRValue convert => new SsaConvertRValue(
                     RewriteValue(convert.Operand, replacements),
                     convert.TargetType,

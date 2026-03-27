@@ -728,7 +728,8 @@ public sealed record MidLevelIrCallRValue(
     string FunctionName,
     IReadOnlyList<MidLevelIrOperand> Arguments,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrConvertRValue(
@@ -946,7 +947,8 @@ public sealed record SsaCallRValue(
     string FunctionName,
     IReadOnlyList<SsaValue> Arguments,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaConvertRValue(
@@ -1070,6 +1072,16 @@ public sealed record SsaValueInstruction(
     : SsaInstruction;
 
 public sealed record SsaAllocateLocalInstruction(
+    string LocalName,
+    StarkTypeSymbol LocalType)
+    : SsaInstruction;
+
+public sealed record SsaLifetimeStartInstruction(
+    string LocalName,
+    StarkTypeSymbol LocalType)
+    : SsaInstruction;
+
+public sealed record SsaLifetimeEndInstruction(
     string LocalName,
     StarkTypeSymbol LocalType)
     : SsaInstruction;

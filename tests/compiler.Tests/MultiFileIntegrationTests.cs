@@ -35,7 +35,7 @@ public sealed class MultiFileIntegrationTests
                 import Math
                 module App
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -101,7 +101,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.Add(Facade.Double(2), 3);
                 }
                 """);
@@ -171,7 +171,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.HiddenAdd(Facade.Double(2), 3);
                 }
                 """);

@@ -16,7 +16,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return 1;
                 }
                 """),
@@ -60,7 +60,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Main(bool flag) {
+                fn i32 Run(bool flag) {
                     return flag ? 1 : 2;
                 }
                 """),
@@ -70,7 +70,7 @@ public sealed class CompilerCliTests
         Assert.Equal(0, exitCode);
         var text = stdout.ToString();
         Assert.Contains("mir module Demo", text);
-        Assert.Contains("fn i32 Main(bool flag)", text);
+        Assert.Contains("fn i32 Run(bool flag)", text);
         Assert.Contains("blocks:", text);
         Assert.Equal(string.Empty, stderr.ToString());
     }
@@ -87,7 +87,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Main(bool left, bool right) {
+                fn i32 Run(bool left, bool right) {
                     return left && right ? 1 : 2;
                 }
                 """),
@@ -118,7 +118,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Main() {
+                    fn i32 Run() {
                         return 7;
                     }
                     """),
@@ -162,7 +162,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Main() {
+                    fn i32 Run() {
                         return 7;
                     }
                     """),
@@ -206,7 +206,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Main() {
+                    fn i32 Run() {
                         return 7;
                     }
                     """),
@@ -258,7 +258,7 @@ public sealed class CompilerCliTests
                 import Math
                 module App
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.Add(3, 4);
                 }
                 """);

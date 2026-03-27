@@ -13,7 +13,7 @@ public sealed class LlvmEmitterConversionTests
             new SsaFloatConstant("3.5", StarkTypeSymbols.Float(32)));
 
         Assert.Contains("define", llvm);
-        Assert.Contains("@Main()", llvm);
+        Assert.Contains("@Run()", llvm);
         Assert.Contains("fptosi float 3.5 to i32", llvm);
         Assert.Contains("ret i32", llvm);
     }
@@ -27,7 +27,7 @@ public sealed class LlvmEmitterConversionTests
             new SsaIntegerConstant(new BigInteger(1024), StarkTypeSymbols.Integer(64)));
 
         Assert.Contains("define", llvm);
-        Assert.Contains("@Main()", llvm);
+        Assert.Contains("@Run()", llvm);
         Assert.Contains("inttoptr i64 1024 to ptr", llvm);
         Assert.Contains("ret ptr", llvm);
     }
@@ -41,7 +41,7 @@ public sealed class LlvmEmitterConversionTests
             new SsaNullConstant(sourceType));
 
         Assert.Contains("define", llvm);
-        Assert.Contains("@Main()", llvm);
+        Assert.Contains("@Run()", llvm);
         Assert.Contains("ptrtoint ptr null to i64", llvm);
         Assert.Contains("ret i64", llvm);
     }
@@ -54,8 +54,8 @@ public sealed class LlvmEmitterConversionTests
             "Demo",
             new Dictionary<string, FunctionEffectProfile>(StringComparer.Ordinal)
             {
-                ["Main"] = new FunctionEffectProfile(
-                    "Main",
+                ["Run"] = new FunctionEffectProfile(
+                    "Run",
                     StarkFunctionKind.Fn,
                     ReadsArgumentMemory: false,
                     IsPure: true,
@@ -75,7 +75,7 @@ public sealed class LlvmEmitterConversionTests
             NamedTypes: new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal),
             Functions: new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
             {
-                ["Main"] = new TypedFunctionSignature("Main", targetType, [])
+                ["Run"] = new TypedFunctionSignature("Run", targetType, [])
             },
             Globals: new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal),
             Literals: []);
@@ -83,9 +83,9 @@ public sealed class LlvmEmitterConversionTests
             "Demo",
             new Dictionary<string, AbiFunctionSignature>(StringComparer.Ordinal)
             {
-                ["Main"] = new AbiFunctionSignature(
-                    "Main",
-                    "Main",
+                ["Run"] = new AbiFunctionSignature(
+                    "Run",
+                    "Run",
                     targetType,
                     targetType,
                     [],
@@ -95,7 +95,7 @@ public sealed class LlvmEmitterConversionTests
             "Demo",
             [
                 new SsaFunction(
-                    "Main",
+                    "Run",
                     targetType,
                     [],
                     HasBody: true,
@@ -126,11 +126,11 @@ public sealed class LlvmEmitterConversionTests
             [],
             [
                 new TopLevelDeclarationModel(
-                    "Main",
+                    "Run",
                     DeclarationKind.Function,
                     StarkVisibility.Module,
                     new FunctionDeclarationModel(
-                        "Main",
+                        "Run",
                         StarkFunctionKind.Fn,
                         targetType.DisplayName,
                         [],

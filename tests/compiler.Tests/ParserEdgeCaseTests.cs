@@ -94,7 +94,7 @@ public sealed class ParserEdgeCaseTests
                 return;
             }
 
-            fn void Main() {
+            fn void Run() {
                 Write(1, 2,,);
             }
             """
@@ -104,7 +104,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Main(rawptr<rawmutptr<i8> value) {
+            fn void Run(rawptr<rawmutptr<i8> value) {
                 return;
             }
             """
@@ -114,7 +114,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Main(i32[-10 10 20] value) {
+            fn void Run(i32[-10 10 20] value) {
                 return;
             }
             """
@@ -124,7 +124,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 return new Node()..Value;
             }
             """
@@ -134,7 +134,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Main(bool flag) {
+            fn void Run(bool flag) {
                 while non_deterministic (flag) {
                     break;
                 }
@@ -150,7 +150,7 @@ public sealed class ParserEdgeCaseTests
                 i32 Value;
             }
 
-            fn void Main() {
+            fn void Run() {
                 stack Item item = new Item() { Value = 1,, };
             }
             """

@@ -80,7 +80,7 @@ public sealed class CompilerPipelineTests
                 import Core.Text
                 module Demo
 
-                public fn void Main() { return; }
+                public fn void Run() { return; }
                 """),
             new CompilerOptions(
                 ModuleResolver: new InMemoryModuleResolver(
@@ -108,7 +108,7 @@ public sealed class CompilerPipelineTests
                 import Math
                 module Demo
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -150,7 +150,7 @@ public sealed class CompilerPipelineTests
                 import Facade
                 module Demo
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -202,7 +202,7 @@ public sealed class CompilerPipelineTests
                 import Facade
                 module Demo
 
-                fn i32 Main() {
+                fn i32 Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -304,7 +304,7 @@ public sealed class CompilerPipelineTests
                     import Facade
                     module Demo
 
-                    fn i32 Main() {
+                    fn i32 Run() {
                         return Math.Add(3, 4);
                     }
                     """,
@@ -350,7 +350,7 @@ public sealed class CompilerPipelineTests
             public const i32 Answer = 42;
             internal static rawptr<i8> Buffer = null;
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Widget widget = new Widget() { Value = 1 };
                 stack i32 value = widget.Value + 2;
                 return value;
@@ -363,7 +363,7 @@ public sealed class CompilerPipelineTests
 
         Assert.True(typeCheckModel.NamedTypes.ContainsKey("Widget"));
         Assert.True(typeCheckModel.Globals.ContainsKey("Answer"));
-        Assert.Equal("i32", typeCheckModel.Functions["Main"].ReturnType.DisplayName);
+        Assert.Equal("i32", typeCheckModel.Functions["Run"].ReturnType.DisplayName);
         Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "42" && literal.Type.DisplayName == "i8[42 42]");
         Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "null" && literal.Type.Kind == StarkTypeKind.Null);
     }
@@ -378,7 +378,7 @@ public sealed class CompilerPipelineTests
             import Missing.Module
             module Demo
 
-            fn void Main() { return; }
+            fn void Run() { return; }
             """));
 
         Assert.False(result.Succeeded);
@@ -423,7 +423,7 @@ public sealed class CompilerPipelineTests
 
         var result = pipeline.Run(new CompilationInput(
             """
-            public fn void Main();
+            public fn void Run();
             """));
 
         Assert.False(result.Succeeded);

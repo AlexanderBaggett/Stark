@@ -12,7 +12,7 @@ internal sealed class OwnershipValidator
     private readonly ModuleGraph _moduleGraph;
     private readonly TypeCheckModel _typeModel;
     private readonly StarkTypeResolver _typeResolver;
-    private readonly Dictionary<string, StarkParser.FunctionDeclarationContext> _functionDeclarations;
+    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
 
@@ -29,10 +29,8 @@ internal sealed class OwnershipValidator
         _moduleGraph = moduleGraph;
         _typeModel = typeModel;
         _typeResolver = new StarkTypeResolver(context, "ownership-validate", moduleGraph, typeModel.NamedTypes);
-        _functionDeclarations = parseResult.Root.topLevelDeclaration()
-            .Select(static declaration => declaration.functionDeclaration())
-            .Where(static declaration => declaration is not null)!
-            .ToDictionary(static declaration => declaration.Identifier().GetText(), StringComparer.Ordinal);
+        _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult)
+            .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
 
         SeedMutableGlobals();
@@ -44,7 +42,7 @@ internal sealed class OwnershipValidator
 
         foreach (var functionDeclaration in _functionDeclarations.Values)
         {
-            var name = functionDeclaration.Identifier().GetText();
+            var name = functionDeclaration.Name;
             if (!_signatures.TryGetValue(name, out var signature))
             {
                 continue;
@@ -58,13 +56,13 @@ internal sealed class OwnershipValidator
     }
 
     private FunctionOwnershipSummary ValidateFunction(
-        StarkParser.FunctionDeclarationContext functionDeclaration,
+        DeclaredFunctionSyntax functionDeclaration,
         TypedFunctionSignature signature)
     {
         var summary = new FunctionOwnershipBuilder(signature.Name);
         var state = new FlowState(_typeModel.NamedTypes);
         var functionScope = state.EnterScope();
-        var parameterDeclarations = functionDeclaration.parameterList().parameter();
+        var parameterDeclarations = functionDeclaration.ParameterList.parameter();
 
         for (var index = 0; index < signature.Parameters.Count; index++)
         {
@@ -86,7 +84,7 @@ internal sealed class OwnershipValidator
                 isInitialized: true);
         }
 
-        if (functionDeclaration.functionBody().block() is { } body)
+        if (functionDeclaration.Body.block() is { } body)
         {
             CheckBlock(body, state, signature, summary, openScope: true);
         }
@@ -1004,11 +1002,23 @@ internal sealed class OwnershipValidator
         }
 
         var borrowArguments = new List<BorrowLifetime>();
+        var receiverOffset = target.Receiver is null ? 0 : 1;
+        var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
+
+        if (target.Receiver is not null && target.Function.Parameters.Count != 0)
+        {
+            var receiverParameterType = target.Function.Parameters[0].Type;
+            var receiverValue = ApplyUse(target.Receiver, state, summary, ValueUse.ForCallArgument(receiverParameterType), arguments);
+            if (receiverParameterType.BorrowKind != StarkBorrowKind.None)
+            {
+                borrowArguments.Add(receiverValue.BorrowLifetime);
+            }
+        }
 
         for (var index = 0; index < arguments.argument().Length; index++)
         {
-            var parameterType = index < target.Function.Parameters.Count
-                ? target.Function.Parameters[index].Type
+            var parameterType = index < explicitParameterCount
+                ? target.Function.Parameters[index + receiverOffset].Type
                 : StarkTypeSymbols.Error;
             var argumentValue = EvaluateExpression(
                 arguments.argument(index).expression(),
@@ -1106,21 +1116,37 @@ internal sealed class OwnershipValidator
             ? resolved
             : null;
 
-        if (namedType is null || !namedType.Fields.TryGetValue(memberName, out var field))
+        if (namedType is null)
         {
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
+        if (namedType.Fields.TryGetValue(memberName, out var field))
+        {
+            return new ExpressionInfo(
+                field.Type,
+                Variable: target.Variable,
+                BorrowLifetime: target.BorrowLifetime,
+                IsPlace: target.IsPlace,
+                IsIndirectPlace: true,
+                ProjectionPath: target.Variable is null
+                    ? target.ProjectionPath
+                    : AppendProjection(target.ProjectionPath, memberName),
+                HasIndexProjection: target.HasIndexProjection);
+        }
+
+        if (_signatures.TryGetValue($"{namedType.Name}.{memberName}", out var method)
+            && method.Parameters.Count != 0)
+        {
+            return new ExpressionInfo(
+                method.ReturnType,
+                Function: method,
+                BorrowLifetime: BorrowLifetime.None,
+                Receiver: target);
+        }
+
         return new ExpressionInfo(
-            field.Type,
-            Variable: target.Variable,
-            BorrowLifetime: target.BorrowLifetime,
-            IsPlace: target.IsPlace,
-            IsIndirectPlace: true,
-            ProjectionPath: target.Variable is null
-                ? target.ProjectionPath
-                : AppendProjection(target.ProjectionPath, memberName),
-            HasIndexProjection: target.HasIndexProjection);
+            StarkTypeSymbols.Error);
     }
 
     private ExpressionInfo ApplyUse(
@@ -1903,7 +1929,8 @@ internal sealed class OwnershipValidator
         bool IsIndirectPlace = false,
         string? NamespaceName = null,
         string[]? ProjectionPath = null,
-        bool HasIndexProjection = false)
+        bool HasIndexProjection = false,
+        ExpressionInfo? Receiver = null)
     {
         public ExpressionInfo(StarkTypeSymbol type)
             : this(type, BorrowLifetime: BorrowLifetime.None)

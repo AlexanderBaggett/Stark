@@ -15,7 +15,7 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 heap Box box = new Box() { Value = 1 };
                 return 1;
             }
@@ -23,7 +23,7 @@ public sealed class OwnershipValidationTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.Contains("box", ownership.Functions["Main"].ImplicitDrops);
+        Assert.Contains("box", ownership.Functions["Run"].ImplicitDrops);
     }
 
     [Fact]
@@ -41,9 +41,40 @@ public sealed class OwnershipValidationTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 Consume(box);
+                return box.Value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4200"
+                && diagnostic.Severity == DiagnosticSeverity.Info
+                && diagnostic.Message.Contains("was moved here", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValueReceiverMethodCallsMoveTheReceiver()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+
+                fn void Consume(Box box) {
+                    return;
+                }
+            }
+
+            fn i32 Run() {
+                stack Box box = new Box() { Value = 1 };
+                box.Consume();
                 return box.Value;
             }
             """);
@@ -64,7 +95,7 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32 x = 1;
                 stack i32 y = x;
                 return x + y;
@@ -73,8 +104,8 @@ public sealed class OwnershipValidationTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.True(ownership.Functions["Main"].OwnershipValid);
-        Assert.DoesNotContain("x", ownership.Functions["Main"].Moves);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.DoesNotContain("x", ownership.Functions["Run"].Moves);
     }
 
     [Fact]
@@ -88,7 +119,7 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box = new Box() { Value = 2 };
                 return box.Value;
@@ -97,7 +128,7 @@ public sealed class OwnershipValidationTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.Contains("box", ownership.Functions["Main"].ImplicitDrops);
+        Assert.Contains("box", ownership.Functions["Run"].ImplicitDrops);
     }
 
     [Fact]
@@ -115,7 +146,7 @@ public sealed class OwnershipValidationTests
                 return;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 if (true) {
                     Consume(box);
@@ -164,7 +195,7 @@ public sealed class OwnershipValidationTests
                 ascii Label;
             }
 
-            fn ascii Main() {
+            fn ascii Run() {
                 stack Container value = new Container() { Name = "hi", Label = "there" };
                 return value.Name;
             }
@@ -172,8 +203,8 @@ public sealed class OwnershipValidationTests
 
         Assert.True(result.Succeeded);
         var ownership = GetOwnership(result);
-        Assert.Contains("value.Name", ownership.Functions["Main"].Moves);
-        Assert.Contains("value", ownership.Functions["Main"].ImplicitDrops);
+        Assert.Contains("value.Name", ownership.Functions["Run"].Moves);
+        Assert.Contains("value", ownership.Functions["Run"].ImplicitDrops);
     }
 
     [Fact]
@@ -191,7 +222,7 @@ public sealed class OwnershipValidationTests
                 NameBox Name;
             }
 
-            fn ascii Main() {
+            fn ascii Run() {
                 stack Container value = new Container() { Name = new NameBox() { Value = "hi" } };
                 return value.Name.Value;
             }

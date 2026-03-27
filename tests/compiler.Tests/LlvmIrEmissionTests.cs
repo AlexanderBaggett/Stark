@@ -11,7 +11,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32 value = 1;
                 value = value + 1;
                 return value;
@@ -21,11 +21,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main()", llvm);
+        Assert.Contains("define fastcc i32 @Run()", llvm);
         Assert.Contains("ret i32 2", llvm);
         Assert.DoesNotContain("add i32", llvm);
         Assert.DoesNotContain("alloca i32", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main()", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run()", llvm);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 if (true) {
                     return 1;
                 }
@@ -59,7 +59,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(bool flag) {
+            fn i32 Run(bool flag) {
                 stack mut i32 value = 0;
                 if (flag) {
                     value = 1;
@@ -89,7 +89,7 @@ public sealed class LlvmIrEmissionTests
             internal static rawptr<i8> Buffer = null;
             export static rawptr<i8> Visible = null;
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return 0;
             }
             """);
@@ -112,7 +112,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(i32 left, i32 right) {
+            fn i32 Run(i32 left, i32 right) {
                 return left ^ right;
             }
             """);
@@ -120,7 +120,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i32 %arg_left, i32 %arg_right)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i32 %arg_left, i32 %arg_right)", llvm);
         Assert.Contains("xor i32 %arg_left, %arg_right", llvm);
     }
 
@@ -131,7 +131,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn f32 Main() {
+            fn f32 Run() {
                 return 2.0 ** 3.0;
             }
             """);
@@ -139,7 +139,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc float @Main()", llvm);
+        Assert.Contains("define fastcc float @Run()", llvm);
         Assert.Contains("ret float 8", llvm);
         Assert.DoesNotContain("@llvm.pow.f32", llvm);
     }
@@ -151,7 +151,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32 i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
@@ -176,7 +176,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32 value = 1;
                 switch (value) {
                     case 1:
@@ -190,11 +190,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main()", llvm);
+        Assert.Contains("define fastcc i32 @Run()", llvm);
         Assert.Contains("ret i32 1", llvm);
         Assert.DoesNotContain("switch i32", llvm);
         Assert.DoesNotContain("icmp eq i32", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main()", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run()", llvm);
     }
 
     [Fact]
@@ -204,7 +204,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 1;
@@ -217,10 +217,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i32 %arg_value, i1 %arg_allow)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i32 %arg_value, i1 %arg_allow)", llvm);
         Assert.Contains("icmp eq i32", llvm);
         Assert.Contains("br i1 %arg_allow", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main(i32, i1)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i32, i1)", llvm);
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -243,10 +243,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i32 %arg_value, i1 %arg_allow)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i32 %arg_value, i1 %arg_allow)", llvm);
         Assert.Contains("br i1 %arg_allow", llvm);
         Assert.Contains("ret i32 %arg_value", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main(i32, i1)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i32, i1)", llvm);
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -270,12 +270,12 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i32 %arg_value, i1 %arg_allow)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i32 %arg_value, i1 %arg_allow)", llvm);
         Assert.Contains("icmp eq i32 %arg_value, 1", llvm);
         Assert.Contains("icmp eq i32 %arg_value, 2", llvm);
         Assert.Contains("br i1 %arg_allow", llvm);
         Assert.DoesNotContain("switch i32", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main(i32, i1)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i32, i1)", llvm);
     }
 
     [Fact]
@@ -285,7 +285,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Hello
 
-            ffi fn i32 puts(ascii s);
+            ffi fn i32 puts(ascii text);
             export ffi fn i32 main() {
                 puts("Hello, world!\n");
                 return 0;
@@ -313,7 +313,7 @@ public sealed class LlvmIrEmissionTests
                 return text;
             }
 
-            fn ascii Main() {
+            fn ascii Run() {
                 return Echo("Hi");
             }
             """);
@@ -325,6 +325,35 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc %stark_ascii @Echo(%stark_ascii %arg_text)", llvm);
         Assert.Contains("ret %stark_ascii %arg_text", llvm);
         Assert.Contains("call %stark_ascii @Echo(%stark_ascii { ptr getelementptr inbounds ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 })", llvm);
+    }
+
+    [Fact]
+    public void CharacterLiteralsEmitConcreteStringValues()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii AsciiChar() {
+                return 'a';
+            }
+
+            fn unicode UnicodeChar() {
+                return '\u03B1';
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
+        Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
+        Assert.Contains("@.str.0 = private unnamed_addr constant [2 x i8] c\"a\\00\"", llvm);
+        Assert.Contains("@.str.1 = private unnamed_addr constant [3 x i8] c\"\\CE\\B1\\00\"", llvm);
+        Assert.Contains("define fastcc %stark_ascii @AsciiChar()", llvm);
+        Assert.Contains("define fastcc %stark_unicode @UnicodeChar()", llvm);
+        Assert.Contains("ret %stark_ascii { ptr getelementptr inbounds ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }", llvm);
+        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.1, i32 0, i32 0), i64 2 }", llvm);
     }
 
     [Fact]
@@ -369,7 +398,7 @@ public sealed class LlvmIrEmissionTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 41 };
                 return box.Value;
             }
@@ -382,7 +411,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("insertvalue %Box zeroinitializer, i32", llvm);
         Assert.Contains("extractvalue %Box", llvm);
         Assert.Contains("ret i32", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main()", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run()", llvm);
     }
 
     [Fact]
@@ -396,7 +425,7 @@ public sealed class LlvmIrEmissionTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -409,7 +438,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%Box = type { i32 }", llvm);
         Assert.True(CountOccurrences(llvm, "insertvalue %Box") >= 2);
         Assert.Contains("extractvalue %Box", llvm);
-        Assert.DoesNotContain("; LLVM body emission pending for Main", llvm);
+        Assert.DoesNotContain("; LLVM body emission pending for Run", llvm);
     }
 
     [Fact]
@@ -421,7 +450,7 @@ public sealed class LlvmIrEmissionTests
 
             record Point(i32 X, i32 Y) { }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Point point = new Point() { X = 3, Y = 4 };
                 return point.Y;
             }
@@ -437,7 +466,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void InternalAggregateParameterUsesIndirectAbi()
+    public void InternalAggregateParameterUsesDirectValueAbi()
     {
         var result = Compile(
             """
@@ -451,7 +480,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return Read(new Box() { Value = 7 });
             }
             """);
@@ -459,9 +488,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Read(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("load %Box, ptr %arg_box", llvm);
-        Assert.Contains("call i32 @Read(ptr %", llvm);
+        Assert.Contains("define fastcc i32 @Read(%Box %arg_box)", llvm);
+        Assert.Contains("extractvalue %Box %arg_box, 0", llvm);
+        Assert.Contains("call i32 @Read(%Box", llvm);
+        Assert.DoesNotContain("load %Box, ptr %arg_box", llvm);
     }
 
     [Fact]
@@ -488,7 +518,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void InternalAggregateReturnUsesSRetAbi()
+    public void InternalAggregateReturnUsesDirectValueAbi()
     {
         var result = Compile(
             """
@@ -502,7 +532,7 @@ public sealed class LlvmIrEmissionTests
                 return new Box() { Value = 7 };
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = Make();
                 return box.Value;
             }
@@ -511,11 +541,99 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Make(ptr noalias sret(%Box) nonnull dereferenceable(4) align 4 %ret)", llvm);
-        Assert.Contains("store %Box", llvm);
-        Assert.Contains("ret void", llvm);
-        Assert.Contains("call void @Make(ptr sret(%Box) %", llvm);
-        Assert.Contains("load %Box, ptr %", llvm);
+        Assert.Contains("define fastcc %Box @Make()", llvm);
+        Assert.Contains("ret %Box", llvm);
+        Assert.Contains("call %Box @Make()", llvm);
+        Assert.DoesNotContain("sret(%Box)", llvm);
+    }
+
+    [Fact]
+    public void AggregateBranchJoinEmitsByValuePhiNode()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run(bool flag) {
+                stack mut Box box = new Box() { Value = 0 };
+                if (flag) {
+                    box = new Box() { Value = 1 };
+                } else {
+                    box = new Box() { Value = 2 };
+                }
+
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("phi %Box", llvm);
+        Assert.Contains("extractvalue %Box", llvm);
+        Assert.DoesNotContain("load %Box, ptr %slot_box", llvm);
+    }
+
+    [Fact]
+    public void ValueReceiverMethodsLowerToDirectAggregateCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+
+                fn i32 Read(Box box) {
+                    return box.Value;
+                }
+            }
+
+            fn i32 Run() {
+                stack Box box = new Box() { Value = 7 };
+                return box.Read();
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Box_Read(%Box %arg_box)", llvm);
+        Assert.Contains("extractvalue %Box %arg_box, 0", llvm);
+        Assert.Contains("call i32 @Box_Read(%Box", llvm);
+        Assert.DoesNotContain("load %Box, ptr %arg_box", llvm);
+    }
+
+    [Fact]
+    public void BorrowReceiverMethodsLowerToPointerReceiverCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+
+                fn i32 Read(borrow Box box) {
+                    return box.Value;
+                }
+            }
+
+            fn i32 Run(borrow Box box) {
+                return box.Read();
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Box_Read(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("call i32 @Box_Read(ptr %", llvm);
     }
 
     [Fact]
@@ -525,7 +643,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32[3] values = { 1, 2, 3 };
                 return values[1];
             }
@@ -534,10 +652,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main()", llvm);
+        Assert.Contains("define fastcc i32 @Run()", llvm);
         Assert.Contains("insertvalue [3 x i32] zeroinitializer", llvm);
         Assert.Contains("extractvalue [3 x i32]", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main()", llvm);
+        Assert.DoesNotContain("alloca [3 x i32]", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run()", llvm);
     }
 
     [Fact]
@@ -547,7 +666,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32[3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
@@ -559,6 +678,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.True(CountOccurrences(llvm, "insertvalue [3 x i32]") >= 2);
         Assert.Contains("extractvalue [3 x i32]", llvm);
+        Assert.DoesNotContain("alloca [3 x i32]", llvm);
     }
 
     [Fact]
@@ -568,7 +688,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack i32[3] values = { 1, 2, 3 };
                 return values[index];
             }
@@ -577,12 +697,16 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i32 %arg_index)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i32 %arg_index)", llvm);
         Assert.Contains("alloca [3 x i32]", llvm);
+        Assert.Contains("declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)", llvm);
+        Assert.Contains("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)", llvm);
+        Assert.Contains("call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)", llvm);
+        Assert.Contains("call void @llvm.lifetime.end.p0(i64 12, ptr %slot_values)", llvm);
         Assert.Contains("getelementptr inbounds [3 x i32], ptr %slot_values, i32 0", llvm);
         Assert.Contains("getelementptr inbounds [3 x i32], ptr", llvm);
         Assert.Contains("load i32, ptr", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main(i32)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i32)", llvm);
     }
 
     [Fact]
@@ -607,13 +731,65 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FixedArrayParameterUsesDirectValueAbi()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Read(i32[2] values) {
+                return values[0] + values[1];
+            }
+
+            fn i32 Run() {
+                stack i32[2] values = { 4, 7 };
+                return Read(values);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Read([2 x i32] %arg_values)", llvm);
+        Assert.Contains("extractvalue [2 x i32] %arg_values, 0", llvm);
+        Assert.Contains("extractvalue [2 x i32] %arg_values, 1", llvm);
+        Assert.Contains("call i32 @Read([2 x i32]", llvm);
+    }
+
+    [Fact]
+    public void FixedArrayReturnUsesDirectValueAbi()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[2] Make() {
+                stack i32[2] values = { 4, 7 };
+                return values;
+            }
+
+            fn i32 Run() {
+                stack i32[2] values = Make();
+                return values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc [2 x i32] @Make()", llvm);
+        Assert.Contains("call [2 x i32] @Make()", llvm);
+        Assert.DoesNotContain("sret([2 x i32])", llvm);
+    }
+
+    [Fact]
     public void DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoad()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack mut i32[3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
@@ -623,11 +799,13 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i32 %arg_index)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i32 %arg_index)", llvm);
         Assert.True(CountOccurrences(llvm, "getelementptr inbounds [3 x i32], ptr") >= 2);
+        Assert.Contains("call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)", llvm);
+        Assert.Contains("call void @llvm.lifetime.end.p0(i64 12, ptr %slot_values)", llvm);
         Assert.Contains("store i32", llvm);
         Assert.Contains("load i32, ptr", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Main(i32)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i32)", llvm);
     }
 
     [Fact]
@@ -637,7 +815,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(i32[] view, i32 index) {
+            fn i32 Run(i32[] view, i32 index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -646,7 +824,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main({ ptr, i64 } %arg_view, i32 %arg_index)", llvm);
+        Assert.Contains("define fastcc i32 @Run({ ptr, i64 } %arg_view, i32 %arg_index)", llvm);
         Assert.Contains("extractvalue { ptr, i64 } %arg_view, 0", llvm);
         Assert.Contains("store i32", llvm);
         Assert.Contains("load i32, ptr", llvm);
@@ -660,7 +838,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return Math.Add(3, 4);
             }
             """,
@@ -726,10 +904,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("declare fastcc void @Geometry_Make(ptr noalias sret(%Geometry_Box) nonnull dereferenceable(4) align 4)", llvm);
-        Assert.Contains("declare fastcc i32 @Geometry_Read(ptr nonnull noalias readonly dereferenceable(4) align 4)", llvm);
-        Assert.Contains("call void @Geometry_Make(ptr sret(%Geometry_Box)", llvm);
-        Assert.Contains("call i32 @Geometry_Read(ptr", llvm);
+        Assert.Contains("declare fastcc %Geometry_Box @Geometry_Make()", llvm);
+        Assert.Contains("declare fastcc i32 @Geometry_Read(%Geometry_Box)", llvm);
+        Assert.Contains("call %Geometry_Box @Geometry_Make()", llvm);
+        Assert.Contains("call i32 @Geometry_Read(%Geometry_Box", llvm);
     }
 
     [Fact]
@@ -785,7 +963,7 @@ public sealed class LlvmIrEmissionTests
                 return view[index];
             }
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack i32[3] values = { 4, 7, 9 };
                 return Read(values, index);
             }
@@ -802,13 +980,44 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void BorrowedAggregateCallReusesPromotedLocalSlot()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn void Touch(borrow Box box) {
+                return;
+            }
+
+            fn void Forward(borrow Box box) {
+                stack borrow Box alias = box;
+                Touch(alias);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("%slot_alias = alloca %Box", llvm);
+        Assert.Contains("call void @Touch(ptr %slot_alias)", llvm);
+        Assert.DoesNotContain("callarg_box", llvm);
+    }
+
+    [Fact]
     public void ConfiguredTargetInfoIsEmittedInHeader()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return 1;
             }
             """,
@@ -832,7 +1041,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Main(bool left, bool right) {
+            fn i32 Run(bool left, bool right) {
                 return left && right ? 1 : 2;
             }
             """);
@@ -840,7 +1049,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Main(i1 %arg_left, i1 %arg_right)", llvm);
+        Assert.Contains("define fastcc i32 @Run(i1 %arg_left, i1 %arg_right)", llvm);
         Assert.Contains("phi i1", llvm);
         Assert.Contains("phi i32", llvm);
         Assert.Contains("br i1", llvm);

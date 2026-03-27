@@ -13,7 +13,7 @@ public sealed class SsaOptimizationTests
             "Demo",
             [
                 new SsaFunction(
-                    "Main",
+                    "Run",
                     valueType,
                     [new TypedParameterSymbol("value", valueType)],
                     HasBody: true,
@@ -55,7 +55,7 @@ public sealed class SsaOptimizationTests
             "Demo",
             [
                 new SsaFunction(
-                    "Main",
+                    "Run",
                     valueType,
                     [new TypedParameterSymbol("flag", boolType)],
                     HasBody: true,
@@ -123,7 +123,7 @@ public sealed class SsaOptimizationTests
             "Demo",
             [
                 new SsaFunction(
-                    "Main",
+                    "Run",
                     targetType,
                     [],
                     HasBody: true,
@@ -184,7 +184,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32 Main(bool flag) {
+            fn i32 Run(bool flag) {
                 if (flag == true) {
                     return 1;
                 }
@@ -219,7 +219,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 return (1 + 2) * 3;
             }
             """);
@@ -240,7 +240,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32 Main(i32[] view, i32 index) {
+            fn i32 Run(i32[] view, i32 index) {
                 return view[index] + view[index];
             }
             """);
@@ -270,7 +270,7 @@ public sealed class SsaOptimizationTests
             "Demo",
             [
                 new SsaFunction(
-                    "Main",
+                    "Run",
                     valueType,
                     [],
                     HasBody: true,
@@ -332,7 +332,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32 x = 1;
                 if (x == 1) {
                     return 7;
@@ -357,7 +357,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32 value = 2;
                 switch (value) {
                     case 1:

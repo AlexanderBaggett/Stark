@@ -153,6 +153,12 @@ internal sealed class LlvmIrEmitter
             declarations.Add($"declare {llvmType} @llvm.pow.{suffix}({llvmType}, {llvmType})");
         }
 
+        if (UsesLifetimeMarkers())
+        {
+            declarations.Add("declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)");
+            declarations.Add("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)");
+        }
+
         foreach (var declaration in declarations)
         {
             builder.AppendLine(declaration);
@@ -162,6 +168,14 @@ internal sealed class LlvmIrEmitter
         {
             builder.AppendLine();
         }
+    }
+
+    private bool UsesLifetimeMarkers()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(static instruction => instruction is SsaLifetimeStartInstruction or SsaLifetimeEndInstruction);
     }
 
     private static void EmitBuiltinTypeDefinitions(StringBuilder builder)
@@ -216,7 +230,15 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects));
         builder.AppendLine("{");
 
-        var bodyEmitter = new FunctionBodyEmitter(builder, function, abiFunction, _abiModel, ssaFunction, _stringConstants, MapType);
+        var bodyEmitter = new FunctionBodyEmitter(
+            builder,
+            function,
+            abiFunction,
+            _abiModel,
+            ssaFunction,
+            _stringConstants,
+            MapType,
+            TryGetConcreteTypeLayout);
         bodyEmitter.Emit();
 
         builder.AppendLine("}");
@@ -692,6 +714,7 @@ internal sealed class LlvmIrEmitter
         private readonly SsaFunction _ssaFunction;
         private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
         private readonly Func<StarkTypeSymbol, string> _mapType;
+        private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
         private int _nextAbiTempId;
@@ -703,7 +726,8 @@ internal sealed class LlvmIrEmitter
             AbiModel abiModel,
             SsaFunction ssaFunction,
             IReadOnlyDictionary<string, EmittedStringConstant> stringConstants,
-            Func<StarkTypeSymbol, string> mapType)
+            Func<StarkTypeSymbol, string> mapType,
+            Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout)
         {
             _builder = builder;
             _function = function;
@@ -712,6 +736,7 @@ internal sealed class LlvmIrEmitter
             _ssaFunction = ssaFunction;
             _stringConstants = stringConstants;
             _mapType = mapType;
+            _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
         }
 
         public void Emit()
@@ -763,6 +788,12 @@ internal sealed class LlvmIrEmitter
                     return;
                 case SsaAllocateLocalInstruction allocateLocal:
                     EmitAllocateLocal(allocateLocal);
+                    return;
+                case SsaLifetimeStartInstruction lifetimeStart:
+                    EmitLifetimeStart(lifetimeStart);
+                    return;
+                case SsaLifetimeEndInstruction lifetimeEnd:
+                    EmitLifetimeEnd(lifetimeEnd);
                     return;
                 case SsaStoreLocalInstruction storeLocal:
                     EmitStoreLocal(storeLocal);
@@ -1086,6 +1117,16 @@ internal sealed class LlvmIrEmitter
                     continue;
                 }
 
+                var promotedLocal = call.IndirectArgumentLocalNames is not null && index < call.IndirectArgumentLocalNames.Count
+                    ? call.IndirectArgumentLocalNames[index]
+                    : null;
+                if (!string.IsNullOrWhiteSpace(promotedLocal))
+                {
+                    EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
+                    arguments.Add($"ptr %{EscapeIdentifier($"slot_{promotedLocal}")}");
+                    continue;
+                }
+
                 var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"callarg_{parameter.SourceName}"))}";
                 AppendLine($"  {tempSlot} = alloca {MapType(parameter.SourceType)}");
                 AppendLine($"  store {MapType(parameter.SourceType)} {FormatValue(argument)}, ptr {tempSlot}");
@@ -1117,6 +1158,27 @@ internal sealed class LlvmIrEmitter
             {
                 AppendLine($"  %{slotName} = alloca {MapType(allocateLocal.LocalType)}");
             }
+        }
+
+        private void EmitLifetimeStart(SsaLifetimeStartInstruction lifetimeStart)
+        {
+            EmitLifetimeMarker("start", lifetimeStart.LocalName, lifetimeStart.LocalType);
+        }
+
+        private void EmitLifetimeEnd(SsaLifetimeEndInstruction lifetimeEnd)
+        {
+            EmitLifetimeMarker("end", lifetimeEnd.LocalName, lifetimeEnd.LocalType);
+        }
+
+        private void EmitLifetimeMarker(string phase, string localName, StarkTypeSymbol localType)
+        {
+            if (_tryGetConcreteTypeLayout(localType) is not { } layout)
+            {
+                return;
+            }
+
+            EnsureLocalSlotExists(localName, localType);
+            AppendLine($"  call void @llvm.lifetime.{phase}.p0(i64 {layout.SizeBytes}, ptr %{EscapeIdentifier($"slot_{localName}")})");
         }
 
         private void EmitStoreLocal(SsaStoreLocalInstruction storeLocal)

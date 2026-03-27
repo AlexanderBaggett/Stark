@@ -11,7 +11,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -39,7 +39,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 while willexit (true) {
                     break;
                 }
@@ -64,7 +64,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Main() {
+            fn void Run() {
                 for willexit (stack i32 i = 0; i < 4; i = i + 1) {
                     continue;
                 }
@@ -89,7 +89,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 value) {
+            fn i32 Run(i32 value) {
                 switch (value) {
                     case 1:
                         return 10;
@@ -117,7 +117,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 10;
@@ -142,7 +142,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case _ when allow:
                         return 10;
@@ -167,7 +167,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1:
                     case _ when allow:
@@ -195,7 +195,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -223,7 +223,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 value, bool allow) {
+            fn i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -257,7 +257,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn bool Main(bool left, bool right, bool fallback) {
+            fn bool Run(bool left, bool right, bool fallback) {
                 return left || right || fallback;
             }
             """);
@@ -278,7 +278,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(bool flag) {
+            fn i32 Run(bool flag) {
                 return flag ? 1 : 2;
             }
             """);
@@ -300,7 +300,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32 value = 1;
                 value = value + 1;
                 return value;
@@ -333,7 +333,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 left, i32 right) {
+            fn i32 Run(i32 left, i32 right) {
                 return left ^ right;
             }
             """);
@@ -355,7 +355,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32 value = 6;
                 value ^= 3;
                 return value;
@@ -379,7 +379,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn f32 Main() {
+            fn f32 Run() {
                 return 2.0 ** 3.0;
             }
             """);
@@ -401,11 +401,11 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii MainAscii() {
+            fn ascii AsciiChar() {
                 return 'a';
             }
 
-            fn unicode MainUnicode() {
+            fn unicode UnicodeChar() {
                 return '\u03B1';
             }
             """);
@@ -416,11 +416,11 @@ public sealed class MidLevelIrLoweringTests
         Assert.Equal(2, functions.Length);
         Assert.All(functions, function => Assert.True(function.SupportsDirectCodeGeneration));
 
-        var asciiReturn = Assert.Single(functions, function => function.Name == "MainAscii").Blocks.Single().Terminator.Value;
+        var asciiReturn = Assert.Single(functions, function => function.Name == "AsciiChar").Blocks.Single().Terminator.Value;
         Assert.IsType<MidLevelIrStringConstantOperand>(asciiReturn);
         Assert.Equal(StarkTypeKind.Ascii, asciiReturn!.Type.Kind);
 
-        var unicodeReturn = Assert.Single(functions, function => function.Name == "MainUnicode").Blocks.Single().Terminator.Value;
+        var unicodeReturn = Assert.Single(functions, function => function.Name == "UnicodeChar").Blocks.Single().Terminator.Value;
         Assert.IsType<MidLevelIrStringConstantOperand>(unicodeReturn);
         Assert.Equal(StarkTypeKind.Unicode, unicodeReturn!.Type.Kind);
     }
@@ -436,7 +436,7 @@ public sealed class MidLevelIrLoweringTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack Box box = new Box() { Value = 41 };
                 return box.Value;
             }
@@ -462,7 +462,7 @@ public sealed class MidLevelIrLoweringTests
                 i32 Value;
             }
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -479,13 +479,51 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void MemberCallsEvaluateReceiverBeforeExplicitArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                fn i32 Pick(Box box, i32 value) {
+                    return value;
+                }
+            }
+
+            fn Box Make() {
+                return new Box();
+            }
+
+            fn i32 Next() {
+                return 7;
+            }
+
+            fn i32 Run() {
+                return Make().Pick(Next());
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var calls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrCallRValue>()
+            .Select(static call => call.FunctionName)
+            .ToArray();
+
+        Assert.Equal(["Make", "Next", "Box.Pick"], calls);
+    }
+
+    [Fact]
     public void FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperations()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack i32[3] values = { 1, 2, 3 };
                 return values[1];
             }
@@ -507,7 +545,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main() {
+            fn i32 Run() {
                 stack mut i32[3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
@@ -530,7 +568,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack i32[3] values = { 4, 7, 9 };
                 stack i32[] view = values;
                 return view[index];
@@ -555,7 +593,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32 index) {
+            fn i32 Run(i32 index) {
                 stack mut i32[3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
@@ -581,7 +619,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Main(i32[] view, i32 index) {
+            fn i32 Run(i32[] view, i32 index) {
                 view[index] = 9;
                 return view[index];
             }

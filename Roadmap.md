@@ -216,14 +216,14 @@ Goal: Stark lowers through multiple IR stages and can produce native executables
 - [x] short-circuit `&&`
 - [x] short-circuit `||`
 - [x] ternary conditional `?:`
-- [ ] character literal lowering
+- [x] character literal lowering
 - [x] field access lowering
 - [x] index access lowering
-- [ ] member call lowering
-  - [ ] lower receiver evaluation order explicitly
-  - [ ] lower value-receiver method calls
-  - [ ] lower borrow/reference receiver calls
-  - [ ] add ABI and codegen tests for receiver passing
+- [x] member call lowering
+  - [x] lower receiver evaluation order explicitly
+  - [x] lower value-receiver method calls
+  - [x] lower borrow/reference receiver calls
+  - [x] add ABI and codegen tests for receiver passing
 - [ ] pointer/address operations beyond the current subset
   - [ ] raw address-of for locals, fields, and globals
   - [ ] element and field address formation as first-class lowered values
@@ -272,11 +272,11 @@ This is the most important remaining compiler milestone.
 - [x] Concrete LLVM lowering for slices
 - [x] Concrete LLVM lowering for strings
 - [x] Concrete LLVM lowering for named aggregate types
-- [ ] Stop mapping most named/aggregate types directly to `ptr`
-  - [ ] by-value aggregate locals in MIR and SSA where legal
-  - [ ] aggregate call arguments without implicit pointer fallback
-  - [ ] aggregate return values without implicit pointer fallback
-  - [ ] aggregate temporaries and phi nodes without pointer-only lowering
+- [x] Stop mapping most named/aggregate types directly to `ptr`
+  - [x] by-value aggregate locals in MIR and SSA where legal
+  - [x] aggregate call arguments without implicit pointer fallback
+  - [x] aggregate return values without implicit pointer fallback
+  - [x] aggregate temporaries and phi nodes without pointer-only lowering
 
 ### Memory and Access Lowering
 
@@ -286,9 +286,9 @@ This is the most important remaining compiler milestone.
 - [x] Array indexing lowering
 - [x] Slice indexing lowering
 - [ ] Aggregate local allocation/lifetime strategy
-  - [ ] choose stack-slot vs scalarized lowering per aggregate shape
-  - [ ] emit LLVM lifetime markers when valid
-  - [ ] preserve stable addresses for borrowed aggregate locals
+  - [x] choose stack-slot vs scalarized lowering per aggregate shape
+  - [x] emit LLVM lifetime markers when valid
+  - [x] preserve stable addresses for borrowed aggregate locals
   - [ ] add copy-elision rules for aggregate temporaries
 - [ ] Aggregate copy/move semantics in lowering
   - [ ] distinguish trivial bitwise copy from semantic move
@@ -451,10 +451,10 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 
 - [x] string literal typing
 - [x] string constant codegen for the supported path
-- [ ] character literal lowering
-  - [ ] ascii character lowering
-  - [ ] unicode character lowering
-  - [ ] regression tests for typing and codegen width rules
+- [x] character literal lowering
+  - [x] ascii character lowering
+  - [x] unicode character lowering
+  - [x] regression tests for typing and codegen width rules
 - [ ] richer escape support and validation
   - [ ] simple escapes
   - [ ] hex and unicode escapes

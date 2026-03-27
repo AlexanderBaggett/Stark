@@ -132,10 +132,10 @@ public sealed class ParserConformanceTests
             """
             module Operators
 
-            fn i32 Compute(i32 a, i32 b, i32 c, bool flag) {
-                stack mut i32 value = a + b * c << 1;
-                value &= a ^ b | c;
-                value = flag ? value : a;
+            fn i32 Compute(i32 left, i32 middle, i32 right, bool flag) {
+                stack mut i32 value = left + middle * right << 1;
+                value &= left ^ middle | right;
+                value = flag ? value : left;
                 return ~value;
             }
             """
@@ -160,7 +160,7 @@ public sealed class ParserConformanceTests
                 i32 Value;
             }
 
-            fn void Main() {
+            fn void Run() {
                 stack Item item = new Item() { Value = 1, };
                 stack i32[3] numbers = { 1, 2, 3, };
             }
@@ -210,7 +210,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn i32 Main(i32 value) {
+            fn i32 Run(i32 value) {
                 switch (value) {
                     case var:
                         return 1;
@@ -235,7 +235,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Main(bool flag) {
+            fn void Run(bool flag) {
                 for willexit (stack i32 i = 0) {
                     ;
                 }
@@ -251,7 +251,7 @@ public sealed class ParserConformanceTests
                 i32 Value;
             }
 
-            fn void Main() {
+            fn void Run() {
                 stack Item item = new Item() { Value = };
             }
             """
@@ -261,7 +261,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Main(rawptr<i32 value) {
+            fn void Run(rawptr<i32 value) {
                 return;
             }
             """
@@ -271,7 +271,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            public export fn void Main();
+            public export fn void Run();
             """
         },
         {
@@ -279,7 +279,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Main(bool flag) {
+            fn void Run(bool flag) {
                 while non deterministic (flag) {
                     break;
                 }
@@ -295,7 +295,7 @@ public sealed class ParserConformanceTests
                 return;
             }
 
-            fn void Main() {
+            fn void Run() {
                 Write(1 2);
             }
             """

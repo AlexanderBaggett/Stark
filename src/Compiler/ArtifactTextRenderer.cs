@@ -158,6 +158,8 @@ internal static class ArtifactTextRenderer
         {
             SsaValueInstruction valueInstruction => $"{valueInstruction.ResultName} = {valueInstruction.Value.Text}",
             SsaAllocateLocalInstruction allocateLocal => $"alloca {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
+            SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
+            SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaStoreLocalInstruction storeLocal => $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",
             SsaStoreIndirectInstruction storeIndirect => $"store {FormatSsaValue(storeIndirect.Value)} -> {FormatSsaValue(storeIndirect.Address)}",
             SsaStoreGlobalInstruction storeGlobal => $"store {FormatSsaValue(storeGlobal.Value)} -> @{storeGlobal.GlobalName}",
