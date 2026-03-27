@@ -221,6 +221,35 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void MultiLabelGuardedSwitchEmitsDecisionTreeBody()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Main(i32 value, bool allow) {
+                switch (value) {
+                    case 1:
+                    case 2 when allow:
+                        return 10;
+                    default:
+                        return 20;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Main(i32 %arg_value, i1 %arg_allow)", llvm);
+        Assert.Contains("icmp eq i32 %arg_value, 1", llvm);
+        Assert.Contains("icmp eq i32 %arg_value, 2", llvm);
+        Assert.Contains("br i1 %arg_allow", llvm);
+        Assert.DoesNotContain("switch i32", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Main(i32, i1)", llvm);
+    }
+
+    [Fact]
     public void HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody()
     {
         var result = Compile(

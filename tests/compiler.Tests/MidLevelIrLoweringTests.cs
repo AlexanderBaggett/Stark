@@ -189,6 +189,34 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void MultiLabelSectionsNormalizeIntoSectionDecisionTrees()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Main(i32 value, bool allow) {
+                switch (value) {
+                    case 1:
+                    case 2 when allow:
+                        return 10;
+                    default:
+                        return 20;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_test_0", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_test_0_1", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_case_0", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void CaptureSwitchPatternLowersToMatchLocalAndBody()
     {
         var result = Compile(
@@ -211,6 +239,14 @@ public sealed class MidLevelIrLoweringTests
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(function.Locals, local => local.Name == "capture");
         Assert.Contains(function.Blocks.SelectMany(static block => block.Statements), statement => statement.TargetName == "capture");
+
+        var captureBlock = Assert.Single(
+            function.Blocks,
+            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.Contains("switch_bind", captureBlock.Label, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
         Assert.Contains(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch);
     }
 

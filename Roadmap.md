@@ -197,11 +197,11 @@ Goal: Stark lowers through multiple IR stages and can produce native executables
 - [x] literal `switch` lowering
 - [x] guarded `switch` lowering with `when`
 - [x] `case var capture` lowering
-- [ ] More advanced pattern lowering strategy
-  - [ ] normalize multi-label `switch` sections before lowering
+- [x] More advanced pattern lowering strategy
+  - [x] normalize multi-label `switch` sections before lowering
   - [x] make guard ordering explicit in the lowered control-flow shape
-  - [ ] lower more complex decision trees without ad-hoc fallthrough handling
-  - [ ] materialize capture bindings only after a case is selected
+  - [x] lower more complex decision trees without ad-hoc fallthrough handling
+  - [x] materialize capture bindings only after a case is selected
 
 ### Expression Lowering
 
@@ -736,3 +736,33 @@ The compiler should be considered broadly complete only when all of the followin
 - [ ] The toolchain can produce native binaries reliably across normal workflows
 - [ ] The standard library is sufficient for basic command-line applications
 - [ ] Diagnostics and tests are strong enough that refactoring the compiler is safe
+
+
+Everything before this point is frozen
+---------------------------------------------------
+
+## Milestone v1.2: Expand Standard Library
+
+### Expand Standard Library Definition For Full IO/Threading/Collections
+
+### Linux Standard Libary Implementation with SysCall
+
+### Windows Standard Library
+
+
+## Milestone v1.3 Examples and Website
+
+### Create Simple Exammples Demonstrating syntax
+
+### Create Intermediate Examples of semi-realworld usage 
+
+### Create equivalent of the Rust Book for this language
+
+### Create Website to showcase language
+
+
+## Milestone v1.4 Performance benchmarking vs C and Rust
+
+### Create the benchmarks
+
+### Optimize IL Code Gen Based on Results

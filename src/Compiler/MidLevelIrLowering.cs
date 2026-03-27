@@ -626,91 +626,45 @@ internal sealed class MidLevelIrLowerer
             }
 
             var sections = parsedSections
-                .Select((section, index) => (section.Section, section.Labels, Block: CreateBlock($"switch_case_{index}")))
+                .Select((section, index) => (
+                    section.Section,
+                    section.Labels,
+                    EntryBlock: CreateBlock($"switch_test_{index}"),
+                    BodyBlock: CreateBlock($"switch_case_{index}")))
                 .ToArray();
             var exitBlock = CreateBlock("switch_exit");
             var defaultTarget = sections
-                .SelectMany(static section => section.Labels.Select(label => (section.Block.Id, label)))
-                .FirstOrDefault(static item => item.label.IsDefault && item.label.GuardExpression is null && item.label.CaptureName is null)
-                .Id;
-
-            if (defaultTarget == 0 && !sections.SelectMany(static section => section.Labels).Any(static label => label.IsDefault))
-            {
-                defaultTarget = exitBlock.Id;
-            }
+                .Where(static section => section.Labels.Any(static label => label.IsDefault && label.GuardExpression is null && label.CaptureName is null))
+                .Select(static section => section.BodyBlock.Id)
+                .FirstOrDefault(exitBlock.Id);
 
             if (!TryRegisterSwitchCaptureLocals(sections, switchValue.Type))
             {
                 return false;
             }
 
-            var orderedCases = sections
-                .SelectMany(static section => section.Labels.Select(label => (section.Block.Id, Label: label)))
-                .ToArray();
-
-            if (orderedCases.Length == 0)
+            if (sections.Length == 0)
             {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [defaultTarget]);
             }
             else
             {
-                var compareBlocks = new BasicBlockBuilder[orderedCases.Length];
-                compareBlocks[0] = CurrentBlock;
-                for (var index = 1; index < orderedCases.Length; index++)
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Goto,
+                    [sections[0].EntryBlock.Id]);
+
+                for (var index = 0; index < sections.Length; index++)
                 {
-                    compareBlocks[index] = CreateBlock($"switch_test_{index}");
-                }
+                    CurrentBlock = sections[index].EntryBlock;
+                    var nextSectionTarget = index + 1 < sections.Length ? sections[index + 1].EntryBlock.Id : defaultTarget;
 
-                for (var index = 0; index < orderedCases.Length; index++)
-                {
-                    CurrentBlock = compareBlocks[index];
-                    var (targetBlockId, label) = orderedCases[index];
-                    var nextTarget = index + 1 < orderedCases.Length ? compareBlocks[index + 1].Id : defaultTarget;
-
-                    if (label.IsMatchAll)
-                    {
-                        if (!EmitSwitchMatchTransition(label, switchValue, targetBlockId, nextTarget))
-                        {
-                            return false;
-                        }
-
-                        continue;
-                    }
-
-                    var literalOperand = LowerSwitchCaseLiteral(label.Literal!, switchValue.Type);
-                    if (literalOperand is null)
-                    {
-                        return false;
-                    }
-
-                    var condition = EmitEqualityComparison(
+                    if (!EmitSwitchSectionDecision(
+                        sections[index].Labels,
                         switchValue,
-                        literalOperand,
-                        $"switch {switchStatement.expression().GetText()} == {label.LabelText}");
-                    if (condition is null)
-                    {
-                        return false;
-                    }
-
-                    if (label.GuardExpression is null && label.CaptureName is null)
-                    {
-                        CurrentBlock.Terminator = new MidLevelIrTerminator(
-                            MidLevelIrTerminatorKind.Branch,
-                            [targetBlockId, nextTarget],
-                            ConditionText: label.LabelText,
-                            Condition: condition);
-                        continue;
-                    }
-
-                    var matchBlock = CreateBlock($"switch_match_{index}");
-                    CurrentBlock.Terminator = new MidLevelIrTerminator(
-                        MidLevelIrTerminatorKind.Branch,
-                        [matchBlock.Id, nextTarget],
-                        ConditionText: label.LabelText,
-                        Condition: condition);
-
-                    CurrentBlock = matchBlock;
-                    if (!EmitSwitchMatchTransition(label, switchValue, targetBlockId, nextTarget))
+                        sections[index].BodyBlock.Id,
+                        nextSectionTarget,
+                        switchStatement.expression().GetText(),
+                        index))
                     {
                         return false;
                     }
@@ -719,7 +673,7 @@ internal sealed class MidLevelIrLowerer
 
             foreach (var section in sections)
             {
-                CurrentBlock = section.Block;
+                CurrentBlock = section.BodyBlock;
                 foreach (var nested in section.Section.statement())
                 {
                     LowerStatement(nested);
@@ -729,6 +683,85 @@ internal sealed class MidLevelIrLowerer
             }
 
             CurrentBlock = exitBlock;
+            return true;
+        }
+
+        private bool EmitSwitchSectionDecision(
+            IReadOnlyList<LowerableSwitchLabel> labels,
+            MidLevelIrOperand switchValue,
+            int targetBlockId,
+            int nextSectionTarget,
+            string switchText,
+            int sectionIndex)
+        {
+            if (labels.Count == 0)
+            {
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [nextSectionTarget]);
+                return true;
+            }
+
+            var decisionBlocks = new BasicBlockBuilder[labels.Count];
+            decisionBlocks[0] = CurrentBlock;
+            for (var index = 1; index < labels.Count; index++)
+            {
+                decisionBlocks[index] = CreateBlock($"switch_test_{sectionIndex}_{index}");
+            }
+
+            for (var index = 0; index < labels.Count; index++)
+            {
+                CurrentBlock = decisionBlocks[index];
+                var label = labels[index];
+                var nextTarget = index + 1 < labels.Count ? decisionBlocks[index + 1].Id : nextSectionTarget;
+
+                if (label.IsMatchAll)
+                {
+                    if (!EmitSwitchMatchTransition(label, switchValue, targetBlockId, nextTarget))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                var literalOperand = LowerSwitchCaseLiteral(label.Literal!, switchValue.Type);
+                if (literalOperand is null)
+                {
+                    return false;
+                }
+
+                var condition = EmitEqualityComparison(
+                    switchValue,
+                    literalOperand,
+                    $"switch {switchText} == {label.LabelText}");
+                if (condition is null)
+                {
+                    return false;
+                }
+
+                if (label.GuardExpression is null && label.CaptureName is null)
+                {
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Branch,
+                        [targetBlockId, nextTarget],
+                        ConditionText: label.LabelText,
+                        Condition: condition);
+                    continue;
+                }
+
+                var matchBlock = CreateBlock($"switch_match_{sectionIndex}_{index}");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [matchBlock.Id, nextTarget],
+                    ConditionText: label.LabelText,
+                    Condition: condition);
+
+                CurrentBlock = matchBlock;
+                if (!EmitSwitchMatchTransition(label, switchValue, targetBlockId, nextTarget))
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 
@@ -811,7 +844,7 @@ internal sealed class MidLevelIrLowerer
         }
 
         private bool TryRegisterSwitchCaptureLocals(
-            IEnumerable<(StarkParser.SwitchSectionContext Section, IReadOnlyList<LowerableSwitchLabel> Labels, BasicBlockBuilder Block)> sections,
+            IEnumerable<(StarkParser.SwitchSectionContext Section, IReadOnlyList<LowerableSwitchLabel> Labels, BasicBlockBuilder EntryBlock, BasicBlockBuilder BodyBlock)> sections,
             StarkTypeSymbol switchType)
         {
             foreach (var section in sections)
@@ -841,14 +874,14 @@ internal sealed class MidLevelIrLowerer
 
         private bool EmitSwitchMatchTransition(LowerableSwitchLabel label, MidLevelIrOperand switchValue, int targetBlockId, int nextTarget)
         {
-            if (label.CaptureName is not null)
-            {
-                var capture = new MidLevelIrLocalOperand(label.CaptureName, switchValue.Type);
-                EmitOperandAssignment(capture, switchValue, switchValue.Text);
-            }
-
             if (label.GuardExpression is null)
             {
+                if (label.CaptureName is not null)
+                {
+                    var capture = new MidLevelIrLocalOperand(label.CaptureName, switchValue.Type);
+                    EmitOperandAssignment(capture, switchValue, switchValue.Text);
+                }
+
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
                 return true;
             }
@@ -857,6 +890,22 @@ internal sealed class MidLevelIrLowerer
             if (guard is null)
             {
                 return false;
+            }
+
+            if (label.CaptureName is not null)
+            {
+                var captureBlock = CreateBlock("switch_bind");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [captureBlock.Id, nextTarget],
+                    ConditionText: label.GuardExpression.GetText(),
+                    Condition: guard);
+
+                CurrentBlock = captureBlock;
+                var capture = new MidLevelIrLocalOperand(label.CaptureName, switchValue.Type);
+                EmitOperandAssignment(capture, switchValue, switchValue.Text);
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
+                return true;
             }
 
             CurrentBlock.Terminator = new MidLevelIrTerminator(
@@ -2330,6 +2379,13 @@ internal sealed class MidLevelIrLowerer
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
                     "numcast");
+            }
+
+            if (operand.Type.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Integer)
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    "intcast");
             }
 
             if (operand.Type.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Float)

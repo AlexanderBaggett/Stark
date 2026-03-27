@@ -867,6 +867,12 @@ internal sealed class LlvmIrEmitter
                 return;
             }
 
+            if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Integer)
+            {
+                AppendLine($"  {result} = fptosi {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
+                return;
+            }
+
             if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Float)
             {
                 if (sourceType.BitWidth == targetType.BitWidth)
@@ -877,6 +883,18 @@ internal sealed class LlvmIrEmitter
 
                 var opcode = sourceType.BitWidth < targetType.BitWidth ? "fpext" : "fptrunc";
                 AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
+                return;
+            }
+
+            if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.RawPointer)
+            {
+                AppendLine($"  {result} = inttoptr {MapType(sourceType)} {FormatValue(convert.Operand)} to ptr");
+                return;
+            }
+
+            if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.Integer)
+            {
+                AppendLine($"  {result} = ptrtoint ptr {FormatValue(convert.Operand)} to {MapType(targetType)}");
                 return;
             }
 

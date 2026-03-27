@@ -1,0 +1,153 @@
+using System.Numerics;
+using Stark.Compiler;
+
+namespace compiler.Tests;
+
+public sealed class LlvmEmitterConversionTests
+{
+    [Fact]
+    public void FloatToIntegerConversionEmitsFptosi()
+    {
+        var llvm = EmitSingleConversion(
+            StarkTypeSymbols.Integer(32),
+            new SsaFloatConstant("3.5", StarkTypeSymbols.Float(32)));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Main()", llvm);
+        Assert.Contains("fptosi float 3.5 to i32", llvm);
+        Assert.Contains("ret i32", llvm);
+    }
+
+    [Fact]
+    public void IntegerToRawPointerConversionEmitsInttoptr()
+    {
+        var targetType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false);
+        var llvm = EmitSingleConversion(
+            targetType,
+            new SsaIntegerConstant(new BigInteger(1024), StarkTypeSymbols.Integer(64)));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Main()", llvm);
+        Assert.Contains("inttoptr i64 1024 to ptr", llvm);
+        Assert.Contains("ret ptr", llvm);
+    }
+
+    [Fact]
+    public void RawPointerToIntegerConversionEmitsPtrtoint()
+    {
+        var sourceType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false);
+        var llvm = EmitSingleConversion(
+            StarkTypeSymbols.Integer(64),
+            new SsaNullConstant(sourceType));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Main()", llvm);
+        Assert.Contains("ptrtoint ptr null to i64", llvm);
+        Assert.Contains("ret i64", llvm);
+    }
+
+    private static string EmitSingleConversion(
+        StarkTypeSymbol targetType,
+        SsaValue operand)
+    {
+        var effectModel = new FunctionEffectModel(
+            "Demo",
+            new Dictionary<string, FunctionEffectProfile>(StringComparer.Ordinal)
+            {
+                ["Main"] = new FunctionEffectProfile(
+                    "Main",
+                    StarkFunctionKind.Fn,
+                    ReadsArgumentMemory: false,
+                    IsPure: true,
+                    NoSync: true,
+                    NoFree: true,
+                    NoUnwind: true,
+                    WillReturn: true,
+                    MustProgress: true,
+                    UseFastCallingConvention: true,
+                    IsFfi: false,
+                    IsHot: false,
+                    IsCold: false,
+                    InlinePreference.NoInline)
+            });
+        var typeModel = new TypeCheckModel(
+            "Demo",
+            NamedTypes: new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal),
+            Functions: new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
+            {
+                ["Main"] = new TypedFunctionSignature("Main", targetType, [])
+            },
+            Globals: new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal),
+            Literals: []);
+        var abiModel = new AbiModel(
+            "Demo",
+            new Dictionary<string, AbiFunctionSignature>(StringComparer.Ordinal)
+            {
+                ["Main"] = new AbiFunctionSignature(
+                    "Main",
+                    "Main",
+                    targetType,
+                    targetType,
+                    [],
+                    IsFfi: false)
+            });
+        var ssa = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Main",
+                    targetType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaConvertRValue(
+                                        operand,
+                                        targetType,
+                                        "convert"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", targetType)))
+                    ])
+            ]);
+        var syntaxModel = new SyntaxModel(
+            "Demo",
+            [],
+            [
+                new TopLevelDeclarationModel(
+                    "Main",
+                    DeclarationKind.Function,
+                    StarkVisibility.Module,
+                    new FunctionDeclarationModel(
+                        "Main",
+                        StarkFunctionKind.Fn,
+                        targetType.DisplayName,
+                        [],
+                        new FunctionModifierSet(
+                            InlinePreference.NoInline,
+                            IsHot: false,
+                            IsCold: false,
+                            IsFfi: false),
+                        HasBody: true))
+            ]);
+
+        return new LlvmIrEmitter(
+            new CompilationInput("module Demo"),
+            syntaxModel,
+            effectModel,
+            typeModel,
+            abiModel,
+            ssa).Emit().Text;
+    }
+}
