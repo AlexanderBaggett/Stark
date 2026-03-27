@@ -190,7 +190,9 @@ const rawptr<i8> stdout = null;
 const rawptr<i8> stderr = null;
 ```
 
-Do not rename imported foreign symbols into Stark-style `PascalCase` names unless a separate Stark wrapper is introduced.
+Do not rename imported foreign symbols into Stark-style `PascalCase` names.
+
+A separate Stark wrapper is justified only when it creates a real semantic or package boundary, not when it exists only to restyle the foreign name.
 
 Bad:
 
@@ -202,10 +204,6 @@ Good:
 
 ```stark
 ffi fn i32 fputs(ascii text, rawptr<i8> stream);
-public fn void Write(ascii text) {
-    fputs(text, stdout);
-    return;
-}
 ```
 
 ### Exported FFI Names
@@ -232,11 +230,36 @@ If the foreign API expects `CreateFileW`, use `CreateFileW`.
 
 If the exported symbol is really part of a Stark-facing package API rather than a foreign ABI convention, `PascalCase` is still preferred.
 
-### Stark Wrappers Around FFI
+### Cosmetic Wrappers Around FFI
 
-When possible, wrap raw FFI imports with Stark-style functions.
+Do not introduce wrappers around FFI imports just to make the foreign names look more Stark-like.
 
-Examples:
+That kind of wrapper usually adds no semantic value and can lengthen hot call paths for style reasons alone.
+
+Bad:
+
+```stark
+ffi fn i32 fputs(ascii text, rawptr<i8> stream);
+
+public fn i32 FPuts(ascii text, rawptr<i8> stream) {
+    return fputs(text, stream);
+}
+```
+
+If the foreign symbol is `fputs`, call it `fputs`.
+
+### Semantic Wrappers Around FFI
+
+An FFI wrapper is acceptable only when it creates a real Stark boundary.
+
+Typical valid reasons include:
+
+- hiding raw handles or raw pointers from the rest of the package
+- combining multiple foreign calls into one Stark-level operation
+- exposing a stable package API instead of leaking runtime details directly
+- narrowing a low-level foreign surface into a smaller, more intentional Stark abstraction
+
+Example:
 
 ```stark
 ffi fn i32 fputs(ascii text, rawptr<i8> stream);
@@ -249,7 +272,9 @@ public fn void WriteLine(ascii text) {
 }
 ```
 
-The raw boundary keeps foreign naming. The Stark-owned layer uses Stark naming.
+This is acceptable because it is not just a spelling wrapper. It hides the foreign stream handle and defines a higher-level Stark operation.
+
+If a wrapper adds no semantic value and exists only for naming, prefer direct FFI use instead.
 
 ## Entrypoint Rule
 
