@@ -2665,8 +2665,8 @@ public partial class StarkParser : Parser {
 	public partial class ConstantDeclaratorContext : ParserRuleContext {
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode Identifier() { return GetToken(StarkParser.Identifier, 0); }
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode ASSIGN() { return GetToken(StarkParser.ASSIGN, 0); }
-		[System.Diagnostics.DebuggerNonUserCode] public ExpressionContext expression() {
-			return GetRuleContext<ExpressionContext>(0);
+		[System.Diagnostics.DebuggerNonUserCode] public VariableInitializerContext variableInitializer() {
+			return GetRuleContext<VariableInitializerContext>(0);
 		}
 		public ConstantDeclaratorContext(ParserRuleContext parent, int invokingState)
 			: base(parent, invokingState)
@@ -2693,7 +2693,7 @@ public partial class StarkParser : Parser {
 			State = 522;
 			Match(ASSIGN);
 			State = 523;
-			expression();
+			variableInitializer();
 			}
 		}
 		catch (RecognitionException re) {
@@ -6867,8 +6867,8 @@ public partial class StarkParser : Parser {
 	public partial class MemberInitializerContext : ParserRuleContext {
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode Identifier() { return GetToken(StarkParser.Identifier, 0); }
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode ASSIGN() { return GetToken(StarkParser.ASSIGN, 0); }
-		[System.Diagnostics.DebuggerNonUserCode] public ExpressionContext expression() {
-			return GetRuleContext<ExpressionContext>(0);
+		[System.Diagnostics.DebuggerNonUserCode] public VariableInitializerContext variableInitializer() {
+			return GetRuleContext<VariableInitializerContext>(0);
 		}
 		public MemberInitializerContext(ParserRuleContext parent, int invokingState)
 			: base(parent, invokingState)
@@ -6895,7 +6895,7 @@ public partial class StarkParser : Parser {
 			State = 983;
 			Match(ASSIGN);
 			State = 984;
-			expression();
+			variableInitializer();
 			}
 		}
 		catch (RecognitionException re) {
@@ -6911,11 +6911,11 @@ public partial class StarkParser : Parser {
 
 	public partial class ArrayInitializerContext : ParserRuleContext {
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode LBRACE() { return GetToken(StarkParser.LBRACE, 0); }
-		[System.Diagnostics.DebuggerNonUserCode] public ExpressionContext[] expression() {
-			return GetRuleContexts<ExpressionContext>();
+		[System.Diagnostics.DebuggerNonUserCode] public VariableInitializerContext[] variableInitializer() {
+			return GetRuleContexts<VariableInitializerContext>();
 		}
-		[System.Diagnostics.DebuggerNonUserCode] public ExpressionContext expression(int i) {
-			return GetRuleContext<ExpressionContext>(i);
+		[System.Diagnostics.DebuggerNonUserCode] public VariableInitializerContext variableInitializer(int i) {
+			return GetRuleContext<VariableInitializerContext>(i);
 		}
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode RBRACE() { return GetToken(StarkParser.RBRACE, 0); }
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode[] COMMA() { return GetTokens(StarkParser.COMMA); }
@@ -6947,7 +6947,7 @@ public partial class StarkParser : Parser {
 			State = 986;
 			Match(LBRACE);
 			State = 987;
-			expression();
+			variableInitializer();
 			State = 992;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,104,Context);
@@ -6958,7 +6958,7 @@ public partial class StarkParser : Parser {
 					State = 988;
 					Match(COMMA);
 					State = 989;
-					expression();
+					variableInitializer();
 					}
 					} 
 				}
@@ -7397,7 +7397,7 @@ public partial class StarkParser : Parser {
 		0,0,509,510,3,84,42,0,510,511,3,76,38,0,511,512,5,105,0,0,512,71,1,0,0,
 		0,513,518,3,74,37,0,514,515,5,106,0,0,515,517,3,74,37,0,516,514,1,0,0,
 		0,517,520,1,0,0,0,518,516,1,0,0,0,518,519,1,0,0,0,519,73,1,0,0,0,520,518,
-		1,0,0,0,521,522,5,115,0,0,522,523,5,90,0,0,523,524,3,150,75,0,524,75,1,
+		1,0,0,0,521,522,5,115,0,0,522,523,5,90,0,0,523,524,3,80,40,0,524,75,1,
 		0,0,0,525,530,3,78,39,0,526,527,5,106,0,0,527,529,3,78,39,0,528,526,1,
 		0,0,0,529,532,1,0,0,0,530,528,1,0,0,0,530,531,1,0,0,0,531,77,1,0,0,0,532,
 		530,1,0,0,0,533,536,5,115,0,0,534,535,5,90,0,0,535,537,3,80,40,0,536,534,
@@ -7526,25 +7526,25 @@ public partial class StarkParser : Parser {
 		101,0,972,970,1,0,0,0,973,976,1,0,0,0,974,972,1,0,0,0,974,975,1,0,0,0,
 		975,978,1,0,0,0,976,974,1,0,0,0,977,979,5,106,0,0,978,977,1,0,0,0,978,
 		979,1,0,0,0,979,980,1,0,0,0,980,981,5,111,0,0,981,201,1,0,0,0,982,983,
-		5,115,0,0,983,984,5,90,0,0,984,985,3,150,75,0,985,203,1,0,0,0,986,987,
-		5,110,0,0,987,992,3,150,75,0,988,989,5,106,0,0,989,991,3,150,75,0,990,
-		988,1,0,0,0,991,994,1,0,0,0,992,990,1,0,0,0,992,993,1,0,0,0,993,996,1,
-		0,0,0,994,992,1,0,0,0,995,997,5,106,0,0,996,995,1,0,0,0,996,997,1,0,0,
-		0,997,998,1,0,0,0,998,999,5,111,0,0,999,205,1,0,0,0,1000,1008,3,208,104,
-		0,1001,1008,5,117,0,0,1002,1008,5,119,0,0,1003,1008,5,118,0,0,1004,1008,
-		5,57,0,0,1005,1008,5,58,0,0,1006,1008,5,59,0,0,1007,1000,1,0,0,0,1007,
-		1001,1,0,0,0,1007,1002,1,0,0,0,1007,1003,1,0,0,0,1007,1004,1,0,0,0,1007,
-		1005,1,0,0,0,1007,1006,1,0,0,0,1008,207,1,0,0,0,1009,1011,5,94,0,0,1010,
-		1009,1,0,0,0,1010,1011,1,0,0,0,1011,1012,1,0,0,0,1012,1013,5,116,0,0,1013,
-		209,1,0,0,0,1014,1019,5,115,0,0,1015,1016,5,107,0,0,1016,1018,5,115,0,
-		0,1017,1015,1,0,0,0,1018,1021,1,0,0,0,1019,1017,1,0,0,0,1019,1020,1,0,
-		0,0,1020,211,1,0,0,0,1021,1019,1,0,0,0,109,215,222,228,233,238,241,250,
-		257,264,270,280,286,294,297,300,308,316,331,336,341,348,351,358,365,375,
-		384,393,402,410,415,422,431,438,444,452,459,465,473,480,486,494,507,518,
-		530,536,541,548,555,563,565,577,582,584,590,605,614,631,640,648,656,660,
-		669,677,682,688,694,710,714,718,725,729,744,763,770,780,790,797,805,813,
-		821,829,837,845,853,858,866,874,886,893,900,906,908,913,919,925,930,940,
-		945,948,956,959,962,974,978,992,996,1007,1010,1019
+		5,115,0,0,983,984,5,90,0,0,984,985,3,80,40,0,985,203,1,0,0,0,986,987,5,
+		110,0,0,987,992,3,80,40,0,988,989,5,106,0,0,989,991,3,80,40,0,990,988,
+		1,0,0,0,991,994,1,0,0,0,992,990,1,0,0,0,992,993,1,0,0,0,993,996,1,0,0,
+		0,994,992,1,0,0,0,995,997,5,106,0,0,996,995,1,0,0,0,996,997,1,0,0,0,997,
+		998,1,0,0,0,998,999,5,111,0,0,999,205,1,0,0,0,1000,1008,3,208,104,0,1001,
+		1008,5,117,0,0,1002,1008,5,119,0,0,1003,1008,5,118,0,0,1004,1008,5,57,
+		0,0,1005,1008,5,58,0,0,1006,1008,5,59,0,0,1007,1000,1,0,0,0,1007,1001,
+		1,0,0,0,1007,1002,1,0,0,0,1007,1003,1,0,0,0,1007,1004,1,0,0,0,1007,1005,
+		1,0,0,0,1007,1006,1,0,0,0,1008,207,1,0,0,0,1009,1011,5,94,0,0,1010,1009,
+		1,0,0,0,1010,1011,1,0,0,0,1011,1012,1,0,0,0,1012,1013,5,116,0,0,1013,209,
+		1,0,0,0,1014,1019,5,115,0,0,1015,1016,5,107,0,0,1016,1018,5,115,0,0,1017,
+		1015,1,0,0,0,1018,1021,1,0,0,0,1019,1017,1,0,0,0,1019,1020,1,0,0,0,1020,
+		211,1,0,0,0,1021,1019,1,0,0,0,109,215,222,228,233,238,241,250,257,264,
+		270,280,286,294,297,300,308,316,331,336,341,348,351,358,365,375,384,393,
+		402,410,415,422,431,438,444,452,459,465,473,480,486,494,507,518,530,536,
+		541,548,555,563,565,577,582,584,590,605,614,631,640,648,656,660,669,677,
+		682,688,694,710,714,718,725,729,744,763,770,780,790,797,805,813,821,829,
+		837,845,853,858,866,874,886,893,900,906,908,913,919,925,930,940,945,948,
+		956,959,962,974,978,992,996,1007,1010,1019
 	};
 
 	public static readonly ATN _ATN =

@@ -572,14 +572,18 @@ public static class DefaultCompilerPipeline
 
         public void Execute(CompilerPassContext context)
         {
+            var parseResult = context.Artifacts.GetRequired(CompilerArtifactKeys.ParseResult);
             var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var llvmModule = new LlvmIrEmitter(
                 context.Input,
+                parseResult,
                 syntaxModel,
+                loadedModules,
                 effectModel,
                 typeModel,
                 abiModel,

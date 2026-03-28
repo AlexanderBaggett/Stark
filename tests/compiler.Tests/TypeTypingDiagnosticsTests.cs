@@ -111,6 +111,138 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void ConstDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32[] View = { 1, 2, 3 };
+
+            fn void Run() {
+                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&View[0]);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<i32>", "rawmutptr<i32>", "strengthen pointer mutability");
+    }
+
+    [Fact]
+    public void ConstDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32[] View = { 1, 2, 3 };
+
+            fn void Run() {
+                stack i64 bits = (i64)(&View[0]);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<i32>", "i64", "erase readonly pointer provenance");
+    }
+
+    [Fact]
+    public void FrozenMemberProjectionsCannotBeMutated()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn void Run(frozen Box box) {
+                box.Value = 2;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot mutate member 'Value' through a frozen value");
+    }
+
+    [Fact]
+    public void FrozenSliceProjectionsRemainReadonly()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(frozen i32[] view) {
+                view[0] = 4;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot mutate indexed element through a frozen value");
+    }
+
+    [Fact]
+    public void FrozenDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn void Run(frozen Box box) {
+                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&box.Value);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<frozen i32>", "rawmutptr<i32>", "strengthen pointer mutability");
+    }
+
+    [Fact]
+    public void FrozenDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn void Run(frozen Box box) {
+                stack i64 bits = (i64)(&box.Value);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<frozen i32>", "i64", "erase readonly pointer provenance");
+    }
+
+    [Fact]
+    public void FrozenReachableRawPointerFieldsCannotLeakMutableAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct PtrBox {
+                rawmutptr<i32> Ptr;
+            }
+
+            fn void Run(frozen PtrBox box) {
+                stack rawmutptr<i32> leaked = box.Ptr;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawmutptr<i32>", "rawptr<frozen i32>");
+    }
+
+    [Fact]
     public void MemberAssignmentsReportExpectedAndActualTypes()
     {
         var result = Compile(

@@ -543,7 +543,7 @@ public sealed class SsaLoweringTests
                 i32 Value;
             }
 
-            static i32 Counter = 0;
+            static mut i32 Counter = 0;
 
             fn i32 Run(i32 input) {
                 stack mut Box box = new Box() { Value = 1 };
@@ -568,6 +568,86 @@ public sealed class SsaLoweringTests
                 {
                     Address: SsaGlobalAddressValue { GlobalName: "Counter" }
                 }
+            });
+    }
+
+    [Fact]
+    public void ImmutableGlobalAddressesLowerToReadonlySsaAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static i32 Counter = 0;
+            static Box Current = new Box() { Value = 5 };
+
+            fn rawptr<i32> CounterPtr() {
+                return &Counter;
+            }
+
+            fn rawptr<i32> FieldPtr() {
+                return &(Current.Value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var ssa = GetSsa(result);
+        var counterPtr = Assert.Single(ssa.Functions, static function => function.Name == "CounterPtr");
+        var fieldPtr = Assert.Single(ssa.Functions, static function => function.Name == "FieldPtr");
+
+        Assert.True(counterPtr.SupportsDirectCodeGeneration);
+        Assert.True(fieldPtr.SupportsDirectCodeGeneration);
+
+        var counterReturn = Assert.IsType<SsaGlobalAddressValue>(Assert.Single(counterPtr.Blocks).Terminator.Value);
+        Assert.False(counterReturn.Type.IsMutablePointer);
+
+        var fieldInstructions = fieldPtr.Blocks.SelectMany(static block => block.Instructions).ToArray();
+        Assert.Contains(
+            fieldInstructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaFieldAddressRValue { Type.IsMutablePointer: false }
+            });
+        Assert.DoesNotContain(
+            fieldInstructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaConvertRValue
+                {
+                    TargetType: { Kind: StarkTypeKind.RawPointer },
+                    Operand.Type: { Kind: StarkTypeKind.RawPointer }
+                }
+            });
+    }
+
+    [Fact]
+    public void FrozenSliceAddressesLowerToReadonlySsaAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn rawptr<frozen i32> FirstPtr(frozen i32[] view) {
+                return &(view[0]);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetSsa(result).Functions);
+        Assert.True(function.SupportsDirectCodeGeneration);
+
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaSliceElementAddressRValue { Type.IsMutablePointer: false }
             });
     }
 

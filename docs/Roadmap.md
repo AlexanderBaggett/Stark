@@ -152,6 +152,12 @@ Goal: Stark source can be parsed, modeled, checked, and validated before lowerin
   - [x] track field-wise move state inside aggregates
   - [x] merge partially moved aggregate state across branches
   - [x] diagnose drops of not-fully-initialized aggregate values
+- [x] Generic `frozen` alias and projection semantics
+  - [x] field, index, and slice projections derived from `frozen` values remain `frozen`/readonly views
+  - [x] address-of on data reached through `frozen` values preserves frozen provenance
+  - [x] raw aliases derived from `frozen` values cannot be upgraded into mutable-capable aliases
+  - [x] pointer and integer conversions preserve frozen provenance or are rejected
+  - [x] regression tests for frozen-alias escape hatches outside `const` globals
 - [x] Better diagnostics for borrow conflicts and lifetime errors
   - [x] point back to both the borrow source and the conflicting use
   - [x] distinguish move, alias, escape, and lifetime-end failures clearly
@@ -308,37 +314,42 @@ This is the most important remaining compiler milestone.
 ### Globals and Constants
 
 - [x] String global emission for supported literals
-- [ ] Three-class global binding model
-  - [ ] parse and represent `const`, bare, and `mut` globals distinctly
-  - [ ] enforce immutable-binding vs mutable-rebinding rules
-  - [ ] define `const` as a fully frozen reachable object graph
-  - [ ] diagnostics that distinguish illegal rebinding from illegal mutation
-- [ ] Real fully frozen `const` global emission
-  - [ ] scalar frozen globals
-  - [ ] array and slice frozen globals
-  - [ ] struct and record frozen globals
-  - [ ] nested frozen object graphs
-  - [ ] correct `constant` and `unnamed_addr` style flags where valid
-- [ ] Real immutable global binding emission
-  - [ ] plain immutable scalar/value globals
-  - [ ] immutable globals pointing at mutable heap objects
-  - [ ] aggregate immutable bindings with stable addresses
-  - [ ] tests for immutable global load/address lowering
+- [x] Three-class global binding model
+  - [x] parse and represent `const`, bare, and `mut` globals distinctly
+  - [x] enforce immutable-binding vs mutable-rebinding rules
+  - [x] define `const` as a fully frozen reachable object graph
+  - [x] diagnostics that distinguish illegal rebinding from illegal mutation
+- [ ] Deep freeze alias semantics for `const` globals
+  - [ ] projections from `const` graphs behave as frozen/readonly values, not merely root-guarded globals
+  - [x] safe code cannot strengthen const-derived raw aliases into `rawmutptr`
+  - [x] safe code cannot erase const-derived readonly raw alias provenance through integer conversions
+  - [x] regression tests for `const` escape hatches through explicit conversions
+- [x] Real fully frozen `const` global emission
+  - [x] scalar frozen globals
+  - [x] array and slice frozen globals
+  - [x] struct and record frozen globals
+  - [x] nested frozen object graphs
+  - [x] correct `constant` and `unnamed_addr` style flags where valid
+- [x] Real immutable global binding emission
+  - [x] plain immutable scalar/value globals
+  - [x] immutable globals pointing at mutable heap objects
+  - [x] aggregate immutable bindings with stable addresses
+  - [x] tests for immutable global load/address lowering
 - [ ] Real mutable global rebinding emission
-  - [ ] zero-initialized mutable globals
-  - [ ] scalar-initialized mutable globals
-  - [ ] aggregate-initialized mutable globals
-  - [ ] tests for mutable global load/store lowering
+  - [x] zero-initialized mutable globals
+  - [x] scalar-initialized mutable globals
+  - [x] aggregate-initialized mutable globals
+  - [x] tests for mutable global load/store lowering
 - [ ] Better linkage/visibility lowering for globals
-  - [ ] module-private/internal/public/export mapping for globals
-  - [ ] linkage defaults for frozen vs immutable-binding vs mutable-rebinding globals
-  - [ ] package-boundary behavior for manifest-backed libraries
+  - [x] module-private/internal/public/export mapping for globals
+  - [x] linkage defaults for frozen vs immutable-binding vs mutable-rebinding globals
+  - [x] package-boundary behavior for manifest-backed libraries
   - [x] regression tests over emitted LLVM/global symbol visibility
-- [ ] Frozen aggregate initializers for `const` globals
-  - [ ] array literal constants
-  - [ ] nested aggregate constants
-  - [ ] struct and record constants
-  - [ ] folding aggregate literals into frozen global initializers
+- [x] Frozen aggregate initializers for `const` globals
+  - [x] array literal constants
+  - [x] nested aggregate constants
+  - [x] struct and record constants
+  - [x] folding aggregate literals into frozen global initializers
 
 ## Milestone 4: Modules, Standard Library, and Runtime Surface
 
@@ -355,35 +366,10 @@ Goal: Stark can build real multi-file programs and expose a small but useful sta
 - [x] Package search paths beyond the local module directory
 - [x] Standard library packaging as a manifest-backed Stark package
 
-### Standard Library Core
-
-- [x] Define the first standard library module layout
-- [x] `Console` or `Stdout` output abstraction
-- [x] `Stderr` output abstraction
-- [ ] File read API
-  - [ ] bytes read-all API
-  - [ ] text read-all API for Stark string types
-  - [ ] handle-based read API if handles are exposed
-  - [ ] tests through stdlib package import paths
-- [ ] File write API
-  - [ ] bytes write-all API
-  - [ ] text write-all API for Stark string types
-  - [ ] overwrite vs append mode selection
-  - [ ] flush/close semantics if handles are exposed
-- [ ] Basic path/file error modeling
-  - [ ] canonical file/path error value cases
-  - [ ] result-style IO return shapes
-  - [ ] platform failure translation into Stark error values
-  - [ ] tests and docs for file/path failure behavior
-- [ ] String helpers required by the standard library
-  - [ ] length and emptiness helpers
-  - [ ] string slicing helpers required by IO APIs
-  - [ ] basic search helpers required by stdlib code
-  - [ ] ascii/unicode conversion helpers if the surface supports them
 
 ### Runtime Surface
 
-- [ ] Define program entrypoint conventions beyond raw `ffi fn main`
+- [ ] Define program entrypoint conventions beyond raw `export ffi fn main`
   - [ ] hosted entrypoint rules around `main`
   - [ ] freestanding entrypoint form, if supported
   - [ ] argument and environment exposure model
@@ -477,6 +463,8 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
   - [ ] literal storage and encoding guarantees
   - [ ] stdlib helpers that depend on the text layout model
 
+  
+
 ## Milestone 6: Traits and Doctrine
 
 Goal: Stark's abstraction system becomes real, optimizable, and usable.
@@ -506,6 +494,34 @@ Goal: Stark's abstraction system becomes real, optimizable, and usable.
   - [ ] emit stronger readonly/noalias/capture facts
   - [ ] specialize and inline law calls where closed-world facts allow it
   - [ ] regression tests for emitted LLVM attributes and call shapes
+
+
+  ### Standard Library Core
+
+- [x] Define the first standard library module layout
+- [x] `Console` or `Stdout` output abstraction
+- [x] `Stderr` output abstraction
+- [ ] File read API
+  - [ ] bytes read-all API
+  - [ ] text read-all API for Stark string types
+  - [ ] handle-based read API if handles are exposed
+  - [ ] tests through stdlib package import paths
+- [ ] File write API
+  - [ ] bytes write-all API
+  - [ ] text write-all API for Stark string types
+  - [ ] overwrite vs append mode selection
+  - [ ] flush/close semantics if handles are exposed
+- [ ] Basic path/file error modeling
+  - [ ] canonical file/path error value cases
+  - [ ] result-style IO return shapes
+  - [ ] platform failure translation into Stark error values
+  - [ ] tests and docs for file/path failure behavior
+- [ ] String helpers required by the standard library
+  - [ ] length and emptiness helpers
+  - [ ] string slicing helpers required by IO APIs
+  - [ ] basic search helpers required by stdlib code
+  - [ ] ascii/unicode conversion helpers if the surface supports them
+
 
 ## Milestone 7: Optimization and Backend Quality
 

@@ -144,8 +144,8 @@ internal static class PackageManifestBuilder
                                 qualifiedName,
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
-                                globalType.DisplayName,
-                                declaration.Kind == DeclarationKind.GlobalVariable));
+                                globalType.Type.DisplayName,
+                                globalType.IsMutable));
                         }
 
                         break;

@@ -1,4 +1,6 @@
+using System.Numerics;
 using System.Text;
+using Stark.Parsing;
 
 namespace Stark.Compiler;
 
@@ -8,18 +10,48 @@ internal sealed class LlvmIrEmitter
     private const string UnicodeStringTypeName = "stark_unicode";
     private const int AggregateMemcpyThresholdBytes = 32;
     private readonly CompilationInput _input;
+    private readonly ParseResult _parseResult;
     private readonly SyntaxModel _syntaxModel;
+    private readonly LoadedModuleSet _loadedModules;
     private readonly FunctionEffectModel _effectModel;
     private readonly TypeCheckModel _typeModel;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
     private readonly LlvmTargetInfo? _targetInfo;
     private readonly bool _internalizeModulePrivate;
+    private readonly IReadOnlyDictionary<string, string> _globalSymbols;
     private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
+    private int _syntheticGlobalInitializerIndex;
 
     public LlvmIrEmitter(
         CompilationInput input,
+        ParseResult parseResult,
         SyntaxModel syntaxModel,
+        FunctionEffectModel effectModel,
+        TypeCheckModel typeModel,
+        AbiModel abiModel,
+        SsaIrModule ssa,
+        LlvmTargetInfo? targetInfo = null,
+        bool internalizeModulePrivate = false)
+        : this(
+            input,
+            parseResult,
+            syntaxModel,
+            CreateRootLoadedModules(parseResult, syntaxModel, input.FilePath),
+            effectModel,
+            typeModel,
+            abiModel,
+            ssa,
+            targetInfo,
+            internalizeModulePrivate)
+    {
+    }
+
+    public LlvmIrEmitter(
+        CompilationInput input,
+        ParseResult parseResult,
+        SyntaxModel syntaxModel,
+        LoadedModuleSet loadedModules,
         FunctionEffectModel effectModel,
         TypeCheckModel typeModel,
         AbiModel abiModel,
@@ -28,14 +60,17 @@ internal sealed class LlvmIrEmitter
         bool internalizeModulePrivate = false)
     {
         _input = input;
+        _parseResult = parseResult;
         _syntaxModel = syntaxModel;
+        _loadedModules = loadedModules;
         _effectModel = effectModel;
         _typeModel = typeModel;
         _abiModel = abiModel;
         _ssa = ssa;
         _targetInfo = targetInfo;
         _internalizeModulePrivate = internalizeModulePrivate;
-        _stringConstants = CollectStringConstants(ssa);
+        _globalSymbols = BuildGlobalSymbolMap();
+        _stringConstants = CollectStringConstants(parseResult, ssa);
     }
 
     public LlvmIrModule Emit()
@@ -123,23 +158,269 @@ internal sealed class LlvmIrEmitter
 
     private void EmitGlobals(StringBuilder builder)
     {
-        foreach (var declaration in _syntaxModel.Declarations)
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
         {
-            if (declaration.Kind is not (DeclarationKind.GlobalConstant or DeclarationKind.GlobalVariable))
+            var visibility = ParseVisibility(declaration.visibilityModifier());
+
+            if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+            {
+                foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                {
+                    var name = declarator.Identifier().GetText();
+                    if (!_typeModel.Globals.TryGetValue(name, out var global))
+                    {
+                        continue;
+                    }
+
+                    var symbolName = ResolveGlobalSymbolName(name);
+                    if (ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer()))
+                    {
+                        builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+                        builder.AppendLine($"@{EscapeIdentifier(symbolName)} = external constant {MapType(global.Type)}");
+                        builder.AppendLine();
+                        continue;
+                    }
+
+                    if (!TryPlanVariableInitializer(declarator.variableInitializer(), global.Type, isFrozen: true, out var initializer))
+                    {
+                        builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+                        builder.AppendLine($"@{EscapeIdentifier(symbolName)} = external constant {MapType(global.Type)}");
+                        builder.AppendLine();
+                        continue;
+                    }
+
+                    EmitGlobalInitializerPrelude(builder, initializer);
+                    builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+                    builder.AppendLine(BuildGlobalDefinition(symbolName, visibility, global, initializer.Rendered));
+                    builder.AppendLine();
+                }
+
+                continue;
+            }
+
+            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
             {
                 continue;
             }
 
-            if (!_typeModel.Globals.TryGetValue(declaration.Name, out var type))
+            foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
             {
-                continue;
-            }
+                var name = declarator.Identifier().GetText();
+                if (!_typeModel.Globals.TryGetValue(name, out var global))
+                {
+                    continue;
+                }
 
-            builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
-            var storage = declaration.Kind == DeclarationKind.GlobalConstant ? "constant" : "global";
-            builder.AppendLine($"@{declaration.Name} = external {storage} {MapType(type)}");
-            builder.AppendLine();
+                var symbolName = ResolveGlobalSymbolName(name);
+                if (declarator.variableInitializer() is null
+                    || !TryPlanVariableInitializer(declarator.variableInitializer(), global.Type, isFrozen: false, out var initializer))
+                {
+                    builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+                    var storage = global.IsMutable ? "global" : "constant";
+                    builder.AppendLine($"@{EscapeIdentifier(symbolName)} = external {storage} {MapType(global.Type)}");
+                    builder.AppendLine();
+                    continue;
+                }
+
+                EmitGlobalInitializerPrelude(builder, initializer);
+                builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+                builder.AppendLine(BuildGlobalDefinition(symbolName, visibility, global, initializer.Rendered));
+                builder.AppendLine();
+            }
         }
+
+        EmitImportedGlobalDeclarations(builder);
+    }
+
+    private void EmitImportedGlobalDeclarations(StringBuilder builder)
+    {
+        foreach (var module in _loadedModules.ImportedModules.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                var visibility = ParseVisibility(declaration.visibilityModifier());
+
+                if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+                {
+                    foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                    {
+                        EmitImportedGlobalDeclaration(builder, module, visibility, declarator.Identifier().GetText());
+                    }
+
+                    continue;
+                }
+
+                if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+                {
+                    continue;
+                }
+
+                foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+                {
+                    EmitImportedGlobalDeclaration(builder, module, visibility, declarator.Identifier().GetText());
+                }
+            }
+        }
+    }
+
+    private void EmitImportedGlobalDeclaration(
+        StringBuilder builder,
+        LoadedModuleDocument module,
+        StarkVisibility visibility,
+        string sourceName)
+    {
+        var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
+        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+        {
+            return;
+        }
+
+        var symbolName = ResolveGlobalSymbolName(qualifiedName);
+        var storage = global.IsMutable ? "global" : "constant";
+        builder.AppendLine($"; imported declaration: {qualifiedName}");
+        builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"@{EscapeIdentifier(symbolName)} = external {storage} {MapType(global.Type)}");
+        builder.AppendLine();
+    }
+
+    private string BuildGlobalDefinition(string symbolName, StarkVisibility visibility, TypedGlobalSymbol global, string initializer)
+    {
+        var segments = new List<string> { $"@{EscapeIdentifier(symbolName)}", "=" };
+
+        if (ShouldInternalize(visibility))
+        {
+            segments.Add("internal");
+        }
+
+        segments.Add(global.IsMutable ? "global" : "constant");
+        segments.Add(MapType(global.Type));
+        segments.Add(initializer);
+        return string.Join(" ", segments);
+    }
+
+    private IReadOnlyDictionary<string, string> BuildGlobalSymbolMap()
+    {
+        var symbols = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            var visibility = ParseVisibility(declaration.visibilityModifier());
+
+            if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+            {
+                foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                {
+                    var sourceName = declarator.Identifier().GetText();
+                    if (!_typeModel.Globals.TryGetValue(sourceName, out var global))
+                    {
+                        continue;
+                    }
+
+                    symbols[sourceName] = ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer())
+                        ? sourceName
+                        : GlobalSymbolNaming.ComputeSymbolName(
+                            _syntaxModel.ModuleName,
+                            sourceName,
+                            visibility,
+                            _internalizeModulePrivate,
+                            isImported: false);
+                }
+
+                continue;
+            }
+
+            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+            {
+                continue;
+            }
+
+            foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+            {
+                var sourceName = declarator.Identifier().GetText();
+                symbols[sourceName] = GlobalSymbolNaming.ComputeSymbolName(
+                    _syntaxModel.ModuleName,
+                    sourceName,
+                    visibility,
+                    _internalizeModulePrivate,
+                    isImported: false);
+            }
+        }
+
+        foreach (var module in _loadedModules.ImportedModules)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                var visibility = ParseVisibility(declaration.visibilityModifier());
+
+                if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+                {
+                    foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                    {
+                        var sourceName = declarator.Identifier().GetText();
+                        var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
+                        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+                        {
+                            continue;
+                        }
+
+                        symbols[qualifiedName] = ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer())
+                            ? sourceName
+                            : GlobalSymbolNaming.ComputeSymbolName(
+                                module.SyntaxModel.ModuleName,
+                                sourceName,
+                                visibility,
+                                qualifyModuleSymbols: false,
+                                isImported: true);
+                    }
+
+                    continue;
+                }
+
+                if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+                {
+                    continue;
+                }
+
+                foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+                {
+                    AddImportedGlobalSymbol(symbols, module.SyntaxModel.ModuleName, visibility, declarator.Identifier().GetText());
+                }
+            }
+        }
+
+        foreach (var globalName in _typeModel.Globals.Keys)
+        {
+            symbols.TryAdd(globalName, globalName);
+        }
+
+        return symbols;
+    }
+
+    private void AddImportedGlobalSymbol(
+        Dictionary<string, string> symbols,
+        string moduleName,
+        StarkVisibility visibility,
+        string sourceName)
+    {
+        var qualifiedName = $"{moduleName}.{sourceName}";
+        if (!_typeModel.Globals.ContainsKey(qualifiedName))
+        {
+            return;
+        }
+
+        symbols[qualifiedName] = GlobalSymbolNaming.ComputeSymbolName(
+            moduleName,
+            sourceName,
+            visibility,
+            qualifyModuleSymbols: false,
+            isImported: true);
+    }
+
+    private string ResolveGlobalSymbolName(string globalName)
+    {
+        return _globalSymbols.TryGetValue(globalName, out var symbolName)
+            ? symbolName
+            : globalName;
     }
 
     private void EmitIntrinsicDeclarations(StringBuilder builder)
@@ -252,6 +533,7 @@ internal sealed class LlvmIrEmitter
             _abiModel,
             ssaFunction,
             _stringConstants,
+            ResolveGlobalSymbolName,
             MapType,
             TryGetConcreteTypeLayout);
         bodyEmitter.Emit();
@@ -518,10 +800,25 @@ internal sealed class LlvmIrEmitter
         return builder.ToString();
     }
 
-    private static IReadOnlyDictionary<string, EmittedStringConstant> CollectStringConstants(SsaIrModule ssa)
+    private static LoadedModuleSet CreateRootLoadedModules(ParseResult parseResult, SyntaxModel syntaxModel, string? filePath)
+    {
+        return new LoadedModuleSet(
+            syntaxModel.ModuleName,
+            new Dictionary<string, LoadedModuleDocument>(StringComparer.Ordinal)
+            {
+                [syntaxModel.ModuleName] = new(
+                    new ResolvedModuleReference(syntaxModel.ModuleName, filePath, IsExternal: false, IsRoot: true),
+                    parseResult,
+                    syntaxModel)
+            });
+    }
+
+    private static IReadOnlyDictionary<string, EmittedStringConstant> CollectStringConstants(ParseResult parseResult, SsaIrModule ssa)
     {
         var result = new Dictionary<string, EmittedStringConstant>(StringComparer.Ordinal);
         var index = 0;
+
+        AddGlobalStringConstants(parseResult, result, ref index);
 
         foreach (var function in ssa.Functions)
         {
@@ -554,6 +851,32 @@ internal sealed class LlvmIrEmitter
         }
 
         return result;
+    }
+
+    private static void AddGlobalStringConstants(ParseResult parseResult, Dictionary<string, EmittedStringConstant> constants, ref int index)
+    {
+        foreach (var declaration in parseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+            {
+                foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                {
+                    AddStringConstant(declarator.variableInitializer(), constants, ref index);
+                }
+
+                continue;
+            }
+
+            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+            {
+                continue;
+            }
+
+            foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+            {
+                AddStringConstant(declarator.variableInitializer(), constants, ref index);
+            }
+        }
     }
 
     private static void AddStringConstant(object? source, Dictionary<string, EmittedStringConstant> constants, ref int index)
@@ -617,7 +940,536 @@ internal sealed class LlvmIrEmitter
             case SsaLoadIndirectRValue loadIndirect:
                 AddStringConstant(loadIndirect.Address, constants, ref index);
                 return;
+            case StarkParser.VariableInitializerContext initializer:
+                if (initializer.expression() is { } initializerExpression)
+                {
+                    AddStringConstant(initializerExpression, constants, ref index);
+                    return;
+                }
+
+                if (initializer.objectInitializer() is { } initializerObject)
+                {
+                    AddStringConstant(initializerObject, constants, ref index);
+                    return;
+                }
+
+                if (initializer.arrayInitializer() is { } initializerArray)
+                {
+                    AddStringConstant(initializerArray, constants, ref index);
+                }
+
+                return;
+            case StarkParser.ExpressionContext expression:
+                if (TryUnwrapSimplePrimaryExpression(expression, out var unwrappedPrimaryExpression))
+                {
+                    AddStringConstant(unwrappedPrimaryExpression, constants, ref index);
+                }
+
+                return;
+            case StarkParser.PrimaryExpressionContext primaryExpression:
+                if (primaryExpression.literal() is { } literal)
+                {
+                    AddStringConstant(literal, constants, ref index);
+                    return;
+                }
+
+                if (primaryExpression.objectCreationExpression() is { } creation)
+                {
+                    AddStringConstant(creation, constants, ref index);
+                    return;
+                }
+
+                if (primaryExpression.expression() is { } groupedExpression)
+                {
+                    AddStringConstant(groupedExpression, constants, ref index);
+                }
+
+                return;
+            case StarkParser.ObjectCreationExpressionContext objectCreation:
+                foreach (var argument in objectCreation.argumentList()?.argument() ?? [])
+                {
+                    AddStringConstant(argument.expression(), constants, ref index);
+                }
+
+                AddStringConstant(objectCreation.objectInitializer(), constants, ref index);
+                return;
+            case StarkParser.ObjectInitializerContext objectInitializer:
+                foreach (var memberInitializer in objectInitializer.memberInitializer())
+                {
+                    AddStringConstant(memberInitializer.variableInitializer(), constants, ref index);
+                }
+
+                return;
+            case StarkParser.ArrayInitializerContext arrayInitializer:
+                foreach (var element in arrayInitializer.variableInitializer())
+                {
+                    AddStringConstant(element, constants, ref index);
+                }
+
+                return;
+            case StarkParser.LiteralContext parseLiteral:
+                if (parseLiteral.StringLiteral() is { } literalString)
+                {
+                    AddStringLiteral(literalString.GetText(), constants, ref index);
+                    return;
+                }
+
+                if (parseLiteral.CharacterLiteral() is { } characterLiteral)
+                {
+                    AddStringLiteral(characterLiteral.GetText(), constants, ref index);
+                }
+
+                return;
         }
+    }
+
+    private static bool TryUnwrapSimplePrimaryExpression(StarkParser.ExpressionContext expression, out StarkParser.PrimaryExpressionContext primaryExpression)
+    {
+        primaryExpression = null!;
+
+        if (expression.assignmentExpression().conditionalExpression() is not { } conditionalExpression
+            || conditionalExpression.QUESTION() is not null)
+        {
+            return false;
+        }
+
+        var logicalOr = conditionalExpression.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var unary = multiplicative.unaryExpression(0);
+        if (unary.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null
+            || powerExpression.postfixExpression() is not { } postfixExpression
+            || postfixExpression.postfixPart().Length != 0
+            || postfixExpression.primaryExpression() is not { } primary)
+        {
+            return false;
+        }
+
+        primaryExpression = primary;
+        return true;
+    }
+
+    private bool TryPlanVariableInitializer(
+        StarkParser.VariableInitializerContext initializer,
+        StarkTypeSymbol targetType,
+        bool isFrozen,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+
+        if (initializer.expression() is { } expression)
+        {
+            return TryPlanGlobalExpression(expression, targetType, isFrozen, out plan);
+        }
+
+        if (initializer.objectInitializer() is { } objectInitializer)
+        {
+            return TryPlanObjectInitializer(objectInitializer, targetType, isFrozen, out plan);
+        }
+
+        if (initializer.arrayInitializer() is { } arrayInitializer)
+        {
+            return TryPlanArrayInitializer(arrayInitializer, targetType, isFrozen, out plan);
+        }
+
+        return false;
+    }
+
+    private bool TryPlanGlobalExpression(
+        StarkParser.ExpressionContext expression,
+        StarkTypeSymbol targetType,
+        bool isFrozen,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+
+        if (!TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression))
+        {
+            return false;
+        }
+
+        if (primaryExpression.literal() is { } literal)
+        {
+            return TryPlanLiteralInitializer(literal, targetType, out plan);
+        }
+
+        if (primaryExpression.objectCreationExpression() is { } objectCreation)
+        {
+            return TryPlanObjectCreationInitializer(objectCreation, targetType, isFrozen, out plan);
+        }
+
+        if (primaryExpression.expression() is { } groupedExpression)
+        {
+            return TryPlanGlobalExpression(groupedExpression, targetType, isFrozen, out plan);
+        }
+
+        return false;
+    }
+
+    private bool TryPlanLiteralInitializer(
+        StarkParser.LiteralContext literal,
+        StarkTypeSymbol targetType,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+        var rendered = string.Empty;
+
+        if (literal.signedIntegerLiteral() is { } integerLiteral)
+        {
+            rendered = ParseSignedIntegerLiteral(integerLiteral).ToString();
+        }
+        else if (literal.FloatLiteral() is { } floatLiteral)
+        {
+            rendered = floatLiteral.GetText();
+        }
+        else if (literal.TRUE() is not null)
+        {
+            rendered = "true";
+        }
+        else if (literal.FALSE() is not null)
+        {
+            rendered = "false";
+        }
+        else if (literal.NULL() is not null)
+        {
+            rendered = "null";
+        }
+        else if (literal.StringLiteral() is { } stringLiteral)
+        {
+            rendered = FormatGlobalStringConstantValue(stringLiteral.GetText());
+        }
+        else if (literal.CharacterLiteral() is { } characterLiteral)
+        {
+            rendered = FormatGlobalStringConstantValue(characterLiteral.GetText());
+        }
+        else
+        {
+            return false;
+        }
+
+        plan = new GlobalInitializerPlan(rendered, []);
+        return true;
+    }
+
+    private bool TryPlanObjectCreationInitializer(
+        StarkParser.ObjectCreationExpressionContext objectCreation,
+        StarkTypeSymbol targetType,
+        bool isFrozen,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        var preludeDefinitions = new List<string>();
+        var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal);
+        var fieldOrder = namedType.OrderedFields;
+        var arguments = objectCreation.argumentList()?.argument() ?? [];
+
+        if (arguments.Length != 0)
+        {
+            if (namedType.Kind != DeclarationKind.Record || arguments.Length != fieldOrder.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < arguments.Length; index++)
+            {
+                var field = fieldOrder[index];
+                if (!TryPlanGlobalExpression(arguments[index].expression(), field.Type, isFrozen, out var argumentPlan))
+                {
+                    return false;
+                }
+
+                preludeDefinitions.AddRange(argumentPlan.PreludeDefinitions);
+                fieldValues[field.Name] = argumentPlan.Rendered;
+            }
+        }
+
+        if (objectCreation.objectInitializer() is { } objectInitializer
+            && !TryCollectObjectInitializerMembers(objectInitializer, namedType, isFrozen, fieldValues, preludeDefinitions))
+        {
+            return false;
+        }
+
+        plan = new GlobalInitializerPlan(FormatNamedAggregateInitializer(namedType, fieldValues), preludeDefinitions);
+        return true;
+    }
+
+    private bool TryPlanObjectInitializer(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        StarkTypeSymbol targetType,
+        bool isFrozen,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        var preludeDefinitions = new List<string>();
+        var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!TryCollectObjectInitializerMembers(objectInitializer, namedType, isFrozen, fieldValues, preludeDefinitions))
+        {
+            return false;
+        }
+
+        plan = new GlobalInitializerPlan(FormatNamedAggregateInitializer(namedType, fieldValues), preludeDefinitions);
+        return true;
+    }
+
+    private bool TryCollectObjectInitializerMembers(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        NamedTypeSymbol namedType,
+        bool isFrozen,
+        IDictionary<string, string> fieldValues,
+        ICollection<string> preludeDefinitions)
+    {
+        foreach (var memberInitializer in objectInitializer.memberInitializer())
+        {
+            var memberName = memberInitializer.Identifier().GetText();
+            if (!namedType.Fields.TryGetValue(memberName, out var field))
+            {
+                return false;
+            }
+
+            if (!TryPlanVariableInitializer(memberInitializer.variableInitializer(), field.Type, isFrozen, out var memberPlan))
+            {
+                return false;
+            }
+
+            foreach (var prelude in memberPlan.PreludeDefinitions)
+            {
+                preludeDefinitions.Add(prelude);
+            }
+
+            fieldValues[memberName] = memberPlan.Rendered;
+        }
+
+        return true;
+    }
+
+    private string FormatNamedAggregateInitializer(
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, string> fieldValues)
+    {
+        var fieldInitializers = namedType.OrderedFields
+            .Select(field => $"{MapType(field.Type)} {(fieldValues.TryGetValue(field.Name, out var value) ? value : FormatZeroInitializer(field.Type))}");
+        return $"{{ {string.Join(", ", fieldInitializers)} }}";
+    }
+
+    private bool TryPlanArrayInitializer(
+        StarkParser.ArrayInitializerContext arrayInitializer,
+        StarkTypeSymbol targetType,
+        bool isFrozen,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+
+        if (targetType.Kind == StarkTypeKind.Slice
+            && targetType.ElementType is not null)
+        {
+            var elementCount = arrayInitializer.variableInitializer().Length;
+            var backingArrayType = StarkTypeSymbols.FixedArray(targetType.ElementType, elementCount);
+            if (!TryPlanArrayInitializer(arrayInitializer, backingArrayType, isFrozen, out var backingPlan))
+            {
+                return false;
+            }
+
+            var backingSymbolName = AllocateSyntheticGlobalInitializerSymbol("slice");
+            var preludeDefinitions = new List<string>(backingPlan.PreludeDefinitions)
+            {
+                BuildSyntheticGlobalDefinition(
+                    backingSymbolName,
+                    isConstant: isFrozen,
+                    unnamedAddr: isFrozen,
+                    MapType(backingArrayType),
+                    backingPlan.Rendered)
+            };
+
+            var dataPointer = $"getelementptr inbounds ({MapType(backingArrayType)}, ptr @{EscapeIdentifier(backingSymbolName)}, i32 0, i32 0)";
+            plan = new GlobalInitializerPlan($"{{ ptr {dataPointer}, i64 {elementCount} }}", preludeDefinitions);
+            return true;
+        }
+
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is null
+            || targetType.FixedLength is not int fixedLength
+            || arrayInitializer.variableInitializer().Length != fixedLength)
+        {
+            return false;
+        }
+
+        var preludeDefinitionsForArray = new List<string>();
+        var elements = new List<string>(fixedLength);
+        foreach (var initializer in arrayInitializer.variableInitializer())
+        {
+            if (!TryPlanVariableInitializer(initializer, targetType.ElementType, isFrozen, out var elementPlan))
+            {
+                return false;
+            }
+
+            preludeDefinitionsForArray.AddRange(elementPlan.PreludeDefinitions);
+            elements.Add($"{MapType(targetType.ElementType)} {elementPlan.Rendered}");
+        }
+
+        plan = new GlobalInitializerPlan($"[{string.Join(", ", elements)}]", preludeDefinitionsForArray);
+        return true;
+    }
+
+    private string FormatZeroInitializer(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.Integer => "0",
+            StarkTypeKind.Float => "0.0",
+            StarkTypeKind.Bool => "false",
+            StarkTypeKind.RawPointer => "null",
+            StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Named => "zeroinitializer",
+            _ => "zeroinitializer"
+        };
+    }
+
+    private bool ShouldEmitExternalConstPlaceholder(TypedGlobalSymbol global, StarkParser.VariableInitializerContext initializer)
+    {
+        return global.IsConst
+            && global.Type.Kind == StarkTypeKind.RawPointer
+            && initializer.expression() is { } expression
+            && TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression)
+            && primaryExpression.literal()?.NULL() is not null;
+    }
+
+    private void EmitGlobalInitializerPrelude(StringBuilder builder, GlobalInitializerPlan plan)
+    {
+        foreach (var prelude in plan.PreludeDefinitions)
+        {
+            builder.AppendLine(prelude);
+            builder.AppendLine();
+        }
+    }
+
+    private string AllocateSyntheticGlobalInitializerSymbol(string kind)
+    {
+        return $".global_init_{kind}_{_syntheticGlobalInitializerIndex++}";
+    }
+
+    private string BuildSyntheticGlobalDefinition(
+        string symbolName,
+        bool isConstant,
+        bool unnamedAddr,
+        string llvmType,
+        string initializer)
+    {
+        var segments = new List<string> { $"@{EscapeIdentifier(symbolName)}", "=", "private" };
+
+        if (unnamedAddr)
+        {
+            segments.Add("unnamed_addr");
+        }
+
+        segments.Add(isConstant ? "constant" : "global");
+        segments.Add(llvmType);
+        segments.Add(initializer);
+        return string.Join(" ", segments);
+    }
+
+    private string FormatGlobalStringConstantValue(string literalText)
+    {
+        var pointer = FormatStringDataPointer(literalText);
+        var constant = _stringConstants[literalText];
+        return $"{{ ptr {pointer}, i64 {constant.DataLength} }}";
+    }
+
+    private string FormatStringDataPointer(string literalText)
+    {
+        if (!_stringConstants.TryGetValue(literalText, out var constant))
+        {
+            throw new InvalidOperationException($"Missing string constant for literal '{literalText}'.");
+        }
+
+        return $"getelementptr inbounds ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
+    }
+
+    private static StarkVisibility ParseVisibility(StarkParser.VisibilityModifierContext? visibilityModifier)
+    {
+        return visibilityModifier?.GetText() switch
+        {
+            "internal" => StarkVisibility.Internal,
+            "public" => StarkVisibility.Public,
+            "export" => StarkVisibility.Export,
+            _ => StarkVisibility.Module
+        };
+    }
+
+    private static BigInteger ParseSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)
+    {
+        var text = literal.GetText().Replace("_", string.Empty, StringComparison.Ordinal);
+        return BigInteger.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static void AddStringLiteral(string literalText, Dictionary<string, EmittedStringConstant> constants, ref int index)
@@ -720,6 +1572,13 @@ internal sealed class LlvmIrEmitter
         return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes);
     }
 
+    private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type)
+    {
+        return type.NamedType is not null && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
+            ? namedType
+            : null;
+    }
+
     private sealed class FunctionBodyEmitter
     {
         private readonly StringBuilder _builder;
@@ -728,6 +1587,7 @@ internal sealed class LlvmIrEmitter
         private readonly AbiModel _abiModel;
         private readonly SsaFunction _ssaFunction;
         private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
+        private readonly Func<string, string> _mapGlobalSymbolName;
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
@@ -741,6 +1601,7 @@ internal sealed class LlvmIrEmitter
             AbiModel abiModel,
             SsaFunction ssaFunction,
             IReadOnlyDictionary<string, EmittedStringConstant> stringConstants,
+            Func<string, string> mapGlobalSymbolName,
             Func<StarkTypeSymbol, string> mapType,
             Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout)
         {
@@ -750,6 +1611,7 @@ internal sealed class LlvmIrEmitter
             _abiModel = abiModel;
             _ssaFunction = ssaFunction;
             _stringConstants = stringConstants;
+            _mapGlobalSymbolName = mapGlobalSymbolName;
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
         }
@@ -821,7 +1683,7 @@ internal sealed class LlvmIrEmitter
                     return;
                 case SsaStoreGlobalInstruction storeGlobal:
                     AppendLine(
-                        $"  store {MapType(storeGlobal.GlobalType)} {FormatValue(storeGlobal.Value)}, ptr @{storeGlobal.GlobalName}");
+                        $"  store {MapType(storeGlobal.GlobalType)} {FormatValue(storeGlobal.Value)}, ptr @{EscapeIdentifier(_mapGlobalSymbolName(storeGlobal.GlobalName))}");
                     return;
                 default:
                     throw new UnsupportedBodyEmissionException($"Unsupported SSA instruction '{instruction.GetType().Name}'.");
@@ -837,7 +1699,7 @@ internal sealed class LlvmIrEmitter
                     AppendLine($"  {result} = add {MapType(use.Type)} {FormatValue(use.Value)}, 0");
                     return;
                 case SsaLoadGlobalRValue load:
-                    AppendLine($"  {result} = load {MapType(load.Type)}, ptr @{load.GlobalName}");
+                    AppendLine($"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(_mapGlobalSymbolName(load.GlobalName))}");
                     return;
                 case SsaLoadLocalRValue loadLocal:
                     EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
@@ -1422,7 +2284,7 @@ internal sealed class LlvmIrEmitter
                 SsaStringConstant text => FormatStringConstantValue(text),
                 SsaBoolConstant boolean => boolean.Value ? "true" : "false",
                 SsaNullConstant => "null",
-                SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(globalAddress.GlobalName)}",
+                SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(_mapGlobalSymbolName(globalAddress.GlobalName))}",
                 SsaZeroInitializerValue => "zeroinitializer",
                 SsaUndefValue => "undef",
                 _ => throw new UnsupportedBodyEmissionException($"Unsupported SSA value '{value.GetType().Name}'.")
@@ -1523,6 +2385,8 @@ internal sealed class LlvmIrEmitter
         {
         }
     }
+
+    private sealed record GlobalInitializerPlan(string Rendered, IReadOnlyList<string> PreludeDefinitions);
 
     private sealed record EmittedStringConstant(string SymbolName, string ArrayType, string Initializer, int DataLength);
 }

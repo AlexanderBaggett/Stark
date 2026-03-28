@@ -314,6 +314,102 @@ public sealed class MultiFileIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task ManifestBackedPublicGlobalsLinkAcrossPackageBoundaries()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-multifile-global-manifest-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var globalsPath = Path.Combine(packageDirectory, "Globals.stark");
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Globals.lib" : "libGlobals.a");
+        var manifestPath = Path.Combine(packageDirectory, "libGlobals.starkpkg.json");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                globalsPath,
+                """
+                module Globals
+
+                public const i32 Answer = 7;
+                """);
+
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [globalsPath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            Assert.Contains("Emitted static library:", buildStdout.ToString());
+            Assert.Contains("Emitted package manifest:", buildStdout.ToString());
+            Assert.Equal(string.Empty, buildStderr.ToString());
+            Assert.True(File.Exists(libraryPath));
+            Assert.True(File.Exists(manifestPath));
+
+            File.Delete(globalsPath);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import Globals
+                module App
+
+                export ffi fn i32 main() {
+                    return Globals.Answer;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(7, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
     private static void Cleanup(DirectoryInfo tempDirectory)
     {
         try

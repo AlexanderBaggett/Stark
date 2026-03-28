@@ -63,6 +63,54 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void ConstGlobalsRejectReachableRawPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Holder {
+                rawptr<i8> Ptr;
+            }
+
+            const Holder Current = new Holder() { Ptr = null };
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4007");
+    }
+
+    [Fact]
+    public void ConstSliceGlobalsRejectNonMaterializableExpressionInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[] Source();
+
+            const i32[] View = Source();
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4008");
+    }
+
+    [Fact]
+    public void ConstGlobalsRejectInitializersThatCannotBeMaterializedAsStaticData()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32 Answer = 1 + 2;
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4008");
+    }
+
+    [Fact]
     public void LawsCannotReadGlobalState()
     {
         var result = Compile(

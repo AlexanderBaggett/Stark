@@ -304,6 +304,15 @@ This gives Stark the following source-level global model:
 - immutable global pointer to mutable heap object
 - fully frozen global object graph
 
+More concretely, `const` means:
+
+- every reachable field and element is observed as readonly
+- any pointer-like or view-like value reachable through the hierarchy is itself readonly
+- safe code may not derive a mutable-capable alias from any reachable part of the graph
+- safe code may not regain mutation through explicit raw-pointer or integer conversion chains
+
+Conceptually, reading from a `const` global behaves like reading through a deeply frozen view of the entire reachable hierarchy, not merely through a root binding that happens not to be assignable.
+
 Local variables still require an explicit storage class.
 
 The storage classes are:
@@ -417,6 +426,8 @@ This is the required surface for conversions that Stark keeps explicit, includin
 - raw pointer to raw pointer conversions
 - fixed-array to slice view conversions
 - ascii/unicode text view conversions
+
+These conversions may not strengthen mutability. In particular, safe code may not use explicit conversions to turn a readonly raw pointer into `rawmutptr<T>`, and may not erase readonly or frozen provenance from a raw pointer in order to regain mutation later.
 
 ### 11.2 Precedence
 

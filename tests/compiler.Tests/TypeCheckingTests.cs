@@ -95,13 +95,41 @@ public sealed class TypeCheckingTests
                 stack rawmutptr<i32> ptr = &value;
                 stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
                 *ptr = (i32)bits;
-                stack i64 address = (i64)readonlyPtr;
+                stack i64 address = (i64)ptr;
                 stack rawmutptr<i32> roundTrip = (rawmutptr<i32>)address;
                 stack unicode wide = (unicode)text;
                 stack ascii narrow = (ascii)wide;
                 stack i32[2] values = { 1, 2 };
                 stack i32[] view = (i32[])values;
                 return *roundTrip + view[0];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void FrozenReachableViewsTypeCheckAsReadonlyAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            struct PtrBox {
+                rawmutptr<i32> Ptr;
+            }
+
+            fn void Run(frozen Box box, frozen PtrBox ptrBox) {
+                stack rawptr<frozen i32> valuePtr = &box.Value;
+                stack rawptr<frozen i32> readonlyPtr = ptrBox.Ptr;
+                stack bool same = *valuePtr == *readonlyPtr;
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));

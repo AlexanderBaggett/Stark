@@ -175,7 +175,7 @@ constantDeclarators
     ;
 
 constantDeclarator
-    : Identifier ASSIGN expression
+    : Identifier ASSIGN variableInitializer
     ;
 
 variableDeclarators
@@ -498,11 +498,11 @@ objectInitializer
     ;
 
 memberInitializer
-    : Identifier ASSIGN expression
+    : Identifier ASSIGN variableInitializer
     ;
 
 arrayInitializer
-    : LBRACE expression (COMMA expression)* COMMA? RBRACE
+    : LBRACE variableInitializer (COMMA variableInitializer)* COMMA? RBRACE
     ;
 
 literal

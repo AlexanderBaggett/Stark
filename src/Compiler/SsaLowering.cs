@@ -3,6 +3,7 @@ namespace Stark.Compiler;
 internal sealed class SsaLowerer
 {
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
+    private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
 
     public SsaLowerer()
         : this(typeModel: null)
@@ -14,6 +15,9 @@ internal sealed class SsaLowerer
         _signatures = typeModel is null
             ? new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
             : new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
+        _globals = typeModel is null
+            ? new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal)
+            : new Dictionary<string, TypedGlobalSymbol>(typeModel.Globals, StringComparer.Ordinal);
     }
 
     public SsaIrModule Lower(MidLevelIrModule mir)
@@ -39,7 +43,7 @@ internal sealed class SsaLowerer
                 []);
         }
 
-        var builder = new FunctionSsaBuilder(function, _signatures);
+        var builder = new FunctionSsaBuilder(function, _signatures, _globals);
         return builder.Lower();
     }
 
@@ -47,6 +51,7 @@ internal sealed class SsaLowerer
     {
         private readonly MidLevelIrFunction _function;
         private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
+        private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
         private readonly Dictionary<int, MidLevelIrBasicBlock> _sourceBlocks;
         private readonly IReadOnlyList<int> _reachableOrder;
         private readonly Dictionary<int, List<int>> _predecessors;
@@ -66,10 +71,12 @@ internal sealed class SsaLowerer
 
         public FunctionSsaBuilder(
             MidLevelIrFunction function,
-            IReadOnlyDictionary<string, TypedFunctionSignature> signatures)
+            IReadOnlyDictionary<string, TypedFunctionSignature> signatures,
+            IReadOnlyDictionary<string, TypedGlobalSymbol> globals)
         {
             _function = function;
             _signatures = signatures;
+            _globals = globals;
             _sourceBlocks = function.Blocks.ToDictionary(static block => block.Id);
             _successors = BuildSuccessors(function.Blocks);
             _reachableOrder = ComputeReachableOrder(function.EntryBlockId, function.Blocks, _successors);
@@ -501,7 +508,11 @@ internal sealed class SsaLowerer
                     sourceAddress = new SsaGlobalAddressValue(
                         global.Name,
                         global.Type,
-                        StarkTypeSymbols.RawPointer(global.Type, isMutable: true));
+                        StarkTypeSymbols.RawPointer(
+                            global.Type,
+                            _globals.TryGetValue(global.Name, out var globalBinding)
+                                ? globalBinding.IsMutable
+                                : true));
                     return true;
                 case MidLevelIrGlobalAddressOperand globalAddress when globalAddress.PointeeType == targetType:
                     sourceAddress = new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type);

@@ -50,7 +50,13 @@ internal sealed class TypeChecker
             _syntaxModel.ModuleName,
             _namedTypes,
             _functions,
-            _globals.ToDictionary(static pair => pair.Key, static pair => pair.Value.Type, StringComparer.Ordinal),
+            _globals.ToDictionary(
+                static pair => pair.Key,
+                static pair => new TypedGlobalSymbol(
+                    pair.Value.Name,
+                    pair.Value.Type,
+                    pair.Value.BindingKind ?? (pair.Value.IsMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable)),
+                StringComparer.Ordinal),
             _literals);
     }
 
@@ -389,14 +395,13 @@ internal sealed class TypeChecker
                 var declaredType = ResolveType(constantDeclaration.type_());
                 foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                 {
-                    var valueType = EvaluateExpression(declarator.expression(), Scope.CreateRoot(_globals), allowFunctionReference: false).Type;
-                    EnsureAssignmentCompatible(
+                    CheckVariableInitializer(declarator.variableInitializer(), declaredType, Scope.CreateRoot(_globals));
+                    _globals[declarator.Identifier().GetText()] = new VariableSymbol(
                         declarator.Identifier().GetText(),
                         declaredType,
-                        valueType,
-                        declarator.expression(),
-                        isConstant: true);
-                    _globals[declarator.Identifier().GetText()] = new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: false, IsConstant: true);
+                        IsMutable: false,
+                        IsConstant: true,
+                        BindingKind: GlobalBindingKind.Const);
                 }
 
                 continue;
@@ -415,12 +420,22 @@ internal sealed class TypeChecker
                             "STK3001",
                             $"Variable '{declarator.Identifier().GetText()}' requires an initializer.",
                             declarator);
-                        _globals[declarator.Identifier().GetText()] = new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false);
+                        _globals[declarator.Identifier().GetText()] = new VariableSymbol(
+                            declarator.Identifier().GetText(),
+                            declaredType,
+                            IsMutable: isMutable,
+                            IsConstant: false,
+                            BindingKind: isMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable);
                         continue;
                     }
 
                     CheckVariableInitializer(declarator.variableInitializer(), declaredType, Scope.CreateRoot(_globals));
-                    _globals[declarator.Identifier().GetText()] = new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false);
+                    _globals[declarator.Identifier().GetText()] = new VariableSymbol(
+                        declarator.Identifier().GetText(),
+                        declaredType,
+                        IsMutable: isMutable,
+                        IsConstant: false,
+                        BindingKind: isMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable);
                 }
             }
         }
@@ -450,7 +465,8 @@ internal sealed class TypeChecker
                             QualifyName(module, declarator.Identifier().GetText()),
                             declaredType,
                             IsMutable: false,
-                            IsConstant: true);
+                            IsConstant: true,
+                            BindingKind: GlobalBindingKind.Const);
                     }
 
                     continue;
@@ -474,7 +490,8 @@ internal sealed class TypeChecker
                             QualifyName(module, declarator.Identifier().GetText()),
                             declaredType,
                             IsMutable: variableDeclaration.MUT() is not null,
-                            IsConstant: false);
+                            IsConstant: false,
+                            BindingKind: variableDeclaration.MUT() is not null ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable);
                     }
                 }
             }
@@ -527,13 +544,7 @@ internal sealed class TypeChecker
             var declaredType = ResolveType(localConstant.type_());
             foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
             {
-                var valueType = EvaluateExpression(declarator.expression(), scope, allowFunctionReference: false).Type;
-                EnsureAssignmentCompatible(
-                    declarator.Identifier().GetText(),
-                    declaredType,
-                    valueType,
-                    declarator.expression(),
-                    isConstant: true);
+                CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
                 scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: false, IsConstant: true));
             }
 
@@ -740,7 +751,6 @@ internal sealed class TypeChecker
 
         foreach (var initializer in objectInitializer.memberInitializer())
         {
-            var valueType = EvaluateExpression(initializer.expression(), scope, allowFunctionReference: false).Type;
             var memberName = initializer.Identifier().GetText();
 
             if (namedType is null)
@@ -763,7 +773,14 @@ internal sealed class TypeChecker
                 continue;
             }
 
-            EnsureObjectInitializerCompatible(memberName, field.Type, valueType, initializer.expression());
+            if (initializer.variableInitializer().expression() is { } expression)
+            {
+                var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
+                EnsureObjectInitializerCompatible(memberName, field.Type, valueType, expression);
+                continue;
+            }
+
+            CheckVariableInitializer(initializer.variableInitializer(), field.Type, scope);
         }
     }
 
@@ -776,19 +793,25 @@ internal sealed class TypeChecker
             return;
         }
 
-        foreach (var expression in arrayInitializer.expression())
+        foreach (var initializer in arrayInitializer.variableInitializer())
         {
-            var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
-            EnsureArrayElementCompatible(elementType, valueType, expression);
+            if (initializer.expression() is { } expression)
+            {
+                var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
+                EnsureArrayElementCompatible(elementType, valueType, expression);
+                continue;
+            }
+
+            CheckVariableInitializer(initializer, elementType, scope);
         }
 
         if (targetType.Kind == StarkTypeKind.FixedArray
             && targetType.FixedLength is int fixedLength
-            && fixedLength != arrayInitializer.expression().Length)
+            && fixedLength != arrayInitializer.variableInitializer().Length)
         {
             ReportError(
                 "STK3006",
-                $"Array initializer provides {arrayInitializer.expression().Length} elements, but '{targetType.DisplayName}' expects {fixedLength}.",
+                $"Array initializer provides {arrayInitializer.variableInitializer().Length} elements, but '{targetType.DisplayName}' expects {fixedLength}.",
                 arrayInitializer);
         }
     }
@@ -811,7 +834,10 @@ internal sealed class TypeChecker
 
         if (!left.IsAssignable)
         {
-            ReportError("STK3007", $"The left side of '{assignmentOperator}' must be assignable.", expression.unaryExpression());
+            ReportError(
+                "STK3007",
+                left.AssignmentErrorMessage ?? $"The left side of '{assignmentOperator}' must be assignable.",
+                expression.unaryExpression());
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
@@ -1182,6 +1208,7 @@ internal sealed class TypeChecker
     private ExpressionBinding ApplyIndex(ExpressionBinding target, StarkParser.ExpressionListContext indexes, Scope scope, ParserRuleContext context)
     {
         var currentType = target.Type;
+        var currentIsAssignable = target.IsAssignable;
 
         foreach (var indexExpression in indexes.expression())
         {
@@ -1196,7 +1223,8 @@ internal sealed class TypeChecker
 
             if (currentType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Slice && currentType.ElementType is not null)
             {
-                currentType = currentType.ElementType;
+                currentIsAssignable &= currentType.AccessKind != StarkAccessKind.Frozen;
+                currentType = ProjectFrozenView(currentType, currentType.ElementType);
                 continue;
             }
 
@@ -1206,10 +1234,19 @@ internal sealed class TypeChecker
 
         return new ExpressionBinding(
             currentType,
-            IsAssignable: target.IsAssignable,
+            IsAssignable: currentIsAssignable,
             NamedType: ResolveNamedTypeSymbol(currentType),
             DiagnosticName: target.DiagnosticName is null ? "indexed element" : $"indexed element of {target.DiagnosticName}",
-            IsAddressable: target.IsAddressable);
+            IsAddressable: target.IsAddressable,
+            RootGlobalName: target.RootGlobalName,
+            RootGlobalBindingKind: target.RootGlobalBindingKind,
+            AssignmentErrorMessage: target.RootGlobalBindingKind is not null
+                && target.RootGlobalName is not null
+                && !currentIsAssignable
+                ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, "indexed element")
+                : target.Type.AccessKind == StarkAccessKind.Frozen
+                    ? DescribeFrozenMutationError("indexed element")
+                : target.AssignmentErrorMessage);
     }
 
     private ExpressionBinding ApplyMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -1229,7 +1266,12 @@ internal sealed class TypeChecker
                     IsAssignable: global.IsMutable,
                     NamedType: ResolveNamedTypeSymbol(global.Type),
                     DiagnosticName: global.IsConstant ? $"constant '{qualifiedName}'" : $"variable '{qualifiedName}'",
-                    IsAddressable: true);
+                    IsAddressable: true,
+                    RootGlobalName: qualifiedName,
+                    RootGlobalBindingKind: global.BindingKind,
+                    AssignmentErrorMessage: global.IsMutable
+                        ? null
+                        : DescribeGlobalRebindingError(qualifiedName, global.BindingKind ?? GlobalBindingKind.Immutable));
             }
 
             if (_functions.TryGetValue(qualifiedName, out var function))
@@ -1250,12 +1292,23 @@ internal sealed class TypeChecker
 
         if (namedType.Fields.TryGetValue(memberName, out var field))
         {
+            var projectedType = ProjectFrozenView(target.Type, field.Type);
+            var isAssignable = target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen;
             return new ExpressionBinding(
-                field.Type,
-                IsAssignable: target.IsAssignable,
-                NamedType: ResolveNamedTypeSymbol(field.Type),
+                projectedType,
+                IsAssignable: isAssignable,
+                NamedType: ResolveNamedTypeSymbol(projectedType),
                 DiagnosticName: $"member '{memberName}'",
-                IsAddressable: target.IsAddressable);
+                IsAddressable: target.IsAddressable,
+                RootGlobalName: target.RootGlobalName,
+                RootGlobalBindingKind: target.RootGlobalBindingKind,
+                AssignmentErrorMessage: target.RootGlobalBindingKind is not null
+                    && target.RootGlobalName is not null
+                    && !isAssignable
+                    ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, $"member '{memberName}'")
+                    : target.Type.AccessKind == StarkAccessKind.Frozen
+                        ? DescribeFrozenMutationError($"member '{memberName}'")
+                    : target.AssignmentErrorMessage);
         }
 
         if (_functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
@@ -1277,6 +1330,21 @@ internal sealed class TypeChecker
     {
         if (scope.TryLookup(name, out var local))
         {
+            if (local.BindingKind is not null)
+            {
+                return new ExpressionBinding(
+                    local.Type,
+                    IsAssignable: local.IsMutable,
+                    NamedType: ResolveNamedTypeSymbol(local.Type),
+                    DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
+                    IsAddressable: true,
+                    RootGlobalName: name,
+                    RootGlobalBindingKind: local.BindingKind,
+                    AssignmentErrorMessage: local.IsMutable
+                        ? null
+                        : DescribeGlobalRebindingError(name, local.BindingKind.Value));
+            }
+
             return new ExpressionBinding(
                 local.Type,
                 IsAssignable: !local.IsConstant,
@@ -1292,7 +1360,12 @@ internal sealed class TypeChecker
                 IsAssignable: global.IsMutable,
                 NamedType: ResolveNamedTypeSymbol(global.Type),
                 DiagnosticName: global.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
-                IsAddressable: true);
+                IsAddressable: true,
+                RootGlobalName: name,
+                RootGlobalBindingKind: global.BindingKind,
+                AssignmentErrorMessage: global.IsMutable
+                    ? null
+                    : DescribeGlobalRebindingError(name, global.BindingKind ?? GlobalBindingKind.Immutable));
         }
 
         if (_functions.TryGetValue(name, out var function))
@@ -1532,7 +1605,7 @@ internal sealed class TypeChecker
         var pointeeType = operand.Type.ElementType;
         return new ExpressionBinding(
             pointeeType,
-            IsAssignable: operand.Type.IsMutablePointer,
+            IsAssignable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
             NamedType: ResolveNamedTypeSymbol(pointeeType),
             DiagnosticName: "dereferenced value",
             IsAddressable: true);
@@ -1738,6 +1811,29 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (targetType.Kind == StarkTypeKind.RawPointer
+            && targetType.IsMutablePointer
+            && source.Type.Kind == StarkTypeKind.RawPointer
+            && !source.Type.IsMutablePointer)
+        {
+            ReportError(
+                "STK3002",
+                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported because explicit conversions may not strengthen pointer mutability.",
+                context);
+            return;
+        }
+
+        if (targetType.Kind == StarkTypeKind.Integer
+            && source.Type.Kind == StarkTypeKind.RawPointer
+            && !source.Type.IsMutablePointer)
+        {
+            ReportError(
+                "STK3002",
+                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported because it would erase readonly pointer provenance.",
+                context);
+            return;
+        }
+
         ReportError(
             "STK3002",
             $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported.",
@@ -1788,6 +1884,40 @@ internal sealed class TypeChecker
         return binding.DiagnosticName is not null
             ? $"{binding.DiagnosticName} of type '{binding.Type.DisplayName}'"
             : $"expression of type '{binding.Type.DisplayName}'";
+    }
+
+    private static string DescribeGlobalRebindingError(string name, GlobalBindingKind bindingKind)
+    {
+        return bindingKind switch
+        {
+            GlobalBindingKind.Const => $"Cannot rebind constant global '{name}'.",
+            GlobalBindingKind.Immutable => $"Cannot rebind immutable global '{name}'.",
+            GlobalBindingKind.Mutable => $"Global '{name}' is assignable.",
+            _ => $"Cannot assign to global '{name}'."
+        };
+    }
+
+    private static string DescribeGlobalMutationError(string name, GlobalBindingKind bindingKind, string targetDescription)
+    {
+        return bindingKind switch
+        {
+            GlobalBindingKind.Const => $"Cannot mutate {targetDescription} of constant global '{name}'.",
+            GlobalBindingKind.Immutable => $"Cannot mutate {targetDescription} through immutable global '{name}'.",
+            GlobalBindingKind.Mutable => $"Global '{name}' is assignable.",
+            _ => $"Cannot mutate {targetDescription} of global '{name}'."
+        };
+    }
+
+    private static string DescribeFrozenMutationError(string targetDescription)
+    {
+        return $"Cannot mutate {targetDescription} through a frozen value.";
+    }
+
+    private static StarkTypeSymbol ProjectFrozenView(StarkTypeSymbol sourceType, StarkTypeSymbol projectedType)
+    {
+        return sourceType.AccessKind == StarkAccessKind.Frozen
+            ? StarkTypeSymbols.FreezeReachableView(projectedType)
+            : projectedType;
     }
 
     private bool CanAssign(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -1908,10 +2038,28 @@ internal sealed class TypeChecker
         }
 
         if ((target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Integer)
-            || (target.Kind == StarkTypeKind.Integer && source.Type.Kind == StarkTypeKind.RawPointer)
-            || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.RawPointer)
             || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Null))
         {
+            return true;
+        }
+
+        if (target.Kind == StarkTypeKind.Integer && source.Type.Kind == StarkTypeKind.RawPointer)
+        {
+            return source.Type.IsMutablePointer;
+        }
+
+        if (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.RawPointer)
+        {
+            if (WouldEraseFrozenProvenance(target, source.Type))
+            {
+                return false;
+            }
+
+            if (target.IsMutablePointer && !source.Type.IsMutablePointer)
+            {
+                return false;
+            }
+
             return true;
         }
 
@@ -1976,7 +2124,38 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (source == StarkAccessKind.Frozen || target == StarkAccessKind.Frozen)
+        {
+            return false;
+        }
+
         return AccessRank(source) >= AccessRank(target);
+    }
+
+    private static bool WouldEraseFrozenProvenance(StarkTypeSymbol target, StarkTypeSymbol source)
+    {
+        if (source.AccessKind == StarkAccessKind.Frozen && target.AccessKind != StarkAccessKind.Frozen)
+        {
+            return true;
+        }
+
+        if (target.Kind == StarkTypeKind.RawPointer
+            && source.Kind == StarkTypeKind.RawPointer
+            && target.ElementType is not null
+            && source.ElementType is not null)
+        {
+            return WouldEraseFrozenProvenance(target.ElementType, source.ElementType);
+        }
+
+        if ((target.Kind == StarkTypeKind.FixedArray || target.Kind == StarkTypeKind.Slice)
+            && source.Kind == target.Kind
+            && target.ElementType is not null
+            && source.ElementType is not null)
+        {
+            return WouldEraseFrozenProvenance(target.ElementType, source.ElementType);
+        }
+
+        return false;
     }
 
     private static int BorrowRank(StarkBorrowKind kind)
@@ -2218,7 +2397,12 @@ internal sealed class TypeChecker
     private SourceLocation Location(IToken token) =>
         new(_context.Input.FilePath, token.Line, token.Column + 1);
 
-    private sealed record VariableSymbol(string Name, StarkTypeSymbol Type, bool IsMutable, bool IsConstant);
+    private sealed record VariableSymbol(
+        string Name,
+        StarkTypeSymbol Type,
+        bool IsMutable,
+        bool IsConstant,
+        GlobalBindingKind? BindingKind = null);
 
     private sealed record ExpressionBinding(
         StarkTypeSymbol Type,
@@ -2228,7 +2412,10 @@ internal sealed class TypeChecker
         string? NamespaceName = null,
         string? DiagnosticName = null,
         ExpressionBinding? Receiver = null,
-        bool IsAddressable = false);
+        bool IsAddressable = false,
+        string? RootGlobalName = null,
+        GlobalBindingKind? RootGlobalBindingKind = null,
+        string? AssignmentErrorMessage = null);
 
     private sealed record ConstructorShape(
         string Name,

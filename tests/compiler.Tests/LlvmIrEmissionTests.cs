@@ -87,7 +87,7 @@ public sealed class LlvmIrEmissionTests
 
             public const i32 Answer = 42;
             internal static rawptr<i8> Buffer = null;
-            export static rawptr<i8> Visible = null;
+            export static mut rawptr<i8> Visible = null;
 
             fn i32 Run() {
                 return 0;
@@ -98,11 +98,275 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("; visibility: public", llvm);
-        Assert.Contains("@Answer = external constant i32", llvm);
+        Assert.Contains("@Answer = constant i32 42", llvm);
         Assert.Contains("; visibility: internal", llvm);
-        Assert.Contains("@Buffer = external global ptr", llvm);
+        Assert.Contains("@Buffer = constant ptr null", llvm);
         Assert.Contains("; visibility: export", llvm);
-        Assert.Contains("@Visible = external global ptr", llvm);
+        Assert.Contains("@Visible = global ptr null", llvm);
+    }
+
+    [Fact]
+    public void MutableGlobalsEmitRealDefinitionsStoresAndLoads()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            fn i32 Run() {
+                Counter = 7;
+                return Counter;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@Counter = global i32 0", llvm);
+        Assert.Contains("store i32 7, ptr @Counter", llvm);
+        Assert.Contains("load i32, ptr @Counter", llvm);
+    }
+
+    [Fact]
+    public void LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNames()
+    {
+        var result = Compile(
+            """
+            module Math
+
+            public const i32 Answer = 42;
+            internal static mut i32 Counter = 0;
+            static i32 Hidden = 1;
+            export static mut i32 Visible = 0;
+
+            fn i32 Run() {
+                Counter = 7;
+                return Counter;
+            }
+            """,
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                QualifyModuleSymbols: true));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@Math_Answer = constant i32 42", llvm);
+        Assert.Contains("@Math_Counter = global i32 0", llvm);
+        Assert.Contains("@Math_Hidden = internal constant i32 1", llvm);
+        Assert.Contains("@Visible = global i32 0", llvm);
+        Assert.Contains("store i32 7, ptr @Math_Counter", llvm);
+        Assert.Contains("load i32, ptr @Math_Counter", llvm);
+    }
+
+    [Fact]
+    public void AggregateAndArrayGlobalsEmitConcreteInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            const Pair Origin = new Pair() { Left = 1, Right = 2 };
+            static i32[3] Values = { 4, 7, 9 };
+
+            fn i32 Run() {
+                return Origin.Right + Values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Pair = type { i32, i32 }", llvm);
+        Assert.Contains("@Origin = constant %Pair { i32 1, i32 2 }", llvm);
+        Assert.Contains("@Values = constant [3 x i32] [i32 4, i32 7, i32 9]", llvm);
+    }
+
+    [Fact]
+    public void ConstArrayAndSliceGlobalsEmitFrozenDefinitions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32[3] Values = { 4, 7, 9 };
+            const i32[] View = { 1, 2, 3 };
+
+            fn i32 Run() {
+                return Values[1] + View[2];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@Values = constant [3 x i32] [i32 4, i32 7, i32 9]", llvm);
+        Assert.Contains("private unnamed_addr constant [3 x i32] [i32 1, i32 2, i32 3]", llvm);
+        Assert.Contains("@View = constant { ptr, i64 } { ptr getelementptr inbounds ([3 x i32], ptr @_global_init_slice_", llvm);
+        Assert.Contains("i64 3 }", llvm);
+    }
+
+    [Fact]
+    public void NestedConstObjectGraphsEmitConcreteConstantInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Inner {
+                i32 Value;
+            }
+
+            struct Outer {
+                Inner Item;
+                ascii Label;
+            }
+
+            const Outer Graph = new Outer() {
+                Item = new Inner() { Value = 7 },
+                Label = "ok"
+            };
+
+            fn i32 Run() {
+                return Graph.Item.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
+        Assert.Contains("%Inner = type { i32 }", llvm);
+        Assert.Contains("%Outer = type { %Inner, %stark_ascii }", llvm);
+        Assert.Contains("@Graph = constant %Outer { %Inner { i32 7 }, %stark_ascii { ptr getelementptr inbounds (", llvm);
+        Assert.Contains("i64 2 } }", llvm);
+    }
+
+    [Fact]
+    public void NestedAggregateLiteralsFoldIntoFrozenGlobalInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Inner {
+                i32[2] Pair;
+            }
+
+            struct Outer {
+                Inner Node;
+                i32[] View;
+            }
+
+            const Outer Frozen = {
+                Node = { Pair = { 4, 7 } },
+                View = { 1, 2, 3 }
+            };
+
+            fn i32 Run() {
+                return Frozen.Node.Pair[1] + Frozen.View[0];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Inner = type { [2 x i32] }", llvm);
+        Assert.Contains("%Outer = type { %Inner, { ptr, i64 } }", llvm);
+        Assert.Contains("private unnamed_addr constant [3 x i32] [i32 1, i32 2, i32 3]", llvm);
+        Assert.Contains("@Frozen = constant %Outer { %Inner { [2 x i32] [i32 4, i32 7] }, { ptr, i64 } { ptr getelementptr inbounds ([3 x i32], ptr @_global_init_slice_", llvm);
+        Assert.Contains("i64 3 } }", llvm);
+    }
+
+    [Fact]
+    public void MutableAggregateGlobalsEmitConcreteInitializersAndStores()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32 Left;
+                i32 Right;
+            }
+
+            static mut Pair Current = new Pair() { Left = 5, Right = 8 };
+            static mut i32[3] Values = { 1, 2, 3 };
+
+            fn i32 Run() {
+                Current.Right = 9;
+                Values[1] = 7;
+                return Current.Right + Values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Pair = type { i32, i32 }", llvm);
+        Assert.Contains("@Current = global %Pair { i32 5, i32 8 }", llvm);
+        Assert.Contains("@Values = global [3 x i32] [i32 1, i32 2, i32 3]", llvm);
+        Assert.Contains("load %Pair, ptr @Current", llvm);
+        Assert.Contains("store %Pair", llvm);
+        Assert.Contains("ptr @Current", llvm);
+        Assert.Contains("load [3 x i32], ptr @Values", llvm);
+        Assert.Contains("store [3 x i32]", llvm);
+        Assert.Contains("ptr @Values", llvm);
+    }
+
+    [Fact]
+    public void ImmutableGlobalsCanPointAtMutablePrivateBackingStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i32[] Values;
+            }
+
+            static Buffer Shared = {
+                Values = { 5, 8 }
+            };
+
+            fn i32 Run() {
+                return Shared.Values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Buffer = type { { ptr, i64 } }", llvm);
+        Assert.Contains("private global [2 x i32] [i32 5, i32 8]", llvm);
+        Assert.Contains("@Shared = constant %Buffer { { ptr, i64 } { ptr getelementptr inbounds ([2 x i32], ptr @_global_init_slice_", llvm);
+        Assert.Contains("i64 2 } }", llvm);
+    }
+
+    [Fact]
+    public void RawPointerConstNullGlobalsRemainExternalPlaceholders()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const rawptr<i8> stdout = null;
+
+            fn i32 Run() {
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@stdout = external constant ptr", llvm);
     }
 
     [Fact]
@@ -1011,6 +1275,79 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ImportedGlobalsUseQualifiedDependencySymbols()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            fn i32 Run() {
+                Math.Counter = 7;
+                return Math.Counter + Math.Answer;
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public const i32 Answer = 3;
+                        public static mut i32 Counter = 1;
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("; imported declaration: Math.Answer", llvm);
+        Assert.Contains("@Math_Answer = external constant i32", llvm);
+        Assert.Contains("; imported declaration: Math.Counter", llvm);
+        Assert.Contains("@Math_Counter = external global i32", llvm);
+        Assert.Contains("store i32 7, ptr @Math_Counter", llvm);
+        Assert.Contains("load i32, ptr @Math_Counter", llvm);
+        Assert.Contains("load i32, ptr @Math_Answer", llvm);
+    }
+
+    [Fact]
+    public void ImmutableGlobalAddressesLowerWithoutPointerCasts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static i32 Counter = 0;
+            static Box Current = new Box() { Value = 5 };
+
+            fn rawptr<i32> CounterPtr() {
+                return &Counter;
+            }
+
+            fn rawptr<i32> FieldPtr() {
+                return &(Current.Value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@Counter = constant i32 0", llvm);
+        Assert.Contains("@Current = constant %Box { i32 5 }", llvm);
+        Assert.Contains("ret ptr @Counter", llvm);
+        Assert.Contains("getelementptr inbounds %Box, ptr @Current, i32 0, i32 0", llvm);
+        Assert.Equal(0, CountOccurrences(llvm, "getelementptr inbounds i8"));
+    }
+
+    [Fact]
     public void ImportedAggregateFunctionsUseCrossModuleAbiDeclarations()
     {
         var result = Compile(
@@ -1207,7 +1544,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static i32 Counter = 0;
+            static mut i32 Counter = 0;
 
             fn i32 Run(i64 bits) {
                 stack mut i32 value = 1;

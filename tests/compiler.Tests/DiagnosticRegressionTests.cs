@@ -96,6 +96,80 @@ public sealed class DiagnosticRegressionTests
         AssertDiagnostic(result, "STK4204", "Cannot move out of global or static storage 'Current'");
     }
 
+    [Fact]
+    public void ImmutableGlobalsRejectRebindingWithSpecificDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static i32 Answer = 42;
+
+            fn void Run() {
+                Answer = 7;
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot rebind immutable global 'Answer'.");
+    }
+
+    [Fact]
+    public void ConstGlobalsRejectMutationWithSpecificDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            const Box Current = new Box() { Value = 1 };
+
+            fn void Run() {
+                Current.Value = 2;
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot mutate member 'Value' of constant global 'Current'.");
+    }
+
+    [Fact]
+    public void ConstGlobalsExplainWhyReachableStateIsNotFrozen()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Holder {
+                rawptr<i8> Ptr;
+            }
+
+            const Holder Current = new Holder() { Ptr = null };
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4007", "fully frozen object graph", "Current.Ptr", "raw pointer type");
+    }
+
+    [Fact]
+    public void ConstGlobalsExplainWhenInitializersCannotLowerAsStaticData()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32 Answer = 1 + 2;
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4008", "frozen initializer", "materialized as static data");
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

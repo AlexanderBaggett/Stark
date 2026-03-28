@@ -98,7 +98,7 @@ public sealed class BorrowLivenessValidationTests
                 ["Run"] = new TypedFunctionSignature("Run", StarkTypeSymbols.Integer(32), [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)]),
                 ["Consume"] = new TypedFunctionSignature("Consume", StarkTypeSymbols.Void, [new TypedParameterSymbol("value", BoxType)])
             },
-            Globals: new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal),
+            Globals: new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal),
             Literals: []);
         var ownership = new OwnershipValidationModel(
             "Demo",

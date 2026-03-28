@@ -1,5 +1,6 @@
 using System.Numerics;
 using Stark.Compiler;
+using Stark.Parsing;
 
 namespace compiler.Tests;
 
@@ -106,7 +107,7 @@ public sealed class LlvmEmitterConversionTests
             {
                 ["Run"] = new TypedFunctionSignature("Run", targetType, [])
             },
-            Globals: new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal),
+            Globals: new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal),
             Literals: []);
         var abiModel = new AbiModel(
             "Demo",
@@ -173,6 +174,7 @@ public sealed class LlvmEmitterConversionTests
 
         return new LlvmIrEmitter(
             new CompilationInput("module Demo"),
+            StarkSyntax.ParseCompilationUnit("module Demo"),
             syntaxModel,
             effectModel,
             typeModel,

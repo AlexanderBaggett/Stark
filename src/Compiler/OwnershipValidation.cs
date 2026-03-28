@@ -132,8 +132,8 @@ internal sealed class OwnershipValidator
                 localConstant.constantDeclarators().constantDeclarator()
                     .Select(static declarator => (
                         Identifier: (ITerminalNode)declarator.Identifier(),
-                        ConstantExpression: (StarkParser.ExpressionContext?)declarator.expression(),
-                        Initializer: (StarkParser.VariableInitializerContext?)null))
+                        ConstantExpression: (StarkParser.ExpressionContext?)null,
+                        Initializer: (StarkParser.VariableInitializerContext?)declarator.variableInitializer()))
                     .ToArray(),
                 StorageClass.None,
                 isMutable: false,
@@ -393,20 +393,14 @@ internal sealed class OwnershipValidator
 
         if (initializer.objectInitializer() is { } objectInitializer)
         {
-            foreach (var memberInitializer in objectInitializer.memberInitializer())
-            {
-                EvaluateExpression(memberInitializer.expression(), state, signature, summary, ValueUse.ForAssignment(memberInitializer.expression()), allowFunctionReference: false);
-            }
+            EvaluateObjectInitializerMembers(objectInitializer, declaredType, state, signature, summary);
 
             return new ExpressionInfo(declaredType);
         }
 
         if (initializer.arrayInitializer() is { } arrayInitializer)
         {
-            foreach (var item in arrayInitializer.expression())
-            {
-                EvaluateExpression(item, state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
-            }
+            EvaluateArrayInitializerItems(arrayInitializer, declaredType, state, signature, summary);
         }
 
         return new ExpressionInfo(declaredType);
@@ -924,13 +918,46 @@ internal sealed class OwnershipValidator
 
         if (expression.objectInitializer() is { } objectInitializer)
         {
-            foreach (var initializer in objectInitializer.memberInitializer())
-            {
-                EvaluateExpression(initializer.expression(), state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
-            }
+            EvaluateObjectInitializerMembers(objectInitializer, type, state, signature, summary);
         }
 
         return new ExpressionInfo(type, BorrowLifetime: BorrowLifetime.None);
+    }
+
+    private void EvaluateObjectInitializerMembers(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        StarkTypeSymbol targetType,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        NamedTypeSymbol? namedType = null;
+        if (targetType.NamedType is not null)
+        {
+            _typeModel.NamedTypes.TryGetValue(targetType.NamedType, out namedType);
+        }
+
+        foreach (var memberInitializer in objectInitializer.memberInitializer())
+        {
+            var memberType = namedType is not null && namedType.Fields.TryGetValue(memberInitializer.Identifier().GetText(), out var field)
+                ? field.Type
+                : StarkTypeSymbols.Error;
+            EvaluateVariableInitializer(memberInitializer.variableInitializer(), state, signature, summary, memberType);
+        }
+    }
+
+    private void EvaluateArrayInitializerItems(
+        StarkParser.ArrayInitializerContext arrayInitializer,
+        StarkTypeSymbol targetType,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        var elementType = targetType.ElementType ?? StarkTypeSymbols.Error;
+        foreach (var item in arrayInitializer.variableInitializer())
+        {
+            EvaluateVariableInitializer(item, state, signature, summary, elementType);
+        }
     }
 
     private ExpressionInfo ResolveValue(
@@ -967,22 +994,23 @@ internal sealed class OwnershipValidator
 
         if (_typeModel.Globals.TryGetValue(name, out var globalType))
         {
+            var isMutable = globalType.IsMutable;
             var binding = new ExpressionInfo(
-                globalType,
+                globalType.Type,
                 Variable: new VariableInfo(
                     name,
-                    globalType,
+                    globalType.Type,
                     StorageClass.Static,
                     VariableOrigin.Global,
-                    IsMutable: _mutableGlobals.TryGetValue(name, out var isMutable) && isMutable,
-                    IsConstant: !_mutableGlobals.TryGetValue(name, out isMutable) || !isMutable,
-                    BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                    IsMutable: isMutable,
+                    IsConstant: !isMutable,
+                    BorrowLifetime: globalType.Type.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
                     DeclarationLocation: null),
-                BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                BorrowLifetime: globalType.Type.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
                 IsPlace: true,
                 IsDirectVariable: true);
 
-            if (use.Kind == ValueUseKind.Consume && IsMoveOnly(globalType))
+            if (use.Kind == ValueUseKind.Consume && IsMoveOnly(globalType.Type))
             {
                 OwnershipError(summary, "STK4204", $"Cannot move out of global or static storage '{name}'.", token);
             }
@@ -1121,18 +1149,19 @@ internal sealed class OwnershipValidator
 
             if (_typeModel.Globals.TryGetValue(qualifiedName, out var globalType))
             {
+                var isMutable = globalType.IsMutable;
                 return new ExpressionInfo(
-                    globalType,
+                    globalType.Type,
                     Variable: new VariableInfo(
                         qualifiedName,
-                        globalType,
+                        globalType.Type,
                         StorageClass.Static,
                         VariableOrigin.Global,
-                        IsMutable: _mutableGlobals.TryGetValue(qualifiedName, out var isMutable) && isMutable,
-                        IsConstant: !_mutableGlobals.TryGetValue(qualifiedName, out isMutable) || !isMutable,
-                        BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                        IsMutable: isMutable,
+                        IsConstant: !isMutable,
+                        BorrowLifetime: globalType.Type.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
                         DeclarationLocation: null),
-                    BorrowLifetime: globalType.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
+                    BorrowLifetime: globalType.Type.BorrowKind == StarkBorrowKind.None ? BorrowLifetime.None : BorrowLifetime.External,
                     IsPlace: true,
                     IsDirectVariable: true);
             }
@@ -1313,17 +1342,14 @@ internal sealed class OwnershipValidator
 
     private void SeedMutableGlobals()
     {
-        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        foreach (var global in _typeModel.Globals)
         {
-            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+            if (!global.Value.IsMutable)
             {
                 continue;
             }
 
-            foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
-            {
-                _mutableGlobals[declarator.Identifier().GetText()] = variableDeclaration.MUT() is not null;
-            }
+            _mutableGlobals[global.Key] = true;
         }
     }
 

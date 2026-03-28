@@ -111,6 +111,31 @@ public sealed class ParserSmokeTests
             """
         },
         {
+            "const aggregate literals and nested slice members",
+            """
+            module Globals
+
+            struct Inner {
+                i32[2] Pair;
+            }
+
+            struct Outer {
+                Inner Node;
+                i32[] View;
+            }
+
+            const Outer Frozen = {
+                Node = { Pair = { 4, 7 } },
+                View = { 1, 2, 3 }
+            };
+
+            static Outer Shared = {
+                Node = { Pair = { 8, 9 } },
+                View = { 5, 6 }
+            };
+            """
+        },
+        {
             "generic function with constraint",
             """
             module GenericDemo

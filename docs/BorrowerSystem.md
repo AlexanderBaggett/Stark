@@ -185,6 +185,8 @@ Under `frozen`, the language prohibits:
 - interior mutability
 - hidden atomics
 - mutation through reachable aliases
+- upgrading reachable readonly aliases back into mutable-capable raw aliases in safe code
+- laundering reachable readonly aliases through integer conversions to regain mutation
 
 This distinction exists so the compiler can rely on true read-only behavior rather than mere absence of writes through one syntactic path.
 

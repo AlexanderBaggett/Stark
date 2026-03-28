@@ -65,6 +65,12 @@ internal sealed class SemanticValidator
             {
                 var declaredType = _typeResolver.ResolveType(constantDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Global, constantDeclaration.type_(), isFfiBoundary: false);
+
+                foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                {
+                    ValidateConstGlobal(declarator.Identifier().GetText(), declaredType, declarator.variableInitializer());
+                }
+
                 continue;
             }
 
@@ -73,6 +79,46 @@ internal sealed class SemanticValidator
                 var declaredType = _typeResolver.ResolveType(variableDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Global, variableDeclaration.type_(), isFfiBoundary: false);
             }
+        }
+    }
+
+    private void ValidateConstGlobal(
+        string name,
+        StarkTypeSymbol declaredType,
+        StarkParser.VariableInitializerContext initializer)
+    {
+        if (declaredType.Kind == StarkTypeKind.Error)
+        {
+            return;
+        }
+
+        if (IsExternalConstRawPointerPlaceholder(declaredType, initializer))
+        {
+            return;
+        }
+
+        if (!TryValidateFrozenConstGlobalType(
+                declaredType,
+                name,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var failingPath,
+                out var failureReason))
+        {
+            _context.Diagnostics.Error(
+                "STK4007",
+                $"Const global '{name}' must be a fully frozen object graph. Reachable path '{failingPath}' {failureReason}.",
+                "semantic-validate",
+                Location(initializer.Start));
+            return;
+        }
+
+        if (!CanMaterializeFrozenConstInitializer(initializer, declaredType))
+        {
+            _context.Diagnostics.Error(
+                "STK4008",
+                $"Const global '{name}' must use a frozen initializer that can be materialized as static data.",
+                "semantic-validate",
+                Location(initializer.Start));
         }
     }
 
@@ -188,9 +234,9 @@ internal sealed class SemanticValidator
 
             foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
             {
-                if (declarator.expression() is { } initializer)
+                if (declarator.variableInitializer() is { } initializer)
                 {
-                    EvaluateExpression(initializer, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+                    CheckVariableInitializer(initializer, scope, function, effects, summary);
                 }
 
                 scope.Declare(new VariableSymbol(
@@ -397,7 +443,7 @@ internal sealed class SemanticValidator
         {
             foreach (var memberInitializer in objectInitializer.memberInitializer())
             {
-                EvaluateExpression(memberInitializer.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+                CheckVariableInitializer(memberInitializer.variableInitializer(), scope, function, effects, summary);
             }
 
             return;
@@ -405,9 +451,9 @@ internal sealed class SemanticValidator
 
         if (initializer.arrayInitializer() is { } arrayInitializer)
         {
-            foreach (var item in arrayInitializer.expression())
+            foreach (var item in arrayInitializer.variableInitializer())
             {
-                EvaluateExpression(item, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+                CheckVariableInitializer(item, scope, function, effects, summary);
             }
         }
     }
@@ -786,7 +832,7 @@ internal sealed class SemanticValidator
         {
             foreach (var memberInitializer in objectInitializer.memberInitializer())
             {
-                EvaluateExpression(memberInitializer.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+                CheckVariableInitializer(memberInitializer.variableInitializer(), scope, function, effects, summary);
             }
         }
 
@@ -815,11 +861,13 @@ internal sealed class SemanticValidator
                 EffectError(summary, "STK4105", $"Law '{function.Name}' cannot read global state.", token);
             }
 
+            var isMutable = globalType.IsMutable;
+
             return new ValidationValue(
-                globalType,
-                IsAssignable: TryIsMutableGlobal(name),
-                RootSymbol: new VariableSymbol(name, globalType, SymbolOrigin.Global, LocalStorageClass.Static, TryIsMutableGlobal(name), IsConstant: !TryIsMutableGlobal(name)),
-                NamedType: ResolveNamedTypeSymbol(globalType));
+                globalType.Type,
+                IsAssignable: isMutable,
+                RootSymbol: new VariableSymbol(name, globalType.Type, SymbolOrigin.Global, LocalStorageClass.Static, isMutable, IsConstant: !isMutable),
+                NamedType: ResolveNamedTypeSymbol(globalType.Type));
         }
 
         if (_typeModel.Functions.TryGetValue(name, out var targetFunction))
@@ -983,15 +1031,23 @@ internal sealed class SemanticValidator
         FunctionValidationBuilder summary)
     {
         var currentType = target.Type;
+        var currentIsAssignable = target.IsAssignable;
         foreach (var indexExpression in indexes.expression())
         {
             EvaluateExpression(indexExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            currentType = currentType.ElementType ?? StarkTypeSymbols.Error;
+            if (currentType.ElementType is null)
+            {
+                currentType = StarkTypeSymbols.Error;
+                continue;
+            }
+
+            currentIsAssignable &= currentType.AccessKind != StarkAccessKind.Frozen;
+            currentType = ProjectFrozenView(currentType, currentType.ElementType);
         }
 
         return new ValidationValue(
             currentType,
-            IsAssignable: target.IsAssignable,
+            IsAssignable: currentIsAssignable,
             RootSymbol: target.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(currentType),
             IsIndirectStorageAccess: true);
@@ -1009,11 +1065,12 @@ internal sealed class SemanticValidator
 
             if (_typeModel.Globals.TryGetValue(qualifiedName, out var globalType))
             {
+                var isMutable = globalType.IsMutable;
                 return new ValidationValue(
-                    globalType,
-                    IsAssignable: TryIsMutableGlobal(qualifiedName),
-                    RootSymbol: new VariableSymbol(qualifiedName, globalType, SymbolOrigin.Global, LocalStorageClass.Static, TryIsMutableGlobal(qualifiedName), IsConstant: !TryIsMutableGlobal(qualifiedName)),
-                    NamedType: ResolveNamedTypeSymbol(globalType));
+                    globalType.Type,
+                    IsAssignable: isMutable,
+                    RootSymbol: new VariableSymbol(qualifiedName, globalType.Type, SymbolOrigin.Global, LocalStorageClass.Static, isMutable, IsConstant: !isMutable),
+                    NamedType: ResolveNamedTypeSymbol(globalType.Type));
             }
 
             if (_typeModel.Functions.TryGetValue(qualifiedName, out var function))
@@ -1030,11 +1087,12 @@ internal sealed class SemanticValidator
 
         if (namedType.Fields.TryGetValue(memberName, out var field))
         {
+            var projectedType = ProjectFrozenView(target.Type, field.Type);
             return new ValidationValue(
-                field.Type,
-                IsAssignable: target.IsAssignable,
+                projectedType,
+                IsAssignable: target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen,
                 RootSymbol: target.RootSymbol,
-                NamedType: ResolveNamedTypeSymbol(field.Type),
+                NamedType: ResolveNamedTypeSymbol(projectedType),
                 IsIndirectStorageAccess: true);
         }
 
@@ -1088,7 +1146,7 @@ internal sealed class SemanticValidator
         var pointeeType = operand.Type.ElementType;
         return new ValidationValue(
             pointeeType,
-            IsAssignable: operand.Type.IsMutablePointer,
+            IsAssignable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
             RootSymbol: operand.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(pointeeType),
             IsIndirectStorageAccess: true);
@@ -1351,6 +1409,330 @@ internal sealed class SemanticValidator
         }
     }
 
+    private bool TryValidateFrozenConstGlobalType(
+        StarkTypeSymbol type,
+        string path,
+        ISet<string> visitingNamedTypes,
+        out string failingPath,
+        out string failureReason)
+    {
+        failingPath = path;
+        failureReason = string.Empty;
+
+        if (type.Kind == StarkTypeKind.Error)
+        {
+            return true;
+        }
+
+        if (type.BorrowKind != StarkBorrowKind.None)
+        {
+            failureReason = $"uses borrow-qualified type '{type.DisplayName}'";
+            return false;
+        }
+
+        if (type.AccessKind == StarkAccessKind.Shared)
+        {
+            failureReason = $"uses shared access type '{type.DisplayName}'";
+            return false;
+        }
+
+        if (type.InitializationKind != StarkInitializationKind.None)
+        {
+            failureReason = $"uses initialization-qualified type '{type.DisplayName}'";
+            return false;
+        }
+
+        if (type.IsMutableView)
+        {
+            failureReason = $"uses mutable-view type '{type.DisplayName}'";
+            return false;
+        }
+
+        switch (type.Kind)
+        {
+            case StarkTypeKind.RawPointer:
+                failureReason = $"uses raw pointer type '{type.DisplayName}'";
+                return false;
+            case StarkTypeKind.FixedArray:
+            case StarkTypeKind.Slice:
+                if (type.ElementType is null)
+                {
+                    return true;
+                }
+
+                return TryValidateFrozenConstGlobalType(type.ElementType, $"{path}[]", visitingNamedTypes, out failingPath, out failureReason);
+            case StarkTypeKind.Named:
+                if (type.NamedType is null || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType))
+                {
+                    return true;
+                }
+
+                if (!visitingNamedTypes.Add(namedType.Name))
+                {
+                    return true;
+                }
+
+                foreach (var field in namedType.OrderedFields)
+                {
+                    if (!TryValidateFrozenConstGlobalType(field.Type, $"{path}.{field.Name}", visitingNamedTypes, out failingPath, out failureReason))
+                    {
+                        visitingNamedTypes.Remove(namedType.Name);
+                        return false;
+                    }
+                }
+
+                visitingNamedTypes.Remove(namedType.Name);
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    private bool CanMaterializeFrozenConstInitializer(
+        StarkParser.VariableInitializerContext initializer,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind == StarkTypeKind.Error)
+        {
+            return true;
+        }
+
+        if (initializer.expression() is { } expression)
+        {
+            return CanMaterializeFrozenConstExpression(expression, targetType);
+        }
+
+        if (initializer.objectInitializer() is { } objectInitializer)
+        {
+            return CanMaterializeFrozenConstObjectInitializer(objectInitializer, targetType);
+        }
+
+        if (initializer.arrayInitializer() is { } arrayInitializer)
+        {
+            return CanMaterializeFrozenConstArrayInitializer(arrayInitializer, targetType);
+        }
+
+        return false;
+    }
+
+    private bool CanMaterializeFrozenConstExpression(
+        StarkParser.ExpressionContext expression,
+        StarkTypeSymbol targetType)
+    {
+        if (!TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression))
+        {
+            return false;
+        }
+
+        if (primaryExpression.literal() is not null)
+        {
+            return true;
+        }
+
+        if (primaryExpression.objectCreationExpression() is { } objectCreation)
+        {
+            return CanMaterializeFrozenConstObjectCreation(objectCreation, targetType);
+        }
+
+        if (primaryExpression.expression() is { } groupedExpression)
+        {
+            return CanMaterializeFrozenConstExpression(groupedExpression, targetType);
+        }
+
+        return false;
+    }
+
+    private bool CanMaterializeFrozenConstObjectCreation(
+        StarkParser.ObjectCreationExpressionContext objectCreation,
+        StarkTypeSymbol targetType)
+    {
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        var fieldOrder = namedType.OrderedFields;
+        var arguments = objectCreation.argumentList()?.argument() ?? [];
+        if (arguments.Length != 0)
+        {
+            if (namedType.Kind != DeclarationKind.Record || arguments.Length != fieldOrder.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < arguments.Length; index++)
+            {
+                if (!CanMaterializeFrozenConstExpression(arguments[index].expression(), fieldOrder[index].Type))
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (objectCreation.objectInitializer() is { } objectInitializer
+            && !CanMaterializeFrozenConstObjectInitializer(objectInitializer, targetType))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool CanMaterializeFrozenConstObjectInitializer(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        StarkTypeSymbol targetType)
+    {
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        foreach (var memberInitializer in objectInitializer.memberInitializer())
+        {
+            var memberName = memberInitializer.Identifier().GetText();
+            if (!namedType.Fields.TryGetValue(memberName, out var field))
+            {
+                return false;
+            }
+
+            if (!CanMaterializeFrozenConstInitializer(memberInitializer.variableInitializer(), field.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool CanMaterializeFrozenConstArrayInitializer(
+        StarkParser.ArrayInitializerContext arrayInitializer,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice)
+            || targetType.ElementType is null)
+        {
+            return false;
+        }
+
+        if (targetType.Kind == StarkTypeKind.FixedArray
+            && targetType.FixedLength is int fixedLength
+            && fixedLength != arrayInitializer.variableInitializer().Length)
+        {
+            return false;
+        }
+
+        foreach (var item in arrayInitializer.variableInitializer())
+        {
+            if (!CanMaterializeFrozenConstInitializer(item, targetType.ElementType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsExternalConstRawPointerPlaceholder(
+        StarkTypeSymbol type,
+        StarkParser.VariableInitializerContext initializer)
+    {
+        return type.Kind == StarkTypeKind.RawPointer
+            && !type.IsMutablePointer
+            && type.BorrowKind == StarkBorrowKind.None
+            && type.AccessKind == StarkAccessKind.None
+            && type.InitializationKind == StarkInitializationKind.None
+            && !type.IsMutableView
+            && initializer.expression() is { } expression
+            && TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression)
+            && primaryExpression.literal()?.NULL() is not null;
+    }
+
+    private static bool TryUnwrapSimplePrimaryExpression(StarkParser.ExpressionContext expression, out StarkParser.PrimaryExpressionContext primaryExpression)
+    {
+        primaryExpression = null!;
+
+        if (expression.assignmentExpression().conditionalExpression() is not { } conditionalExpression
+            || conditionalExpression.QUESTION() is not null)
+        {
+            return false;
+        }
+
+        var logicalOr = conditionalExpression.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var unary = multiplicative.unaryExpression(0);
+        if (unary.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null
+            || powerExpression.postfixExpression() is not { } postfixExpression
+            || postfixExpression.postfixPart().Length != 0
+            || postfixExpression.primaryExpression() is not { } primary)
+        {
+            return false;
+        }
+
+        primaryExpression = primary;
+        return true;
+    }
+
     private static bool ContainsNestedRawPointer(StarkTypeSymbol type)
     {
         if (type.Kind == StarkTypeKind.RawPointer)
@@ -1559,6 +1941,13 @@ internal sealed class SemanticValidator
         return true;
     }
 
+    private static StarkTypeSymbol ProjectFrozenView(StarkTypeSymbol sourceType, StarkTypeSymbol projectedType)
+    {
+        return sourceType.AccessKind == StarkAccessKind.Frozen
+            ? StarkTypeSymbols.FreezeReachableView(projectedType)
+            : projectedType;
+    }
+
     private static bool IsMemoryBackedType(StarkTypeSymbol type)
     {
         return type.Kind switch
@@ -1644,20 +2033,7 @@ internal sealed class SemanticValidator
 
     private bool TryIsMutableGlobal(string name)
     {
-        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
-        {
-            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
-            {
-                continue;
-            }
-
-            if (variableDeclaration.variableDeclarators().variableDeclarator().Any(declarator => declarator.Identifier().GetText() == name))
-            {
-                return variableDeclaration.MUT() is not null;
-            }
-        }
-
-        return false;
+        return _typeModel.Globals.TryGetValue(name, out var global) && global.IsMutable;
     }
 
     private FunctionValidationBuilder GetOrCreateSummary(string functionName)

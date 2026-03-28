@@ -324,6 +324,61 @@ public static class StarkTypeSymbols
             IsMutableView = isMutableView
         };
     }
+
+    public static StarkTypeSymbol WithQualifiers(
+        StarkTypeSymbol type,
+        StarkBorrowKind? borrowKind = null,
+        StarkAccessKind? accessKind = null,
+        StarkInitializationKind? initializationKind = null,
+        bool? isMutableView = null)
+    {
+        if (type.Kind == StarkTypeKind.Error)
+        {
+            return type;
+        }
+
+        var rebuilt = RebuildWithoutTopLevelQualifiers(type);
+        return ApplyQualifiers(
+            rebuilt,
+            borrowKind ?? type.BorrowKind,
+            accessKind ?? type.AccessKind,
+            initializationKind ?? type.InitializationKind,
+            isMutableView ?? type.IsMutableView);
+    }
+
+    public static StarkTypeSymbol FreezeReachableView(StarkTypeSymbol type)
+    {
+        if (type.Kind == StarkTypeKind.Error)
+        {
+            return type;
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            return RawPointer(FreezeReachableView(type.ElementType), isMutable: false);
+        }
+
+        return WithQualifiers(type, accessKind: StarkAccessKind.Frozen, isMutableView: false);
+    }
+
+    private static StarkTypeSymbol RebuildWithoutTopLevelQualifiers(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.Void => Void,
+            StarkTypeKind.Bool => Bool,
+            StarkTypeKind.Ascii => Ascii,
+            StarkTypeKind.Unicode => Unicode,
+            StarkTypeKind.Null => Null,
+            StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax),
+            StarkTypeKind.Float => Float(type.BitWidth ?? 32),
+            StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
+            StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength),
+            StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
+            StarkTypeKind.Named when type.NamedType is not null => Named(type.NamedType),
+            _ => type
+        };
+    }
 }
 
 public sealed record FieldSymbol(string Name, StarkTypeSymbol Type);
@@ -363,6 +418,23 @@ public sealed record TypedFunctionSignature(
     StarkTypeSymbol ReturnType,
     IReadOnlyList<TypedParameterSymbol> Parameters);
 
+public enum GlobalBindingKind
+{
+    Const,
+    Immutable,
+    Mutable
+}
+
+public sealed record TypedGlobalSymbol(
+    string Name,
+    StarkTypeSymbol Type,
+    GlobalBindingKind BindingKind)
+{
+    public bool IsMutable => BindingKind == GlobalBindingKind.Mutable;
+
+    public bool IsConst => BindingKind == GlobalBindingKind.Const;
+}
+
 public sealed record LiteralTypingRecord(
     string LiteralText,
     StarkTypeSymbol Type,
@@ -372,7 +444,7 @@ public sealed record TypeCheckModel(
     string ModuleName,
     IReadOnlyDictionary<string, NamedTypeSymbol> NamedTypes,
     IReadOnlyDictionary<string, TypedFunctionSignature> Functions,
-    IReadOnlyDictionary<string, StarkTypeSymbol> Globals,
+    IReadOnlyDictionary<string, TypedGlobalSymbol> Globals,
     IReadOnlyList<LiteralTypingRecord> Literals);
 
 public enum AbiParameterKind

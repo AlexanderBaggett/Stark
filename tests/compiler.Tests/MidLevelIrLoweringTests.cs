@@ -683,7 +683,7 @@ public sealed class MidLevelIrLoweringTests
                 i32 Value;
             }
 
-            static i32 Counter = 0;
+            static mut i32 Counter = 0;
 
             fn i32 Run(i32 input) {
                 stack mut Box box = new Box() { Value = 1 };
@@ -705,6 +705,86 @@ public sealed class MidLevelIrLoweringTests
             statements,
             statement => statement.Value is MidLevelIrLoadIndirectRValue load
                 && load.Address is MidLevelIrGlobalAddressOperand { Name: "Counter" });
+    }
+
+    [Fact]
+    public void ImmutableGlobalAddressesLowerToReadonlyMirAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static i32 Counter = 0;
+            static Box Current = new Box() { Value = 5 };
+
+            fn rawptr<i32> CounterPtr() {
+                return &Counter;
+            }
+
+            fn rawptr<i32> FieldPtr() {
+                return &(Current.Value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var mir = GetMir(result);
+        var counterPtr = Assert.Single(mir.Functions, static function => function.Name == "CounterPtr");
+        var fieldPtr = Assert.Single(mir.Functions, static function => function.Name == "FieldPtr");
+
+        Assert.True(counterPtr.SupportsDirectCodeGeneration);
+        Assert.True(fieldPtr.SupportsDirectCodeGeneration);
+        Assert.IsType<MidLevelIrGlobalAddressOperand>(Assert.Single(counterPtr.Blocks).Terminator.Value);
+        Assert.Equal(
+            new[] { false },
+            counterPtr.Blocks
+                .Select(block => block.Terminator.Value)
+                .OfType<MidLevelIrGlobalAddressOperand>()
+                .Select(static address => address.Type.IsMutablePointer)
+                .ToArray());
+
+        var fieldStatements = fieldPtr.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.Contains(
+            fieldStatements,
+            static statement => statement.Value is MidLevelIrFieldAddressRValue { Type.IsMutablePointer: false });
+        Assert.DoesNotContain(
+            fieldStatements,
+            static statement => statement.Value is MidLevelIrConvertRValue
+            {
+                TargetType: { Kind: StarkTypeKind.RawPointer },
+                Operand.Type: { Kind: StarkTypeKind.RawPointer }
+            });
+    }
+
+    [Fact]
+    public void FrozenSliceAddressesLowerToReadonlyMirAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn rawptr<frozen i32> FirstPtr(frozen i32[] view) {
+                return &(view[0]);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions);
+        Assert.True(function.SupportsDirectCodeGeneration);
+
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrSliceElementAddressRValue { Type.IsMutablePointer: false });
+
+        var returned = Assert.IsType<MidLevelIrLocalOperand>(Assert.Single(function.Blocks).Terminator.Value);
+        Assert.Equal(StarkTypeKind.RawPointer, returned.Type.Kind);
+        Assert.False(returned.Type.IsMutablePointer);
     }
 
     private static CompilationResult Compile(string source)
