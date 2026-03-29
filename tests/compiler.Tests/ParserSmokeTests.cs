@@ -47,6 +47,27 @@ public sealed class ParserSmokeTests
             """
         },
         {
+            "rust style enum declarations",
+            """
+            module Variants
+
+            public enum Result<T, E> {
+                Ok(T),
+                Err(E),
+            }
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn void Use(Result<i32, ascii> result, Token token) {
+                return;
+            }
+            """
+        },
+        {
             "qualified types pointers and constrained ranges",
             """
             module Memory
@@ -107,6 +128,41 @@ public sealed class ParserSmokeTests
                 }
 
                 return counter;
+            }
+            """
+        },
+        {
+            "aggregate switch patterns",
+            """
+            module Patterns
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn i32 Run(Pair value) {
+                switch (value) {
+                    case Pair(1, var right):
+                        return right;
+                    case Pair(_, _):
+                        return 0;
+                }
+            }
+            """
+        },
+        {
+            "nested aggregate switch patterns",
+            """
+            module Patterns
+
+            record Pair(i32 Left, i32 Right) { }
+            record Outer(Pair Values, i32 Tail) { }
+
+            fn i32 Run(Outer value) {
+                switch (value) {
+                    case Outer(Pair(1, var right), var tail):
+                        return right + tail;
+                    case Outer(Pair(_, _), _):
+                        return 0;
+                }
             }
             """
         },
@@ -273,7 +329,7 @@ public sealed class ParserSmokeTests
             """
         },
         {
-            "type switch patterns are not part of Stark",
+            "property switch patterns are not part of Stark",
             """
             module Demo
 
@@ -283,7 +339,7 @@ public sealed class ParserSmokeTests
 
             fn i32 Run(Boxed value) {
                 switch (value) {
-                    case Boxed boxed:
+                    case Boxed { Value: 1 }:
                         return 1;
                     default:
                         return 0;

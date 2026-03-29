@@ -176,7 +176,7 @@ internal sealed class StarkTypeResolver
         return builtinType;
     }
 
-    private StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters, string? currentModuleName)
+    public StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters = null, string? currentModuleName = null)
     {
         if (simpleType.builtinType() is { } builtinType)
         {

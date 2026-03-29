@@ -17,6 +17,7 @@ topLevelDeclaration
           functionDeclaration
         | structDeclaration
         | recordDeclaration
+        | enumDeclaration
         | traitDeclaration
         | doctrineDeclaration
         | globalConstantDeclaration
@@ -89,6 +90,10 @@ recordDeclaration
     : RECORD Identifier typeParameterList? primaryConstructorParameters? recordBody
     ;
 
+enumDeclaration
+    : ENUM Identifier typeParameterList? enumBody
+    ;
+
 traitDeclaration
     : TRAIT Identifier typeParameterList? traitBody
     ;
@@ -109,6 +114,10 @@ recordBody
     : LBRACE recordMember* RBRACE
     ;
 
+enumBody
+    : LBRACE (enumVariantDeclaration (COMMA enumVariantDeclaration)* COMMA?)? RBRACE
+    ;
+
 traitBody
     : LBRACE traitMember* RBRACE
     ;
@@ -127,6 +136,19 @@ recordMember
     : fieldDeclaration
     | methodDeclaration
     | constructorDeclaration
+    ;
+
+enumVariantDeclaration
+    : Identifier enumVariantPayload?
+    ;
+
+enumVariantPayload
+    : LPAREN (type_ (COMMA type_)*)? COMMA? RPAREN
+    | LBRACE (enumVariantFieldDeclaration (COMMA enumVariantFieldDeclaration)* COMMA?)? RBRACE
+    ;
+
+enumVariantFieldDeclaration
+    : Identifier COLON type_
     ;
 
 traitMember
@@ -357,6 +379,16 @@ pattern
     : DISCARD
     | literal
     | VAR Identifier
+    | aggregatePattern
+    ;
+
+aggregatePattern
+    : simpleType aggregatePatternSuffix?
+    ;
+
+aggregatePatternSuffix
+    : Identifier
+    | LPAREN (pattern (COMMA pattern)*)? COMMA? RPAREN
     ;
 
 expressionList
@@ -543,6 +575,7 @@ STRICTFP    : 'strictfp';
 
 STRUCT      : 'struct';
 RECORD      : 'record';
+ENUM        : 'enum';
 TRAIT       : 'trait';
 DOCTRINE    : 'doctrine';
 

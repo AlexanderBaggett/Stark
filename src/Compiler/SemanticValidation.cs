@@ -896,8 +896,106 @@ internal sealed class SemanticValidator
     {
         if (pattern.VAR() is not null && pattern.Identifier() is { } capture)
         {
-            scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            if (switchType.Kind != StarkTypeKind.Named)
+            {
+                scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            }
+
+            return;
         }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            BindAggregateSwitchPattern(aggregatePattern, switchType, scope);
+        }
+    }
+
+    private void BindAggregateSwitchPattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
+    {
+        var patternType = ResolvePatternSimpleType(aggregatePattern.simpleType());
+        if (switchType.Kind != StarkTypeKind.Named
+            || patternType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || patternType.NamedType is null
+            || !string.Equals(switchType.NamedType, patternType.NamedType, StringComparison.Ordinal)
+            || !_typeModel.NamedTypes.TryGetValue(switchType.NamedType, out var namedType))
+        {
+            return;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (suffix is null || suffix.Identifier() is not null)
+        {
+            return;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != namedType.OrderedFields.Count)
+        {
+            return;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope);
+        }
+    }
+
+    private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, ValidationScope scope)
+    {
+        if (pattern.VAR() is not null
+            && pattern.Identifier() is { } capture
+            && SupportsAggregateFieldSubpattern(field.Type))
+        {
+            scope.Declare(new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (pattern.aggregatePattern() is not { } aggregatePattern
+            || field.Type.Kind != StarkTypeKind.Named
+            || field.Type.NamedType is null
+            || !_typeModel.NamedTypes.TryGetValue(field.Type.NamedType, out var namedType))
+        {
+            return;
+        }
+
+        var patternType = ResolvePatternSimpleType(aggregatePattern.simpleType());
+        if (patternType.Kind != StarkTypeKind.Named
+            || patternType.NamedType is null
+            || !string.Equals(field.Type.NamedType, patternType.NamedType, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (suffix is null || suffix.Identifier() is not null)
+        {
+            return;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != namedType.OrderedFields.Count)
+        {
+            return;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope);
+        }
+    }
+
+    private StarkTypeSymbol ResolvePatternSimpleType(StarkParser.SimpleTypeContext simpleType)
+    {
+        return _typeResolver.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName);
+    }
+
+    private static bool SupportsAggregateFieldSubpattern(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Bool
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Float
+            or StarkTypeKind.RawPointer;
     }
 
     private ValidationValue InvokeCall(

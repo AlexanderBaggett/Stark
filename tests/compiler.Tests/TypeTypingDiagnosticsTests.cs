@@ -79,6 +79,132 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void AggregateSwitchPatternsRejectMoveOnlyFieldCaptures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                ascii Text;
+            }
+
+            fn i32 Run(Box value) {
+                switch (value) {
+                    case Box(var text):
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Field 'Text'", "cannot currently be captured", "scalar, non-owning field types");
+    }
+
+    [Fact]
+    public void ExhaustiveBoolSwitchRejectsLaterDefaultLabel()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(bool value) {
+                switch (value) {
+                    case true:
+                        return 1;
+                    case false:
+                        return 0;
+                    default:
+                        return 2;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'default' is unreachable", "already exhaustive", "'false'");
+        AssertDiagnostic(result, "STK3020", "Switch coverage becomes exhaustive here for 'bool'.");
+    }
+
+    [Fact]
+    public void AggregateWildcardPatternRejectsLaterSpecificArm()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn i32 Run(Pair value) {
+                switch (value) {
+                    case Pair(_, _):
+                        return 0;
+                    case Pair(1, 2):
+                        return 1;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'Pair(1,2)' is unreachable", "already exhaustive", "'Pair(_,_)'");
+        AssertDiagnostic(result, "STK3020", "Switch coverage becomes exhaustive here for 'Pair'.");
+    }
+
+    [Fact]
+    public void BroaderAggregatePatternRejectsLaterSpecificArm()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn i32 Run(Pair value) {
+                switch (value) {
+                    case Pair(1, _):
+                        return 0;
+                    case Pair(1, 2):
+                        return 1;
+                    default:
+                        return 2;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'Pair(1,2)' is unreachable", "'Pair(1,_)' already covers it");
+        AssertDiagnostic(result, "STK3020", "already covers the later label 'Pair(1,2)'");
+    }
+
+    [Fact]
+    public void NestedAggregatePatternRejectsLaterSpecificArm()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+            record Outer(Pair Values, i32 Tail) { }
+
+            fn i32 Run(Outer value) {
+                switch (value) {
+                    case Outer(Pair(1, _), _):
+                        return 0;
+                    case Outer(Pair(1, 2), 3):
+                        return 1;
+                    default:
+                        return 2;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'Outer(Pair(1,2),3)' is unreachable", "'Outer(Pair(1,_),_)' already covers it");
+        AssertDiagnostic(result, "STK3020", "already covers the later label 'Outer(Pair(1,2),3)'");
+    }
+
+    [Fact]
     public void ArrayInitializerMismatchesUseExpectedActualWording()
     {
         var result = Compile(

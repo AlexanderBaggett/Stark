@@ -455,12 +455,15 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 - [x] literal switch patterns
 - [x] discard/match-all switch patterns
 - [x] `var` capture switch patterns
-- [ ] richer sum/variant pattern matching
-  - [ ] define a concrete discriminated runtime representation
-  - [ ] model variant constructors and payloads
-  - [ ] lower discriminant tests and payload extraction
-  - [ ] exhaustiveness and unreachable-arm diagnostics
-- [ ] first-class optional/result/sum-type lowering if those are part of the surface language plan
+- [x] exact-type named aggregate switch patterns with scalar field bindings as groundwork
+- [x] exhaustiveness and unreachable-arm diagnostics
+
+### Enums
+
+- [ ] define a concrete discriminated runtime representation
+- [ ] model enum constructors and payloads
+- [ ] lower discriminant tests and payload extraction
+- [ ] first-class optional/result lowering if those are part of the surface language plan
   - [ ] define standard library or surface forms for optional/result values
   - [ ] define layout and ABI rules
   - [ ] integrate with `switch` and pattern binding
@@ -797,7 +800,7 @@ Everything before this point is frozen
 - [ ] Define the public module layout for `System.IO`
 - [ ] Define the public module layout for `System.FileSystem`
 - [ ] Define the public module layout for `System.Threading`
-- [ ] Define the public module layout for `System.Collections`
+- [ ] Define the public module layout for `System.Collections`including Stack, Queue, List, Linked List, and Dictionary
 - [ ] Define the public module layout for `System.Net.Tcp`
 - [ ] Define the public module layout for `System.Net.Http`
 - [ ] Define the error/result model used by stdlib APIs that can fail

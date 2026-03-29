@@ -251,6 +251,90 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void AggregateSwitchPatternBindsScalarFieldsAfterPatternSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn i32 Run(Pair value) {
+                switch (value) {
+                    case Pair(1, var right):
+                        return right;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "right");
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Left" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Right" });
+
+        var captureBlock = Assert.Single(
+            function.Blocks,
+            static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "right"));
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_agg_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "right"));
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "right"));
+        Assert.Contains("switch_agg_match", captureBlock.Label, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+            record Outer(Pair Values, i32 Tail) { }
+
+            fn i32 Run(Outer value) {
+                switch (value) {
+                    case Outer(Pair(1, var right), var tail):
+                        return right + tail;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "right");
+        Assert.Contains(function.Locals, static local => local.Name == "tail");
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Values" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Tail" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Left" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Right" });
+
+        var captureBlock = Assert.Single(
+            function.Blocks,
+            static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "right")
+                && block.Statements.Any(static statement => statement.TargetName == "tail"));
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_agg_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "right" || statement.TargetName == "tail"));
+        Assert.Contains("switch_agg_match", captureBlock.Label, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
     {
         var result = Compile(

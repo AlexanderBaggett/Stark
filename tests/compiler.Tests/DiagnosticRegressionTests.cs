@@ -171,7 +171,7 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void UnsupportedSwitchScrutineeProducesAStableTypeDiagnostic()
+    public void NamedSwitchWholeValueCapturesProduceAStableBoundedDiagnostic()
     {
         var result = Compile(
             """
@@ -192,7 +192,7 @@ public sealed class DiagnosticRegressionTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Switch over 'Box'", "not implemented in the current compiler yet");
+        AssertDiagnostic(result, "STK3008", "Switch over 'Box'", "Whole-value capture patterns remain unsupported for named switch values");
     }
 
     [Fact]
@@ -215,6 +215,30 @@ public sealed class DiagnosticRegressionTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3008", "Switch capture patterns must currently appear as the only label in their section");
+    }
+
+    [Fact]
+    public void UnreachableSwitchLabelsPointBackToTheCoveringArm()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(bool value) {
+                switch (value) {
+                    case true:
+                        return 1;
+                    case false:
+                        return 0;
+                    default:
+                        return 2;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'default' is unreachable", "already exhaustive", "earlier unguarded label 'false'");
+        AssertDiagnostic(result, "STK3020", "Switch coverage becomes exhaustive here for 'bool'.");
     }
 
     private static CompilationResult Compile(string source)

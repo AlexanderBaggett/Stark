@@ -135,6 +135,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitRecordDeclaration([NotNull] StarkParser.RecordDeclarationContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumDeclaration([NotNull] StarkParser.EnumDeclarationContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.traitDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -165,6 +171,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitRecordBody([NotNull] StarkParser.RecordBodyContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumBody"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumBody([NotNull] StarkParser.EnumBodyContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.traitBody"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -188,6 +200,24 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitRecordMember([NotNull] StarkParser.RecordMemberContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumVariantDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumVariantDeclaration([NotNull] StarkParser.EnumVariantDeclarationContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumVariantPayload"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumVariantPayload([NotNull] StarkParser.EnumVariantPayloadContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumVariantFieldDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumVariantFieldDeclaration([NotNull] StarkParser.EnumVariantFieldDeclarationContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.traitMember"/>.
 	/// </summary>
@@ -476,6 +506,18 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitPattern([NotNull] StarkParser.PatternContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.aggregatePattern"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAggregatePattern([NotNull] StarkParser.AggregatePatternContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.aggregatePatternSuffix"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAggregatePatternSuffix([NotNull] StarkParser.AggregatePatternSuffixContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.expressionList"/>.
 	/// </summary>

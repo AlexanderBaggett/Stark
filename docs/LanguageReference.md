@@ -48,6 +48,7 @@ The top-level declaration categories are:
 - functions
 - `struct` declarations
 - `record` declarations
+- `enum` declarations
 - `trait` declarations
 - `doctrine` declarations
 - type alias declarations
@@ -172,6 +173,7 @@ The aggregate/view forms are:
 - fixed arrays: `T[N]`
 - slices: `T[]`
 - named aggregates through `struct` and `record`
+- named variant families through `enum`
 
 Fixed arrays are owning aggregate values.
 
@@ -200,11 +202,15 @@ The raw pointer forms are:
 - `rawptr<T>`
 - `rawmutptr<T>`
 
-Safe Stark code does not have null references or nullable borrows. Null exists only in the raw/FFI domain.
+Safe Stark code does not have null references or nullable borrows.
+
+`null` exists only in the raw/FFI domain. A Stark program may compare raw
+pointers against `null` and may store `null` in raw-pointer storage, but may
+not assign `null` to safe values or borrows.
 
 ### 6.5 Generic Parameters and Type Aliases
 
-Generic type parameters may appear on functions, `struct` declarations, `record` declarations, `trait` declarations, and `doctrine` declarations.
+Generic type parameters may appear on functions, `struct` declarations, `record` declarations, `enum` declarations, `trait` declarations, and `doctrine` declarations.
 
 Generic parameters participate in name resolution, constraint checking, and type substitution.
 
@@ -265,13 +271,33 @@ Stark `struct` declarations do not support inheritance.
 
 Stark `record` declarations do not support inheritance.
 
-### 8.3 Traits
+### 8.3 Enums
+
+`enum` declares a closed Rust-style variant family.
+
+Enum variants may be:
+
+- unit-like: `End`
+- tuple-like: `Integer(i32)`
+- named-field: `Move { X: i32, Y: i32 }`
+
+Example:
+
+```stark
+enum Token {
+    End,
+    Integer(i32),
+    Move { X: i32, Y: i32 },
+}
+```
+
+### 8.4 Traits
 
 `trait` declares a named behavior contract.
 
 Traits group function requirements for a type or family of types. Traits do not imply class-style inheritance.
 
-### 8.4 Doctrines
+### 8.5 Doctrines
 
 `doctrine` declares a compile-time-only bundle of `law` functions and related constraints.
 
@@ -380,6 +406,7 @@ The switch surface includes:
 - `when` guards
 - `case var capture`
 - discard `_`
+- exact-type named aggregate patterns with nested aggregate subpatterns
 
 ## 11. Expressions
 
@@ -564,13 +591,14 @@ At that boundary:
 
 - raw pointers are allowed
 - nested raw pointers are allowed
-- null may appear
+- null may appear in raw-pointer values and raw-pointer checks
 - foreign ABI shape is preserved
 - foreign code must not unwind through Stark frames
 
 Outside that boundary:
 
 - safe borrows are non-null
+- safe values may not be assigned `null`
 - pointers-to-pointers are not part of ordinary safe Stark code
 - conversions from raw pointers into safe borrows must be explicit
 

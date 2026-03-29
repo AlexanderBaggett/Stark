@@ -139,6 +139,83 @@ public sealed class TypeCheckingTests
         Assert.NotNull(typeCheckModel);
     }
 
+    [Fact]
+    public void AggregateSwitchPatternsTypeCheckOnScalarFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn i32 Run(Pair value) {
+                switch (value) {
+                    case Pair(1, var right):
+                        return right;
+                    case Pair(_, _):
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void GuardedSwitchLabelsDoNotContributeToReachabilityCoverage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(bool value, bool allow) {
+                switch (value) {
+                    case true when allow:
+                        return 1;
+                    case true:
+                        return 2;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK3019");
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void NestedAggregateSwitchPatternsTypeCheckOnScalarLeaves()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+            record Outer(Pair Values, i32 Tail) { }
+
+            fn i32 Run(Outer value) {
+                switch (value) {
+                    case Outer(Pair(1, var right), var tail):
+                        return right + tail;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

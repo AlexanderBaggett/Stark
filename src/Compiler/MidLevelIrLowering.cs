@@ -74,13 +74,39 @@ internal sealed class MidLevelIrLowerer(
 
     private sealed class FunctionMirBuilder
     {
+        private enum AggregatePatternFieldKind
+        {
+            Discard,
+            Literal,
+            Capture,
+            Nested
+        }
+
+        private sealed record LowerableAggregateFieldPattern(
+            string FieldName,
+            int FieldIndex,
+            StarkTypeSymbol FieldType,
+            AggregatePatternFieldKind Kind,
+            string Text,
+            StarkParser.LiteralContext? Literal,
+            string? CaptureName,
+            LowerableAggregatePattern? NestedPattern);
+
+        private sealed record LowerableAggregatePattern(
+            string TypeName,
+            IReadOnlyList<LowerableAggregateFieldPattern> FieldPatterns,
+            string? WholeCaptureName);
+
+        private sealed record PendingSwitchBinding(string Name, MidLevelIrOperand Source);
+
         private sealed record LowerableSwitchLabel(
             string LabelText,
             StarkParser.LiteralContext? Literal,
             StarkParser.ExpressionContext? GuardExpression,
             bool IsDefault,
             bool IsMatchAll,
-            string? CaptureName);
+            string? CaptureName,
+            LowerableAggregatePattern? AggregatePattern);
 
         private sealed record LowerableSwitchSection(
             StarkParser.SwitchSectionContext Section,
@@ -991,6 +1017,16 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
+                if (label.AggregatePattern is { } aggregatePattern)
+                {
+                    if (!EmitAggregateSwitchPatternTransition(label, aggregatePattern, switchValue, targetBlockId, nextTarget, sectionIndex, index))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
                 var condition = EmitSwitchLiteralComparison(
                     switchValue,
                     label.Literal!,
@@ -1027,6 +1063,113 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
+        private bool TryParseAggregatePattern(StarkParser.AggregatePatternContext aggregatePattern, out LowerableAggregatePattern? parsedAggregatePattern)
+        {
+            parsedAggregatePattern = null;
+
+            var patternType = _typeResolver.ResolveSimpleType(aggregatePattern.simpleType(), currentModuleName: _typeModel.ModuleName);
+            if (patternType.Kind != StarkTypeKind.Named
+                || patternType.NamedType is null
+                || !_typeModel.NamedTypes.TryGetValue(patternType.NamedType, out var namedType))
+            {
+                return false;
+            }
+
+            var suffix = aggregatePattern.aggregatePatternSuffix();
+            if (suffix is null)
+            {
+                parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, [], WholeCaptureName: null);
+                return true;
+            }
+
+            if (suffix.Identifier() is { } capture)
+            {
+                parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, [], capture.GetText());
+                return true;
+            }
+
+            var fieldPatterns = suffix.pattern();
+            if (fieldPatterns.Length != namedType.OrderedFields.Count)
+            {
+                return false;
+            }
+
+            var parsedFieldPatterns = new LowerableAggregateFieldPattern[fieldPatterns.Length];
+            for (var index = 0; index < fieldPatterns.Length; index++)
+            {
+                var field = namedType.OrderedFields[index];
+                var pattern = fieldPatterns[index];
+
+                if (pattern.DISCARD() is not null)
+                {
+                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
+                        field.Name,
+                        index,
+                        field.Type,
+                        AggregatePatternFieldKind.Discard,
+                        pattern.GetText(),
+                        Literal: null,
+                        CaptureName: null,
+                        NestedPattern: null);
+                    continue;
+                }
+
+                if (pattern.VAR() is not null)
+                {
+                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
+                        field.Name,
+                        index,
+                        field.Type,
+                        AggregatePatternFieldKind.Capture,
+                        pattern.GetText(),
+                        Literal: null,
+                        CaptureName: pattern.Identifier()?.GetText(),
+                        NestedPattern: null);
+                    continue;
+                }
+
+                if (pattern.literal() is { } literal)
+                {
+                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
+                        field.Name,
+                        index,
+                        field.Type,
+                        AggregatePatternFieldKind.Literal,
+                        literal.GetText(),
+                        literal,
+                        CaptureName: null,
+                        NestedPattern: null);
+                    continue;
+                }
+
+                if (pattern.aggregatePattern() is { } nestedAggregatePattern)
+                {
+                    if (!TryParseAggregatePattern(nestedAggregatePattern, out var parsedNestedPattern)
+                        || parsedNestedPattern is null
+                        || parsedNestedPattern.WholeCaptureName is not null)
+                    {
+                        return false;
+                    }
+
+                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
+                        field.Name,
+                        index,
+                        field.Type,
+                        AggregatePatternFieldKind.Nested,
+                        nestedAggregatePattern.GetText(),
+                        Literal: null,
+                        CaptureName: null,
+                        NestedPattern: parsedNestedPattern);
+                    continue;
+                }
+
+                return false;
+            }
+
+            parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, parsedFieldPatterns, WholeCaptureName: null);
+            return true;
+        }
+
         private bool TryParseLowerableSwitchSections(
             StarkParser.SwitchStatementContext switchStatement,
             out List<LowerableSwitchSection> sections,
@@ -1043,7 +1186,7 @@ internal sealed class MidLevelIrLowerer(
                 {
                     if (label.DEFAULT() is not null)
                     {
-                        labels.Add(new LowerableSwitchLabel("default", null, null, IsDefault: true, IsMatchAll: true, CaptureName: null));
+                        labels.Add(new LowerableSwitchLabel("default", null, null, IsDefault: true, IsMatchAll: true, CaptureName: null, AggregatePattern: null));
                         defaultSectionCount++;
                         continue;
                     }
@@ -1058,7 +1201,7 @@ internal sealed class MidLevelIrLowerer(
                     {
                         if (label.whenClause() is null)
                         {
-                            labels.Add(new LowerableSwitchLabel(pattern.GetText(), null, null, IsDefault: true, IsMatchAll: true, CaptureName: null));
+                            labels.Add(new LowerableSwitchLabel(pattern.GetText(), null, null, IsDefault: true, IsMatchAll: true, CaptureName: null, AggregatePattern: null));
                             defaultSectionCount++;
                             continue;
                         }
@@ -1069,7 +1212,8 @@ internal sealed class MidLevelIrLowerer(
                             GuardExpression: label.whenClause()?.expression(),
                             IsDefault: false,
                             IsMatchAll: true,
-                            CaptureName: null));
+                            CaptureName: null,
+                            AggregatePattern: null));
                         continue;
                     }
 
@@ -1081,7 +1225,27 @@ internal sealed class MidLevelIrLowerer(
                             GuardExpression: label.whenClause()?.expression(),
                             IsDefault: false,
                             IsMatchAll: true,
-                            CaptureName: pattern.Identifier()?.GetText()));
+                            CaptureName: pattern.Identifier()?.GetText(),
+                            AggregatePattern: null));
+                        continue;
+                    }
+
+                    if (pattern.aggregatePattern() is { } aggregatePattern)
+                    {
+                        if (!TryParseAggregatePattern(aggregatePattern, out var parsedAggregatePattern)
+                            || parsedAggregatePattern is null)
+                        {
+                            return false;
+                        }
+
+                        labels.Add(new LowerableSwitchLabel(
+                            aggregatePattern.GetText(),
+                            Literal: null,
+                            GuardExpression: label.whenClause()?.expression(),
+                            IsDefault: false,
+                            IsMatchAll: false,
+                            CaptureName: null,
+                            AggregatePattern: parsedAggregatePattern));
                         continue;
                     }
 
@@ -1096,7 +1260,8 @@ internal sealed class MidLevelIrLowerer(
                         label.whenClause()?.expression(),
                         IsDefault: false,
                         IsMatchAll: false,
-                        CaptureName: null));
+                        CaptureName: null,
+                        AggregatePattern: null));
                 }
 
                 sections.Add(new LowerableSwitchSection(section, labels));
@@ -1111,6 +1276,28 @@ internal sealed class MidLevelIrLowerer(
         {
             foreach (var section in sections)
             {
+                var aggregateLabels = section.Labels.Where(static label => label.AggregatePattern is not null).ToArray();
+                if (aggregateLabels.Length != 0)
+                {
+                    if (aggregateLabels.Length != 1 || section.Labels.Count != 1)
+                    {
+                        return false;
+                    }
+
+                    var aggregatePattern = aggregateLabels[0].AggregatePattern!;
+                    if (aggregatePattern.WholeCaptureName is not null)
+                    {
+                        return false;
+                    }
+
+                    if (!TryRegisterAggregatePatternCaptureLocals(aggregatePattern))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
                 var captureLabels = section.Labels.Where(static label => label.CaptureName is not null).ToArray();
                 if (captureLabels.Length == 0)
                 {
@@ -1134,46 +1321,202 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
-        private bool EmitSwitchMatchTransition(LowerableSwitchLabel label, MidLevelIrOperand switchValue, int targetBlockId, int nextTarget)
+        private bool TryRegisterAggregatePatternCaptureLocals(LowerableAggregatePattern aggregatePattern)
         {
-            if (label.GuardExpression is null)
+            foreach (var fieldPattern in aggregatePattern.FieldPatterns)
             {
-                if (label.CaptureName is not null)
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
                 {
-                    var capture = new MidLevelIrLocalOperand(label.CaptureName, switchValue.Type);
-                    EmitOperandAssignment(capture, switchValue, switchValue.Text);
+                    if (fieldPattern.CaptureName is null
+                        || _localsByName.ContainsKey(fieldPattern.CaptureName)
+                        || _parametersByName.ContainsKey(fieldPattern.CaptureName))
+                    {
+                        return false;
+                    }
+
+                    RegisterLocal(fieldPattern.CaptureName, fieldPattern.FieldType, storageClass: "match", isMutable: false, isConstant: false);
+                    continue;
                 }
 
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Nested)
+                {
+                    if (fieldPattern.NestedPattern is null
+                        || fieldPattern.NestedPattern.WholeCaptureName is not null
+                        || !TryRegisterAggregatePatternCaptureLocals(fieldPattern.NestedPattern))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private bool EmitSwitchMatchTransition(LowerableSwitchLabel label, MidLevelIrOperand switchValue, int targetBlockId, int nextTarget)
+        {
+            IReadOnlyList<PendingSwitchBinding> bindings = label.CaptureName is null
+                ? []
+                : [new PendingSwitchBinding(label.CaptureName, switchValue)];
+
+            return EmitSwitchBindingsAndGuard(label.GuardExpression, bindings, targetBlockId, nextTarget);
+        }
+
+        private bool EmitAggregateSwitchPatternTransition(
+            LowerableSwitchLabel label,
+            LowerableAggregatePattern aggregatePattern,
+            MidLevelIrOperand switchValue,
+            int targetBlockId,
+            int nextTarget,
+            int sectionIndex,
+            int labelIndex)
+        {
+            if (aggregatePattern.WholeCaptureName is not null)
+            {
+                return false;
+            }
+
+            if (switchValue.Type.Kind != StarkTypeKind.Named
+                || switchValue.Type.NamedType is null
+                || !string.Equals(switchValue.Type.NamedType, aggregatePattern.TypeName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var bindings = new List<PendingSwitchBinding>();
+            var matchBlock = CreateBlock($"switch_agg_match_{sectionIndex}_{labelIndex}");
+            if (!EmitAggregatePatternDecision(
+                aggregatePattern,
+                switchValue,
+                matchBlock.Id,
+                nextTarget,
+                bindings,
+                $"{sectionIndex}_{labelIndex}"))
+            {
+                return false;
+            }
+
+            CurrentBlock = matchBlock;
+            return EmitSwitchBindingsAndGuard(label.GuardExpression, bindings, targetBlockId, nextTarget);
+        }
+
+        private bool EmitAggregatePatternDecision(
+            LowerableAggregatePattern aggregatePattern,
+            MidLevelIrOperand switchValue,
+            int successTarget,
+            int failureTarget,
+            List<PendingSwitchBinding> bindings,
+            string pathTag)
+        {
+            var fieldPatterns = aggregatePattern.FieldPatterns;
+            if (fieldPatterns.Count == 0)
+            {
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [successTarget]);
+                return true;
+            }
+
+            var decisionBlocks = new BasicBlockBuilder[fieldPatterns.Count];
+            decisionBlocks[0] = CurrentBlock;
+            for (var index = 1; index < fieldPatterns.Count; index++)
+            {
+                decisionBlocks[index] = CreateBlock($"switch_agg_test_{pathTag}_{index}");
+            }
+
+            for (var index = 0; index < fieldPatterns.Count; index++)
+            {
+                CurrentBlock = decisionBlocks[index];
+                var fieldPattern = fieldPatterns[index];
+                var nextTarget = index + 1 < fieldPatterns.Count ? decisionBlocks[index + 1].Id : successTarget;
+
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Discard)
+                {
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [nextTarget]);
+                    continue;
+                }
+
+                var fieldValue = LowerFieldAccess(switchValue, fieldPattern.FieldName);
+                if (fieldValue is null)
+                {
+                    return false;
+                }
+
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
+                {
+                    bindings.Add(new PendingSwitchBinding(fieldPattern.CaptureName!, fieldValue));
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [nextTarget]);
+                    continue;
+                }
+
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Nested)
+                {
+                    if (fieldPattern.NestedPattern is null
+                        || !EmitAggregatePatternDecision(
+                            fieldPattern.NestedPattern,
+                            fieldValue,
+                            nextTarget,
+                            failureTarget,
+                            bindings,
+                            $"{pathTag}_{index}"))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                var condition = EmitSwitchLiteralComparison(
+                    fieldValue,
+                    fieldPattern.Literal!,
+                    $"switch {switchValue.Text}.{fieldPattern.FieldName} == {fieldPattern.Text}");
+                if (condition is null)
+                {
+                    return false;
+                }
+
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [nextTarget, failureTarget],
+                    ConditionText: fieldPattern.Text,
+                    Condition: condition);
+            }
+
+            return true;
+        }
+
+        private bool EmitSwitchBindingsAndGuard(
+            StarkParser.ExpressionContext? guardExpression,
+            IReadOnlyList<PendingSwitchBinding> bindings,
+            int targetBlockId,
+            int nextTarget)
+        {
+            if (bindings.Count != 0 && guardExpression is not null)
+            {
+                var bindBlock = CreateBlock("switch_bind");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bindBlock.Id]);
+                CurrentBlock = bindBlock;
+            }
+
+            foreach (var binding in bindings)
+            {
+                var capture = new MidLevelIrLocalOperand(binding.Name, binding.Source.Type);
+                EmitOperandAssignment(capture, binding.Source, binding.Source.Text);
+            }
+
+            if (guardExpression is null)
+            {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
                 return true;
             }
 
-            var guard = LowerExpressionToOperand(label.GuardExpression, StarkTypeSymbols.Bool);
+            var guard = LowerExpressionToOperand(guardExpression, StarkTypeSymbols.Bool);
             if (guard is null)
             {
                 return false;
             }
 
-            if (label.CaptureName is not null)
-            {
-                var captureBlock = CreateBlock("switch_bind");
-                CurrentBlock.Terminator = new MidLevelIrTerminator(
-                    MidLevelIrTerminatorKind.Branch,
-                    [captureBlock.Id, nextTarget],
-                    ConditionText: label.GuardExpression.GetText(),
-                    Condition: guard);
-
-                CurrentBlock = captureBlock;
-                var capture = new MidLevelIrLocalOperand(label.CaptureName, switchValue.Type);
-                EmitOperandAssignment(capture, switchValue, switchValue.Text);
-                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
-                return true;
-            }
-
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Branch,
                 [targetBlockId, nextTarget],
-                ConditionText: label.GuardExpression.GetText(),
+                ConditionText: guardExpression.GetText(),
                 Condition: guard);
             return true;
         }
@@ -4290,7 +4633,8 @@ internal sealed class MidLevelIrLowerer(
                 or StarkTypeKind.Bool
                 or StarkTypeKind.RawPointer
                 or StarkTypeKind.Ascii
-                or StarkTypeKind.Unicode;
+                or StarkTypeKind.Unicode
+                or StarkTypeKind.Named;
         }
 
         private static bool CanUsePartitionedTextSwitchType(StarkTypeSymbol type)

@@ -8,6 +8,38 @@ namespace Stark.Compiler;
 internal sealed class TypeChecker
 {
     private static readonly int[] SupportedIntegerLiteralWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
+    private const string BoolTrueCoverageKey = "bool:true";
+    private const string BoolFalseCoverageKey = "bool:false";
+
+    private enum SwitchCoveragePatternKind
+    {
+        MatchAll,
+        Literal,
+        Aggregate
+    }
+
+    private enum AggregateCoverageFieldKind
+    {
+        Wildcard,
+        Literal,
+        Nested
+    }
+
+    private sealed record AggregateCoverageField(
+        AggregateCoverageFieldKind Kind,
+        string? LiteralKey,
+        AggregateCoveragePattern? NestedPattern);
+
+    private sealed record AggregateCoveragePattern(
+        string TypeName,
+        IReadOnlyList<AggregateCoverageField> Fields);
+
+    private sealed record SwitchCoveragePattern(
+        SwitchCoveragePatternKind Kind,
+        string LabelText,
+        ParserRuleContext Context,
+        string? LiteralKey,
+        AggregateCoveragePattern? AggregatePattern);
 
     private readonly CompilerPassContext _context;
     private readonly ParseResult _parseResult;
@@ -682,29 +714,34 @@ internal sealed class TypeChecker
             return;
         }
 
-        var unguardedMatchAllCount = 0;
-
         foreach (var section in switchStatement.switchSection())
         {
             var captureLabels = 0;
+            var aggregateLabels = 0;
             var labelCount = section.switchLabel().Length;
 
             foreach (var label in section.switchLabel())
             {
                 var pattern = label.pattern();
-                if (label.DEFAULT() is not null
-                    || (pattern?.DISCARD() is not null && label.whenClause() is null))
-                {
-                    unguardedMatchAllCount++;
-                }
-
                 if (pattern?.VAR() is not null)
                 {
                     captureLabels++;
                 }
+
+                if (pattern?.aggregatePattern() is not null)
+                {
+                    aggregateLabels++;
+                }
             }
 
-            if (captureLabels > 0 && labelCount != 1)
+            if (aggregateLabels > 0 && labelCount != 1)
+            {
+                ReportError(
+                    "STK3008",
+                    "Switch aggregate patterns must currently appear as the only label in their section.",
+                    section);
+            }
+            else if (captureLabels > 0 && labelCount != 1)
             {
                 ReportError(
                     "STK3008",
@@ -713,13 +750,383 @@ internal sealed class TypeChecker
             }
         }
 
-        if (unguardedMatchAllCount > 1)
+        AnalyzeSwitchCoverage(switchStatement, switchType);
+    }
+
+    private void AnalyzeSwitchCoverage(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
+    {
+        var coveragePatterns = new List<SwitchCoveragePattern>();
+        SwitchCoveragePattern? exhaustivePattern = null;
+        var boolTrueCovered = false;
+        var boolFalseCovered = false;
+
+        foreach (var section in switchStatement.switchSection())
         {
-            ReportError(
-                "STK3008",
-                "Switch statements currently support at most one unguarded default or match-all label.",
-                switchStatement);
+            foreach (var label in section.switchLabel())
+            {
+                var labelText = DescribeSwitchLabel(label);
+                _ = TryCreateSwitchCoveragePattern(label, switchType, out var currentPattern);
+
+                if (exhaustivePattern is not null)
+                {
+                    ReportUnreachableSwitchLabel(label, labelText, exhaustivePattern, switchType, becauseExhaustive: true);
+                    continue;
+                }
+
+                if (currentPattern is not null)
+                {
+                    var coveringPattern = coveragePatterns.FirstOrDefault(existing => Covers(existing, currentPattern));
+                    if (coveringPattern is not null)
+                    {
+                        ReportUnreachableSwitchLabel(label, labelText, coveringPattern, switchType, becauseExhaustive: false);
+                        continue;
+                    }
+                }
+
+                if (label.whenClause() is not null || currentPattern is null)
+                {
+                    continue;
+                }
+
+                coveragePatterns.Add(currentPattern);
+                if (currentPattern.Kind == SwitchCoveragePatternKind.MatchAll)
+                {
+                    exhaustivePattern = currentPattern;
+                    continue;
+                }
+
+                if (currentPattern.Kind == SwitchCoveragePatternKind.Aggregate
+                    && currentPattern.AggregatePattern is not null
+                    && IsMatchAllAggregatePattern(currentPattern.AggregatePattern))
+                {
+                    exhaustivePattern = currentPattern;
+                    continue;
+                }
+
+                if (currentPattern.Kind == SwitchCoveragePatternKind.Literal
+                    && switchType.Kind == StarkTypeKind.Bool)
+                {
+                    boolTrueCovered |= string.Equals(currentPattern.LiteralKey, BoolTrueCoverageKey, StringComparison.Ordinal);
+                    boolFalseCovered |= string.Equals(currentPattern.LiteralKey, BoolFalseCoverageKey, StringComparison.Ordinal);
+                    if (boolTrueCovered && boolFalseCovered)
+                    {
+                        exhaustivePattern = currentPattern;
+                    }
+                }
+            }
         }
+    }
+
+    private bool TryCreateSwitchCoveragePattern(
+        StarkParser.SwitchLabelContext label,
+        StarkTypeSymbol switchType,
+        out SwitchCoveragePattern? pattern)
+    {
+        if (label.DEFAULT() is not null)
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.MatchAll,
+                "default",
+                label,
+                LiteralKey: null,
+                AggregatePattern: null);
+            return true;
+        }
+
+        var switchPattern = label.pattern();
+        if (switchPattern is null)
+        {
+            pattern = null;
+            return false;
+        }
+
+        if (switchPattern.DISCARD() is not null || switchPattern.VAR() is not null)
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.MatchAll,
+                switchPattern.GetText(),
+                label,
+                LiteralKey: null,
+                AggregatePattern: null);
+            return true;
+        }
+
+        if (switchPattern.literal() is { } literal
+            && TryCreateLiteralCoverageKey(literal, switchType, out var literalKey))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.Literal,
+                literal.GetText(),
+                label,
+                literalKey,
+                AggregatePattern: null);
+            return true;
+        }
+
+        if (switchPattern.aggregatePattern() is { } aggregatePattern
+            && TryCreateAggregateCoveragePattern(aggregatePattern, switchType, out var aggregateCoverage))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.Aggregate,
+                aggregatePattern.GetText(),
+                label,
+                LiteralKey: null,
+                aggregateCoverage);
+            return true;
+        }
+
+        pattern = null;
+        return false;
+    }
+
+    private bool TryCreateAggregateCoveragePattern(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol switchType,
+        out AggregateCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+
+        var patternType = ResolveSimpleType(aggregatePattern.simpleType());
+        if (switchType.Kind != StarkTypeKind.Named
+            || patternType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || patternType.NamedType is null
+            || !string.Equals(switchType.NamedType, patternType.NamedType, StringComparison.Ordinal)
+            || !_namedTypes.TryGetValue(switchType.NamedType, out var namedType))
+        {
+            return false;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (suffix is null || suffix.Identifier() is not null)
+        {
+            return false;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var coverageFields = new AggregateCoverageField[fieldPatterns.Length];
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            var field = namedType.OrderedFields[index];
+            var fieldPattern = fieldPatterns[index];
+            if (TryCreateAggregateCoverageField(fieldPattern, field, out var coverageField))
+            {
+                coverageFields[index] = coverageField;
+                continue;
+            }
+
+            return false;
+        }
+
+        coveragePattern = new AggregateCoveragePattern(namedType.Name, coverageFields);
+        return true;
+    }
+
+    private bool TryCreateAggregateCoverageField(
+        StarkParser.PatternContext pattern,
+        FieldSymbol field,
+        out AggregateCoverageField coverageField)
+    {
+        if (pattern.DISCARD() is not null)
+        {
+            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Wildcard, LiteralKey: null, NestedPattern: null);
+            return true;
+        }
+
+        if (pattern.VAR() is not null)
+        {
+            if (!SupportsAggregateFieldSubpattern(field.Type))
+            {
+                coverageField = default!;
+                return false;
+            }
+
+            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Wildcard, LiteralKey: null, NestedPattern: null);
+            return true;
+        }
+
+        if (pattern.literal() is { } literal
+            && SupportsAggregateFieldSubpattern(field.Type)
+            && TryCreateLiteralCoverageKey(literal, field.Type, out var literalKey))
+        {
+            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Literal, literalKey, NestedPattern: null);
+            return true;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern
+            && field.Type.Kind == StarkTypeKind.Named
+            && TryCreateAggregateCoveragePattern(aggregatePattern, field.Type, out var nestedPattern)
+            && nestedPattern is not null)
+        {
+            if (IsMatchAllAggregatePattern(nestedPattern))
+            {
+                coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Wildcard, LiteralKey: null, NestedPattern: null);
+                return true;
+            }
+
+            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Nested, LiteralKey: null, nestedPattern);
+            return true;
+        }
+
+        coverageField = default!;
+        return false;
+    }
+
+    private static bool TryCreateLiteralCoverageKey(
+        StarkParser.LiteralContext literal,
+        StarkTypeSymbol targetType,
+        out string literalKey)
+    {
+        literalKey = string.Empty;
+
+        if (targetType.Kind == StarkTypeKind.Bool)
+        {
+            if (literal.TRUE() is not null)
+            {
+                literalKey = BoolTrueCoverageKey;
+                return true;
+            }
+
+            if (literal.FALSE() is not null)
+            {
+                literalKey = BoolFalseCoverageKey;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (targetType.Kind == StarkTypeKind.Integer
+            && literal.signedIntegerLiteral() is { } integerLiteral)
+        {
+            literalKey = $"int:{ParseSignedIntegerLiteral(integerLiteral)}";
+            return true;
+        }
+
+        if (targetType.Kind == StarkTypeKind.Float
+            && literal.FloatLiteral() is not null)
+        {
+            literalKey = $"float:{literal.GetText()}";
+            return true;
+        }
+
+        if (targetType.Kind == StarkTypeKind.RawPointer
+            && literal.NULL() is not null)
+        {
+            literalKey = "rawptr:null";
+            return true;
+        }
+
+        if (targetType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            && (literal.StringLiteral() is not null || literal.CharacterLiteral() is not null))
+        {
+            literalKey = $"{targetType.Kind.ToString().ToLowerInvariant()}:{literal.GetText()}";
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ReportUnreachableSwitchLabel(
+        StarkParser.SwitchLabelContext label,
+        string labelText,
+        SwitchCoveragePattern coveringPattern,
+        StarkTypeSymbol switchType,
+        bool becauseExhaustive)
+    {
+        var message = becauseExhaustive
+            ? $"Switch label '{labelText}' is unreachable because the switch is already exhaustive after the earlier unguarded label '{coveringPattern.LabelText}'."
+            : $"Switch label '{labelText}' is unreachable because the earlier unguarded label '{coveringPattern.LabelText}' already covers it.";
+        ReportError("STK3019", message, label);
+
+        var note = becauseExhaustive
+            ? $"Switch coverage becomes exhaustive here for '{switchType.DisplayName}'."
+            : $"This unguarded switch label already covers the later label '{labelText}'.";
+        ReportInfo("STK3020", note, coveringPattern.Context);
+    }
+
+    private static bool Covers(SwitchCoveragePattern existing, SwitchCoveragePattern current)
+    {
+        if (existing.Kind == SwitchCoveragePatternKind.MatchAll)
+        {
+            return true;
+        }
+
+        if (existing.Kind != current.Kind)
+        {
+            return false;
+        }
+
+        if (existing.Kind == SwitchCoveragePatternKind.Literal)
+        {
+            return string.Equals(existing.LiteralKey, current.LiteralKey, StringComparison.Ordinal);
+        }
+
+        return existing.AggregatePattern is not null
+            && current.AggregatePattern is not null
+            && Covers(existing.AggregatePattern, current.AggregatePattern);
+    }
+
+    private static bool Covers(AggregateCoveragePattern existing, AggregateCoveragePattern current)
+    {
+        if (!string.Equals(existing.TypeName, current.TypeName, StringComparison.Ordinal)
+            || existing.Fields.Count != current.Fields.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < existing.Fields.Count; index++)
+        {
+            var existingField = existing.Fields[index];
+            var currentField = current.Fields[index];
+
+            if (existingField.Kind == AggregateCoverageFieldKind.Wildcard)
+            {
+                continue;
+            }
+
+            if (existingField.Kind == AggregateCoverageFieldKind.Literal)
+            {
+                if (currentField.Kind != AggregateCoverageFieldKind.Literal
+                    || !string.Equals(existingField.LiteralKey, currentField.LiteralKey, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (existingField.Kind != AggregateCoverageFieldKind.Nested
+                || currentField.Kind != AggregateCoverageFieldKind.Nested
+                || existingField.NestedPattern is null
+                || currentField.NestedPattern is null
+                || !Covers(existingField.NestedPattern, currentField.NestedPattern))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsMatchAllAggregatePattern(AggregateCoveragePattern pattern)
+    {
+        return pattern.Fields.All(static field => field.Kind == AggregateCoverageFieldKind.Wildcard);
+    }
+
+    private static string DescribeSwitchLabel(StarkParser.SwitchLabelContext label)
+    {
+        if (label.DEFAULT() is not null)
+        {
+            return "default";
+        }
+
+        return label.pattern()?.GetText() ?? label.GetText();
     }
 
     private void BindPattern(StarkParser.PatternContext pattern, StarkTypeSymbol switchType, Scope scope)
@@ -739,9 +1146,206 @@ internal sealed class TypeChecker
 
         if (pattern.VAR() is not null)
         {
+            if (switchType.Kind == StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3008",
+                    $"Switch over '{switchType.DisplayName}' currently supports exact-type aggregate patterns with scalar field subpatterns, plus '_' and 'default'. Whole-value capture patterns remain unsupported for named switch values.",
+                    pattern);
+                return;
+            }
+
             scope.Declare(new VariableSymbol(pattern.Identifier().GetText(), switchType, IsMutable: false, IsConstant: false));
             return;
         }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            BindAggregatePattern(aggregatePattern, switchType, scope);
+        }
+    }
+
+    private void BindAggregatePattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, Scope scope)
+    {
+        var patternType = ResolveSimpleType(aggregatePattern.simpleType());
+        if (switchType.Kind != StarkTypeKind.Named
+            || patternType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || patternType.NamedType is null
+            || !string.Equals(switchType.NamedType, patternType.NamedType, StringComparison.Ordinal))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch aggregate pattern '{aggregatePattern.GetText()}' must exactly match the named switch type '{switchType.DisplayName}'. Discriminated variant matching is not implemented in the current compiler yet.",
+                aggregatePattern);
+            return;
+        }
+
+        if (!_namedTypes.TryGetValue(switchType.NamedType, out var namedType))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch aggregate pattern '{aggregatePattern.GetText()}' could not resolve field information for '{switchType.DisplayName}'.",
+                aggregatePattern);
+            return;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (suffix is null)
+        {
+            return;
+        }
+
+        if (suffix.Identifier() is not null)
+        {
+            ReportError(
+                "STK3008",
+                $"Switch over '{switchType.DisplayName}' currently supports field-level aggregate patterns, but whole-value typed captures like '{aggregatePattern.GetText()}' are not implemented yet.",
+                aggregatePattern);
+            return;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != namedType.OrderedFields.Count)
+        {
+            ReportError(
+                "STK3008",
+                $"Switch aggregate pattern '{aggregatePattern.GetText()}' expects {namedType.OrderedFields.Count} field subpattern{Pluralize(namedType.OrderedFields.Count)} for '{namedType.Name}' but found {fieldPatterns.Length}.",
+                aggregatePattern);
+            return;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope);
+        }
+    }
+
+    private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, Scope scope)
+    {
+        if (pattern.DISCARD() is not null)
+        {
+            return;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            BindNestedAggregateFieldPattern(aggregatePattern, field, scope);
+            return;
+        }
+
+        if (pattern.VAR() is not null)
+        {
+            if (!SupportsAggregateFieldSubpattern(field.Type))
+            {
+                ReportError(
+                    "STK3008",
+                    $"Field '{field.Name}' of type '{field.Type.DisplayName}' cannot currently be captured in an aggregate switch pattern. Aggregate field subpatterns currently support only scalar, non-owning field types.",
+                    pattern);
+                return;
+            }
+
+            scope.Declare(new VariableSymbol(pattern.Identifier().GetText(), field.Type, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (pattern.literal() is { } literal)
+        {
+            if (!SupportsAggregateFieldSubpattern(field.Type))
+            {
+                ReportError(
+                    "STK3008",
+                    $"Field '{field.Name}' of type '{field.Type.DisplayName}' cannot currently be matched with a literal in an aggregate switch pattern. Aggregate field subpatterns currently support only scalar, non-owning field types.",
+                    pattern);
+                return;
+            }
+
+            var literalType = EvaluateLiteral(literal).Type;
+            if (!CanAssign(field.Type, literalType))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Switch field pattern '{literal.GetText()}' expects '{field.Type.DisplayName}' for field '{field.Name}' but found '{literalType.DisplayName}'.{GetExplicitConversionHint(field.Type, literalType)}",
+                    literal);
+            }
+        }
+    }
+
+    private void BindNestedAggregateFieldPattern(StarkParser.AggregatePatternContext aggregatePattern, FieldSymbol field, Scope scope)
+    {
+        if (field.Type.Kind != StarkTypeKind.Named || field.Type.NamedType is null)
+        {
+            ReportError(
+                "STK3008",
+                $"Field '{field.Name}' of '{field.Type.DisplayName}' must currently use a literal, '_', or 'var' subpattern.",
+                aggregatePattern);
+            return;
+        }
+
+        var patternType = ResolveSimpleType(aggregatePattern.simpleType());
+        if (patternType.Kind != StarkTypeKind.Named
+            || patternType.NamedType is null
+            || !string.Equals(field.Type.NamedType, patternType.NamedType, StringComparison.Ordinal))
+        {
+            ReportError(
+                "STK3008",
+                $"Nested aggregate switch pattern '{aggregatePattern.GetText()}' must exactly match field '{field.Name}' of type '{field.Type.DisplayName}'.",
+                aggregatePattern);
+            return;
+        }
+
+        var namedType = ResolveNamedTypeSymbol(field.Type);
+        if (namedType is null)
+        {
+            ReportError(
+                "STK3008",
+                $"Nested aggregate switch pattern '{aggregatePattern.GetText()}' could not resolve field information for '{field.Type.DisplayName}'.",
+                aggregatePattern);
+            return;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (suffix is null)
+        {
+            return;
+        }
+
+        if (suffix.Identifier() is not null)
+        {
+            ReportError(
+                "STK3008",
+                $"Nested aggregate switch pattern '{aggregatePattern.GetText()}' for field '{field.Name}' must currently use field subpatterns, not a whole-value typed capture.",
+                aggregatePattern);
+            return;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != namedType.OrderedFields.Count)
+        {
+            ReportError(
+                "STK3008",
+                $"Nested aggregate switch pattern '{aggregatePattern.GetText()}' expects {namedType.OrderedFields.Count} field subpattern{Pluralize(namedType.OrderedFields.Count)} for '{namedType.Name}' but found {fieldPatterns.Length}.",
+                aggregatePattern);
+            return;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope);
+        }
+    }
+
+    private StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType)
+    {
+        return _typeResolver!.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName);
+    }
+
+    private static bool SupportsAggregateFieldSubpattern(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Bool
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Float
+            or StarkTypeKind.RawPointer;
     }
 
     private void CheckVariableDeclaration(
@@ -2336,7 +2940,8 @@ internal sealed class TypeChecker
             or StarkTypeKind.Bool
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Ascii
-            or StarkTypeKind.Unicode;
+            or StarkTypeKind.Unicode
+            or StarkTypeKind.Named;
     }
 
     private static bool IsNumeric(StarkTypeSymbol type)
@@ -2468,6 +3073,11 @@ internal sealed class TypeChecker
     private void ReportError(string code, string message, IToken token)
     {
         _context.Diagnostics.Error(code, message, "type-check", Location(token));
+    }
+
+    private void ReportInfo(string code, string message, ParserRuleContext context)
+    {
+        _context.Diagnostics.Info(code, message, "type-check", Location(context));
     }
 
     private SourceLocation Location(ParserRuleContext context) => Location(context.Start);
