@@ -533,6 +533,10 @@ internal sealed class SsaCleanupOptimizer
         {
             SsaBinaryOperator.Add => true,
             SsaBinaryOperator.Multiply => true,
+            SsaBinaryOperator.WrappingAdd => true,
+            SsaBinaryOperator.WrappingMultiply => true,
+            SsaBinaryOperator.SaturatingAdd => true,
+            SsaBinaryOperator.SaturatingMultiply => true,
             SsaBinaryOperator.BitwiseAnd => true,
             SsaBinaryOperator.BitwiseXor => true,
             SsaBinaryOperator.BitwiseOr => true,
@@ -1497,6 +1501,18 @@ internal sealed class SsaConstantPropagator
                 return TryFoldSignedInteger(left.Type, left.Value - right.Value, out folded);
             case SsaBinaryOperator.Multiply:
                 return TryFoldSignedInteger(left.Type, left.Value * right.Value, out folded);
+            case SsaBinaryOperator.WrappingAdd:
+                return TryWrapSignedInteger(left.Type, left.Value + right.Value, out folded);
+            case SsaBinaryOperator.WrappingSubtract:
+                return TryWrapSignedInteger(left.Type, left.Value - right.Value, out folded);
+            case SsaBinaryOperator.WrappingMultiply:
+                return TryWrapSignedInteger(left.Type, left.Value * right.Value, out folded);
+            case SsaBinaryOperator.SaturatingAdd:
+                return TryClampSignedInteger(left.Type, left.Value + right.Value, out folded);
+            case SsaBinaryOperator.SaturatingSubtract:
+                return TryClampSignedInteger(left.Type, left.Value - right.Value, out folded);
+            case SsaBinaryOperator.SaturatingMultiply:
+                return TryClampSignedInteger(left.Type, left.Value * right.Value, out folded);
             case SsaBinaryOperator.Divide:
                 if (right.Value.IsZero)
                 {
@@ -1636,21 +1652,61 @@ internal sealed class SsaConstantPropagator
         return false;
     }
 
+    private static bool TryWrapSignedInteger(StarkTypeSymbol type, BigInteger value, out SsaValue folded)
+    {
+        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            folded = new SsaIntegerConstant(value, type);
+            return false;
+        }
+
+        var modulus = BigInteger.One << bitWidth;
+        var normalized = ((value % modulus) + modulus) % modulus;
+        var wrapped = FromTwosComplement(normalized, bitWidth);
+        folded = new SsaIntegerConstant(wrapped, type);
+        return true;
+    }
+
+    private static bool TryClampSignedInteger(StarkTypeSymbol type, BigInteger value, out SsaValue folded)
+    {
+        if (!TryGetSignedIntegerBounds(type.BitWidth ?? 0, out var min, out var max))
+        {
+            folded = new SsaIntegerConstant(value, type);
+            return false;
+        }
+
+        var clamped = value < min ? min : value > max ? max : value;
+        folded = new SsaIntegerConstant(clamped, type);
+        return true;
+    }
+
     private static bool TryFitSignedInteger(BigInteger value, int bitWidth, out BigInteger fitted)
     {
         fitted = value;
-        if (bitWidth <= 0)
+        if (!TryGetSignedIntegerBounds(bitWidth, out var min, out var max))
         {
             return false;
         }
 
-        var min = -(BigInteger.One << (bitWidth - 1));
-        var max = (BigInteger.One << (bitWidth - 1)) - 1;
         if (value < min || value > max)
         {
             return false;
         }
 
+        return true;
+    }
+
+    private static bool TryGetSignedIntegerBounds(int bitWidth, out BigInteger min, out BigInteger max)
+    {
+        min = BigInteger.Zero;
+        max = BigInteger.Zero;
+        if (bitWidth <= 0)
+        {
+            return false;
+        }
+
+        min = -(BigInteger.One << (bitWidth - 1));
+        max = (BigInteger.One << (bitWidth - 1)) - 1;
         return true;
     }
 

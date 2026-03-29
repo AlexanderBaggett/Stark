@@ -15,6 +15,7 @@ internal sealed class SemanticValidator
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<string, TopLevelDeclarationModel> _syntaxDeclarations;
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
+    private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
 
     public SemanticValidator(
@@ -35,6 +36,9 @@ internal sealed class SemanticValidator
         _syntaxDeclarations = syntaxModel.Declarations.ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
+        _objectCreationConstructors = typeModel.ObjectCreations
+            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
     }
 
     public SemanticValidationModel Validate()
@@ -1552,18 +1556,22 @@ internal sealed class SemanticValidator
             return false;
         }
 
-        var fieldOrder = namedType.OrderedFields;
         var arguments = objectCreation.argumentList()?.argument() ?? [];
         if (arguments.Length != 0)
         {
-            if (namedType.Kind != DeclarationKind.Record || arguments.Length != fieldOrder.Count)
+            if (!TryGetObjectCreationConstructor(objectCreation, out var constructor)
+                || constructor is null
+                || !constructor.IsPrimaryShape
+                || arguments.Length != constructor.Parameters.Count)
             {
                 return false;
             }
 
             for (var index = 0; index < arguments.Length; index++)
             {
-                if (!CanMaterializeFrozenConstExpression(arguments[index].expression(), fieldOrder[index].Type))
+                var parameter = constructor.Parameters[index];
+                if (!namedType.TryGetField(parameter.Name, out var field, out _)
+                    || !CanMaterializeFrozenConstExpression(arguments[index].expression(), field.Type))
                 {
                     return false;
                 }
@@ -1577,6 +1585,18 @@ internal sealed class SemanticValidator
         }
 
         return true;
+    }
+
+    private bool TryGetObjectCreationConstructor(
+        StarkParser.ObjectCreationExpressionContext objectCreation,
+        out TypedConstructorShape? constructor)
+    {
+        return _objectCreationConstructors.TryGetValue(
+            new ObjectCreationKey(
+                objectCreation.GetText(),
+                objectCreation.Start.Line,
+                objectCreation.Start.Column + 1),
+            out constructor);
     }
 
     private bool CanMaterializeFrozenConstObjectInitializer(
@@ -2140,6 +2160,8 @@ internal sealed class SemanticValidator
         bool IsIndirectStorageAccess = false,
         string? NamespaceName = null,
         ValidationValue? Receiver = null);
+
+    private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
 
     private sealed class ValidationScope
     {

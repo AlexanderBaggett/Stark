@@ -243,6 +243,85 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void RegisterObjectCreationRemainsScalarizedInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                register Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "box" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "box" });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaInsertFieldRValue });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaExtractFieldRValue });
+    }
+
+    [Fact]
+    public void RegisterScalarInitializerRemainsDirectSsaValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run() {
+                register mut i32 value = 7;
+                value = value + 1;
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "value" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "value" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeStartInstruction { LocalName: "value" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeEndInstruction { LocalName: "value" });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaBinaryRValue { Operator: SsaBinaryOperator.Add } });
+    }
+
+    [Fact]
+    public void HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                heap Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "box", StorageClass: "heap" });
+        Assert.Contains(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "box" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeStartInstruction { LocalName: "box" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeEndInstruction { LocalName: "box" });
+    }
+
+    [Fact]
     public void AddressableAggregateAssignmentLowersToMemoryCopy()
     {
         var result = Compile(

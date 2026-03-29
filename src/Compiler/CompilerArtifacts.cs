@@ -413,6 +413,17 @@ public sealed record NamedTypeSymbol(
 
 public sealed record TypedParameterSymbol(string Name, StarkTypeSymbol Type);
 
+public sealed record TypedConstructorShape(
+    string TypeName,
+    IReadOnlyList<TypedParameterSymbol> Parameters,
+    bool IsPrimaryShape)
+{
+    public ISet<string>? InitializedMembers =>
+        IsPrimaryShape
+            ? Parameters.Select(static parameter => parameter.Name).ToHashSet(StringComparer.Ordinal)
+            : null;
+}
+
 public sealed record TypedFunctionSignature(
     string Name,
     StarkTypeSymbol ReturnType,
@@ -440,12 +451,18 @@ public sealed record LiteralTypingRecord(
     StarkTypeSymbol Type,
     SourceLocation Location);
 
+public sealed record ObjectCreationTypingRecord(
+    string ExpressionText,
+    TypedConstructorShape? Constructor,
+    SourceLocation Location);
+
 public sealed record TypeCheckModel(
     string ModuleName,
     IReadOnlyDictionary<string, NamedTypeSymbol> NamedTypes,
     IReadOnlyDictionary<string, TypedFunctionSignature> Functions,
     IReadOnlyDictionary<string, TypedGlobalSymbol> Globals,
-    IReadOnlyList<LiteralTypingRecord> Literals);
+    IReadOnlyList<LiteralTypingRecord> Literals,
+    IReadOnlyList<ObjectCreationTypingRecord> ObjectCreations);
 
 public enum AbiParameterKind
 {
@@ -714,6 +731,12 @@ public enum MidLevelIrBinaryOperator
     Add,
     Subtract,
     Multiply,
+    WrappingAdd,
+    WrappingSubtract,
+    WrappingMultiply,
+    SaturatingAdd,
+    SaturatingSubtract,
+    SaturatingMultiply,
     Divide,
     Modulo,
     BitwiseAnd,
@@ -983,6 +1006,12 @@ public enum SsaBinaryOperator
     Add,
     Subtract,
     Multiply,
+    WrappingAdd,
+    WrappingSubtract,
+    WrappingMultiply,
+    SaturatingAdd,
+    SaturatingSubtract,
+    SaturatingMultiply,
     Divide,
     Modulo,
     BitwiseAnd,
@@ -1151,7 +1180,8 @@ public sealed record SsaValueInstruction(
 
 public sealed record SsaAllocateLocalInstruction(
     string LocalName,
-    StarkTypeSymbol LocalType)
+    StarkTypeSymbol LocalType,
+    string StorageClass = "stack")
     : SsaInstruction;
 
 public sealed record SsaLifetimeStartInstruction(

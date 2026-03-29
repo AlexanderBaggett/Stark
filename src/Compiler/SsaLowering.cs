@@ -64,6 +64,7 @@ internal sealed class SsaLowerer
         private readonly HashSet<int> _processed = [];
         private readonly Dictionary<string, StarkTypeSymbol> _variableTypes;
         private readonly HashSet<string> _addressableLocals;
+        private readonly IReadOnlyDictionary<string, MidLevelIrLocal> _localsByName;
         private readonly Dictionary<string, SsaValueReference> _parameterValues;
         private readonly Dictionary<string, SsaValue> _sharedValueNumbers = new(StringComparer.Ordinal);
         private Dictionary<string, SsaValue>? _currentValueNumbers;
@@ -85,6 +86,7 @@ internal sealed class SsaLowerer
                 .Select(static parameter => KeyValuePair.Create(parameter.Name, parameter.Type))
                 .Concat(function.Locals.Select(static local => KeyValuePair.Create(local.Name, local.Type)))
                 .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+            _localsByName = function.Locals.ToDictionary(static local => local.Name, StringComparer.Ordinal);
             _addressableLocals = function.Locals
                 .Where(static local => local.IsAddressable)
                 .Select(static local => local.Name)
@@ -180,8 +182,12 @@ internal sealed class SsaLowerer
                         && statement.TargetType is not null
                         && _addressableLocals.Contains(statement.TargetName))
                     {
-                        block.Instructions.Add(new SsaAllocateLocalInstruction(statement.TargetName, statement.TargetType));
-                        block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType));
+                        var storageClass = GetLocalStorageClass(statement.TargetName);
+                        block.Instructions.Add(new SsaAllocateLocalInstruction(statement.TargetName, statement.TargetType, storageClass));
+                        if (UsesStackLifetime(storageClass))
+                        {
+                            block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType));
+                        }
                     }
 
                     return;
@@ -190,7 +196,10 @@ internal sealed class SsaLowerer
                         && statement.TargetType is not null
                         && _addressableLocals.Contains(statement.TargetName))
                     {
-                        block.Instructions.Add(new SsaLifetimeEndInstruction(statement.TargetName, statement.TargetType));
+                        if (UsesStackLifetime(GetLocalStorageClass(statement.TargetName)))
+                        {
+                            block.Instructions.Add(new SsaLifetimeEndInstruction(statement.TargetName, statement.TargetType));
+                        }
                     }
 
                     return;
@@ -670,6 +679,15 @@ internal sealed class SsaLowerer
                 $"&{localName}"));
         }
 
+        private string GetLocalStorageClass(string localName)
+        {
+            return _localsByName.TryGetValue(localName, out var local)
+                ? local.StorageClass
+                : "stack";
+        }
+
+        private static bool UsesStackLifetime(string storageClass) => storageClass == "stack";
+
         private void WriteVariable(int blockId, string name, SsaValue value)
         {
             _definitions[blockId][name] = value;
@@ -1056,6 +1074,10 @@ internal sealed class SsaLowerer
             {
                 SsaBinaryOperator.Add => true,
                 SsaBinaryOperator.Multiply => true,
+                SsaBinaryOperator.WrappingAdd => true,
+                SsaBinaryOperator.WrappingMultiply => true,
+                SsaBinaryOperator.SaturatingAdd => true,
+                SsaBinaryOperator.SaturatingMultiply => true,
                 SsaBinaryOperator.BitwiseAnd => true,
                 SsaBinaryOperator.BitwiseXor => true,
                 SsaBinaryOperator.BitwiseOr => true,
@@ -1105,6 +1127,12 @@ internal sealed class SsaLowerer
                 MidLevelIrBinaryOperator.Add => SsaBinaryOperator.Add,
                 MidLevelIrBinaryOperator.Subtract => SsaBinaryOperator.Subtract,
                 MidLevelIrBinaryOperator.Multiply => SsaBinaryOperator.Multiply,
+                MidLevelIrBinaryOperator.WrappingAdd => SsaBinaryOperator.WrappingAdd,
+                MidLevelIrBinaryOperator.WrappingSubtract => SsaBinaryOperator.WrappingSubtract,
+                MidLevelIrBinaryOperator.WrappingMultiply => SsaBinaryOperator.WrappingMultiply,
+                MidLevelIrBinaryOperator.SaturatingAdd => SsaBinaryOperator.SaturatingAdd,
+                MidLevelIrBinaryOperator.SaturatingSubtract => SsaBinaryOperator.SaturatingSubtract,
+                MidLevelIrBinaryOperator.SaturatingMultiply => SsaBinaryOperator.SaturatingMultiply,
                 MidLevelIrBinaryOperator.Divide => SsaBinaryOperator.Divide,
                 MidLevelIrBinaryOperator.Modulo => SsaBinaryOperator.Modulo,
                 MidLevelIrBinaryOperator.BitwiseAnd => SsaBinaryOperator.BitwiseAnd,

@@ -21,6 +21,7 @@ internal sealed class LlvmIrEmitter
     private readonly bool _internalizeModulePrivate;
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
     private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
+    private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private int _syntheticGlobalInitializerIndex;
 
     public LlvmIrEmitter(
@@ -71,6 +72,9 @@ internal sealed class LlvmIrEmitter
         _internalizeModulePrivate = internalizeModulePrivate;
         _globalSymbols = BuildGlobalSymbolMap();
         _stringConstants = CollectStringConstants(parseResult, ssa);
+        _objectCreationConstructors = typeModel.ObjectCreations
+            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
     }
 
     public LlvmIrModule Emit()
@@ -523,11 +527,12 @@ internal sealed class LlvmIrEmitter
         FunctionEffectProfile effects,
         SsaFunction ssaFunction)
     {
-        builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects));
-        builder.AppendLine("{");
+        var functionBuilder = new StringBuilder();
+        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects));
+        functionBuilder.AppendLine("{");
 
         var bodyEmitter = new FunctionBodyEmitter(
-            builder,
+            functionBuilder,
             function,
             abiFunction,
             _abiModel,
@@ -537,8 +542,8 @@ internal sealed class LlvmIrEmitter
             MapType,
             TryGetConcreteTypeLayout);
         bodyEmitter.Emit();
-
-        builder.AppendLine("}");
+        functionBuilder.AppendLine("}");
+        builder.Append(functionBuilder);
     }
 
     private string BuildDeclarationSignature(bool internalize, TypedFunctionSignature function, AbiFunctionSignature abiFunction, FunctionEffectProfile effects)
@@ -1225,19 +1230,26 @@ internal sealed class LlvmIrEmitter
 
         var preludeDefinitions = new List<string>();
         var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal);
-        var fieldOrder = namedType.OrderedFields;
         var arguments = objectCreation.argumentList()?.argument() ?? [];
 
         if (arguments.Length != 0)
         {
-            if (namedType.Kind != DeclarationKind.Record || arguments.Length != fieldOrder.Count)
+            if (!TryGetObjectCreationConstructor(objectCreation, out var constructor)
+                || constructor is null
+                || !constructor.IsPrimaryShape
+                || arguments.Length != constructor.Parameters.Count)
             {
                 return false;
             }
 
             for (var index = 0; index < arguments.Length; index++)
             {
-                var field = fieldOrder[index];
+                var parameter = constructor.Parameters[index];
+                if (!namedType.TryGetField(parameter.Name, out var field, out _))
+                {
+                    return false;
+                }
+
                 if (!TryPlanGlobalExpression(arguments[index].expression(), field.Type, isFrozen, out var argumentPlan))
                 {
                     return false;
@@ -1256,6 +1268,18 @@ internal sealed class LlvmIrEmitter
 
         plan = new GlobalInitializerPlan(FormatNamedAggregateInitializer(namedType, fieldValues), preludeDefinitions);
         return true;
+    }
+
+    private bool TryGetObjectCreationConstructor(
+        StarkParser.ObjectCreationExpressionContext objectCreation,
+        out TypedConstructorShape? constructor)
+    {
+        return _objectCreationConstructors.TryGetValue(
+            new ObjectCreationKey(
+                objectCreation.GetText(),
+                objectCreation.Start.Line,
+                objectCreation.Start.Column + 1),
+            out constructor);
     }
 
     private bool TryPlanObjectInitializer(
@@ -1833,11 +1857,20 @@ internal sealed class LlvmIrEmitter
         {
             if (binary.Type.Kind == StarkTypeKind.Integer)
             {
+                if (binary.Operator is SsaBinaryOperator.SaturatingAdd or SsaBinaryOperator.SaturatingSubtract or SsaBinaryOperator.SaturatingMultiply)
+                {
+                    EmitSaturatingIntegerBinary(result, binary);
+                    return;
+                }
+
                 var opcode = binary.Operator switch
                 {
                     SsaBinaryOperator.Add => "add",
                     SsaBinaryOperator.Subtract => "sub",
                     SsaBinaryOperator.Multiply => "mul",
+                    SsaBinaryOperator.WrappingAdd => "add",
+                    SsaBinaryOperator.WrappingSubtract => "sub",
+                    SsaBinaryOperator.WrappingMultiply => "mul",
                     SsaBinaryOperator.Divide => "sdiv",
                     SsaBinaryOperator.Modulo => "srem",
                     SsaBinaryOperator.BitwiseAnd => "and",
@@ -1943,11 +1976,55 @@ internal sealed class LlvmIrEmitter
                 $"Unsupported SSA binary operator '{binary.Operator}' for '{binary.Left.Type.DisplayName}'.");
         }
 
+        private void EmitSaturatingIntegerBinary(string result, SsaBinaryRValue binary)
+        {
+            if (binary.Type.BitWidth is not int bitWidth || bitWidth <= 0)
+            {
+                throw new UnsupportedBodyEmissionException($"Saturating integer operator '{binary.Operator}' requires a concrete integer bit width.");
+            }
+
+            var narrowType = MapType(binary.Type);
+            var wideTypeSymbol = StarkTypeSymbols.Integer(bitWidth * 2);
+            var wideType = MapType(wideTypeSymbol);
+            var wideOpcode = binary.Operator switch
+            {
+                SsaBinaryOperator.SaturatingAdd => "add",
+                SsaBinaryOperator.SaturatingSubtract => "sub",
+                SsaBinaryOperator.SaturatingMultiply => "mul",
+                _ => throw new UnsupportedBodyEmissionException($"Unsupported saturating integer operator '{binary.Operator}'.")
+            };
+
+            var leftWide = $"%{EscapeIdentifier(CreateAbiTempName("sat_left"))}";
+            var rightWide = $"%{EscapeIdentifier(CreateAbiTempName("sat_right"))}";
+            var valueWide = $"%{EscapeIdentifier(CreateAbiTempName("sat_value"))}";
+            var aboveMax = $"%{EscapeIdentifier(CreateAbiTempName("sat_above"))}";
+            var belowMin = $"%{EscapeIdentifier(CreateAbiTempName("sat_below"))}";
+            var clampHigh = $"%{EscapeIdentifier(CreateAbiTempName("sat_clamp_high"))}";
+            var clamped = $"%{EscapeIdentifier(CreateAbiTempName("sat_clamped"))}";
+
+            GetSignedIntegerBounds(bitWidth, out var minValue, out var maxValue);
+
+            AppendLine($"  {leftWide} = sext {narrowType} {FormatValue(binary.Left)} to {wideType}");
+            AppendLine($"  {rightWide} = sext {narrowType} {FormatValue(binary.Right)} to {wideType}");
+            AppendLine($"  {valueWide} = {wideOpcode} {wideType} {leftWide}, {rightWide}");
+            AppendLine($"  {aboveMax} = icmp sgt {wideType} {valueWide}, {maxValue}");
+            AppendLine($"  {belowMin} = icmp slt {wideType} {valueWide}, {minValue}");
+            AppendLine($"  {clampHigh} = select i1 {aboveMax}, {wideType} {maxValue}, {wideType} {valueWide}");
+            AppendLine($"  {clamped} = select i1 {belowMin}, {wideType} {minValue}, {wideType} {clampHigh}");
+            AppendLine($"  {result} = trunc {wideType} {clamped} to {narrowType}");
+        }
+
         private void EmitFloatExponent(string result, SsaBinaryRValue binary)
         {
             var llvmType = MapType(binary.Left.Type);
             var intrinsicName = $"@llvm.pow.{LlvmIrEmitter.GetFloatIntrinsicSuffix(binary.Left.Type)}";
             AppendLine($"  {result} = call {llvmType} {intrinsicName}({llvmType} {FormatValue(binary.Left)}, {llvmType} {FormatValue(binary.Right)})");
+        }
+
+        private static void GetSignedIntegerBounds(int bitWidth, out BigInteger minValue, out BigInteger maxValue)
+        {
+            minValue = -(BigInteger.One << (bitWidth - 1));
+            maxValue = (BigInteger.One << (bitWidth - 1)) - 1;
         }
 
         private void EmitCall(string result, SsaCallRValue call)
@@ -2027,6 +2104,12 @@ internal sealed class LlvmIrEmitter
 
         private void EmitAllocateLocal(SsaAllocateLocalInstruction allocateLocal)
         {
+            if (allocateLocal.StorageClass is not "stack")
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Local storage class '{allocateLocal.StorageClass}' is not yet supported for LLVM body emission.");
+            }
+
             var slotName = EscapeIdentifier($"slot_{allocateLocal.LocalName}");
             if (_allocatedLocalSlots.Add(slotName))
             {
@@ -2359,6 +2442,8 @@ internal sealed class LlvmIrEmitter
         {
         }
     }
+
+    private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
 
     private sealed record GlobalInitializerPlan(string Rendered, IReadOnlyList<string> PreludeDefinitions);
 

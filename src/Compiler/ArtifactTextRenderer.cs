@@ -157,7 +157,7 @@ internal static class ArtifactTextRenderer
         return instruction switch
         {
             SsaValueInstruction valueInstruction => $"{valueInstruction.ResultName} = {valueInstruction.Value.Text}",
-            SsaAllocateLocalInstruction allocateLocal => $"alloca {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
+            SsaAllocateLocalInstruction allocateLocal => $"alloca[{allocateLocal.StorageClass}] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
             SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaStoreLocalInstruction storeLocal => $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",

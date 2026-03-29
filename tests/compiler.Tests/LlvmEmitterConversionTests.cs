@@ -108,7 +108,8 @@ public sealed class LlvmEmitterConversionTests
                 ["Run"] = new TypedFunctionSignature("Run", targetType, [])
             },
             Globals: new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal),
-            Literals: []);
+            Literals: [],
+            ObjectCreations: []);
         var abiModel = new AbiModel(
             "Demo",
             new Dictionary<string, AbiFunctionSignature>(StringComparer.Ordinal)

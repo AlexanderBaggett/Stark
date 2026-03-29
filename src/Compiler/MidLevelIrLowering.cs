@@ -19,6 +19,9 @@ internal sealed class MidLevelIrLowerer(
     private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes = typeModel.Literals
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Type);
+    private readonly Dictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors = typeModel.ObjectCreations
+            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
 
     public MidLevelIrModule Lower(HighLevelIrModule hir)
     {
@@ -46,7 +49,7 @@ internal sealed class MidLevelIrLowerer(
                 Blocks: []);
         }
 
-        var builder = new FunctionMirBuilder(function, _typeModel, _typeResolver, _literalTypes);
+        var builder = new FunctionMirBuilder(function, _typeModel, _typeResolver, _literalTypes, _objectCreationConstructors);
         builder.Lower(body);
 
         return new MidLevelIrFunction(
@@ -67,6 +70,7 @@ internal sealed class MidLevelIrLowerer(
     }
 
     private readonly record struct LiteralKey(string Text, int Line, int Column);
+    private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
 
     private sealed class FunctionMirBuilder
     {
@@ -129,6 +133,7 @@ internal sealed class MidLevelIrLowerer(
         private readonly TypeCheckModel _typeModel;
         private readonly StarkTypeResolver _typeResolver;
         private readonly IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
+        private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
@@ -142,12 +147,14 @@ internal sealed class MidLevelIrLowerer(
             HighLevelIrFunction function,
             TypeCheckModel typeModel,
             StarkTypeResolver typeResolver,
-            IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> literalTypes)
+            IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> literalTypes,
+            IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> objectCreationConstructors)
         {
             _function = function;
             _typeModel = typeModel;
             _typeResolver = typeResolver;
             _literalTypes = literalTypes;
+            _objectCreationConstructors = objectCreationConstructors;
             _parametersByName = function.Signature.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
             CurrentBlock = CreateBlock("entry");
         }
@@ -450,18 +457,7 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
-            var @operator = expression.assignmentOperator().GetText() switch
-            {
-                "+=" => MidLevelIrBinaryOperator.Add,
-                "-=" => MidLevelIrBinaryOperator.Subtract,
-                "*=" => MidLevelIrBinaryOperator.Multiply,
-                "/=" => MidLevelIrBinaryOperator.Divide,
-                "%=" => MidLevelIrBinaryOperator.Modulo,
-                "&=" => MidLevelIrBinaryOperator.BitwiseAnd,
-                "^=" => MidLevelIrBinaryOperator.BitwiseXor,
-                "|=" => MidLevelIrBinaryOperator.BitwiseOr,
-                _ => throw new InvalidOperationException($"Unsupported assignment operator '{expression.assignmentOperator().GetText()}'.")
-            };
+            var @operator = MapAssignmentOperator(expression.assignmentOperator().GetText());
 
             var commonType = FindCommonType(currentValue.Type, right.Type);
             var leftValue = CoerceOperand(currentValue, commonType);
@@ -528,18 +524,7 @@ internal sealed class MidLevelIrLowerer(
                 return default;
             }
 
-            var @operator = expression.assignmentOperator().GetText() switch
-            {
-                "+=" => MidLevelIrBinaryOperator.Add,
-                "-=" => MidLevelIrBinaryOperator.Subtract,
-                "*=" => MidLevelIrBinaryOperator.Multiply,
-                "/=" => MidLevelIrBinaryOperator.Divide,
-                "%=" => MidLevelIrBinaryOperator.Modulo,
-                "&=" => MidLevelIrBinaryOperator.BitwiseAnd,
-                "^=" => MidLevelIrBinaryOperator.BitwiseXor,
-                "|=" => MidLevelIrBinaryOperator.BitwiseOr,
-                _ => throw new InvalidOperationException($"Unsupported assignment operator '{expression.assignmentOperator().GetText()}'.")
-            };
+            var @operator = MapAssignmentOperator(expression.assignmentOperator().GetText());
 
             var commonType = FindCommonType(currentValue.Type, right.Type);
             var leftValue = CoerceOperand(currentValue, commonType);
@@ -1567,6 +1552,14 @@ internal sealed class MidLevelIrLowerer(
                 "-" => EmitTemporary(
                     new MidLevelIrUnaryRValue(MidLevelIrUnaryOperator.Negate, operand, operand.Type, expression.GetText()),
                     "neg"),
+                "-%" => EmitTemporary(
+                    new MidLevelIrBinaryRValue(
+                        MidLevelIrBinaryOperator.WrappingSubtract,
+                        new MidLevelIrIntegerConstantOperand(BigInteger.Zero, operand.Type),
+                        operand,
+                        operand.Type,
+                        expression.GetText()),
+                    "wrapneg"),
                 "!" => EmitTemporary(
                     new MidLevelIrUnaryRValue(MidLevelIrUnaryOperator.LogicalNot, CoerceOperand(operand, StarkTypeSymbols.Bool) ?? operand, StarkTypeSymbols.Bool, expression.GetText()),
                     "not"),
@@ -1678,81 +1671,155 @@ internal sealed class MidLevelIrLowerer(
                 return EmitTemporary(call, "call");
             }
 
-            if (!TryInitializePostfixState(expression.primaryExpression(), out var current, out var currentName))
+            if (!TryLowerPostfixOperand(expression, out var current))
             {
                 return null;
             }
 
-            foreach (var postfixPart in expression.postfixPart())
+            return expectedType is null ? current : CoerceOperand(current, expectedType);
+        }
+
+        private bool TryLowerPostfixOperand(
+            StarkParser.PostfixExpressionContext expression,
+            out MidLevelIrOperand? result)
+        {
+            result = null;
+
+            if (!TryInitializePostfixState(expression.primaryExpression(), out var currentValue, out var currentName))
             {
-                if (postfixPart.argumentList() is not null)
+                return false;
+            }
+
+            for (var index = 0; index < expression.postfixPart().Length; index++)
+            {
+                var postfixPart = expression.postfixPart()[index];
+
+                if (postfixPart.argumentList() is { } argumentList)
                 {
-                    MarkUnsupported();
-                    return null;
+                    if (currentName is null
+                        || !TryBuildCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var directCall))
+                    {
+                        return false;
+                    }
+
+                    if (directCall.Type.Kind == StarkTypeKind.Void)
+                    {
+                        MarkUnsupported();
+                        return false;
+                    }
+
+                    currentValue = EmitTemporary(directCall, "call");
+                    currentName = null;
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    continue;
                 }
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
-                    if (current is null)
+                    if (currentValue is null)
                     {
                         if (currentName is null)
                         {
-                            return null;
+                            return false;
                         }
 
-                        current = ResolveNamedOperand(currentName);
+                        currentValue = ResolveNamedOperand(currentName);
                         currentName = null;
-                        if (current is null)
+                        if (currentValue is null)
                         {
-                            return null;
+                            return false;
                         }
                     }
 
-                    current = LowerIndexAccess(current, expressionList);
-                }
-                else if (current is not null)
-                {
-                    current = LowerFieldAccess(current, postfixPart.Identifier().GetText());
-                }
-                else if (currentName is not null)
-                {
-                    var qualifiedName = $"{currentName}.{postfixPart.Identifier().GetText()}";
-                    current = TryResolveNamedValueOperand(qualifiedName);
-                    if (current is not null)
+                    currentValue = LowerIndexAccess(currentValue, expressionList);
+                    if (currentValue is null)
                     {
-                        currentName = null;
+                        return false;
                     }
-                    else
+
+                    continue;
+                }
+
+                var memberName = postfixPart.Identifier()?.GetText();
+                if (memberName is null)
+                {
+                    return false;
+                }
+
+                if (currentValue is not null
+                    && index + 1 < expression.postfixPart().Length
+                    && expression.postfixPart()[index + 1].argumentList() is { } memberArguments)
+                {
+                    if (!TryBuildMemberCall(currentValue, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out var memberCall))
                     {
-                        currentName = qualifiedName;
+                        return false;
                     }
+
+                    if (memberCall.Type.Kind == StarkTypeKind.Void)
+                    {
+                        MarkUnsupported();
+                        return false;
+                    }
+
+                    currentValue = EmitTemporary(memberCall, "call");
+                    currentName = null;
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    index++;
+                    continue;
+                }
+
+                if (currentValue is not null)
+                {
+                    currentValue = LowerFieldAccess(currentValue, memberName);
+                    if (currentValue is null)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (currentName is null)
+                {
+                    return false;
+                }
+
+                var qualifiedName = $"{currentName}.{memberName}";
+                currentValue = TryResolveNamedValueOperand(qualifiedName);
+                if (currentValue is not null)
+                {
+                    currentName = null;
                 }
                 else
                 {
-                    return null;
-                }
-
-                if (current is null)
-                {
-                    continue;
+                    currentName = qualifiedName;
                 }
             }
 
-            if (current is null)
+            if (currentValue is null)
             {
                 if (currentName is null)
                 {
-                    return null;
+                    return false;
                 }
 
-                current = ResolveNamedOperand(currentName);
-                if (current is null)
+                currentValue = ResolveNamedOperand(currentName);
+                if (currentValue is null)
                 {
-                    return null;
+                    return false;
                 }
             }
 
-            return expectedType is null ? current : CoerceOperand(current, expectedType);
+            result = currentValue;
+            return true;
         }
 
         private bool TryInitializePostfixState(
@@ -1810,18 +1877,23 @@ internal sealed class MidLevelIrLowerer(
             StarkParser.ObjectCreationExpressionContext expression,
             StarkTypeSymbol? expectedType)
         {
-            if (expression.argumentList() is { } argumentList && argumentList.argument().Length != 0)
-            {
-                MarkUnsupported();
-                return null;
-            }
-
             var createdType = _typeResolver.ResolveType(expression.type_());
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
 
+            if (expression.argumentList() is { } argumentList && argumentList.argument().Length != 0)
+            {
+                var initializedFromConstructor = LowerPrimaryConstructorObjectCreation(expression, createdType, argumentList);
+                if (initializedFromConstructor is null)
+                {
+                    return null;
+                }
+
+                current = initializedFromConstructor;
+            }
+
             if (expression.objectInitializer() is { } objectInitializer)
             {
-                var initialized = LowerObjectInitializer(createdType, objectInitializer);
+                var initialized = LowerObjectInitializer(createdType, current, objectInitializer);
                 if (initialized is null)
                 {
                     return null;
@@ -1835,6 +1907,14 @@ internal sealed class MidLevelIrLowerer(
 
         private MidLevelIrOperand? LowerObjectInitializer(StarkTypeSymbol targetType, StarkParser.ObjectInitializerContext objectInitializer)
         {
+            return LowerObjectInitializer(targetType, new MidLevelIrZeroInitializerOperand(targetType), objectInitializer);
+        }
+
+        private MidLevelIrOperand? LowerObjectInitializer(
+            StarkTypeSymbol targetType,
+            MidLevelIrOperand seed,
+            StarkParser.ObjectInitializerContext objectInitializer)
+        {
             if (targetType.Kind != StarkTypeKind.Named
                 || targetType.NamedType is null
                 || !_typeModel.NamedTypes.TryGetValue(targetType.NamedType, out var namedType))
@@ -1843,7 +1923,7 @@ internal sealed class MidLevelIrLowerer(
                 return null;
             }
 
-            MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(targetType);
+            var current = seed;
 
             foreach (var initializer in objectInitializer.memberInitializer())
             {
@@ -1878,6 +1958,78 @@ internal sealed class MidLevelIrLowerer(
             }
 
             return current;
+        }
+
+        private MidLevelIrOperand? LowerPrimaryConstructorObjectCreation(
+            StarkParser.ObjectCreationExpressionContext expression,
+            StarkTypeSymbol createdType,
+            StarkParser.ArgumentListContext argumentList)
+        {
+            if (createdType.Kind != StarkTypeKind.Named
+                || createdType.NamedType is null
+                || !_typeModel.NamedTypes.TryGetValue(createdType.NamedType, out var namedType)
+                || !TryGetMatchedObjectCreationConstructor(expression, out var constructor)
+                || constructor is null
+                || !constructor.IsPrimaryShape
+                || constructor.Parameters.Count != argumentList.argument().Length)
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
+
+            for (var index = 0; index < constructor.Parameters.Count; index++)
+            {
+                var parameter = constructor.Parameters[index];
+                if (!namedType.TryGetField(parameter.Name, out var field, out var fieldIndex))
+                {
+                    MarkUnsupported();
+                    return null;
+                }
+
+                var loweredArgument = LowerExpressionToOperand(argumentList.argument(index).expression(), parameter.Type);
+                if (loweredArgument is null)
+                {
+                    return null;
+                }
+
+                var fieldValue = CoerceOperand(loweredArgument, field.Type);
+                if (fieldValue is null)
+                {
+                    return null;
+                }
+
+                var updated = EmitTemporary(
+                    new MidLevelIrInsertFieldRValue(
+                        current,
+                        field.Name,
+                        fieldIndex,
+                        fieldValue,
+                        createdType,
+                        $"{current.Text}.{field.Name} = {argumentList.argument(index).GetText()}"),
+                    "insertfield");
+                if (updated is null)
+                {
+                    return null;
+                }
+
+                current = updated;
+            }
+
+            return current;
+        }
+
+        private bool TryGetMatchedObjectCreationConstructor(
+            StarkParser.ObjectCreationExpressionContext expression,
+            out TypedConstructorShape? constructor)
+        {
+            return _objectCreationConstructors.TryGetValue(
+                new ObjectCreationKey(
+                    expression.GetText(),
+                    expression.Start.Line,
+                    expression.Start.Column + 1),
+                out constructor);
         }
 
         private MidLevelIrOperand? LowerArrayInitializer(StarkTypeSymbol targetType, StarkParser.ArrayInitializerContext arrayInitializer)
@@ -3943,6 +4095,12 @@ internal sealed class MidLevelIrLowerer(
                 "+" => MidLevelIrBinaryOperator.Add,
                 "-" => MidLevelIrBinaryOperator.Subtract,
                 "*" => MidLevelIrBinaryOperator.Multiply,
+                "+%" => MidLevelIrBinaryOperator.WrappingAdd,
+                "-%" => MidLevelIrBinaryOperator.WrappingSubtract,
+                "*%" => MidLevelIrBinaryOperator.WrappingMultiply,
+                "+|" => MidLevelIrBinaryOperator.SaturatingAdd,
+                "-|" => MidLevelIrBinaryOperator.SaturatingSubtract,
+                "*|" => MidLevelIrBinaryOperator.SaturatingMultiply,
                 "/" => MidLevelIrBinaryOperator.Divide,
                 "%" => MidLevelIrBinaryOperator.Modulo,
                 "&" => MidLevelIrBinaryOperator.BitwiseAnd,
@@ -3957,6 +4115,28 @@ internal sealed class MidLevelIrLowerer(
                 ">" => MidLevelIrBinaryOperator.GreaterThan,
                 ">=" => MidLevelIrBinaryOperator.GreaterThanOrEqual,
                 _ => throw new InvalidOperationException($"Unsupported binary operator '{text}'.")
+            };
+        }
+
+        private static MidLevelIrBinaryOperator MapAssignmentOperator(string text)
+        {
+            return text switch
+            {
+                "+=" => MidLevelIrBinaryOperator.Add,
+                "-=" => MidLevelIrBinaryOperator.Subtract,
+                "*=" => MidLevelIrBinaryOperator.Multiply,
+                "+%=" => MidLevelIrBinaryOperator.WrappingAdd,
+                "-%=" => MidLevelIrBinaryOperator.WrappingSubtract,
+                "*%=" => MidLevelIrBinaryOperator.WrappingMultiply,
+                "+|=" => MidLevelIrBinaryOperator.SaturatingAdd,
+                "-|=" => MidLevelIrBinaryOperator.SaturatingSubtract,
+                "*|=" => MidLevelIrBinaryOperator.SaturatingMultiply,
+                "/=" => MidLevelIrBinaryOperator.Divide,
+                "%=" => MidLevelIrBinaryOperator.Modulo,
+                "&=" => MidLevelIrBinaryOperator.BitwiseAnd,
+                "^=" => MidLevelIrBinaryOperator.BitwiseXor,
+                "|=" => MidLevelIrBinaryOperator.BitwiseOr,
+                _ => throw new InvalidOperationException($"Unsupported assignment operator '{text}'.")
             };
         }
 
@@ -4069,7 +4249,8 @@ internal sealed class MidLevelIrLowerer(
 
         private static bool ShouldAddressLocal(StarkTypeSymbol type, string storageClass)
         {
-            return false;
+            return storageClass is "heap" or "arena" or "static"
+                && type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
         }
 
         private static StarkTypeSymbol AddressType(StarkTypeSymbol pointeeType, bool isMutable)

@@ -20,6 +20,7 @@ internal sealed class TypeChecker
     private readonly Dictionary<string, TypedFunctionSignature> _functions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VariableSymbol> _globals = new(StringComparer.Ordinal);
     private readonly List<LiteralTypingRecord> _literals = [];
+    private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
     private StarkTypeResolver? _typeResolver;
 
     public TypeChecker(
@@ -57,7 +58,8 @@ internal sealed class TypeChecker
                     pair.Value.Type,
                     pair.Value.BindingKind ?? (pair.Value.IsMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable)),
                 StringComparer.Ordinal),
-            _literals);
+            _literals,
+            _objectCreations);
     }
 
     private void SeedNamedTypes()
@@ -1216,6 +1218,16 @@ internal sealed class TypeChecker
         if (expression.objectInitializer() is { } objectInitializer)
         {
             CheckObjectInitializer(objectInitializer, createdType, scope, matchedConstructor?.InitializedMembers);
+        }
+
+        if (expression.argumentList()?.argument().Length > 0)
+        {
+            _objectCreations.Add(new ObjectCreationTypingRecord(
+                expression.GetText(),
+                matchedConstructor is null
+                    ? null
+                    : new TypedConstructorShape(createdType.DisplayName, matchedConstructor.Parameters, matchedConstructor.IsPrimaryShape),
+                Location(expression.Start)));
         }
 
         return new ExpressionBinding(createdType, NamedType: ResolveNamedTypeSymbol(createdType), DiagnosticName: $"new '{createdType.DisplayName}'");

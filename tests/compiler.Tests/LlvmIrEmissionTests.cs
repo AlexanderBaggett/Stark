@@ -189,6 +189,31 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RecordPrimaryConstructorGlobalsEmitConcreteInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Point(i32 X) {
+                i32 Y;
+            }
+
+            const Point Origin = new Point(3) { Y = 9 };
+
+            fn i32 Run() {
+                return Origin.Y;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Point = type { i32, i32 }", llvm);
+        Assert.Contains("@Origin = constant %Point { i32 3, i32 9 }", llvm);
+    }
+
+    [Fact]
     public void ConstFixedArrayGlobalsEmitFrozenDefinitions()
     {
         var result = Compile(
@@ -376,6 +401,104 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc i32 @Run(i32 %arg_left, i32 %arg_right)", llvm);
         Assert.Contains("xor i32 %arg_left, %arg_right", llvm);
+    }
+
+    [Fact]
+    public void BitwiseAndShiftExpressionsEmitConcreteLlvmInstructions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 left, i32 middle, i32 right, i32 mask) {
+                return left | middle ^ right & mask << 1 >> 1;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("shl i32 %arg_mask, 1", llvm);
+        Assert.Contains("ashr i32", llvm);
+        Assert.Contains("and i32 %arg_right", llvm);
+        Assert.Contains("xor i32 %arg_middle", llvm);
+        Assert.Contains("or i32 %arg_left", llvm);
+    }
+
+    [Fact]
+    public void WrappingArithmeticEmitsConcreteLlvmInstructions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 left, i32 right) {
+                return -%left +% right *% 2;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("sub i32 0, %arg_left", llvm);
+        Assert.Contains("mul i32 %arg_right, 2", llvm);
+        Assert.Contains("add i32", llvm);
+    }
+
+    [Fact]
+    public void SaturatingArithmeticEmitsWideClampSequence()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 left, i32 right) {
+                return left +| right *| 2 -| 1;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("sext i32", llvm);
+        Assert.Contains("mul i64", llvm);
+        Assert.Contains("add i64", llvm);
+        Assert.Contains("sub i64", llvm);
+        Assert.Contains("icmp sgt i64", llvm);
+        Assert.Contains("icmp slt i64", llvm);
+        Assert.Contains("select i1", llvm);
+        Assert.Contains("trunc i64", llvm);
+    }
+
+    [Fact]
+    public void ExplicitIntegerArithmeticConstantsFoldBeforeLlvmEmission()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Wrap() {
+                return 2147483647 +% 1;
+            }
+
+            fn i32 SatAdd() {
+                return 2147483647 +| 1;
+            }
+
+            fn i32 SatMul() {
+                return 1073741824 *| 4;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Wrap()", llvm);
+        Assert.Contains("ret i32 -2147483648", llvm);
+        Assert.Contains("define fastcc i32 @SatAdd()", llvm);
+        Assert.Contains("ret i32 2147483647", llvm);
+        Assert.Contains("define fastcc i32 @SatMul()", llvm);
+        Assert.Equal(2, llvm.Split('\n').Count(static line => line.Contains("ret i32 2147483647", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -844,6 +967,94 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RegisterObjectCreationKeepsDirectAggregateLlvmLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                register Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Run()", llvm);
+        Assert.Contains("extractvalue %Box", llvm);
+        Assert.DoesNotContain("alloca %Box", llvm);
+        Assert.DoesNotContain("; LLVM body emission pending for Run", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void HeapObjectCreationFallsBackUntilAllocatorLoweringExists()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                heap Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("; LLVM body emission fallback for Run: Local storage class 'heap' is not yet supported for LLVM body emission.", llvm);
+        Assert.Contains("declare fastcc i32 @Run()", llvm);
+    }
+
+    [Fact]
+    public void MixedCallMemberAndIndexPostfixChainsEmitCallAndExtracts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Cell {
+                i32 Value;
+            }
+
+            struct Holder {
+                Cell[2] Cells;
+            }
+
+            fn Holder Make() {
+                return new Holder() {
+                    Cells = { new Cell() { Value = 3 }, new Cell() { Value = 5 } }
+                };
+            }
+
+            fn i32 Run() {
+                return Make().Cells[1].Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Cell = type { i32 }", llvm);
+        Assert.Contains("%Holder = type { [2 x %Cell] }", llvm);
+        Assert.Contains("call %Holder @Make()", llvm);
+        Assert.Contains("extractvalue %Holder", llvm);
+        Assert.Contains("extractvalue [2 x %Cell]", llvm);
+        Assert.Contains("extractvalue %Cell", llvm);
+    }
+
+    [Fact]
     public void RecordTypeUsesConcreteAggregateLayout()
     {
         var result = Compile(
@@ -865,6 +1076,54 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("insertvalue %Point zeroinitializer, i32", llvm);
         Assert.Contains("insertvalue %Point", llvm);
         Assert.Contains("extractvalue %Point", llvm);
+    }
+
+    [Fact]
+    public void PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregate()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn Box Make() {
+                return new Box();
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc %Box @Make()", llvm);
+        Assert.Contains("ret %Box zeroinitializer", llvm);
+    }
+
+    [Fact]
+    public void PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdates()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Point(i32 X) {
+                i32 Y;
+            }
+
+            fn Point Make() {
+                return new Point(3) { Y = 9 };
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Point = type { i32, i32 }", llvm);
+        Assert.True(CountOccurrences(llvm, "insertvalue %Point") >= 2);
+        Assert.Contains("ret %Point", llvm);
+        Assert.DoesNotContain("declare fastcc %Point @Make()", llvm);
     }
 
     [Fact]

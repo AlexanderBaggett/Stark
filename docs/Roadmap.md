@@ -429,26 +429,26 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 - [x] return statements
 - [x] local declarations
 - [x] assignments
-- [ ] object creation lowering
-  - [ ] lower `new T()` without initializers
-  - [ ] lower constructor argument evaluation order
-  - [ ] lower storage-class-aware allocation choice
-  - [ ] tests for local and returned object creation
-- [ ] object initializer lowering
-  - [ ] lower field writes in source order
-  - [ ] lower nested object and array initializers
-  - [ ] lower constructor-plus-initializer combinations
-  - [ ] tests for initializer evaluation order and result placement
-- [ ] richer assignment target lowering
-  - [ ] field assignment targets
-  - [ ] index assignment targets
-  - [ ] compound assignment on field and index targets
-  - [ ] nested lvalue chain lowering
-- [ ] full postfix/operator coverage
-  - [ ] wrapping and saturating arithmetic lowering
-  - [ ] remaining postfix chain lowering across mixed call/member/index paths
-  - [ ] remaining bitwise and shift edge cases
-  - [ ] precedence and associativity regression coverage
+- [x] object creation lowering
+  - [x] lower `new T()` without initializers
+  - [x] lower constructor argument evaluation order
+  - [x] lower storage-class-aware allocation choice
+  - [x] tests for local and returned object creation
+- [x] object initializer lowering
+  - [x] lower field writes in source order
+  - [x] lower nested object and array initializers
+  - [x] lower constructor-plus-initializer combinations
+  - [x] tests for initializer evaluation order and result placement
+- [x] richer assignment target lowering
+  - [x] field assignment targets
+  - [x] index assignment targets
+  - [x] compound assignment on field and index targets
+  - [x] nested lvalue chain lowering
+- [x] full postfix/operator coverage
+  - [x] wrapping and saturating arithmetic lowering
+  - [x] remaining postfix chain lowering across mixed call/member/index paths
+  - [x] remaining bitwise and shift edge cases
+  - [x] precedence and associativity regression coverage
 
 ### Types and Patterns
 

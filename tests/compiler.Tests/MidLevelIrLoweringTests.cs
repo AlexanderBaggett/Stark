@@ -507,6 +507,78 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void BitwiseAndShiftChainsRespectPrecedenceAndAssociativity()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 left, i32 middle, i32 right, i32 mask) {
+                return left | middle ^ right & mask << 1 >> 1;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var operators = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrBinaryRValue>()
+            .Select(static binary => binary.Operator)
+            .ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Equal(
+            [
+                MidLevelIrBinaryOperator.ShiftLeft,
+                MidLevelIrBinaryOperator.ShiftRight,
+                MidLevelIrBinaryOperator.BitwiseAnd,
+                MidLevelIrBinaryOperator.BitwiseXor,
+                MidLevelIrBinaryOperator.BitwiseOr
+            ],
+            operators);
+    }
+
+    [Fact]
+    public void WrappingAndSaturatingArithmeticLowerToDistinctMirOperators()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 left, i32 right) {
+                stack mut i32 wrapped = left;
+                wrapped +%= right;
+                stack i32 wrapProduct = -%wrapped *% 2;
+
+                stack mut i32 saturated = left;
+                saturated +|= right;
+                saturated *|= 2;
+                stack i32 bounded = saturated -| 3;
+
+                return wrapProduct + bounded;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var operators = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrBinaryRValue>()
+            .Select(static binary => binary.Operator)
+            .ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(MidLevelIrBinaryOperator.WrappingAdd, operators);
+        Assert.Contains(MidLevelIrBinaryOperator.WrappingSubtract, operators);
+        Assert.Contains(MidLevelIrBinaryOperator.WrappingMultiply, operators);
+        Assert.Contains(MidLevelIrBinaryOperator.SaturatingAdd, operators);
+        Assert.Contains(MidLevelIrBinaryOperator.SaturatingSubtract, operators);
+        Assert.Contains(MidLevelIrBinaryOperator.SaturatingMultiply, operators);
+    }
+
+    [Fact]
     public void ExponentExpressionLowersToMirBinaryOperation()
     {
         var result = Compile(
@@ -610,6 +682,177 @@ public sealed class MidLevelIrLoweringTests
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(statements, statement => statement.Text.Contains("box.Value = 2", StringComparison.Ordinal));
         Assert.True(statements.Count(static statement => statement.Value is MidLevelIrInsertFieldRValue) >= 2);
+    }
+
+    [Fact]
+    public void FieldCompoundAssignmentLowersToAggregateReadModifyWrite()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                stack mut Box box = new Box() { Value = 1 };
+                box.Value += 2;
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, statement => statement.Text.Contains("box.Value += 2", StringComparison.Ordinal));
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Add });
+        Assert.True(statements.Count(static statement => statement.Value is MidLevelIrInsertFieldRValue) >= 2);
+    }
+
+    [Fact]
+    public void PrimaryRecordConstructorArgumentsLowerInEvaluationOrder()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn i32 First() {
+                return 1;
+            }
+
+            fn i32 Second() {
+                return 2;
+            }
+
+            fn i32 Run() {
+                stack Pair pair = new Pair(First(), Second());
+                return pair.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        var calls = statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrCallRValue>()
+            .Select(static call => call.FunctionName)
+            .ToArray();
+        var insertTexts = statements
+            .Where(static statement => statement.Value is MidLevelIrInsertFieldRValue)
+            .Select(static statement => statement.Text)
+            .ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Equal(["First", "Second"], calls);
+        Assert.Equal(2, insertTexts.Length);
+        Assert.Contains(".Left = First()", insertTexts[0], StringComparison.Ordinal);
+        Assert.Contains(".Right = Second()", insertTexts[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConstructorInitializerCombinationAppliesInitializerAfterConstructorFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left) {
+                i32 Right;
+            }
+
+            fn i32 First() {
+                return 1;
+            }
+
+            fn i32 Override() {
+                return 4;
+            }
+
+            fn i32 Run() {
+                stack Pair pair = new Pair(First()) { Right = Override() };
+                return pair.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        var calls = statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrCallRValue>()
+            .Select(static call => call.FunctionName)
+            .ToArray();
+        var insertTexts = statements
+            .Where(static statement => statement.Value is MidLevelIrInsertFieldRValue)
+            .Select(static statement => statement.Text)
+            .ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Equal(["First", "Override"], calls);
+        Assert.Equal(2, insertTexts.Length);
+        Assert.Contains(".Left = First()", insertTexts[0], StringComparison.Ordinal);
+        Assert.Contains(".Right = Override()", insertTexts[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrder()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Inner {
+                i32[2] Pair;
+            }
+
+            struct Outer {
+                i32 Score;
+                Inner Node;
+            }
+
+            fn i32 MakeScore() {
+                return 9;
+            }
+
+            fn i32 MakeLeft() {
+                return 4;
+            }
+
+            fn i32 MakeRight() {
+                return 7;
+            }
+
+            fn i32 Run() {
+                stack Outer outer = new Outer() {
+                    Score = MakeScore(),
+                    Node = { Pair = { MakeLeft(), MakeRight() } }
+                };
+                return outer.Node.Pair[1] + outer.Score;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        var calls = statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrCallRValue>()
+            .Select(static call => call.FunctionName)
+            .ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Equal(["MakeScore", "MakeLeft", "MakeRight"], calls);
+        Assert.Contains(statements, statement => statement.Text.Contains(".Score = MakeScore()", StringComparison.Ordinal));
+        Assert.Contains(statements, statement => statement.Value is MidLevelIrInsertIndexRValue);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "Node" });
     }
 
     [Fact]
@@ -747,6 +990,45 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Cell {
+                i32 Value;
+            }
+
+            struct Holder {
+                Cell[2] Cells;
+            }
+
+            fn i32 Run(i32 index) {
+                stack mut Holder holder = new Holder() {
+                    Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
+                };
+                holder.Cells[index].Value += 4;
+                return holder.Cells[index].Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, local => local.Name == "holder" && local.IsAddressable);
+        Assert.Contains(statements, statement => statement.Text.Contains("holder.Cells[index].Value += 4", StringComparison.Ordinal));
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrFieldAddressRValue);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Add });
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+    }
+
+    [Fact]
     public void SliceMutationUsesAddressBasedMemoryAccess()
     {
         var result = Compile(
@@ -767,6 +1049,102 @@ public sealed class MidLevelIrLoweringTests
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrSliceElementAddressRValue);
         Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+    }
+
+    [Fact]
+    public void MixedCallMemberAndIndexPostfixChainsLowerToMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Cell {
+                i32 Value;
+            }
+
+            struct Holder {
+                Cell[2] Cells;
+            }
+
+            fn Holder Make() {
+                return new Holder() {
+                    Cells = { new Cell() { Value = 3 }, new Cell() { Value = 5 } }
+                };
+            }
+
+            fn i32 Run() {
+                return Make().Cells[1].Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Make" });
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Cells" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractIndexRValue { ElementIndex: 1 });
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Value" });
+    }
+
+    [Fact]
+    public void RegisterObjectCreationKeepsValueStyleLocalLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                register Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var box = Assert.Single(function.Locals, static local => local.Name == "box");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Equal("register", box.StorageClass);
+        Assert.False(box.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue);
+    }
+
+    [Fact]
+    public void HeapObjectCreationMarksLocalAsAddressableStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                heap Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var box = Assert.Single(function.Locals, static local => local.Name == "box");
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Equal("heap", box.StorageClass);
+        Assert.True(box.IsAddressable);
     }
 
     [Fact]
