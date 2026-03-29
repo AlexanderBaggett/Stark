@@ -189,17 +189,16 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ConstArrayAndSliceGlobalsEmitFrozenDefinitions()
+    public void ConstFixedArrayGlobalsEmitFrozenDefinitions()
     {
         var result = Compile(
             """
             module Demo
 
             const i32[3] Values = { 4, 7, 9 };
-            const i32[] View = { 1, 2, 3 };
 
             fn i32 Run() {
-                return Values[1] + View[2];
+                return Values[1];
             }
             """);
 
@@ -207,9 +206,6 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("@Values = constant [3 x i32] [i32 4, i32 7, i32 9]", llvm);
-        Assert.Contains("private unnamed_addr constant [3 x i32] [i32 1, i32 2, i32 3]", llvm);
-        Assert.Contains("@View = constant { ptr, i64 } { ptr getelementptr inbounds ([3 x i32], ptr @_global_init_slice_", llvm);
-        Assert.Contains("i64 3 }", llvm);
     }
 
     [Fact]
@@ -261,7 +257,7 @@ public sealed class LlvmIrEmissionTests
 
             struct Outer {
                 Inner Node;
-                i32[] View;
+                i32[3] View;
             }
 
             const Outer Frozen = {
@@ -278,10 +274,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Inner = type { [2 x i32] }", llvm);
-        Assert.Contains("%Outer = type { %Inner, { ptr, i64 } }", llvm);
-        Assert.Contains("private unnamed_addr constant [3 x i32] [i32 1, i32 2, i32 3]", llvm);
-        Assert.Contains("@Frozen = constant %Outer { %Inner { [2 x i32] [i32 4, i32 7] }, { ptr, i64 } { ptr getelementptr inbounds ([3 x i32], ptr @_global_init_slice_", llvm);
-        Assert.Contains("i64 3 } }", llvm);
+        Assert.Contains("%Outer = type { %Inner, [3 x i32] }", llvm);
+        Assert.Contains("@Frozen = constant %Outer { %Inner { [2 x i32] [i32 4, i32 7] }, [3 x i32] [i32 1, i32 2, i32 3] }", llvm);
     }
 
     [Fact]
@@ -321,19 +315,17 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ImmutableGlobalsCanPointAtMutablePrivateBackingStorage()
+    public void AggregateArrayFieldsEmitConcreteInitializers()
     {
         var result = Compile(
             """
             module Demo
 
             struct Buffer {
-                i32[] Values;
+                i32[2] Values;
             }
 
-            static Buffer Shared = {
-                Values = { 5, 8 }
-            };
+            static Buffer Shared = { Values = { 5, 8 } };
 
             fn i32 Run() {
                 return Shared.Values[1];
@@ -343,10 +335,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%Buffer = type { { ptr, i64 } }", llvm);
-        Assert.Contains("private global [2 x i32] [i32 5, i32 8]", llvm);
-        Assert.Contains("@Shared = constant %Buffer { { ptr, i64 } { ptr getelementptr inbounds ([2 x i32], ptr @_global_init_slice_", llvm);
-        Assert.Contains("i64 2 } }", llvm);
+        Assert.Contains("%Buffer = type { [2 x i32] }", llvm);
+        Assert.Contains("@Shared = constant %Buffer { [2 x i32] [i32 5, i32 8] }", llvm);
     }
 
     [Fact]
@@ -540,6 +530,154 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("br i1 %arg_allow", llvm);
         Assert.DoesNotContain("switch i32", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Run(i32, i1)", llvm);
+    }
+
+    [Fact]
+    public void ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Next() {
+                return 1;
+            }
+
+            fn bool Run() {
+                return 0 < Next() < 3;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, CountOccurrences(llvm, "call i32 @Next()"));
+        Assert.Equal(2, CountOccurrences(llvm, "icmp slt i32"));
+        Assert.Contains("br i1", llvm);
+        Assert.DoesNotContain("declare fastcc i1 @Run()", llvm);
+    }
+
+    [Fact]
+    public void FloatComparisonChainsUseOrderedPredicates()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Run(f32 low, f32 value, f32 high) {
+                return low < value <= high;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("fcmp olt float", llvm);
+        Assert.Contains("fcmp ole float", llvm);
+        Assert.Contains("br i1", llvm);
+    }
+
+    [Fact]
+    public void TextLiteralSwitchEmitsLengthAndByteComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(ascii value, bool allow) {
+                switch (value) {
+                    case "ab":
+                        return 1;
+                    case "cd" when allow:
+                        return 2;
+                    default:
+                        return 3;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("extractvalue %stark_ascii %arg_value, 0", llvm);
+        Assert.Contains("extractvalue %stark_ascii %arg_value, 1", llvm);
+        Assert.Contains("icmp eq i64", llvm);
+        Assert.Contains("load i8, ptr", llvm);
+        Assert.Contains("br i1 %arg_allow", llvm);
+        Assert.DoesNotContain("switch %stark_ascii", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%stark_ascii, i1)", llvm);
+    }
+
+    [Fact]
+    public void LargeTextLiteralSwitchEmitsLengthPartitionedDispatch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(ascii value) {
+                switch (value) {
+                    case "":
+                        return 0;
+                    case "a":
+                        return 1;
+                    case "b":
+                        return 2;
+                    case "cc":
+                        return 3;
+                    case "dd":
+                        return 4;
+                    case "eee":
+                        return 5;
+                    case "fff":
+                        return 6;
+                    case "gggg":
+                        return 7;
+                    case "hhhh":
+                        return 8;
+                    case "iiiii":
+                        return 9;
+                    default:
+                        return 10;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, CountOccurrences(llvm, "extractvalue %stark_ascii %arg_value, 1"));
+        Assert.Contains("switch i64", llvm);
+        Assert.Contains("icmp eq i8", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%stark_ascii)", llvm);
+    }
+
+    [Fact]
+    public void UnicodeTextLiteralSwitchEmitsConcreteBody()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(unicode value) {
+                switch (value) {
+                    case "\u03c0":
+                        return 1;
+                    case "\u03bb":
+                        return 2;
+                    default:
+                        return 3;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Run(%stark_unicode %arg_value)", llvm);
+        Assert.Contains("extractvalue %stark_unicode %arg_value, 0", llvm);
+        Assert.Contains("load i8, ptr", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%stark_unicode)", llvm);
     }
 
     [Fact]

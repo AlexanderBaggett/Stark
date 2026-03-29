@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using Antlr4.Runtime;
 using Stark.Parsing;
 
@@ -14,7 +15,7 @@ internal sealed class MidLevelIrLowerer(
     private readonly TypeCheckModel _typeModel = typeModel;
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionsByName = DeclaredFunctionSyntaxCollector.Collect(parseResult)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
-    private readonly StarkTypeResolver _typeResolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
+    private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
     private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes = typeModel.Literals
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Type);
@@ -80,6 +81,12 @@ internal sealed class MidLevelIrLowerer(
         private sealed record LowerableSwitchSection(
             StarkParser.SwitchSectionContext Section,
             IReadOnlyList<LowerableSwitchLabel> Labels);
+
+        private sealed record PartitionedTextSwitchLabel(
+            LowerableSwitchLabel Label,
+            int TargetBlockId,
+            byte[] Bytes,
+            int Order);
 
         private enum PlacePathKind
         {
@@ -621,7 +628,9 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerSwitch(StarkParser.SwitchStatementContext switchStatement)
         {
-            if (TryLowerNativeSwitch(switchStatement) || TryLowerGuardedSwitch(switchStatement))
+            if (TryLowerNativeSwitch(switchStatement)
+                || TryLowerPartitionedTextSwitch(switchStatement)
+                || TryLowerGuardedSwitch(switchStatement))
             {
                 return;
             }
@@ -762,6 +771,130 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
+        private bool TryLowerPartitionedTextSwitch(StarkParser.SwitchStatementContext switchStatement)
+        {
+            if (!TryParseLowerableSwitchSections(switchStatement, out var parsedSections, out var defaultSectionCount))
+            {
+                return false;
+            }
+
+            var switchValue = LowerExpressionToOperand(switchStatement.expression());
+            if (switchValue is null
+                || !CanUsePartitionedTextSwitchType(switchValue.Type)
+                || defaultSectionCount > 1)
+            {
+                return false;
+            }
+
+            var allLabels = parsedSections
+                .SelectMany(static section => section.Labels)
+                .ToArray();
+            if (allLabels.Any(static label => label.IsMatchAll && !label.IsDefault))
+            {
+                return false;
+            }
+
+            var textLabels = allLabels
+                .Where(static label => !label.IsDefault)
+                .ToArray();
+            if (textLabels.Length == 0
+                || textLabels.Any(static label => label.GuardExpression is not null || label.CaptureName is not null || label.Literal is null))
+            {
+                return false;
+            }
+
+            var sections = parsedSections
+                .Select((section, index) => (section.Section, section.Labels, Block: CreateBlock($"switch_case_{index}")))
+                .ToArray();
+            var exitBlock = CreateBlock("switch_exit");
+            var defaultTarget = sections
+                .Where(static section => section.Labels.Any(static label => label.IsDefault))
+                .Select(static section => section.Block.Id)
+                .FirstOrDefault(exitBlock.Id);
+
+            if (!TryExtractTextSwitchComponents(switchValue, out var dataPointer, out var length))
+            {
+                return false;
+            }
+
+            var flattenedLabels = new List<PartitionedTextSwitchLabel>();
+            var order = 0;
+            foreach (var section in sections)
+            {
+                foreach (var label in section.Labels)
+                {
+                    if (label.IsDefault || label.Literal is null)
+                    {
+                        continue;
+                    }
+
+                    flattenedLabels.Add(new PartitionedTextSwitchLabel(
+                        label,
+                        section.Block.Id,
+                        DecodeTextLiteral(label.Literal.GetText()),
+                        order++));
+                }
+            }
+
+            if (flattenedLabels.Count == 0)
+            {
+                return false;
+            }
+
+            var lengthType = StarkTypeSymbols.Integer(64);
+            var lengthGroups = flattenedLabels
+                .GroupBy(static label => label.Bytes.Length)
+                .OrderBy(static group => group.Key)
+                .Select(group => (
+                    Length: group.Key,
+                    Labels: group.OrderBy(static label => label.Order).ToArray(),
+                    Block: CreateBlock($"switch_len_{group.Key}")))
+                .ToArray();
+
+            var switchCases = lengthGroups
+                .Select(group => new MidLevelIrSwitchCase(
+                    group.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    group.Block.Id,
+                    new MidLevelIrIntegerConstantOperand(new BigInteger(group.Length), lengthType)))
+                .ToList();
+            var targets = switchCases
+                .Select(static item => item.TargetBlockId)
+                .Append(defaultTarget)
+                .Distinct()
+                .ToArray();
+
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Switch,
+                targets,
+                ConditionText: $"{switchStatement.expression().GetText()}.length",
+                Condition: length,
+                SwitchCases: switchCases,
+                DefaultTarget: defaultTarget);
+
+            foreach (var group in lengthGroups)
+            {
+                CurrentBlock = group.Block;
+                if (!EmitPartitionedTextLengthDecision(dataPointer, group.Labels, defaultTarget, switchStatement.expression().GetText()))
+                {
+                    return false;
+                }
+            }
+
+            foreach (var section in sections)
+            {
+                CurrentBlock = section.Block;
+                foreach (var nested in section.Section.statement())
+                {
+                    LowerStatement(nested);
+                }
+
+                EnsureGoto(exitBlock.Id);
+            }
+
+            CurrentBlock = exitBlock;
+            return true;
+        }
+
         private bool TryLowerGuardedSwitch(StarkParser.SwitchStatementContext switchStatement)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, out var parsedSections, out var defaultSectionCount))
@@ -873,15 +1006,9 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                var literalOperand = LowerSwitchCaseLiteral(label.Literal!, switchValue.Type);
-                if (literalOperand is null)
-                {
-                    return false;
-                }
-
-                var condition = EmitEqualityComparison(
+                var condition = EmitSwitchLiteralComparison(
                     switchValue,
-                    literalOperand,
+                    label.Literal!,
                     $"switch {switchText} == {label.LabelText}");
                 if (condition is null)
                 {
@@ -2907,18 +3034,69 @@ internal sealed class MidLevelIrLowerer(
                 return left;
             }
 
-            if (operators.Count != 1 || operands.Count != 2)
+            var currentLeft = left;
+            if (operators.Count == 1 && operands.Count == 2)
             {
-                MarkUnsupported();
-                return null;
+                var right = lowerOperand(operands[1]);
+                return right is null
+                    ? null
+                    : EmitPairComparison(currentLeft, right, operators[0], $"{operands[0].GetText()} {operators[0]} {operands[1].GetText()}");
             }
 
-            var right = lowerOperand(operands[1]);
-            if (right is null)
+            var result = CreateTemporaryLocal(StarkTypeSymbols.Bool, "cmpchain");
+            var joinBlock = CreateBlock("cmpchain_join");
+
+            for (var index = 0; index < operators.Count; index++)
             {
-                return null;
+                var right = lowerOperand(operands[index + 1]);
+                if (right is null)
+                {
+                    return null;
+                }
+
+                var comparison = EmitPairComparison(
+                    currentLeft,
+                    right,
+                    operators[index],
+                    $"{operands[index].GetText()} {operators[index]} {operands[index + 1].GetText()}");
+                if (comparison is null)
+                {
+                    return null;
+                }
+
+                if (index == operators.Count - 1)
+                {
+                    EmitOperandAssignment(result, comparison, comparison.Text);
+                    EnsureGoto(joinBlock.Id);
+                    break;
+                }
+
+                var nextBlock = CreateBlock($"cmpchain_next_{index + 1}");
+                var falseBlock = CreateBlock($"cmpchain_false_{index}");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [nextBlock.Id, falseBlock.Id],
+                    ConditionText: comparison.Text,
+                    Condition: comparison);
+
+                CurrentBlock = falseBlock;
+                EmitOperandAssignment(result, new MidLevelIrBoolConstantOperand(false), "false");
+                EnsureGoto(joinBlock.Id);
+
+                CurrentBlock = nextBlock;
+                currentLeft = right;
             }
 
+            CurrentBlock = joinBlock;
+            return result;
+        }
+
+        private MidLevelIrOperand? EmitPairComparison(
+            MidLevelIrOperand left,
+            MidLevelIrOperand right,
+            string operatorText,
+            string text)
+        {
             var operandType = FindCommonType(left.Type, right.Type);
             if (operandType.Kind == StarkTypeKind.Error)
             {
@@ -2935,11 +3113,11 @@ internal sealed class MidLevelIrLowerer(
 
             return EmitTemporary(
                 new MidLevelIrBinaryRValue(
-                    MapBinaryOperator(operators[0]),
+                    MapBinaryOperator(operatorText),
                     coercedLeft,
                     coercedRight,
                     StarkTypeSymbols.Bool,
-                    operators[0]),
+                    text),
                 "cmp");
         }
 
@@ -3117,6 +3295,285 @@ internal sealed class MidLevelIrLowerer(
                 "cmp");
         }
 
+        private MidLevelIrOperand? EmitSwitchLiteralComparison(
+            MidLevelIrOperand switchValue,
+            StarkParser.LiteralContext literal,
+            string text)
+        {
+            var literalOperand = LowerSwitchCaseLiteral(literal, switchValue.Type);
+            if (literalOperand is null)
+            {
+                return null;
+            }
+
+            if (switchValue.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+            {
+                if (literalOperand is not MidLevelIrStringConstantOperand stringLiteral)
+                {
+                    MarkUnsupported();
+                    return null;
+                }
+
+                return EmitTextLiteralComparison(switchValue, stringLiteral, text);
+            }
+
+            return EmitEqualityComparison(switchValue, literalOperand, text);
+        }
+
+        private bool EmitPartitionedTextLengthDecision(
+            MidLevelIrOperand dataPointer,
+            IReadOnlyList<PartitionedTextSwitchLabel> labels,
+            int defaultTarget,
+            string switchText)
+        {
+            if (labels.Count == 0)
+            {
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [defaultTarget]);
+                return true;
+            }
+
+            var decisionBlocks = new BasicBlockBuilder[labels.Count];
+            decisionBlocks[0] = CurrentBlock;
+            for (var index = 1; index < labels.Count; index++)
+            {
+                decisionBlocks[index] = CreateBlock($"textcmp_len_{labels[0].Bytes.Length}_{index}");
+            }
+
+            for (var index = 0; index < labels.Count; index++)
+            {
+                CurrentBlock = decisionBlocks[index];
+                var label = labels[index];
+                var nextTarget = index + 1 < labels.Count ? decisionBlocks[index + 1].Id : defaultTarget;
+
+                if (!EmitTextLiteralMatchTransition(
+                    dataPointer,
+                    label.Bytes,
+                    label.TargetBlockId,
+                    nextTarget,
+                    $"switch {switchText} == {label.Label.LabelText}"))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private MidLevelIrOperand? EmitTextLiteralComparison(
+            MidLevelIrOperand switchValue,
+            MidLevelIrStringConstantOperand literal,
+            string text)
+        {
+            var bytes = DecodeTextLiteral(literal.LiteralText);
+            if (!TryExtractTextSwitchComponents(switchValue, out var dataPointer, out var length))
+            {
+                return null;
+            }
+
+            var byteType = StarkTypeSymbols.Integer(8);
+            var lengthType = StarkTypeSymbols.Integer(64);
+            var lengthMatches = EmitPairComparison(
+                length,
+                new MidLevelIrIntegerConstantOperand(new BigInteger(bytes.Length), lengthType),
+                "==",
+                $"{text}:length");
+            if (lengthMatches is null || bytes.Length == 0)
+            {
+                return lengthMatches;
+            }
+
+            var result = CreateTemporaryLocal(StarkTypeSymbols.Bool, "textcmp");
+            var compareBlock = CreateBlock("textcmp_byte_0");
+            var falseBlock = CreateBlock("textcmp_false");
+            var joinBlock = CreateBlock("textcmp_join");
+
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [compareBlock.Id, falseBlock.Id],
+                ConditionText: lengthMatches.Text,
+                Condition: lengthMatches);
+
+            CurrentBlock = falseBlock;
+            EmitOperandAssignment(result, new MidLevelIrBoolConstantOperand(false), "false");
+            EnsureGoto(joinBlock.Id);
+
+            CurrentBlock = compareBlock;
+
+            for (var index = 0; index < bytes.Length; index++)
+            {
+                var byteAddress = EmitTemporary(
+                    new MidLevelIrElementAddressRValue(
+                        dataPointer,
+                        byteType,
+                        Index: null,
+                        ConstantIndex: index,
+                        AddressType(byteType, isMutable: false),
+                        $"{switchValue.Text}.data[{index}]"),
+                    "addr");
+                if (byteAddress is null)
+                {
+                    return null;
+                }
+
+                var loadedByte = EmitTemporary(
+                    new MidLevelIrLoadIndirectRValue(
+                        byteAddress,
+                        byteType,
+                        $"{switchValue.Text}.data[{index}]"),
+                    "load");
+                if (loadedByte is null)
+                {
+                    return null;
+                }
+
+                var expectedByte = new MidLevelIrIntegerConstantOperand(ToSignedByteValue(bytes[index]), byteType);
+                var byteMatches = EmitPairComparison(
+                    loadedByte,
+                    expectedByte,
+                    "==",
+                    $"{text}:byte{index}");
+                if (byteMatches is null)
+                {
+                    return null;
+                }
+
+                if (index == bytes.Length - 1)
+                {
+                    EmitOperandAssignment(result, byteMatches, byteMatches.Text);
+                    EnsureGoto(joinBlock.Id);
+                    break;
+                }
+
+                var nextByteBlock = CreateBlock($"textcmp_byte_{index + 1}");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [nextByteBlock.Id, falseBlock.Id],
+                    ConditionText: byteMatches.Text,
+                    Condition: byteMatches);
+                CurrentBlock = nextByteBlock;
+            }
+
+            CurrentBlock = joinBlock;
+            return result;
+        }
+
+        private bool TryExtractTextSwitchComponents(
+            MidLevelIrOperand switchValue,
+            out MidLevelIrOperand dataPointer,
+            out MidLevelIrOperand length)
+        {
+            dataPointer = null!;
+            length = null!;
+
+            if (!CanUsePartitionedTextSwitchType(switchValue.Type))
+            {
+                MarkUnsupported();
+                return false;
+            }
+
+            var byteType = StarkTypeSymbols.Integer(8);
+            var dataPointerType = StarkTypeSymbols.RawPointer(byteType, isMutable: false);
+            var lengthType = StarkTypeSymbols.Integer(64);
+
+            var extractedDataPointer = EmitTemporary(
+                new MidLevelIrExtractFieldRValue(
+                    switchValue,
+                    "data",
+                    0,
+                    dataPointerType,
+                    $"{switchValue.Text}.data"),
+                "strdata");
+            var extractedLength = EmitTemporary(
+                new MidLevelIrExtractFieldRValue(
+                    switchValue,
+                    "length",
+                    1,
+                    lengthType,
+                    $"{switchValue.Text}.length"),
+                "strlen");
+            if (extractedDataPointer is null || extractedLength is null)
+            {
+                return false;
+            }
+
+            dataPointer = extractedDataPointer;
+            length = extractedLength;
+            return true;
+        }
+
+        private bool EmitTextLiteralMatchTransition(
+            MidLevelIrOperand dataPointer,
+            byte[] bytes,
+            int targetBlockId,
+            int nextTarget,
+            string text)
+        {
+            if (bytes.Length == 0)
+            {
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
+                return true;
+            }
+
+            var byteType = StarkTypeSymbols.Integer(8);
+            for (var index = 0; index < bytes.Length; index++)
+            {
+                var byteAddress = EmitTemporary(
+                    new MidLevelIrElementAddressRValue(
+                        dataPointer,
+                        byteType,
+                        Index: null,
+                        ConstantIndex: index,
+                        AddressType(byteType, isMutable: false),
+                        $"{dataPointer.Text}[{index}]"),
+                    "addr");
+                if (byteAddress is null)
+                {
+                    return false;
+                }
+
+                var loadedByte = EmitTemporary(
+                    new MidLevelIrLoadIndirectRValue(
+                        byteAddress,
+                        byteType,
+                        $"{dataPointer.Text}[{index}]"),
+                    "load");
+                if (loadedByte is null)
+                {
+                    return false;
+                }
+
+                var byteMatches = EmitPairComparison(
+                    loadedByte,
+                    new MidLevelIrIntegerConstantOperand(ToSignedByteValue(bytes[index]), byteType),
+                    "==",
+                    $"{text}:byte{index}");
+                if (byteMatches is null)
+                {
+                    return false;
+                }
+
+                if (index == bytes.Length - 1)
+                {
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Branch,
+                        [targetBlockId, nextTarget],
+                        ConditionText: byteMatches.Text,
+                        Condition: byteMatches);
+                    return true;
+                }
+
+                var nextByteBlock = CreateBlock($"textcmp_byte_{index + 1}");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [nextByteBlock.Id, nextTarget],
+                    ConditionText: byteMatches.Text,
+                    Condition: byteMatches);
+                CurrentBlock = nextByteBlock;
+            }
+
+            return true;
+        }
+
         private MidLevelIrOperand? LowerSwitchCaseLiteral(StarkParser.LiteralContext literal, StarkTypeSymbol switchType)
         {
             if (switchType.Kind == StarkTypeKind.Integer && literal.signedIntegerLiteral() is { } integerLiteral)
@@ -3145,6 +3602,12 @@ internal sealed class MidLevelIrLowerer(
             if (switchType.Kind == StarkTypeKind.RawPointer && literal.NULL() is not null)
             {
                 return new MidLevelIrNullOperand(switchType);
+            }
+
+            if (switchType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                && (literal.StringLiteral() is not null || literal.CharacterLiteral() is not null))
+            {
+                return new MidLevelIrStringConstantOperand(literal.GetText(), switchType);
             }
 
             return LowerLiteral(literal, switchType);
@@ -3641,7 +4104,17 @@ internal sealed class MidLevelIrLowerer(
 
         private static bool CanLowerSwitchType(StarkTypeSymbol type)
         {
-            return type.Kind is StarkTypeKind.Integer or StarkTypeKind.Float or StarkTypeKind.Bool or StarkTypeKind.RawPointer;
+            return type.Kind is StarkTypeKind.Integer
+                or StarkTypeKind.Float
+                or StarkTypeKind.Bool
+                or StarkTypeKind.RawPointer
+                or StarkTypeKind.Ascii
+                or StarkTypeKind.Unicode;
+        }
+
+        private static bool CanUsePartitionedTextSwitchType(StarkTypeSymbol type)
+        {
+            return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
         }
 
         private static bool CanUseNativeSwitchType(StarkTypeSymbol type)
@@ -3658,6 +4131,72 @@ internal sealed class MidLevelIrLowerer(
         {
             var value = BigInteger.Parse(literal.IntegerLiteral().GetText());
             return literal.MINUS() is null ? value : -value;
+        }
+
+        private static BigInteger ToSignedByteValue(byte value)
+        {
+            return value <= sbyte.MaxValue
+                ? new BigInteger(value)
+                : new BigInteger(unchecked((sbyte)value));
+        }
+
+        private static byte[] DecodeTextLiteral(string literalText)
+        {
+            var content = literalText.Length >= 2 ? literalText[1..^1] : literalText;
+            var chars = new List<char>();
+
+            for (var index = 0; index < content.Length; index++)
+            {
+                var ch = content[index];
+                if (ch != '\\')
+                {
+                    chars.Add(ch);
+                    continue;
+                }
+
+                if (index + 1 >= content.Length)
+                {
+                    chars.Add('\\');
+                    break;
+                }
+
+                index++;
+                var escape = content[index];
+                switch (escape)
+                {
+                    case '\\':
+                        chars.Add('\\');
+                        break;
+                    case '"':
+                        chars.Add('"');
+                        break;
+                    case '\'':
+                        chars.Add('\'');
+                        break;
+                    case 'n':
+                        chars.Add('\n');
+                        break;
+                    case 'r':
+                        chars.Add('\r');
+                        break;
+                    case 't':
+                        chars.Add('\t');
+                        break;
+                    case '0':
+                        chars.Add('\0');
+                        break;
+                    case 'u' when index + 4 < content.Length:
+                        var hex = content.Substring(index + 1, 4);
+                        chars.Add((char)Convert.ToInt32(hex, 16));
+                        index += 4;
+                        break;
+                    default:
+                        chars.Add(escape);
+                        break;
+                }
+            }
+
+            return Encoding.UTF8.GetBytes(chars.ToArray());
         }
 
         private static StarkTypeSymbol InferIntegerLiteralType(BigInteger value)

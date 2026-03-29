@@ -173,6 +173,11 @@ The aggregate/view forms are:
 - slices: `T[]`
 - named aggregates through `struct` and `record`
 
+Fixed arrays are owning aggregate values.
+
+Slices are non-owning views. A slice does not materialize or own backing
+storage; it refers to storage established elsewhere.
+
 ### 6.3 Type Qualifiers
 
 The type qualifiers are:
@@ -393,6 +398,28 @@ The expression surface includes:
 - ternary conditional `?:`
 - assignments and compound assignments
 
+`{ ... }` is an array initializer, not a slice literal.
+
+An array initializer may materialize a fixed array value or participate in
+nested aggregate initialization where the target storage is already defined.
+It may not target a slice type directly.
+
+This is invalid:
+
+```stark
+stack i32[] view = { 1, 2, 3 };
+```
+
+because `i32[]` is a view type and Stark does not silently create hidden
+backing storage for slice targets.
+
+Instead, the backing storage must be made explicit:
+
+```stark
+stack i32[3] values = { 1, 2, 3 };
+stack i32[] view = values;
+```
+
 ### 11.1 Operators
 
 Operator families include:
@@ -448,7 +475,49 @@ From highest to lowest, the intended precedence is:
 13. conditional `?:`
 14. assignment
 
-### 11.3 Exponentiation
+Comparison chains are formed at comparison precedence.
+
+### 11.3 Comparison Chains
+
+Comparison operators may be chained.
+
+Examples:
+
+- `a < b < c`
+- `min <= value < max`
+- `left == middle != right`
+
+A comparison chain:
+
+- evaluates operand expressions left to right
+- evaluates each operand expression exactly once
+- compares each adjacent operand pair using the written operator
+- short-circuits on the first false comparison
+- produces `bool`
+
+`a < b < c` is therefore not interpreted as `(a < b) < c`.
+
+Instead, it has the semantics of:
+
+```stark
+a < b && b < c
+```
+
+with the shared middle operand evaluated only once.
+
+More generally, `a op1 b op2 c op3 d` behaves like:
+
+```stark
+a op1 b && b op2 c && c op3 d
+```
+
+with each operand evaluated once and then reused for the adjacent comparisons.
+
+Each adjacent comparison in the chain must be individually legal under Stark's
+ordinary comparison rules. If any adjacent comparison is ill-typed, the chain is
+ill-typed.
+
+### 11.4 Exponentiation
 
 Exponentiation is floating-point only.
 
@@ -456,7 +525,7 @@ Exponentiation is floating-point only.
 - integer exponentiation is not part of Stark
 - there is no implicit integer-power form
 
-### 11.4 Floating-Point Contract
+### 11.5 Floating-Point Contract
 
 Ordinary floating-point code uses aggressive fast-math semantics.
 
@@ -464,7 +533,7 @@ Ordinary floating-point code uses aggressive fast-math semantics.
 - strict IEEE-style semantics require the explicit `strictfp` function modifier
 - `strictfp` is the source-level escape hatch from Stark's default fast-math model
 
-### 11.5 Integer Arithmetic Contract
+### 11.6 Integer Arithmetic Contract
 
 Ordinary integer arithmetic in Stark is performance-first and intentionally strict.
 

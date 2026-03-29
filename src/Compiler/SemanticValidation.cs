@@ -1610,14 +1610,13 @@ internal sealed class SemanticValidator
         StarkParser.ArrayInitializerContext arrayInitializer,
         StarkTypeSymbol targetType)
     {
-        if (targetType.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice)
+        if (targetType.Kind != StarkTypeKind.FixedArray
             || targetType.ElementType is null)
         {
             return false;
         }
 
-        if (targetType.Kind == StarkTypeKind.FixedArray
-            && targetType.FixedLength is int fixedLength
+        if (targetType.FixedLength is int fixedLength
             && fixedLength != arrayInitializer.variableInitializer().Length)
         {
             return false;

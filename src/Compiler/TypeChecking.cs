@@ -572,6 +572,7 @@ internal sealed class TypeChecker
         if (statement.switchStatement() is { } switchStatement)
         {
             var switchType = EvaluateExpression(switchStatement.expression(), scope, allowFunctionReference: false).Type;
+            ValidateImplementedSwitchShape(switchStatement, switchType);
 
             foreach (var section in switchStatement.switchSection())
             {
@@ -665,6 +666,57 @@ internal sealed class TypeChecker
         if (statement.expressionStatement() is { } expressionStatement)
         {
             EvaluateExpression(expressionStatement.expression(), scope, allowFunctionReference: false);
+        }
+    }
+
+    private void ValidateImplementedSwitchShape(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
+    {
+        if (!CanLowerImplementedSwitchType(switchType))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch over '{switchType.DisplayName}' is not implemented in the current compiler yet. The current switch subset supports integers, floating-point values, bool, raw pointers, and text literals over ascii/unicode; richer non-text domains remain out of scope for now.",
+                switchStatement.expression());
+            return;
+        }
+
+        var unguardedMatchAllCount = 0;
+
+        foreach (var section in switchStatement.switchSection())
+        {
+            var captureLabels = 0;
+            var labelCount = section.switchLabel().Length;
+
+            foreach (var label in section.switchLabel())
+            {
+                var pattern = label.pattern();
+                if (label.DEFAULT() is not null
+                    || (pattern?.DISCARD() is not null && label.whenClause() is null))
+                {
+                    unguardedMatchAllCount++;
+                }
+
+                if (pattern?.VAR() is not null)
+                {
+                    captureLabels++;
+                }
+            }
+
+            if (captureLabels > 0 && labelCount != 1)
+            {
+                ReportError(
+                    "STK3008",
+                    "Switch capture patterns must currently appear as the only label in their section.",
+                    section);
+            }
+        }
+
+        if (unguardedMatchAllCount > 1)
+        {
+            ReportError(
+                "STK3008",
+                "Switch statements currently support at most one unguarded default or match-all label.",
+                switchStatement);
         }
     }
 
@@ -787,9 +839,12 @@ internal sealed class TypeChecker
     private void CheckArrayInitializer(StarkParser.ArrayInitializerContext arrayInitializer, StarkTypeSymbol targetType, Scope scope)
     {
         var elementType = targetType.ElementType;
-        if (targetType.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice) || elementType is null)
+        if (targetType.Kind != StarkTypeKind.FixedArray || elementType is null)
         {
-            ReportError("STK3002", $"Array initializers require an array or slice target type, but got '{targetType.DisplayName}'.", arrayInitializer);
+            var message = targetType.Kind == StarkTypeKind.Slice
+                ? $"Array initializers require a fixed-size array target, but got '{targetType.DisplayName}'. Form a slice explicitly from backing storage instead."
+                : $"Array initializers require a fixed-size array target, but got '{targetType.DisplayName}'.";
+            ReportError("STK3002", message, arrayInitializer);
             return;
         }
 
@@ -2259,6 +2314,17 @@ internal sealed class TypeChecker
         return FindCommonType(left, right).Kind != StarkTypeKind.Error
             || (left.Kind == StarkTypeKind.Named && right.Kind == StarkTypeKind.Named && left.NamedType == right.NamedType)
             || (left.Kind == StarkTypeKind.RawPointer && right.Kind == StarkTypeKind.RawPointer);
+    }
+
+    private static bool CanLowerImplementedSwitchType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Error
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Float
+            or StarkTypeKind.Bool
+            or StarkTypeKind.RawPointer
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode;
     }
 
     private static bool IsNumeric(StarkTypeSymbol type)

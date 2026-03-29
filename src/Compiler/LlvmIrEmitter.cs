@@ -1331,32 +1331,6 @@ internal sealed class LlvmIrEmitter
     {
         plan = null!;
 
-        if (targetType.Kind == StarkTypeKind.Slice
-            && targetType.ElementType is not null)
-        {
-            var elementCount = arrayInitializer.variableInitializer().Length;
-            var backingArrayType = StarkTypeSymbols.FixedArray(targetType.ElementType, elementCount);
-            if (!TryPlanArrayInitializer(arrayInitializer, backingArrayType, isFrozen, out var backingPlan))
-            {
-                return false;
-            }
-
-            var backingSymbolName = AllocateSyntheticGlobalInitializerSymbol("slice");
-            var preludeDefinitions = new List<string>(backingPlan.PreludeDefinitions)
-            {
-                BuildSyntheticGlobalDefinition(
-                    backingSymbolName,
-                    isConstant: isFrozen,
-                    unnamedAddr: isFrozen,
-                    MapType(backingArrayType),
-                    backingPlan.Rendered)
-            };
-
-            var dataPointer = $"getelementptr inbounds ({MapType(backingArrayType)}, ptr @{EscapeIdentifier(backingSymbolName)}, i32 0, i32 0)";
-            plan = new GlobalInitializerPlan($"{{ ptr {dataPointer}, i64 {elementCount} }}", preludeDefinitions);
-            return true;
-        }
-
         if (targetType.Kind != StarkTypeKind.FixedArray
             || targetType.ElementType is null
             || targetType.FixedLength is not int fixedLength

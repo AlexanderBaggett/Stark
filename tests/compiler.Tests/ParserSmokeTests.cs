@@ -111,7 +111,7 @@ public sealed class ParserSmokeTests
             """
         },
         {
-            "const aggregate literals and nested slice members",
+            "const aggregate literals and nested array members",
             """
             module Globals
 
@@ -121,7 +121,7 @@ public sealed class ParserSmokeTests
 
             struct Outer {
                 Inner Node;
-                i32[] View;
+                i32[3] View;
             }
 
             const Outer Frozen = {
@@ -131,7 +131,7 @@ public sealed class ParserSmokeTests
 
             static Outer Shared = {
                 Node = { Pair = { 8, 9 } },
-                View = { 5, 6 }
+                View = { 5, 6, 7 }
             };
             """
         },

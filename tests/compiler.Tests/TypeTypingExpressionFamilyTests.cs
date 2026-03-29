@@ -78,6 +78,24 @@ public sealed class TypeTypingExpressionFamilyTests
     }
 
     [Fact]
+    public void ComparisonChainsTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Run(i32 min, i32 value, i32 max, f32 low, f32 current, f32 high, i32 left, i32 middle, i32 right) {
+                return min <= value < max
+                    && low < current <= high
+                    && left == middle != right;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        AssertTypedSuccessfully(result);
+    }
+
+    [Fact]
     public void PostfixCallsIndexesMembersAndObjectCreationTypeCheck()
     {
         var result = Compile(

@@ -170,6 +170,53 @@ public sealed class DiagnosticRegressionTests
         AssertDiagnostic(result, "STK4008", "frozen initializer", "materialized as static data");
     }
 
+    [Fact]
+    public void UnsupportedSwitchScrutineeProducesAStableTypeDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Run(Box box) {
+                switch (box) {
+                    case var capture:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Switch over 'Box'", "not implemented in the current compiler yet");
+    }
+
+    [Fact]
+    public void CapturePatternsMixedWithOtherLabelsProduceAnExplicitDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 value) {
+                switch (value) {
+                    case var capture:
+                    case 1:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Switch capture patterns must currently appear as the only label in their section");
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

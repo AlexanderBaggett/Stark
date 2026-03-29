@@ -95,6 +95,42 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void SliceVariablesCannotUseArrayInitializerSyntax()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[] view = { 1, 2, 3 };
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "fixed-size array target", "i32[]", "Form a slice explicitly from backing storage instead");
+    }
+
+    [Fact]
+    public void SliceMembersCannotUseArrayInitializerSyntax()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i32[] Values;
+            }
+
+            fn void Run() {
+                stack Buffer buffer = { Values = { 5, 8 } };
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "fixed-size array target", "i32[]", "Form a slice explicitly from backing storage instead");
+    }
+
+    [Fact]
     public void ReturnMismatchesExplainWhenExplicitConversionIsRequired()
     {
         var result = Compile(
@@ -111,16 +147,16 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
-    public void ConstDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
+    public void ConstArrayDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
     {
         var result = Compile(
             """
             module Demo
 
-            const i32[] View = { 1, 2, 3 };
+            const i32[3] Values = { 1, 2, 3 };
 
             fn void Run() {
-                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&View[0]);
+                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&Values[0]);
             }
             """);
 
@@ -129,16 +165,16 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
-    public void ConstDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
+    public void ConstArrayDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
     {
         var result = Compile(
             """
             module Demo
 
-            const i32[] View = { 1, 2, 3 };
+            const i32[3] Values = { 1, 2, 3 };
 
             fn void Run() {
-                stack i64 bits = (i64)(&View[0]);
+                stack i64 bits = (i64)(&Values[0]);
             }
             """);
 

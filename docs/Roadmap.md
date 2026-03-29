@@ -366,6 +366,28 @@ Goal: Stark can build real multi-file programs and expose a small but useful sta
 - [x] Package search paths beyond the local module directory
 - [x] Standard library packaging as a manifest-backed Stark package
 
+### Comparison Chains and Richer `switch`
+
+- [x] Chained comparison support
+  - [x] type-check comparison chains as adjacent pairwise comparisons
+  - [x] define and preserve left-to-right single-evaluation semantics for shared operands
+  - [x] lower chained comparisons into short-circuit boolean form without re-evaluating shared operands
+  - [x] add regression tests for mixed comparison operators, side-effect ordering, and floating-point edge cases
+- [x] Richer `switch` support with a performance-bounded subset
+  - [x] define the first supported text-switch subset for `ascii` and/or `unicode` scrutinees with literal cases
+  - [x] lower small text literal sets to ordered equality checks with normal short-circuit control flow
+  - [x] investigate larger literal-set lowering via length partitioning, byte/code-unit decision trees, or generated trie-like dispatch
+  - [x] decide whether richer non-text values beyond the scalar/raw-pointer subset belong in `switch` at all
+  - [x] keep unsupported rich-switch shapes as explicit diagnostics rather than MIR fallback
+
+### Slice Views And Array Initializers
+
+- [x] Reject slice-typed `{ ... }` initializers
+  - [x] define `{ ... }` as an array initializer only, not a slice literal
+  - [x] diagnose `T[] x = { ... }` and similar slice-target forms as compile-time errors
+  - [x] preserve explicit fixed-array-to-slice view formation as the supported path
+  - [x] update tests and examples to use explicit backing storage before forming slices
+
 
 ### Runtime Surface
 

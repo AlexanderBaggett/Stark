@@ -251,6 +251,140 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Next() {
+                return 1;
+            }
+
+            fn bool Run() {
+                return 0 < Next() < 3;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var run = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+
+        Assert.True(run.SupportsDirectCodeGeneration);
+        Assert.Single(
+            run.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Next" });
+        Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_next_1", StringComparison.Ordinal));
+        Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_false_0", StringComparison.Ordinal));
+        Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_join", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TextLiteralSwitchLowersToBranchBasedComparisonTree()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(ascii value, bool allow) {
+                switch (value) {
+                    case "ab":
+                        return 1;
+                    case "cd" when allow:
+                        return 2;
+                    default:
+                        return 3;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(function.Blocks, block => block.Label.Contains("textcmp_byte_0", StringComparison.Ordinal));
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldIndex: 1 });
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrLoadIndirectRValue { Type.Kind: StarkTypeKind.Integer });
+        Assert.Contains(function.Blocks, block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch && block.Terminator.ConditionText == "allow");
+    }
+
+    [Fact]
+    public void LargeTextLiteralSwitchLowersThroughLengthPartitioning()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(ascii value) {
+                switch (value) {
+                    case "":
+                        return 0;
+                    case "a":
+                        return 1;
+                    case "b":
+                        return 2;
+                    case "cc":
+                        return 3;
+                    case "dd":
+                        return 4;
+                    case "eee":
+                        return 5;
+                    case "fff":
+                        return 6;
+                    case "gggg":
+                        return 7;
+                    case "hhhh":
+                        return 8;
+                    case "iiiii":
+                        return 9;
+                    default:
+                        return 10;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_len_0", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_len_1", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_len_2", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("switch_len_5", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnicodeTextLiteralSwitchLowersSuccessfully()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(unicode value) {
+                switch (value) {
+                    case "\u03c0":
+                        return 1;
+                    case "\u03bb":
+                        return 2;
+                    default:
+                        return 3;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch && block.Terminator.Condition?.Type.Kind == StarkTypeKind.Unicode);
+    }
+
+    [Fact]
     public void ShortCircuitOrLowersToMultipleBlocksAndDirectCodegen()
     {
         var result = Compile(
