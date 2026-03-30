@@ -47,7 +47,7 @@ public sealed class ParserSmokeTests
             """
         },
         {
-            "rust style enum declarations",
+            "rust style enum declarations constructors and patterns",
             """
             module Variants
 
@@ -62,8 +62,19 @@ public sealed class ParserSmokeTests
                 Move { X: i32, Y: i32 },
             }
 
-            fn void Use(Result<i32, ascii> result, Token token) {
-                return;
+            fn i32 Use(Result<i32, ascii> result, Token token) {
+                stack Token end = Token.End;
+                stack Token integer = Token.Integer(5);
+                stack Token moveToken = Token.Move { X: 1, Y: 2 };
+
+                switch (token) {
+                    case Token.End:
+                        return 0;
+                    case Token.Integer(var value):
+                        return value;
+                    case Token.Move { X: var x, Y: var y }:
+                        return x + y;
+                }
             }
             """
         },

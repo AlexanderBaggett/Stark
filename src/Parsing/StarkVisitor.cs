@@ -519,6 +519,24 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitAggregatePatternSuffix([NotNull] StarkParser.AggregatePatternSuffixContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumNamedFieldPattern"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumNamedFieldPattern([NotNull] StarkParser.EnumNamedFieldPatternContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumNamedFieldPatternPayload"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumNamedFieldPatternPayload([NotNull] StarkParser.EnumNamedFieldPatternPayloadContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.namedPatternMember"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitNamedPatternMember([NotNull] StarkParser.NamedPatternMemberContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.expressionList"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -657,11 +675,29 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitPrimaryExpression([NotNull] StarkParser.PrimaryExpressionContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumConstructorExpression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumConstructorExpression([NotNull] StarkParser.EnumConstructorExpressionContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.objectCreationExpression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitObjectCreationExpression([NotNull] StarkParser.ObjectCreationExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumConstructorInitializer"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumConstructorInitializer([NotNull] StarkParser.EnumConstructorInitializerContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumConstructorMember"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumConstructorMember([NotNull] StarkParser.EnumConstructorMemberContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.argumentList"/>.
 	/// </summary>
@@ -710,5 +746,11 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitQualifiedName([NotNull] StarkParser.QualifiedNameContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.dottedName"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitDottedName([NotNull] StarkParser.DottedNameContext context);
 }
 } // namespace Stark.Parsing

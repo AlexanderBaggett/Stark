@@ -97,6 +97,16 @@ internal static class SyntaxModelFactory
             return;
         }
 
+        if (declaration.enumDeclaration() is { } enumDeclaration)
+        {
+            declarations.Add(new TopLevelDeclarationModel(
+                enumDeclaration.Identifier().GetText(),
+                DeclarationKind.Enum,
+                visibility,
+                null));
+            return;
+        }
+
         if (declaration.traitDeclaration() is { } traitDeclaration)
         {
             declarations.Add(new TopLevelDeclarationModel(

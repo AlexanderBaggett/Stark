@@ -32,7 +32,7 @@ public sealed class CompilerPipelineTests
         Assert.NotNull(ssaModule);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsaModule));
         Assert.NotNull(optimizedSsaModule);
-        Assert.Equal(18, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
+        Assert.Equal(19, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
     }
 
     [Fact]
@@ -335,6 +335,79 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedEnumsPreserveVariantShapesWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-enum-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public enum Token {
+                    End,
+                    Integer(i32),
+                    Move { X: i32, Y: i32 },
+                }
+
+                fn void Touch() {
+                    return;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded);
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run() {
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.Token", out var tokenEnum));
+            Assert.NotNull(tokenEnum);
+            Assert.Equal(DeclarationKind.Enum, tokenEnum.Kind);
+            Assert.Equal(3, tokenEnum.Variants.Count);
+            Assert.True(tokenEnum.Variants[0].IsUnit);
+            Assert.Equal("Integer", tokenEnum.Variants[1].Name);
+            Assert.Equal("i32", Assert.Single(tokenEnum.Variants[1].Fields).Type.DisplayName);
+            Assert.True(tokenEnum.Variants[2].UsesNamedFields);
+            Assert.Equal("X", tokenEnum.Variants[2].Fields[0].Name);
+            Assert.Equal("Y", tokenEnum.Variants[2].Fields[1].Name);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void LiteralTypingAndBodyCheckingProduceTypedArtifacts()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -366,6 +439,128 @@ public sealed class CompilerPipelineTests
         Assert.Equal("i32", typeCheckModel.Functions["Run"].ReturnType.DisplayName);
         Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "42" && literal.Type.DisplayName == "i8[42 42]");
         Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "null" && literal.Type.Kind == StarkTypeKind.Null);
+    }
+
+    [Fact]
+    public void EnumDeclarationsFlowIntoSyntaxAndTypeModels()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Enums
+
+            public enum Result<T, E> {
+                Ok(T),
+                Err(E),
+            }
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn void Run() {
+                return;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+        Assert.Contains(syntaxModel.Declarations, declaration => declaration.Kind == DeclarationKind.Enum && declaration.Name == "Result");
+        Assert.Contains(syntaxModel.Declarations, declaration => declaration.Kind == DeclarationKind.Enum && declaration.Name == "Token");
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.TryGetValue("Result", out var resultEnum));
+        Assert.NotNull(resultEnum);
+        Assert.Equal(DeclarationKind.Enum, resultEnum.Kind);
+        Assert.Equal(2, resultEnum.Variants.Count);
+        Assert.Equal("Ok", resultEnum.Variants[0].Name);
+        Assert.Equal("T", Assert.Single(resultEnum.Variants[0].Fields).Type.DisplayName);
+
+        Assert.True(typeCheckModel.NamedTypes.TryGetValue("Token", out var tokenEnum));
+        Assert.NotNull(tokenEnum);
+        Assert.Equal(DeclarationKind.Enum, tokenEnum.Kind);
+        Assert.Equal(3, tokenEnum.Variants.Count);
+        Assert.True(tokenEnum.Variants[0].IsUnit);
+        Assert.False(tokenEnum.Variants[1].UsesNamedFields);
+        Assert.Equal("i32", Assert.Single(tokenEnum.Variants[1].Fields).Type.DisplayName);
+        Assert.True(tokenEnum.Variants[2].UsesNamedFields);
+        Assert.Equal("X", tokenEnum.Variants[2].Fields[0].Name);
+        Assert.Equal("Y", tokenEnum.Variants[2].Fields[1].Name);
+    }
+
+    [Fact]
+    public void InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipeline()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Enums
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn Token Make(i32 value) {
+                if (value == 0) {
+                    return Token.End;
+                }
+
+                if (value == 1) {
+                    return Token.Integer(7);
+                }
+
+                return Token.Move { X: value, Y: 2 };
+            }
+
+            fn Token Echo(Token token) {
+                return token;
+            }
+
+            fn i32 Run() {
+                stack Token first = Token.Integer(5);
+                stack Token second = Token.Move { X: 1, Y: 2 };
+                stack Token third = Make(0);
+                stack Token fourth = Echo(second);
+                return 0;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.EnumLayoutModel, out EnumLayoutModel? enumLayoutModel));
+        Assert.NotNull(enumLayoutModel);
+        Assert.True(enumLayoutModel.Layouts.TryGetValue("Token", out var tokenLayout));
+        Assert.NotNull(tokenLayout);
+        Assert.Equal(EnumLayoutKind.DirectTag, tokenLayout.Kind);
+        Assert.Equal("$tag", tokenLayout.TagField.Name);
+        Assert.Equal(4, tokenLayout.OrderedFields.Count);
+        Assert.Equal("$Integer_0", tokenLayout.OrderedFields[1].Name);
+        Assert.Equal("$Move_X", tokenLayout.OrderedFields[2].Name);
+        Assert.Equal("$Move_Y", tokenLayout.OrderedFields[3].Name);
+
+        Assert.True(tokenLayout.TryGetVariant("End", out var endVariant));
+        Assert.Equal(0, endVariant.TagValue);
+        Assert.Empty(endVariant.Fields);
+
+        Assert.True(tokenLayout.TryGetVariant("Integer", out var integerVariant));
+        Assert.Equal(1, integerVariant.TagValue);
+        Assert.Equal("$Integer_0", Assert.Single(integerVariant.Fields).StorageFieldName);
+
+        Assert.True(tokenLayout.TryGetVariant("Move", out var moveVariant));
+        Assert.Equal(2, moveVariant.TagValue);
+        Assert.Equal("X", moveVariant.Fields[0].SourceFieldName);
+        Assert.Equal("Y", moveVariant.Fields[1].SourceFieldName);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+        Assert.Contains("%Token = type {", llvmModule.Text, StringComparison.Ordinal);
     }
 
     [Fact]

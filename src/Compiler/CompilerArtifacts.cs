@@ -13,6 +13,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<SymbolCatalog> SymbolCatalog = new("symbols.catalog");
     public static readonly ArtifactKey<FunctionEffectModel> FunctionEffects = new("semantics.function-effects");
     public static readonly ArtifactKey<TypeCheckModel> TypeCheckModel = new("typing.model");
+    public static readonly ArtifactKey<EnumLayoutModel> EnumLayoutModel = new("typing.enum-layout");
     public static readonly ArtifactKey<SemanticValidationModel> SemanticValidation = new("semantics.validation");
     public static readonly ArtifactKey<OwnershipValidationModel> OwnershipValidation = new("semantics.ownership");
     public static readonly ArtifactKey<HighLevelIrModule> HighLevelIr = new("lowering.hir");
@@ -28,6 +29,7 @@ public enum DeclarationKind
     Function,
     Struct,
     Record,
+    Enum,
     Trait,
     Doctrine,
     GlobalConstant,
@@ -383,11 +385,25 @@ public static class StarkTypeSymbols
 
 public sealed record FieldSymbol(string Name, StarkTypeSymbol Type);
 
+public sealed record EnumVariantFieldSymbol(
+    int Position,
+    string? Name,
+    StarkTypeSymbol Type);
+
+public sealed record EnumVariantSymbol(
+    string Name,
+    bool UsesNamedFields,
+    IReadOnlyList<EnumVariantFieldSymbol> Fields)
+{
+    public bool IsUnit => Fields.Count == 0;
+}
+
 public sealed record NamedTypeSymbol(
     string Name,
     DeclarationKind Kind,
     IReadOnlyDictionary<string, FieldSymbol> Fields,
-    IReadOnlyList<FieldSymbol> OrderedFields)
+    IReadOnlyList<FieldSymbol> OrderedFields,
+    IReadOnlyList<EnumVariantSymbol>? EnumVariants = null)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -408,6 +424,57 @@ public sealed record NamedTypeSymbol(
         }
 
         return index >= 0;
+    }
+
+    public IReadOnlyList<EnumVariantSymbol> Variants => EnumVariants ?? [];
+
+    public bool TryGetVariant(string name, out EnumVariantSymbol variant, out int index)
+    {
+        var variants = Variants;
+        for (var candidate = 0; candidate < variants.Count; candidate++)
+        {
+            if (string.Equals(variants[candidate].Name, name, StringComparison.Ordinal))
+            {
+                variant = variants[candidate];
+                index = candidate;
+                return true;
+            }
+        }
+
+        variant = null!;
+        index = -1;
+        return false;
+    }
+}
+
+public enum EnumLayoutKind
+{
+    DirectTag
+}
+
+public sealed record EnumVariantLayoutFieldSymbol(
+    int SourcePosition,
+    string? SourceFieldName,
+    string StorageFieldName,
+    int StorageFieldIndex,
+    StarkTypeSymbol Type);
+
+public sealed record EnumVariantLayoutSymbol(
+    string Name,
+    int TagValue,
+    bool UsesNamedFields,
+    IReadOnlyList<EnumVariantLayoutFieldSymbol> Fields);
+
+public sealed record EnumLayoutSymbol(
+    string EnumName,
+    EnumLayoutKind Kind,
+    FieldSymbol TagField,
+    IReadOnlyList<FieldSymbol> OrderedFields,
+    IReadOnlyDictionary<string, EnumVariantLayoutSymbol> Variants)
+{
+    public bool TryGetVariant(string name, out EnumVariantLayoutSymbol variant)
+    {
+        return Variants.TryGetValue(name, out variant!);
     }
 }
 
@@ -463,6 +530,10 @@ public sealed record TypeCheckModel(
     IReadOnlyDictionary<string, TypedGlobalSymbol> Globals,
     IReadOnlyList<LiteralTypingRecord> Literals,
     IReadOnlyList<ObjectCreationTypingRecord> ObjectCreations);
+
+public sealed record EnumLayoutModel(
+    string ModuleName,
+    IReadOnlyDictionary<string, EnumLayoutSymbol> Layouts);
 
 public enum AbiParameterKind
 {
@@ -526,14 +597,16 @@ internal static class ConcreteTypeLayoutHelper
 {
     public static ConcreteTypeLayout? TryGetConcreteTypeLayout(
         StarkTypeSymbol type,
-        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts = null)
     {
-        return TryGetConcreteTypeLayout(type, namedTypes, new HashSet<string>(StringComparer.Ordinal));
+        return TryGetConcreteTypeLayout(type, namedTypes, enumLayouts, new HashSet<string>(StringComparer.Ordinal));
     }
 
     private static ConcreteTypeLayout? TryGetConcreteTypeLayout(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
         ISet<string> activeNamedTypes)
     {
         var concreteType = type with
@@ -552,11 +625,17 @@ internal static class ConcreteTypeLayoutHelper
             StarkTypeKind.Float when concreteType.BitWidth is int floatWidth =>
                 TryGetScalarLayout((floatWidth + 7) / 8),
             StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
-                TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, activeNamedTypes),
+                TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, activeNamedTypes),
             StarkTypeKind.Named when concreteType.NamedType is not null
                                      && namedTypes.TryGetValue(concreteType.NamedType, out var namedType)
                                      && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record =>
-                TryGetNamedTypeLayout(namedType, namedTypes, activeNamedTypes),
+                TryGetNamedTypeLayout(namedType, namedTypes, enumLayouts, activeNamedTypes),
+            StarkTypeKind.Named when concreteType.NamedType is not null
+                                     && namedTypes.TryGetValue(concreteType.NamedType, out var enumType)
+                                     && enumType.Kind == DeclarationKind.Enum
+                                     && enumLayouts is not null
+                                     && enumLayouts.TryGetValue(concreteType.NamedType, out var enumLayout) =>
+                TryGetEnumTypeLayout(enumLayout, namedTypes, enumLayouts, activeNamedTypes),
             _ => null
         };
     }
@@ -565,9 +644,10 @@ internal static class ConcreteTypeLayoutHelper
         StarkTypeSymbol elementType,
         int fixedLength,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
         ISet<string> activeNamedTypes)
     {
-        var elementLayout = TryGetConcreteTypeLayout(elementType, namedTypes, activeNamedTypes);
+        var elementLayout = TryGetConcreteTypeLayout(elementType, namedTypes, enumLayouts, activeNamedTypes);
         if (elementLayout is null)
         {
             return null;
@@ -587,6 +667,7 @@ internal static class ConcreteTypeLayoutHelper
     private static ConcreteTypeLayout? TryGetNamedTypeLayout(
         NamedTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
         ISet<string> activeNamedTypes)
     {
         if (!activeNamedTypes.Add(type.Name))
@@ -601,7 +682,7 @@ internal static class ConcreteTypeLayoutHelper
 
             foreach (var field in type.OrderedFields)
             {
-                var fieldLayout = TryGetConcreteTypeLayout(field.Type, namedTypes, activeNamedTypes);
+                var fieldLayout = TryGetConcreteTypeLayout(field.Type, namedTypes, enumLayouts, activeNamedTypes);
                 if (fieldLayout is null)
                 {
                     return null;
@@ -622,6 +703,48 @@ internal static class ConcreteTypeLayoutHelper
         finally
         {
             activeNamedTypes.Remove(type.Name);
+        }
+    }
+
+    private static ConcreteTypeLayout? TryGetEnumTypeLayout(
+        EnumLayoutSymbol layout,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        if (!activeNamedTypes.Add(layout.EnumName))
+        {
+            return null;
+        }
+
+        try
+        {
+            var sizeBytes = 0;
+            var alignmentBytes = 1;
+
+            foreach (var field in layout.OrderedFields)
+            {
+                var fieldLayout = TryGetConcreteTypeLayout(field.Type, namedTypes, enumLayouts, activeNamedTypes);
+                if (fieldLayout is null)
+                {
+                    return null;
+                }
+
+                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
+                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+            }
+
+            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+        finally
+        {
+            activeNamedTypes.Remove(layout.EnumName);
         }
     }
 

@@ -133,6 +133,328 @@ public sealed class OwnershipRoadmapRegressionTests
     }
 
     [Fact]
+    public void EnumWithOnlyCopyPayloadsDoesNotRecordImplicitDropAtScopeExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+            }
+
+            fn i32 Run(bool choose) {
+                stack mut Token token;
+
+                if (choose) {
+                    token = Token.End;
+                } else {
+                    token = Token.Integer(1);
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Empty(ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void EnumWithOnlyCopyPayloadsMayRemainUninitializedAtScopeExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+            }
+
+            fn i32 Run(bool choose) {
+                stack mut Token token;
+
+                if (choose) {
+                    token = Token.End;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Empty(ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void TupleEnumConstructorCallsRemainOwnedAcrossScopeExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Text(ascii),
+            }
+
+            fn i32 Run() {
+                stack Token token = Token.Text("hello");
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("token.Text", ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void ConditionalEnumConstructorsOnlyDropOwnedCases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Text(ascii),
+            }
+
+            fn i32 Run(bool choose) {
+                stack Token token = choose ? Token.Text("hello") : Token.End;
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("token.Text", ownership.Functions["Run"].ImplicitDrops);
+        Assert.DoesNotContain("token.End", ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void EnumInitializedOnOnlyOnePathWithOwnedPayloadIsRejectedAtScopeExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                Empty,
+                Text(ascii),
+            }
+
+            fn i32 Run(bool choose) {
+                stack mut Token token;
+
+                if (choose) {
+                    token = Token.Text("hello");
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "Drop error", "cannot drop 'token'", "enum values must be initialized on every path");
+    }
+
+    [Fact]
+    public void OwnedEnumPayloadCaptureLeavesNoDropWhenOnlyUnitCaseRemains()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            enum Token {
+                Empty,
+                Full(Box),
+            }
+
+            fn void Consume(Box box) {
+                return;
+            }
+
+            fn i32 Run(bool choose) {
+                stack mut Token token = choose ? Token.Full(new Box() { Value = 1 }) : Token.Empty;
+
+                switch (token) {
+                    case Token.Full(var box):
+                        Consume(box);
+                    case Token.Empty:
+                        ;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("token", ownership.Functions["Run"].Moves);
+        Assert.Empty(ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void OwnedEnumPayloadCaptureCanBeReinitializedBeforeScopeExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            enum Token {
+                Empty,
+                Full(Box),
+            }
+
+            fn void Consume(Box box) {
+                return;
+            }
+
+            fn i32 Run(bool choose) {
+                stack mut Token token = choose ? Token.Full(new Box() { Value = 1 }) : Token.Empty;
+
+                switch (token) {
+                    case Token.Full(var box):
+                        Consume(box);
+                        token = Token.Empty;
+                    case Token.Empty:
+                        ;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("token", ownership.Functions["Run"].Moves);
+        Assert.Empty(ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void OwnedEnumPayloadCaptureCannotMoveOutOfFieldPlace()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            enum Token {
+                Empty,
+                Full(Box),
+            }
+
+            struct Wrapper {
+                Token Value;
+            }
+
+            fn void Consume(Box box) {
+                return;
+            }
+
+            fn i32 Run() {
+                stack Wrapper wrapper = new Wrapper() { Value = Token.Full(new Box() { Value = 1 }) };
+
+                switch (wrapper.Value) {
+                    case Token.Full(var box):
+                        Consume(box);
+                    case Token.Empty:
+                        ;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4203", "Cannot move out of field or indexed place of type 'Token'");
+    }
+
+    [Fact]
+    public void ReassigningOwnedEnumDropsOnlyThePreviousOwnedCase()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Text(ascii),
+            }
+
+            fn i32 Run() {
+                stack mut Token token = Token.Text("hello");
+                token = Token.End;
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("token.Text", ownership.Functions["Run"].ImplicitDrops);
+        Assert.DoesNotContain("token.End", ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
+    public void SwitchingOnEnumParameterNarrowsActiveCaseForDropAnalysis()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                Empty,
+                Text(ascii),
+            }
+
+            fn void Consume(ascii text) {
+                return;
+            }
+
+            fn i32 Run(Token token) {
+                switch (token) {
+                    case Token.Text(var text):
+                        Consume(text);
+                    case Token.Empty:
+                        ;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Contains("token", ownership.Functions["Run"].Moves);
+        Assert.Empty(ownership.Functions["Run"].ImplicitDrops);
+    }
+
+    [Fact]
     public void UninitializedOwnedLocalIsNotDroppedAtScopeExit()
     {
         var result = Compile(

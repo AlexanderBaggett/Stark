@@ -15,6 +15,7 @@ public static class DefaultCompilerPipeline
             .Add(new BuildSymbolCatalogPass())
             .Add(new DeriveFunctionEffectsPass())
             .Add(new TypeCheckPass())
+            .Add(new EnumLayoutPass())
             .Add(new SemanticValidationPass())
             .Add(new OwnershipValidationPass())
             .Add(new LowerToHighLevelIrPass())
@@ -446,7 +447,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["parse", "syntax-model", "module-graph", "function-effects", "type-check"];
+        public IReadOnlyList<string> Dependencies => ["parse", "syntax-model", "module-graph", "function-effects", "type-check", "enum-layout"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -455,8 +456,9 @@ public static class DefaultCompilerPipeline
             var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
 
-            var validationModel = new SemanticValidator(context, parseResult, syntaxModel, moduleGraph, effectModel, typeModel).Validate();
+            var validationModel = new SemanticValidator(context, parseResult, syntaxModel, moduleGraph, effectModel, typeModel, enumLayoutModel).Validate();
             context.Artifacts.Set(CompilerArtifactKeys.SemanticValidation, validationModel);
         }
     }
@@ -526,15 +528,16 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["parse", "module-graph", "type-check", "lower-hir"];
+        public IReadOnlyList<string> Dependencies => ["parse", "module-graph", "type-check", "enum-layout", "lower-hir"];
 
         public void Execute(CompilerPassContext context)
         {
             var parseResult = context.Artifacts.GetRequired(CompilerArtifactKeys.ParseResult);
             var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
-            var mir = new MidLevelIrLowerer(context, parseResult, moduleGraph, typeModel).Lower(hir);
+            var mir = new MidLevelIrLowerer(context, parseResult, moduleGraph, typeModel, enumLayoutModel).Lower(hir);
             context.Artifacts.Set(CompilerArtifactKeys.MidLevelIr, mir);
         }
     }
@@ -568,7 +571,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "function-effects", "type-check", "const-prop", "lower-abi"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "function-effects", "type-check", "enum-layout", "const-prop", "lower-abi"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -577,6 +580,7 @@ public static class DefaultCompilerPipeline
             var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var llvmModule = new LlvmIrEmitter(
@@ -586,6 +590,7 @@ public static class DefaultCompilerPipeline
                 loadedModules,
                 effectModel,
                 typeModel,
+                enumLayoutModel,
                 abiModel,
                 ssa,
                 context.Options.TargetInfo,
@@ -667,6 +672,23 @@ public static class DefaultCompilerPipeline
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, effectModel, context.Options).Lower();
             context.Artifacts.Set(CompilerArtifactKeys.AbiModel, abiModel);
+        }
+    }
+
+    private sealed class EnumLayoutPass : ICompilerPass
+    {
+        public string Id => "enum-layout";
+
+        public CompilerPhase Phase => CompilerPhase.Typing;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["type-check"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            context.Artifacts.Set(CompilerArtifactKeys.EnumLayoutModel, EnumLayoutBuilder.Build(typeModel));
         }
     }
 }

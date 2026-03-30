@@ -9,10 +9,12 @@ internal sealed class MidLevelIrLowerer(
     CompilerPassContext context,
     ParseResult parseResult,
     ModuleGraph moduleGraph,
-    TypeCheckModel typeModel)
+    TypeCheckModel typeModel,
+    EnumLayoutModel enumLayoutModel)
 {
     private readonly ParseResult _parseResult = parseResult;
     private readonly TypeCheckModel _typeModel = typeModel;
+    private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionsByName = DeclaredFunctionSyntaxCollector.Collect(parseResult)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
     private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
@@ -49,7 +51,7 @@ internal sealed class MidLevelIrLowerer(
                 Blocks: []);
         }
 
-        var builder = new FunctionMirBuilder(function, _typeModel, _typeResolver, _literalTypes, _objectCreationConstructors);
+        var builder = new FunctionMirBuilder(function, _typeModel, _enumLayoutModel, _typeResolver, _literalTypes, _objectCreationConstructors);
         builder.Lower(body);
 
         return new MidLevelIrFunction(
@@ -84,6 +86,7 @@ internal sealed class MidLevelIrLowerer(
 
         private sealed record LowerableAggregateFieldPattern(
             string FieldName,
+            string StorageFieldName,
             int FieldIndex,
             StarkTypeSymbol FieldType,
             AggregatePatternFieldKind Kind,
@@ -94,6 +97,7 @@ internal sealed class MidLevelIrLowerer(
 
         private sealed record LowerableAggregatePattern(
             string TypeName,
+            string? EnumVariantName,
             IReadOnlyList<LowerableAggregateFieldPattern> FieldPatterns,
             string? WholeCaptureName);
 
@@ -157,6 +161,7 @@ internal sealed class MidLevelIrLowerer(
 
         private readonly HighLevelIrFunction _function;
         private readonly TypeCheckModel _typeModel;
+        private readonly EnumLayoutModel _enumLayoutModel;
         private readonly StarkTypeResolver _typeResolver;
         private readonly IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
         private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
@@ -172,12 +177,14 @@ internal sealed class MidLevelIrLowerer(
         public FunctionMirBuilder(
             HighLevelIrFunction function,
             TypeCheckModel typeModel,
+            EnumLayoutModel enumLayoutModel,
             StarkTypeResolver typeResolver,
             IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> literalTypes,
             IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> objectCreationConstructors)
         {
             _function = function;
             _typeModel = typeModel;
+            _enumLayoutModel = enumLayoutModel;
             _typeResolver = typeResolver;
             _literalTypes = literalTypes;
             _objectCreationConstructors = objectCreationConstructors;
@@ -1067,6 +1074,65 @@ internal sealed class MidLevelIrLowerer(
         {
             parsedAggregatePattern = null;
 
+            var patternName = aggregatePattern.simpleType().GetText();
+            if (TryResolveEnumCaseReference(patternName, out var enumType, out _, out var enumVariant))
+            {
+                if (enumVariant.UsesNamedFields)
+                {
+                    return false;
+                }
+
+                var enumSuffix = aggregatePattern.aggregatePatternSuffix();
+                if (enumVariant.Fields.Count == 0)
+                {
+                    if (enumSuffix is not null)
+                    {
+                        return false;
+                    }
+
+                    parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, [], WholeCaptureName: null);
+                    return true;
+                }
+
+                if (enumSuffix is null)
+                {
+                    return false;
+                }
+
+                if (enumSuffix.Identifier() is { } enumCapture)
+                {
+                    parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, [], enumCapture.GetText());
+                    return true;
+                }
+
+                var enumFieldPatterns = enumSuffix.pattern();
+                if (enumFieldPatterns.Length != enumVariant.Fields.Count)
+                {
+                    return false;
+                }
+
+                var parsedEnumFieldPatterns = new LowerableAggregateFieldPattern[enumFieldPatterns.Length];
+                for (var index = 0; index < enumFieldPatterns.Length; index++)
+                {
+                    var field = enumVariant.Fields[index];
+                    if (!TryParseStructuredFieldPattern(
+                            enumFieldPatterns[index],
+                            field.SourceFieldName ?? field.SourcePosition.ToString(),
+                            field.StorageFieldName,
+                            field.StorageFieldIndex,
+                            field.Type,
+                            out var parsedFieldPattern))
+                    {
+                        return false;
+                    }
+
+                    parsedEnumFieldPatterns[index] = parsedFieldPattern;
+                }
+
+                parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, parsedEnumFieldPatterns, WholeCaptureName: null);
+                return true;
+            }
+
             var patternType = _typeResolver.ResolveSimpleType(aggregatePattern.simpleType(), currentModuleName: _typeModel.ModuleName);
             if (patternType.Kind != StarkTypeKind.Named
                 || patternType.NamedType is null
@@ -1078,13 +1144,13 @@ internal sealed class MidLevelIrLowerer(
             var suffix = aggregatePattern.aggregatePatternSuffix();
             if (suffix is null)
             {
-                parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, [], WholeCaptureName: null);
+                parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, EnumVariantName: null, [], WholeCaptureName: null);
                 return true;
             }
 
             if (suffix.Identifier() is { } capture)
             {
-                parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, [], capture.GetText());
+                parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, EnumVariantName: null, [], capture.GetText());
                 return true;
             }
 
@@ -1098,76 +1164,168 @@ internal sealed class MidLevelIrLowerer(
             for (var index = 0; index < fieldPatterns.Length; index++)
             {
                 var field = namedType.OrderedFields[index];
-                var pattern = fieldPatterns[index];
-
-                if (pattern.DISCARD() is not null)
+                if (!TryParseStructuredFieldPattern(fieldPatterns[index], field.Name, field.Name, index, field.Type, out var parsedFieldPattern))
                 {
-                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
-                        field.Name,
-                        index,
-                        field.Type,
-                        AggregatePatternFieldKind.Discard,
-                        pattern.GetText(),
-                        Literal: null,
-                        CaptureName: null,
-                        NestedPattern: null);
-                    continue;
+                    return false;
                 }
 
-                if (pattern.VAR() is not null)
-                {
-                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
-                        field.Name,
-                        index,
-                        field.Type,
-                        AggregatePatternFieldKind.Capture,
-                        pattern.GetText(),
-                        Literal: null,
-                        CaptureName: pattern.Identifier()?.GetText(),
-                        NestedPattern: null);
-                    continue;
-                }
+                parsedFieldPatterns[index] = parsedFieldPattern;
+            }
 
-                if (pattern.literal() is { } literal)
-                {
-                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
-                        field.Name,
-                        index,
-                        field.Type,
-                        AggregatePatternFieldKind.Literal,
-                        literal.GetText(),
-                        literal,
-                        CaptureName: null,
-                        NestedPattern: null);
-                    continue;
-                }
+            parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, EnumVariantName: null, parsedFieldPatterns, WholeCaptureName: null);
+            return true;
+        }
 
-                if (pattern.aggregatePattern() is { } nestedAggregatePattern)
-                {
-                    if (!TryParseAggregatePattern(nestedAggregatePattern, out var parsedNestedPattern)
-                        || parsedNestedPattern is null
-                        || parsedNestedPattern.WholeCaptureName is not null)
-                    {
-                        return false;
-                    }
+        private bool TryParseEnumNamedFieldPattern(StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern, out LowerableAggregatePattern? parsedAggregatePattern)
+        {
+            parsedAggregatePattern = null;
 
-                    parsedFieldPatterns[index] = new LowerableAggregateFieldPattern(
-                        field.Name,
-                        index,
-                        field.Type,
-                        AggregatePatternFieldKind.Nested,
-                        nestedAggregatePattern.GetText(),
-                        Literal: null,
-                        CaptureName: null,
-                        NestedPattern: parsedNestedPattern);
-                    continue;
-                }
-
+            var caseName = enumNamedFieldPattern.dottedName().GetText();
+            if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var enumVariant)
+                || !enumVariant.UsesNamedFields)
+            {
                 return false;
             }
 
-            parsedAggregatePattern = new LowerableAggregatePattern(patternType.NamedType, parsedFieldPatterns, WholeCaptureName: null);
+            var members = enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember();
+            if (members.Length != enumVariant.Fields.Count)
+            {
+                return false;
+            }
+
+            var parsedFieldPatterns = new LowerableAggregateFieldPattern[enumVariant.Fields.Count];
+            var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var member in members)
+            {
+                var memberName = member.Identifier().GetText();
+                var field = enumVariant.Fields.FirstOrDefault(candidate => string.Equals(candidate.SourceFieldName, memberName, StringComparison.Ordinal));
+                if (field is null
+                    || field.SourceFieldName is null
+                    || !seenMembers.Add(memberName)
+                    || !TryParseStructuredFieldPattern(
+                        member.pattern(),
+                        field.SourceFieldName,
+                        field.StorageFieldName,
+                        field.StorageFieldIndex,
+                        field.Type,
+                        out var parsedFieldPattern))
+                {
+                    return false;
+                }
+
+                parsedFieldPatterns[field.SourcePosition] = parsedFieldPattern;
+            }
+
+            if (seenMembers.Count != enumVariant.Fields.Count)
+            {
+                return false;
+            }
+
+            parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, parsedFieldPatterns, WholeCaptureName: null);
             return true;
+        }
+
+        private bool TryParseStructuredFieldPattern(
+            StarkParser.PatternContext pattern,
+            string fieldName,
+            string storageFieldName,
+            int fieldIndex,
+            StarkTypeSymbol fieldType,
+            out LowerableAggregateFieldPattern parsedFieldPattern)
+        {
+            if (pattern.DISCARD() is not null)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Discard,
+                    pattern.GetText(),
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: null);
+                return true;
+            }
+
+            if (pattern.VAR() is not null)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Capture,
+                    pattern.GetText(),
+                    Literal: null,
+                    CaptureName: pattern.Identifier()?.GetText(),
+                    NestedPattern: null);
+                return true;
+            }
+
+            if (pattern.literal() is { } literal)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Literal,
+                    literal.GetText(),
+                    literal,
+                    CaptureName: null,
+                    NestedPattern: null);
+                return true;
+            }
+
+            if (pattern.enumNamedFieldPattern() is { } nestedEnumNamedFieldPattern)
+            {
+                if (!TryParseEnumNamedFieldPattern(nestedEnumNamedFieldPattern, out var parsedNestedPattern)
+                    || parsedNestedPattern is null
+                    || parsedNestedPattern.WholeCaptureName is not null)
+                {
+                    parsedFieldPattern = default!;
+                    return false;
+                }
+
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Nested,
+                    nestedEnumNamedFieldPattern.GetText(),
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: parsedNestedPattern);
+                return true;
+            }
+
+            if (pattern.aggregatePattern() is { } nestedAggregatePattern)
+            {
+                if (!TryParseAggregatePattern(nestedAggregatePattern, out var parsedNestedPattern)
+                    || parsedNestedPattern is null
+                    || parsedNestedPattern.WholeCaptureName is not null)
+                {
+                    parsedFieldPattern = default!;
+                    return false;
+                }
+
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Nested,
+                    nestedAggregatePattern.GetText(),
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: parsedNestedPattern);
+                return true;
+            }
+
+            parsedFieldPattern = default!;
+            return false;
         }
 
         private bool TryParseLowerableSwitchSections(
@@ -1227,6 +1385,25 @@ internal sealed class MidLevelIrLowerer(
                             IsMatchAll: true,
                             CaptureName: pattern.Identifier()?.GetText(),
                             AggregatePattern: null));
+                        continue;
+                    }
+
+                    if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+                    {
+                        if (!TryParseEnumNamedFieldPattern(enumNamedFieldPattern, out var parsedEnumNamedFieldPattern)
+                            || parsedEnumNamedFieldPattern is null)
+                        {
+                            return false;
+                        }
+
+                        labels.Add(new LowerableSwitchLabel(
+                            enumNamedFieldPattern.GetText(),
+                            Literal: null,
+                            GuardExpression: label.whenClause()?.expression(),
+                            IsDefault: false,
+                            IsMatchAll: false,
+                            CaptureName: null,
+                            AggregatePattern: parsedEnumNamedFieldPattern));
                         continue;
                     }
 
@@ -1408,6 +1585,49 @@ internal sealed class MidLevelIrLowerer(
             string pathTag)
         {
             var fieldPatterns = aggregatePattern.FieldPatterns;
+            if (aggregatePattern.EnumVariantName is { } enumVariantName)
+            {
+                if (!_enumLayoutModel.Layouts.TryGetValue(aggregatePattern.TypeName, out var enumLayout)
+                    || !enumLayout.TryGetVariant(enumVariantName, out var enumVariant))
+                {
+                    return false;
+                }
+
+                BasicBlockBuilder? payloadEntryBlock = null;
+                var successAfterTag = successTarget;
+                if (fieldPatterns.Count != 0)
+                {
+                    payloadEntryBlock = CreateBlock($"switch_enum_match_{pathTag}");
+                    successAfterTag = payloadEntryBlock.Id;
+                }
+
+                var tagValue = LowerKnownFieldAccess(switchValue, enumLayout.TagField.Name, fieldIndex: 0, enumLayout.TagField.Type, "$tag");
+                if (tagValue is null)
+                {
+                    return false;
+                }
+
+                var expectedTag = new MidLevelIrIntegerConstantOperand(new BigInteger(enumVariant.TagValue), enumLayout.TagField.Type);
+                var condition = EmitEqualityComparison(tagValue, expectedTag, $"switch {switchValue.Text} is {aggregatePattern.TypeName}.{enumVariantName}");
+                if (condition is null)
+                {
+                    return false;
+                }
+
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [successAfterTag, failureTarget],
+                    ConditionText: $"{aggregatePattern.TypeName}.{enumVariantName}",
+                    Condition: condition);
+
+                if (fieldPatterns.Count == 0)
+                {
+                    return true;
+                }
+
+                CurrentBlock = payloadEntryBlock!;
+            }
+
             if (fieldPatterns.Count == 0)
             {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [successTarget]);
@@ -1433,7 +1653,7 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                var fieldValue = LowerFieldAccess(switchValue, fieldPattern.FieldName);
+                var fieldValue = LowerKnownFieldAccess(switchValue, fieldPattern.StorageFieldName, fieldPattern.FieldIndex, fieldPattern.FieldType, fieldPattern.FieldName);
                 if (fieldValue is null)
                 {
                     return false;
@@ -2039,8 +2259,24 @@ internal sealed class MidLevelIrLowerer(
 
                 if (postfixPart.argumentList() is { } argumentList)
                 {
-                    if (currentName is null
-                        || !TryBuildCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var directCall))
+                    if (currentName is null)
+                    {
+                        return false;
+                    }
+
+                    if (TryLowerEnumConstructorCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var enumConstructorValue))
+                    {
+                        currentValue = enumConstructorValue;
+                        currentName = null;
+                        if (currentValue is null)
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (!TryBuildCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var directCall))
                     {
                         return false;
                     }
@@ -2203,6 +2439,11 @@ internal sealed class MidLevelIrLowerer(
                 return ResolveNamedOperand(identifier.GetText());
             }
 
+            if (expression.enumConstructorExpression() is { } enumConstructorExpression)
+            {
+                return LowerEnumConstructorExpression(enumConstructorExpression, expectedType);
+            }
+
             if (expression.qualifiedName() is { } qualifiedName)
             {
                 return ResolveNamedOperand(qualifiedName.GetText());
@@ -2363,6 +2604,158 @@ internal sealed class MidLevelIrLowerer(
             return current;
         }
 
+        private MidLevelIrOperand? LowerEnumConstructorExpression(
+            StarkParser.EnumConstructorExpressionContext expression,
+            StarkTypeSymbol? expectedType)
+        {
+            var constructorName = expression.dottedName().GetText();
+            if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var layout, out var variant)
+                || !variant.UsesNamedFields)
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            var memberValues = new Dictionary<string, MidLevelIrOperand>(StringComparer.Ordinal);
+            foreach (var member in expression.enumConstructorInitializer().enumConstructorMember())
+            {
+                var memberName = member.Identifier().GetText();
+                var layoutField = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.SourceFieldName, memberName, StringComparison.Ordinal));
+                if (layoutField is null)
+                {
+                    MarkUnsupported();
+                    return null;
+                }
+
+                var value = LowerExpressionToOperand(member.expression(), layoutField.Type);
+                if (value is null)
+                {
+                    return null;
+                }
+
+                var coerced = CoerceOperand(value, layoutField.Type);
+                if (coerced is null)
+                {
+                    return null;
+                }
+
+                memberValues[memberName] = coerced;
+            }
+
+            var orderedValues = new MidLevelIrOperand[variant.Fields.Count];
+            for (var index = 0; index < variant.Fields.Count; index++)
+            {
+                var field = variant.Fields[index];
+                if (field.SourceFieldName is null
+                    || !memberValues.TryGetValue(field.SourceFieldName, out var value))
+                {
+                    MarkUnsupported();
+                    return null;
+                }
+
+                orderedValues[index] = value;
+            }
+
+            var lowered = LowerDirectTagEnumConstructor(enumType, layout, variant, orderedValues, expression.GetText());
+            return lowered is null || expectedType is null ? lowered : CoerceOperand(lowered, expectedType);
+        }
+
+        private bool TryLowerEnumConstructorCall(
+            string constructorName,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrOperand? value)
+        {
+            value = null;
+
+            if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var layout, out var variant)
+                || variant.UsesNamedFields)
+            {
+                return false;
+            }
+
+            if (variant.Fields.Count != arguments.argument().Length)
+            {
+                MarkUnsupported();
+                return true;
+            }
+
+            var loweredArguments = new MidLevelIrOperand[variant.Fields.Count];
+            for (var index = 0; index < variant.Fields.Count; index++)
+            {
+                var field = variant.Fields[index];
+                var argument = LowerExpressionToOperand(arguments.argument(index).expression(), field.Type);
+                if (argument is null)
+                {
+                    value = null;
+                    return true;
+                }
+
+                var coerced = CoerceOperand(argument, field.Type);
+                if (coerced is null)
+                {
+                    value = null;
+                    return true;
+                }
+
+                loweredArguments[index] = coerced;
+            }
+
+            value = LowerDirectTagEnumConstructor(enumType, layout, variant, loweredArguments, text);
+            return true;
+        }
+
+        private MidLevelIrOperand? LowerDirectTagEnumConstructor(
+            StarkTypeSymbol enumType,
+            EnumLayoutSymbol layout,
+            EnumVariantLayoutSymbol variant,
+            IReadOnlyList<MidLevelIrOperand> payloadValues,
+            string text)
+        {
+            MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(enumType);
+            var tagValue = new MidLevelIrIntegerConstantOperand(new BigInteger(variant.TagValue), layout.TagField.Type);
+
+            var withTag = EmitTemporary(
+                new MidLevelIrInsertFieldRValue(
+                    current,
+                    layout.TagField.Name,
+                    0,
+                    tagValue,
+                    enumType,
+                    $"{text}.$tag = {variant.TagValue}"),
+                "enumtag");
+            if (withTag is null)
+            {
+                return null;
+            }
+
+            current = withTag;
+
+            for (var index = 0; index < variant.Fields.Count; index++)
+            {
+                var field = variant.Fields[index];
+                var updated = EmitTemporary(
+                    new MidLevelIrInsertFieldRValue(
+                        current,
+                        field.StorageFieldName,
+                        field.StorageFieldIndex,
+                        payloadValues[index],
+                        enumType,
+                        field.SourceFieldName is null
+                            ? $"{text}[{index}] = {payloadValues[index].Text}"
+                            : $"{text}.{field.SourceFieldName} = {payloadValues[index].Text}"),
+                    "enumfield");
+                if (updated is null)
+                {
+                    return null;
+                }
+
+                current = updated;
+            }
+
+            return current;
+        }
+
         private bool TryGetMatchedObjectCreationConstructor(
             StarkParser.ObjectCreationExpressionContext expression,
             out TypedConstructorShape? constructor)
@@ -2433,6 +2826,24 @@ internal sealed class MidLevelIrLowerer(
                     fieldIndex,
                     projectedType,
                     $"{target.Text}.{field.Name}"),
+                "field");
+        }
+
+        private MidLevelIrOperand? LowerKnownFieldAccess(
+            MidLevelIrOperand target,
+            string fieldName,
+            int fieldIndex,
+            StarkTypeSymbol fieldType,
+            string displayFieldName)
+        {
+            var projectedType = ProjectFrozenView(target.Type, fieldType);
+            return EmitTemporary(
+                new MidLevelIrExtractFieldRValue(
+                    target,
+                    fieldName,
+                    fieldIndex,
+                    projectedType,
+                    $"{target.Text}.{displayFieldName}"),
                 "field");
         }
 
@@ -2867,7 +3278,61 @@ internal sealed class MidLevelIrLowerer(
                 return new MidLevelIrGlobalOperand(name, global.Type);
             }
 
+            if (TryResolveEnumCaseReference(name, out var enumType, out var enumLayout, out var variant) && variant.Fields.Count == 0)
+            {
+                return LowerDirectTagEnumConstructor(enumType, enumLayout, variant, [], name);
+            }
+
             return null;
+        }
+
+        private bool TryResolveEnumCaseReference(
+            string name,
+            out StarkTypeSymbol enumType,
+            out EnumLayoutSymbol layout,
+            out EnumVariantLayoutSymbol variant)
+        {
+            enumType = StarkTypeSymbols.Error;
+            layout = null!;
+            variant = null!;
+
+            var separator = name.LastIndexOf('.');
+            if (separator <= 0)
+            {
+                return false;
+            }
+
+            var enumTypeName = name[..separator];
+            var variantName = name[(separator + 1)..];
+            if (!TryResolveNamedTypeBySourceName(enumTypeName, out var namedType)
+                || namedType.Kind != DeclarationKind.Enum
+                || !_enumLayoutModel.Layouts.TryGetValue(namedType.Name, out layout)
+                || !layout.TryGetVariant(variantName, out variant))
+            {
+                layout = null!;
+                variant = null!;
+                return false;
+            }
+
+            enumType = StarkTypeSymbols.Named(namedType.Name);
+            return true;
+        }
+
+        private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
+        {
+            if (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!))
+            {
+                return true;
+            }
+
+            if (!typeName.Contains('.', StringComparison.Ordinal)
+                && _typeModel.NamedTypes.TryGetValue($"{_typeModel.ModuleName}.{typeName}", out namedType!))
+            {
+                return true;
+            }
+
+            namedType = null!;
+            return false;
         }
 
         private bool TryResolveAssignmentTarget(StarkParser.UnaryExpressionContext expression, out PlaceTarget target)

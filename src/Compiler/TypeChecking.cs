@@ -15,23 +15,31 @@ internal sealed class TypeChecker
     {
         MatchAll,
         Literal,
-        Aggregate
+        Aggregate,
+        EnumCase
     }
 
     private enum AggregateCoverageFieldKind
     {
         Wildcard,
         Literal,
-        Nested
+        NestedAggregate,
+        NestedEnum
     }
 
     private sealed record AggregateCoverageField(
         AggregateCoverageFieldKind Kind,
         string? LiteralKey,
-        AggregateCoveragePattern? NestedPattern);
+        AggregateCoveragePattern? NestedAggregatePattern,
+        EnumCoveragePattern? NestedEnumPattern);
 
     private sealed record AggregateCoveragePattern(
         string TypeName,
+        IReadOnlyList<AggregateCoverageField> Fields);
+
+    private sealed record EnumCoveragePattern(
+        string EnumName,
+        string VariantName,
         IReadOnlyList<AggregateCoverageField> Fields);
 
     private sealed record SwitchCoveragePattern(
@@ -39,7 +47,8 @@ internal sealed class TypeChecker
         string LabelText,
         ParserRuleContext Context,
         string? LiteralKey,
-        AggregateCoveragePattern? AggregatePattern);
+        AggregateCoveragePattern? AggregatePattern,
+        EnumCoveragePattern? EnumPattern);
 
     private readonly CompilerPassContext _context;
     private readonly ParseResult _parseResult;
@@ -100,7 +109,7 @@ internal sealed class TypeChecker
         {
             foreach (var declaration in module.SyntaxModel.Declarations)
             {
-                if (declaration.Kind is not (DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Trait or DeclarationKind.Doctrine))
+                if (declaration.Kind is not (DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum or DeclarationKind.Trait or DeclarationKind.Doctrine))
                 {
                     continue;
                 }
@@ -185,6 +194,25 @@ internal sealed class TypeChecker
                     continue;
                 }
 
+                if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
+                        candidate => candidate.Kind == DeclarationKind.Enum && string.Equals(candidate.Name, enumDeclaration.Identifier().GetText(), StringComparison.Ordinal));
+                    if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
+                    {
+                        continue;
+                    }
+
+                    var enumName = QualifyName(module, enumDeclaration.Identifier().GetText());
+                    var genericParameters = GetGenericParameterNames(enumDeclaration.typeParameterList());
+                    _namedTypes[enumName] = BuildEnumNamedType(
+                        enumName,
+                        enumDeclaration.enumBody().enumVariantDeclaration(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
+                    continue;
+                }
+
                 if (declaration.traitDeclaration() is { } traitDeclaration)
                 {
                     var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
@@ -238,6 +266,80 @@ internal sealed class TypeChecker
         }
 
         return new NamedTypeSymbol(name, kind, fields, orderedFields);
+    }
+
+    private NamedTypeSymbol BuildEnumNamedType(
+        string name,
+        IEnumerable<StarkParser.EnumVariantDeclarationContext> variantDeclarations,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        var variants = new List<EnumVariantSymbol>();
+        var seenVariantNames = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var variantDeclaration in variantDeclarations)
+        {
+            var variantName = variantDeclaration.Identifier().GetText();
+            if (!seenVariantNames.Add(variantName))
+            {
+                ReportError(
+                    "STK3006",
+                    $"Enum '{name}' declares variant '{variantName}' more than once.",
+                    variantDeclaration);
+                continue;
+            }
+
+            var payload = variantDeclaration.enumVariantPayload();
+            if (payload is null)
+            {
+                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: false, Fields: []));
+                continue;
+            }
+
+            if (payload.enumVariantFieldDeclaration().Length != 0)
+            {
+                var fields = new List<EnumVariantFieldSymbol>();
+                var seenFieldNames = new HashSet<string>(StringComparer.Ordinal);
+
+                foreach (var (fieldDeclaration, index) in payload.enumVariantFieldDeclaration().Select((field, index) => (field, index)))
+                {
+                    var fieldName = fieldDeclaration.Identifier().GetText();
+                    if (!seenFieldNames.Add(fieldName))
+                    {
+                        ReportError(
+                            "STK3006",
+                            $"Enum variant '{variantName}' declares field '{fieldName}' more than once.",
+                            fieldDeclaration);
+                        continue;
+                    }
+
+                    fields.Add(new EnumVariantFieldSymbol(
+                        index,
+                        fieldName,
+                        ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName)));
+                }
+
+                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: true, Fields: fields));
+                continue;
+            }
+
+            variants.Add(new EnumVariantSymbol(
+                variantName,
+                UsesNamedFields: false,
+                payload.type_()
+                    .Select((fieldType, index) => new EnumVariantFieldSymbol(
+                        index,
+                        Name: null,
+                        ResolveType(fieldType, genericParameters, currentModuleName)))
+                    .ToArray()));
+        }
+
+        return new NamedTypeSymbol(
+            name,
+            DeclarationKind.Enum,
+            new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
+            [],
+            variants);
     }
 
     private void AddFields(
@@ -300,11 +402,24 @@ internal sealed class TypeChecker
 
                 var genericParameters = GetGenericParameterNames(functionSyntax.TypeParameters);
                 var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
-                var parameters = functionSyntax.ParameterList.parameter()
-                    .Select(parameter => new TypedParameterSymbol(
-                        parameter.Identifier().GetText(),
-                        ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName)))
-                    .ToArray();
+                var isAbiBoundary = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal))
+                    || declarationModel.Visibility == StarkVisibility.Export;
+                if (isAbiBoundary)
+                {
+                    ValidateAbiTypeDoesNotDependOnEnum(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
+                }
+
+                var parameters = new List<TypedParameterSymbol>();
+                foreach (var parameter in functionSyntax.ParameterList.parameter())
+                {
+                    var parameterType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
+                    if (isAbiBoundary)
+                    {
+                        ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
+                    }
+
+                    parameters.Add(new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType));
+                }
 
                 var qualifiedName = QualifyName(module, localName);
                 _functions[qualifiedName] = new TypedFunctionSignature(
@@ -412,9 +527,11 @@ internal sealed class TypeChecker
         string currentModuleName)
     {
         return parameters
-            .Select(parameter => new TypedParameterSymbol(
-                parameter.Identifier().GetText(),
-                ResolveType(parameter.type_(), genericParameters, currentModuleName)))
+            .Select(parameter =>
+            {
+                var parameterType = ResolveType(parameter.type_(), genericParameters, currentModuleName);
+                return new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType);
+            })
             .ToArray();
     }
 
@@ -427,6 +544,7 @@ internal sealed class TypeChecker
             if (declaration.globalConstantDeclaration() is { } constantDeclaration)
             {
                 var declaredType = ResolveType(constantDeclaration.type_());
+                ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, constantDeclaration.type_(), "a global constant type");
                 foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                 {
                     CheckVariableInitializer(declarator.variableInitializer(), declaredType, Scope.CreateRoot(_globals));
@@ -444,6 +562,7 @@ internal sealed class TypeChecker
             if (declaration.globalVariableDeclaration() is { } variableDeclaration)
             {
                 var declaredType = ResolveType(variableDeclaration.type_());
+                ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, variableDeclaration.type_(), "a global variable type");
                 var isMutable = variableDeclaration.MUT() is not null;
 
                 foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
@@ -484,6 +603,7 @@ internal sealed class TypeChecker
                 if (declaration.globalConstantDeclaration() is { } constantDeclaration)
                 {
                     var declaredType = ResolveType(constantDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
+                    ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, constantDeclaration.type_(), "a global constant type");
                     var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
                         candidate => candidate.Kind == DeclarationKind.GlobalConstant
                                      && string.Equals(candidate.Name, constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText(), StringComparison.Ordinal));
@@ -509,6 +629,7 @@ internal sealed class TypeChecker
                 if (declaration.globalVariableDeclaration() is { } variableDeclaration)
                 {
                     var declaredType = ResolveType(variableDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
+                    ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, variableDeclaration.type_(), "a global variable type");
                     var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
                         candidate => candidate.Kind == DeclarationKind.GlobalVariable
                                      && string.Equals(candidate.Name, variableDeclaration.variableDeclarators().variableDeclarator(0).Identifier().GetText(), StringComparison.Ordinal));
@@ -728,7 +849,7 @@ internal sealed class TypeChecker
                     captureLabels++;
                 }
 
-                if (pattern?.aggregatePattern() is not null)
+                if (pattern?.aggregatePattern() is not null || pattern?.enumNamedFieldPattern() is not null)
                 {
                     aggregateLabels++;
                 }
@@ -759,6 +880,16 @@ internal sealed class TypeChecker
         SwitchCoveragePattern? exhaustivePattern = null;
         var boolTrueCovered = false;
         var boolFalseCovered = false;
+        var exhaustiveEnumVariants = new HashSet<string>(StringComparer.Ordinal);
+        var enumVariantCount = 0;
+
+        if (switchType.Kind == StarkTypeKind.Named
+            && switchType.NamedType is not null
+            && _namedTypes.TryGetValue(switchType.NamedType, out var switchNamedType)
+            && switchNamedType.Kind == DeclarationKind.Enum)
+        {
+            enumVariantCount = switchNamedType.Variants.Count;
+        }
 
         foreach (var section in switchStatement.switchSection())
         {
@@ -803,6 +934,18 @@ internal sealed class TypeChecker
                     continue;
                 }
 
+                if (currentPattern.Kind == SwitchCoveragePatternKind.EnumCase
+                    && currentPattern.EnumPattern is not null
+                    && IsMatchAllEnumPattern(currentPattern.EnumPattern))
+                {
+                    exhaustiveEnumVariants.Add(currentPattern.EnumPattern.VariantName);
+                    if (enumVariantCount != 0 && exhaustiveEnumVariants.Count == enumVariantCount)
+                    {
+                        exhaustivePattern = currentPattern;
+                        continue;
+                    }
+                }
+
                 if (currentPattern.Kind == SwitchCoveragePatternKind.Literal
                     && switchType.Kind == StarkTypeKind.Bool)
                 {
@@ -829,7 +972,8 @@ internal sealed class TypeChecker
                 "default",
                 label,
                 LiteralKey: null,
-                AggregatePattern: null);
+                AggregatePattern: null,
+                EnumPattern: null);
             return true;
         }
 
@@ -847,7 +991,8 @@ internal sealed class TypeChecker
                 switchPattern.GetText(),
                 label,
                 LiteralKey: null,
-                AggregatePattern: null);
+                AggregatePattern: null,
+                EnumPattern: null);
             return true;
         }
 
@@ -859,7 +1004,34 @@ internal sealed class TypeChecker
                 literal.GetText(),
                 label,
                 literalKey,
-                AggregatePattern: null);
+                AggregatePattern: null,
+                EnumPattern: null);
+            return true;
+        }
+
+        if (switchPattern.enumNamedFieldPattern() is { } enumNamedFieldPattern
+            && TryCreateEnumNamedFieldCoveragePattern(enumNamedFieldPattern, switchType, out var enumNamedFieldCoverage))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.EnumCase,
+                enumNamedFieldPattern.GetText(),
+                label,
+                LiteralKey: null,
+                AggregatePattern: null,
+                EnumPattern: enumNamedFieldCoverage);
+            return true;
+        }
+
+        if (switchPattern.aggregatePattern() is { } enumAggregatePattern
+            && TryCreateEnumAggregateCoveragePattern(enumAggregatePattern, switchType, out var enumAggregateCoverage))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.EnumCase,
+                enumAggregatePattern.GetText(),
+                label,
+                LiteralKey: null,
+                AggregatePattern: null,
+                EnumPattern: enumAggregateCoverage);
             return true;
         }
 
@@ -871,7 +1043,8 @@ internal sealed class TypeChecker
                 aggregatePattern.GetText(),
                 label,
                 LiteralKey: null,
-                aggregateCoverage);
+                aggregateCoverage,
+                EnumPattern: null);
             return true;
         }
 
@@ -897,6 +1070,11 @@ internal sealed class TypeChecker
             return false;
         }
 
+        if (namedType.Kind == DeclarationKind.Enum)
+        {
+            return false;
+        }
+
         var suffix = aggregatePattern.aggregatePatternSuffix();
         if (suffix is null || suffix.Identifier() is not null)
         {
@@ -912,9 +1090,7 @@ internal sealed class TypeChecker
         var coverageFields = new AggregateCoverageField[fieldPatterns.Length];
         for (var index = 0; index < fieldPatterns.Length; index++)
         {
-            var field = namedType.OrderedFields[index];
-            var fieldPattern = fieldPatterns[index];
-            if (TryCreateAggregateCoverageField(fieldPattern, field, out var coverageField))
+            if (TryCreateStructuredCoverageField(fieldPatterns[index], namedType.OrderedFields[index].Type, out var coverageField, allowAnyCaptureWildcard: false))
             {
                 coverageFields[index] = coverageField;
                 continue;
@@ -927,49 +1103,220 @@ internal sealed class TypeChecker
         return true;
     }
 
-    private bool TryCreateAggregateCoverageField(
+    private bool TryCreateEnumAggregateCoveragePattern(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol switchType,
+        out EnumCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+
+        var caseName = aggregatePattern.simpleType().GetText();
+        if (switchType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || !TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant)
+            || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
+            || variant.UsesNamedFields)
+        {
+            return false;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (variant.IsUnit)
+        {
+            if (suffix is not null)
+            {
+                return false;
+            }
+
+            coveragePattern = new EnumCoveragePattern(enumType.Name, variant.Name, []);
+            return true;
+        }
+
+        if (suffix is null || suffix.Identifier() is not null)
+        {
+            return false;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != variant.Fields.Count)
+        {
+            return false;
+        }
+
+        var coverageFields = new AggregateCoverageField[fieldPatterns.Length];
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            if (!TryCreateStructuredCoverageField(fieldPatterns[index], variant.Fields[index].Type, out var coverageField, allowAnyCaptureWildcard: true))
+            {
+                return false;
+            }
+
+            coverageFields[index] = coverageField;
+        }
+
+        coveragePattern = new EnumCoveragePattern(enumType.Name, variant.Name, coverageFields);
+        return true;
+    }
+
+    private bool TryCreateEnumNamedFieldCoveragePattern(
+        StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
+        StarkTypeSymbol switchType,
+        out EnumCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+
+        var caseName = enumNamedFieldPattern.dottedName().GetText();
+        if (switchType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || !TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant)
+            || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
+            || !variant.UsesNamedFields)
+        {
+            return false;
+        }
+
+        var members = enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember();
+        if (members.Length != variant.Fields.Count)
+        {
+            return false;
+        }
+
+        var coverageFields = new AggregateCoverageField[variant.Fields.Count];
+        var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in members)
+        {
+            var memberName = member.Identifier().GetText();
+            var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
+            if (field is null
+                || field.Name is null
+                || !seenMembers.Add(memberName)
+                || !TryCreateStructuredCoverageField(member.pattern(), field.Type, out var coverageField, allowAnyCaptureWildcard: true))
+            {
+                return false;
+            }
+
+            coverageFields[field.Position] = coverageField;
+        }
+
+        if (seenMembers.Count != variant.Fields.Count)
+        {
+            return false;
+        }
+
+        coveragePattern = new EnumCoveragePattern(enumType.Name, variant.Name, coverageFields);
+        return true;
+    }
+
+    private bool TryCreateStructuredCoverageField(
         StarkParser.PatternContext pattern,
-        FieldSymbol field,
-        out AggregateCoverageField coverageField)
+        StarkTypeSymbol fieldType,
+        out AggregateCoverageField coverageField,
+        bool allowAnyCaptureWildcard)
     {
         if (pattern.DISCARD() is not null)
         {
-            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Wildcard, LiteralKey: null, NestedPattern: null);
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.Wildcard,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: null);
             return true;
         }
 
         if (pattern.VAR() is not null)
         {
-            if (!SupportsAggregateFieldSubpattern(field.Type))
+            if (!allowAnyCaptureWildcard && !SupportsAggregateFieldSubpattern(fieldType))
             {
                 coverageField = default!;
                 return false;
             }
 
-            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Wildcard, LiteralKey: null, NestedPattern: null);
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.Wildcard,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: null);
             return true;
         }
 
         if (pattern.literal() is { } literal
-            && SupportsAggregateFieldSubpattern(field.Type)
-            && TryCreateLiteralCoverageKey(literal, field.Type, out var literalKey))
+            && SupportsAggregateFieldSubpattern(fieldType)
+            && TryCreateLiteralCoverageKey(literal, fieldType, out var literalKey))
         {
-            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Literal, literalKey, NestedPattern: null);
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.Literal,
+                literalKey,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: null);
             return true;
         }
 
-        if (pattern.aggregatePattern() is { } aggregatePattern
-            && field.Type.Kind == StarkTypeKind.Named
-            && TryCreateAggregateCoveragePattern(aggregatePattern, field.Type, out var nestedPattern)
-            && nestedPattern is not null)
+        if (pattern.enumNamedFieldPattern() is { } nestedEnumNamedFieldPattern
+            && fieldType.Kind == StarkTypeKind.Named
+            && TryCreateEnumNamedFieldCoveragePattern(nestedEnumNamedFieldPattern, fieldType, out var nestedEnumNamedPattern)
+            && nestedEnumNamedPattern is not null)
         {
-            if (IsMatchAllAggregatePattern(nestedPattern))
+            if (IsMatchAllEnumPattern(nestedEnumNamedPattern))
             {
-                coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Wildcard, LiteralKey: null, NestedPattern: null);
+                coverageField = new AggregateCoverageField(
+                    AggregateCoverageFieldKind.Wildcard,
+                    LiteralKey: null,
+                    NestedAggregatePattern: null,
+                    NestedEnumPattern: null);
                 return true;
             }
 
-            coverageField = new AggregateCoverageField(AggregateCoverageFieldKind.Nested, LiteralKey: null, nestedPattern);
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.NestedEnum,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: nestedEnumNamedPattern);
+            return true;
+        }
+
+        if (pattern.aggregatePattern() is { } nestedEnumAggregatePattern
+            && fieldType.Kind == StarkTypeKind.Named
+            && TryCreateEnumAggregateCoveragePattern(nestedEnumAggregatePattern, fieldType, out var nestedEnumPattern)
+            && nestedEnumPattern is not null)
+        {
+            if (IsMatchAllEnumPattern(nestedEnumPattern))
+            {
+                coverageField = new AggregateCoverageField(
+                    AggregateCoverageFieldKind.Wildcard,
+                    LiteralKey: null,
+                    NestedAggregatePattern: null,
+                    NestedEnumPattern: null);
+                return true;
+            }
+
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.NestedEnum,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: nestedEnumPattern);
+            return true;
+        }
+
+        if (pattern.aggregatePattern() is { } nestedAggregatePattern
+            && fieldType.Kind == StarkTypeKind.Named
+            && TryCreateAggregateCoveragePattern(nestedAggregatePattern, fieldType, out var nestedAggregateCoverage)
+            && nestedAggregateCoverage is not null)
+        {
+            if (IsMatchAllAggregatePattern(nestedAggregateCoverage))
+            {
+                coverageField = new AggregateCoverageField(
+                    AggregateCoverageFieldKind.Wildcard,
+                    LiteralKey: null,
+                    NestedAggregatePattern: null,
+                    NestedEnumPattern: null);
+                return true;
+            }
+
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.NestedAggregate,
+                LiteralKey: null,
+                NestedAggregatePattern: nestedAggregateCoverage,
+                NestedEnumPattern: null);
             return true;
         }
 
@@ -1067,6 +1414,13 @@ internal sealed class TypeChecker
             return string.Equals(existing.LiteralKey, current.LiteralKey, StringComparison.Ordinal);
         }
 
+        if (existing.Kind == SwitchCoveragePatternKind.EnumCase)
+        {
+            return existing.EnumPattern is not null
+                && current.EnumPattern is not null
+                && Covers(existing.EnumPattern, current.EnumPattern);
+        }
+
         return existing.AggregatePattern is not null
             && current.AggregatePattern is not null
             && Covers(existing.AggregatePattern, current.AggregatePattern);
@@ -1082,30 +1436,7 @@ internal sealed class TypeChecker
 
         for (var index = 0; index < existing.Fields.Count; index++)
         {
-            var existingField = existing.Fields[index];
-            var currentField = current.Fields[index];
-
-            if (existingField.Kind == AggregateCoverageFieldKind.Wildcard)
-            {
-                continue;
-            }
-
-            if (existingField.Kind == AggregateCoverageFieldKind.Literal)
-            {
-                if (currentField.Kind != AggregateCoverageFieldKind.Literal
-                    || !string.Equals(existingField.LiteralKey, currentField.LiteralKey, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-
-                continue;
-            }
-
-            if (existingField.Kind != AggregateCoverageFieldKind.Nested
-                || currentField.Kind != AggregateCoverageFieldKind.Nested
-                || existingField.NestedPattern is null
-                || currentField.NestedPattern is null
-                || !Covers(existingField.NestedPattern, currentField.NestedPattern))
+            if (!Covers(existing.Fields[index], current.Fields[index]))
             {
                 return false;
             }
@@ -1114,7 +1445,61 @@ internal sealed class TypeChecker
         return true;
     }
 
+    private static bool Covers(EnumCoveragePattern existing, EnumCoveragePattern current)
+    {
+        if (!string.Equals(existing.EnumName, current.EnumName, StringComparison.Ordinal)
+            || !string.Equals(existing.VariantName, current.VariantName, StringComparison.Ordinal)
+            || existing.Fields.Count != current.Fields.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < existing.Fields.Count; index++)
+        {
+            if (!Covers(existing.Fields[index], current.Fields[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool Covers(AggregateCoverageField existing, AggregateCoverageField current)
+    {
+        if (existing.Kind == AggregateCoverageFieldKind.Wildcard)
+        {
+            return true;
+        }
+
+        if (existing.Kind != current.Kind)
+        {
+            return false;
+        }
+
+        if (existing.Kind == AggregateCoverageFieldKind.Literal)
+        {
+            return string.Equals(existing.LiteralKey, current.LiteralKey, StringComparison.Ordinal);
+        }
+
+        if (existing.Kind == AggregateCoverageFieldKind.NestedAggregate)
+        {
+            return existing.NestedAggregatePattern is not null
+                && current.NestedAggregatePattern is not null
+                && Covers(existing.NestedAggregatePattern, current.NestedAggregatePattern);
+        }
+
+        return existing.NestedEnumPattern is not null
+            && current.NestedEnumPattern is not null
+            && Covers(existing.NestedEnumPattern, current.NestedEnumPattern);
+    }
+
     private static bool IsMatchAllAggregatePattern(AggregateCoveragePattern pattern)
+    {
+        return pattern.Fields.All(static field => field.Kind == AggregateCoverageFieldKind.Wildcard);
+    }
+
+    private static bool IsMatchAllEnumPattern(EnumCoveragePattern pattern)
     {
         return pattern.Fields.All(static field => field.Kind == AggregateCoverageFieldKind.Wildcard);
     }
@@ -1159,8 +1544,19 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, switchType, scope);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
+            if (TryBindEnumAggregatePattern(aggregatePattern, switchType, scope))
+            {
+                return;
+            }
+
             BindAggregatePattern(aggregatePattern, switchType, scope);
         }
     }
@@ -1176,7 +1572,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3008",
-                $"Switch aggregate pattern '{aggregatePattern.GetText()}' must exactly match the named switch type '{switchType.DisplayName}'. Discriminated variant matching is not implemented in the current compiler yet.",
+                $"Switch aggregate pattern '{aggregatePattern.GetText()}' must exactly match the named switch type '{switchType.DisplayName}'.",
                 aggregatePattern);
             return;
         }
@@ -1186,6 +1582,15 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3008",
                 $"Switch aggregate pattern '{aggregatePattern.GetText()}' could not resolve field information for '{switchType.DisplayName}'.",
+                aggregatePattern);
+            return;
+        }
+
+        if (namedType.Kind == DeclarationKind.Enum)
+        {
+            ReportError(
+                "STK3008",
+                $"Switch over enum '{switchType.DisplayName}' must use dot-qualified enum case patterns such as '{switchType.DisplayName}.Case'.",
                 aggregatePattern);
             return;
         }
@@ -1221,6 +1626,190 @@ internal sealed class TypeChecker
         }
     }
 
+    private bool TryBindEnumAggregatePattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, Scope scope)
+    {
+        var caseName = aggregatePattern.simpleType().GetText();
+        if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant))
+        {
+            return false;
+        }
+
+        if (switchType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch enum case pattern '{aggregatePattern.GetText()}' must exactly match the enum switch type '{switchType.DisplayName}'.",
+                aggregatePattern);
+            return true;
+        }
+
+        if (variant.UsesNamedFields)
+        {
+            ReportError(
+                "STK3008",
+                $"Enum case pattern '{caseName}' must use a named-field payload pattern.",
+                aggregatePattern);
+            return true;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (variant.IsUnit)
+        {
+            if (suffix is not null)
+            {
+                ReportError(
+                    "STK3008",
+                    $"Unit-like enum case pattern '{caseName}' may not bind payload subpatterns.",
+                    aggregatePattern);
+            }
+
+            return true;
+        }
+
+        if (suffix is null)
+        {
+            ReportError(
+                "STK3009",
+                $"Enum case pattern '{caseName}' expects {variant.Fields.Count} payload subpattern{Pluralize(variant.Fields.Count)}.",
+                aggregatePattern);
+            return true;
+        }
+
+        if (suffix.Identifier() is not null)
+        {
+            ReportError(
+                "STK3008",
+                $"Enum case pattern '{aggregatePattern.GetText()}' must currently bind payload subpatterns directly, not as a whole-value typed capture.",
+                aggregatePattern);
+            return true;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != variant.Fields.Count)
+        {
+            ReportError(
+                "STK3009",
+                $"Enum case pattern '{aggregatePattern.GetText()}' expects {variant.Fields.Count} payload subpattern{Pluralize(variant.Fields.Count)} but found {fieldPatterns.Length}.",
+                aggregatePattern);
+            return true;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindEnumVariantFieldPattern(fieldPatterns[index], variant.Fields[index], scope);
+        }
+
+        return true;
+    }
+
+    private void BindEnumNamedFieldPattern(
+        StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
+        StarkTypeSymbol switchType,
+        Scope scope)
+    {
+        var caseName = enumNamedFieldPattern.dottedName().GetText();
+        if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant))
+        {
+            ReportError("STK3003", $"Unknown symbol '{caseName}'.", enumNamedFieldPattern);
+            return;
+        }
+
+        if (switchType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch enum case pattern '{enumNamedFieldPattern.GetText()}' must exactly match the enum switch type '{switchType.DisplayName}'.",
+                enumNamedFieldPattern);
+            return;
+        }
+
+        if (!variant.UsesNamedFields)
+        {
+            ReportError(
+                "STK3008",
+                variant.IsUnit
+                    ? $"Enum case '{caseName}' is unit-like and may not use a named-field pattern."
+                    : $"Enum case '{caseName}' is tuple-like and must use positional subpatterns, not a named-field pattern.",
+                enumNamedFieldPattern);
+            return;
+        }
+
+        var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+        {
+            var memberName = member.Identifier().GetText();
+            var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
+            if (field is null)
+            {
+                ReportError("STK3005", $"Enum case '{caseName}' does not contain a field named '{memberName}'.", member);
+                continue;
+            }
+
+            if (!seenMembers.Add(memberName))
+            {
+                ReportError("STK3006", $"Enum case pattern member '{memberName}' for '{caseName}' is specified more than once.", member);
+                continue;
+            }
+
+            BindEnumVariantFieldPattern(member.pattern(), field, scope);
+        }
+
+        foreach (var field in variant.Fields)
+        {
+            if (field.Name is not null && !seenMembers.Contains(field.Name))
+            {
+                ReportError("STK3009", $"Enum case pattern '{caseName}' requires member '{field.Name}'.", enumNamedFieldPattern);
+            }
+        }
+    }
+
+    private void BindEnumVariantFieldPattern(StarkParser.PatternContext pattern, EnumVariantFieldSymbol field, Scope scope)
+    {
+        var fieldName = field.Name ?? $"#{field.Position}";
+        if (pattern.DISCARD() is not null)
+        {
+            return;
+        }
+
+        if (pattern.VAR() is not null)
+        {
+            scope.Declare(new VariableSymbol(pattern.Identifier().GetText(), field.Type, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (pattern.literal() is { } literal)
+        {
+            if (!SupportsAggregateFieldSubpattern(field.Type))
+            {
+                ReportError(
+                    "STK3008",
+                    $"Enum case payload field '{fieldName}' of type '{field.Type.DisplayName}' cannot currently be matched with a literal in an enum switch pattern. Enum field subpatterns currently support only scalar, non-owning field types.",
+                    pattern);
+                return;
+            }
+
+            var literalType = EvaluateLiteral(literal).Type;
+            if (!CanAssign(field.Type, literalType))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Enum case field pattern '{literal.GetText()}' expects '{field.Type.DisplayName}' for field '{fieldName}' but found '{literalType.DisplayName}'.{GetExplicitConversionHint(field.Type, literalType)}",
+                    literal);
+            }
+
+            return;
+        }
+
+        if (pattern.enumNamedFieldPattern() is not null || pattern.aggregatePattern() is not null)
+        {
+            BindPattern(pattern, field.Type, scope);
+        }
+    }
+
     private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, Scope scope)
     {
         if (pattern.DISCARD() is not null)
@@ -1228,8 +1817,19 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
+            if (TryBindEnumAggregatePattern(aggregatePattern, field.Type, scope))
+            {
+                return;
+            }
+
             BindNestedAggregateFieldPattern(aggregatePattern, field, scope);
             return;
         }
@@ -1796,6 +2396,11 @@ internal sealed class TypeChecker
             return ResolveValue(identifier.GetText(), identifier.Symbol, scope, allowFunctionReference);
         }
 
+        if (expression.enumConstructorExpression() is { } enumConstructorExpression)
+        {
+            return EvaluateEnumConstructorExpression(enumConstructorExpression, scope);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, scope, allowFunctionReference);
@@ -1812,6 +2417,16 @@ internal sealed class TypeChecker
     private ExpressionBinding EvaluateObjectCreation(StarkParser.ObjectCreationExpressionContext expression, Scope scope)
     {
         var createdType = ResolveType(expression.type_());
+        var namedType = ResolveNamedTypeSymbol(createdType);
+        if (namedType?.Kind == DeclarationKind.Enum)
+        {
+            ReportError(
+                "STK3008",
+                $"Object creation for enum '{namedType.Name}' is not implemented in the current compiler yet. Enum constructors and runtime layout remain undefined.",
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
         ConstructorShape? matchedConstructor = null;
 
         if (expression.argumentList() is { } argumentList)
@@ -1837,8 +2452,81 @@ internal sealed class TypeChecker
         return new ExpressionBinding(createdType, NamedType: ResolveNamedTypeSymbol(createdType), DiagnosticName: $"new '{createdType.DisplayName}'");
     }
 
+    private ExpressionBinding EvaluateEnumConstructorExpression(
+        StarkParser.EnumConstructorExpressionContext expression,
+        Scope scope)
+    {
+        var constructorName = expression.dottedName().GetText();
+        if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            ReportError("STK3003", $"Unknown symbol '{constructorName}'.", expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (!variant.UsesNamedFields)
+        {
+            ReportError(
+                "STK3008",
+                variant.IsUnit
+                    ? $"Enum case '{constructorName}' is unit-like and may not use a named-field initializer."
+                    : $"Enum case '{constructorName}' is tuple-like and must use positional arguments, not a named-field initializer.",
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var hasErrors = false;
+        var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var member in expression.enumConstructorInitializer().enumConstructorMember())
+        {
+            var memberName = member.Identifier().GetText();
+            var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
+            if (field is null)
+            {
+                ReportError("STK3005", $"Enum case '{constructorName}' does not contain a field named '{memberName}'.", member);
+                hasErrors = true;
+                continue;
+            }
+
+            if (!seenMembers.Add(memberName))
+            {
+                ReportError("STK3006", $"Enum constructor member '{memberName}' for '{constructorName}' is assigned more than once.", member);
+                hasErrors = true;
+                continue;
+            }
+
+            var valueType = EvaluateExpression(member.expression(), scope, allowFunctionReference: false).Type;
+            if (!CanAssign(field.Type, valueType))
+            {
+                hasErrors = true;
+                ReportError(
+                    "STK3002",
+                    $"Enum constructor member '{memberName}' for '{constructorName}' expects '{field.Type.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(field.Type, valueType)}",
+                    member.expression());
+            }
+        }
+
+        foreach (var field in variant.Fields)
+        {
+            if (field.Name is not null && !seenMembers.Contains(field.Name))
+            {
+                ReportError("STK3009", $"Enum constructor '{constructorName}' requires member '{field.Name}'.", expression);
+                hasErrors = true;
+            }
+        }
+
+        return hasErrors
+            ? new ExpressionBinding(StarkTypeSymbols.Error)
+            : new ExpressionBinding(enumTypeSymbol, NamedType: enumType, DiagnosticName: $"enum constructor '{constructorName}'");
+    }
+
     private ExpressionBinding InvokeCall(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
     {
+        if (target.EnumConstructor is not null)
+        {
+            return InvokeEnumConstructor(target, arguments, scope);
+        }
+
         if (target.Function is null)
         {
             ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
@@ -1874,6 +2562,52 @@ internal sealed class TypeChecker
         }
 
         return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType), DiagnosticName: $"call to '{target.Function.Name}'");
+    }
+
+    private ExpressionBinding InvokeEnumConstructor(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
+    {
+        var constructor = target.EnumConstructor!;
+        if (constructor.Variant.IsUnit || constructor.Variant.UsesNamedFields)
+        {
+            ReportError("STK3008", $"Enum constructor '{constructor.Name}' is not callable with positional arguments.", arguments);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var expectedCount = constructor.Variant.Fields.Count;
+        var receivedCount = arguments.argument().Length;
+        var hasErrors = false;
+
+        if (expectedCount != receivedCount)
+        {
+            ReportError(
+                "STK3009",
+                $"Enum constructor '{constructor.Name}' expects {expectedCount} arguments but received {receivedCount}.",
+                arguments);
+            hasErrors = true;
+        }
+
+        for (var index = 0; index < arguments.argument().Length; index++)
+        {
+            var argumentType = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
+            if (index >= constructor.Variant.Fields.Count)
+            {
+                continue;
+            }
+
+            var parameterType = constructor.Variant.Fields[index].Type;
+            if (!CanAssign(parameterType, argumentType))
+            {
+                hasErrors = true;
+                ReportError(
+                    "STK3002",
+                    $"Argument {index + 1} for enum constructor '{constructor.Name}' expects '{parameterType.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameterType, argumentType)}",
+                    arguments.argument(index).expression());
+            }
+        }
+
+        return hasErrors
+            ? new ExpressionBinding(StarkTypeSymbols.Error)
+            : new ExpressionBinding(target.Type, NamedType: target.NamedType, DiagnosticName: $"enum constructor '{constructor.Name}'");
     }
 
     private ExpressionBinding ApplyIndex(ExpressionBinding target, StarkParser.ExpressionListContext indexes, Scope scope, ParserRuleContext context)
@@ -1948,6 +2682,20 @@ internal sealed class TypeChecker
             if (_functions.TryGetValue(qualifiedName, out var function))
             {
                 return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{qualifiedName}'");
+            }
+
+            if (TryResolveEnumCaseReference(qualifiedName, out var enumType, out var enumTypeSymbol, out var variant))
+            {
+                if (variant.IsUnit)
+                {
+                    return new ExpressionBinding(enumTypeSymbol, NamedType: enumType, DiagnosticName: $"enum case '{qualifiedName}'");
+                }
+
+                return new ExpressionBinding(
+                    enumTypeSymbol,
+                    NamedType: enumType,
+                    DiagnosticName: $"enum constructor '{qualifiedName}'",
+                    EnumConstructor: new EnumConstructorBinding(qualifiedName, variant));
             }
 
             ReportError("STK3003", $"Unknown symbol '{qualifiedName}'.", context);
@@ -2050,6 +2798,37 @@ internal sealed class TypeChecker
             return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{name}'");
         }
 
+        if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            if (variant.IsUnit)
+            {
+                return new ExpressionBinding(enumTypeSymbol, NamedType: enumType, DiagnosticName: $"enum case '{name}'");
+            }
+
+            if (variant.UsesNamedFields)
+            {
+                ReportError("STK3008", $"Enum constructor '{name}' must use a named-field initializer before its value can be used.", token);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (!allowFunctionReference)
+            {
+                ReportError("STK3012", $"Enum constructor '{name}' must be called before its value can be used.", token);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            return new ExpressionBinding(
+                enumTypeSymbol,
+                NamedType: enumType,
+                DiagnosticName: $"enum constructor '{name}'",
+                EnumConstructor: new EnumConstructorBinding(name, variant));
+        }
+
+        if (TryResolveNamedTypeBySourceName(name, out var namedType) && namedType.Kind == DeclarationKind.Enum)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"enum '{name}'");
+        }
+
         if (_moduleGraph.HasModule(name))
         {
             return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"module '{name}'");
@@ -2106,6 +2885,54 @@ internal sealed class TypeChecker
     private StarkTypeSymbol ResolveQualifiedType(string qualifiedName, ISet<string>? genericParameters, IToken token, string? currentModuleName = null)
     {
         return _typeResolver!.ResolveQualifiedType(qualifiedName, genericParameters, token, currentModuleName);
+    }
+
+    private bool TryResolveEnumCaseReference(
+        string name,
+        out NamedTypeSymbol enumType,
+        out StarkTypeSymbol enumTypeSymbol,
+        out EnumVariantSymbol variant)
+    {
+        enumType = null!;
+        enumTypeSymbol = StarkTypeSymbols.Error;
+        variant = null!;
+
+        var separator = name.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var enumTypeName = name[..separator];
+        var variantName = name[(separator + 1)..];
+        if (!TryResolveNamedTypeBySourceName(enumTypeName, out enumType)
+            || enumType.Kind != DeclarationKind.Enum
+            || !enumType.TryGetVariant(variantName, out variant, out _))
+        {
+            enumType = null!;
+            variant = null!;
+            return false;
+        }
+
+        enumTypeSymbol = StarkTypeSymbols.Named(enumType.Name);
+        return true;
+    }
+
+    private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
+    {
+        if (_namedTypes.TryGetValue(typeName, out namedType!))
+        {
+            return true;
+        }
+
+        if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _namedTypes.TryGetValue($"{_syntaxModel.ModuleName}.{typeName}", out namedType!))
+        {
+            return true;
+        }
+
+        namedType = null!;
+        return false;
     }
 
     private static IReadOnlyList<string> ExtractOperators<TOperand>(ParserRuleContext context)
@@ -3036,6 +3863,82 @@ internal sealed class TypeChecker
             : null;
     }
 
+    private void ValidateRuntimeTypeDoesNotDependOnEnum(StarkTypeSymbol type, ParserRuleContext context, string usage)
+    {
+        if (TryFindEnumDependency(type, out var enumName))
+        {
+            ReportError(
+                "STK3008",
+                $"Type '{type.DisplayName}' depends on enum '{enumName}', but enums are not yet supported in {usage}.",
+                context);
+        }
+    }
+
+    private void ValidateAbiTypeDoesNotDependOnEnum(StarkTypeSymbol type, ParserRuleContext context, string usage)
+    {
+        if (TryFindEnumDependency(type, out var enumName))
+        {
+            ReportError(
+                "STK3008",
+                $"Type '{type.DisplayName}' depends on enum '{enumName}', but Stark enums cannot cross FFI/export boundaries for {usage}.",
+                context);
+        }
+    }
+
+    private bool TryFindEnumDependency(StarkTypeSymbol type, out string enumName)
+    {
+        return TryFindEnumDependency(type, out enumName, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool TryFindEnumDependency(
+        StarkTypeSymbol type,
+        out string enumName,
+        ISet<string> activeNamedTypes)
+    {
+        if (type.Kind == StarkTypeKind.Named
+            && type.NamedType is not null
+            && _namedTypes.TryGetValue(type.NamedType, out var namedType)
+            && namedType.Kind == DeclarationKind.Enum)
+        {
+            enumName = namedType.Name;
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.Named
+            && type.NamedType is not null
+            && _namedTypes.TryGetValue(type.NamedType, out var aggregateType))
+        {
+            if (!activeNamedTypes.Add(aggregateType.Name))
+            {
+                enumName = string.Empty;
+                return false;
+            }
+
+            try
+            {
+                foreach (var field in aggregateType.OrderedFields)
+                {
+                    if (TryFindEnumDependency(field.Type, out enumName, activeNamedTypes))
+                    {
+                        return true;
+                    }
+                }
+            }
+            finally
+            {
+                activeNamedTypes.Remove(aggregateType.Name);
+            }
+        }
+
+        if (type.ElementType is not null)
+        {
+            return TryFindEnumDependency(type.ElementType, out enumName, activeNamedTypes);
+        }
+
+        enumName = string.Empty;
+        return false;
+    }
+
     private HashSet<string>? GetGenericParameterNames(StarkParser.TypeParameterListContext? typeParameterList)
     {
         return _typeResolver!.GetGenericParameterNames(typeParameterList);
@@ -3103,7 +4006,12 @@ internal sealed class TypeChecker
         bool IsAddressable = false,
         string? RootGlobalName = null,
         GlobalBindingKind? RootGlobalBindingKind = null,
-        string? AssignmentErrorMessage = null);
+        string? AssignmentErrorMessage = null,
+        EnumConstructorBinding? EnumConstructor = null);
+
+    private sealed record EnumConstructorBinding(
+        string Name,
+        EnumVariantSymbol Variant);
 
     private sealed record ConstructorShape(
         string Name,

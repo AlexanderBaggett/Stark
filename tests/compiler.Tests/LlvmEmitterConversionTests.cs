@@ -179,6 +179,7 @@ public sealed class LlvmEmitterConversionTests
             syntaxModel,
             effectModel,
             typeModel,
+            EnumLayoutBuilder.Build(typeModel),
             abiModel,
             ssa).Emit().Text;
     }

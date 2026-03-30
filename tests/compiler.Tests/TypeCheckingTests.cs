@@ -216,6 +216,37 @@ public sealed class TypeCheckingTests
         Assert.NotNull(typeCheckModel);
     }
 
+    [Fact]
+    public void EnumSwitchPatternsTypeCheckOnCasePayloadCaptures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn i32 Run(Token token) {
+                switch (token) {
+                    case Token.End:
+                        return 0;
+                    case Token.Integer(var value):
+                        return value;
+                    case Token.Move { X: var x, Y: var y }:
+                        return x + y;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

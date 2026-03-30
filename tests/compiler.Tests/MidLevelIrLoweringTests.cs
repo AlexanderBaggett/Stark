@@ -335,6 +335,75 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void EnumConstructorsLowerToDirectTagFieldInserts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn i32 Run() {
+                stack Token a = Token.End;
+                stack Token b = Token.Integer(5);
+                stack Token c = Token.Move { X: 1, Y: 2 };
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$tag" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Integer_0" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Move_X" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Move_Y" });
+    }
+
+    [Fact]
+    public void EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn i32 Run(Token token) {
+                switch (token) {
+                    case Token.End:
+                        return 0;
+                    case Token.Integer(var value):
+                        return value;
+                    case Token.Move { X: var x, Y: var y }:
+                        return x + y;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$tag" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$Integer_0" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$Move_X" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$Move_Y" });
+        Assert.Contains(function.Blocks, static block => block.Label.Contains("switch_enum_match", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
     {
         var result = Compile(

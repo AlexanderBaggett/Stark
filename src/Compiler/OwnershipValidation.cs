@@ -89,7 +89,7 @@ internal sealed class OwnershipValidator
             CheckBlock(body, state, signature, summary, openScope: true);
         }
 
-        state.ExitScope(functionScope, summary, ValidateScopeExitState);
+        state.ExitScope(functionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
         return summary.Build();
     }
 
@@ -109,7 +109,7 @@ internal sealed class OwnershipValidator
 
         if (openScope)
         {
-            state.ExitScope(scope!, summary, ValidateScopeExitState);
+            state.ExitScope(scope!, summary, ValidateScopeExitState, RecordImplicitDrops);
         }
     }
 
@@ -189,11 +189,12 @@ internal sealed class OwnershipValidator
             foreach (var section in switchStatement.switchSection())
             {
                 var sectionState = state.Clone();
+                var sectionScope = sectionState.EnterScope();
                 foreach (var label in section.switchLabel())
                 {
                     if (label.pattern() is { } pattern)
                     {
-                        BindSwitchPattern(pattern, switchValue, sectionState);
+                        BindSwitchPattern(pattern, switchValue, sectionState, summary);
                     }
 
                     if (label.whenClause() is { } whenClause)
@@ -207,6 +208,7 @@ internal sealed class OwnershipValidator
                     CheckStatement(nestedStatement, sectionState, signature, summary);
                 }
 
+                sectionState.ExitScope(sectionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
                 sectionStates.Add(sectionState);
             }
 
@@ -255,7 +257,7 @@ internal sealed class OwnershipValidator
                 }
             }
 
-            loopState.ExitScope(loopScope, summary, ValidateScopeExitState);
+            loopState.ExitScope(loopScope, summary, ValidateScopeExitState, RecordImplicitDrops);
             state.MergeLoop(loopState);
             return;
         }
@@ -346,7 +348,8 @@ internal sealed class OwnershipValidator
                     isConstant,
                     borrowLifetime,
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
-                    isInitialized: true);
+                    isInitialized: true,
+                    aggregateState: value.AggregateState);
             }
             else if (declarator.Initializer is { } initializer)
             {
@@ -361,7 +364,8 @@ internal sealed class OwnershipValidator
                     isConstant,
                     borrowLifetime,
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
-                    isInitialized: true);
+                    isInitialized: true,
+                    aggregateState: value.AggregateState);
             }
             else
             {
@@ -446,7 +450,7 @@ internal sealed class OwnershipValidator
         if (isSimpleAssignment)
         {
             ApplyAssignment(left, right, state, summary, expression.unaryExpression());
-            return left with { BorrowLifetime = right.BorrowLifetime };
+            return left with { BorrowLifetime = right.BorrowLifetime, AggregateState = right.AggregateState };
         }
 
         if (IsMoveOnly(left.Type) && left.IsIndirectPlace)
@@ -486,7 +490,7 @@ internal sealed class OwnershipValidator
                 && variableState.MayBeInitialized
                 && IsAutomaticallyDropped(left.Type, variable.StorageClass))
             {
-                summary.ImplicitDrops.Add(variable.Name);
+                RecordImplicitDrops(variable, variableState, summary);
             }
 
             var borrowLifetime = left.Type.BorrowKind == StarkBorrowKind.None
@@ -503,7 +507,7 @@ internal sealed class OwnershipValidator
             }
             else
             {
-                state.SetInitialized(variable.Id, borrowLifetime);
+                state.SetInitialized(variable.Id, borrowLifetime, right.AggregateState);
             }
         }
     }
@@ -564,7 +568,10 @@ internal sealed class OwnershipValidator
 
         var resultType = FindCommonType(whenTrue.Type, whenFalse.Type);
         var borrowLifetime = BorrowLifetime.Merge(whenTrue.BorrowLifetime, whenFalse.BorrowLifetime);
-        return new ExpressionInfo(resultType, BorrowLifetime: borrowLifetime);
+        var aggregateState = resultType.Kind == StarkTypeKind.Named
+            ? AggregateFieldState.Merge(whenTrue.AggregateState, whenFalse.AggregateState)
+            : null;
+        return new ExpressionInfo(resultType, BorrowLifetime: borrowLifetime, AggregateState: aggregateState);
     }
 
     private ExpressionInfo EvaluateLogicalOrExpression(
@@ -886,6 +893,12 @@ internal sealed class OwnershipValidator
             return ResolveValue(identifier.GetText(), identifier.Symbol, state, summary, use, allowFunctionReference);
         }
 
+        if (expression.enumConstructorExpression() is { } enumConstructorExpression)
+        {
+            var created = EvaluateEnumConstructorExpression(enumConstructorExpression, state, signature, summary);
+            return ApplyUse(created, state, summary, use, enumConstructorExpression);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, state, summary, use, allowFunctionReference);
@@ -921,7 +934,37 @@ internal sealed class OwnershipValidator
             EvaluateObjectInitializerMembers(objectInitializer, type, state, signature, summary);
         }
 
-        return new ExpressionInfo(type, BorrowLifetime: BorrowLifetime.None);
+        return new ExpressionInfo(type, BorrowLifetime: BorrowLifetime.None, AggregateState: CreateInitializedAggregateState(type));
+    }
+
+    private ExpressionInfo EvaluateEnumConstructorExpression(
+        StarkParser.EnumConstructorExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        var constructorName = expression.dottedName().GetText();
+        if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var enumTypeSymbol, out var variant)
+            || !variant.UsesNamedFields)
+        {
+            return new ExpressionInfo(StarkTypeSymbols.Error);
+        }
+
+        foreach (var member in expression.enumConstructorInitializer().enumConstructorMember())
+        {
+            EvaluateExpression(
+                member.expression(),
+                state,
+                signature,
+                summary,
+                ValueUse.ConsumeTemporary,
+                allowFunctionReference: false);
+        }
+
+        return new ExpressionInfo(
+            enumTypeSymbol,
+            BorrowLifetime: BorrowLifetime.None,
+            AggregateState: CreateEnumAggregateState(enumType, variant));
     }
 
     private void EvaluateObjectInitializerMembers(
@@ -987,7 +1030,8 @@ internal sealed class OwnershipValidator
                 Variable: variable,
                 BorrowLifetime: variableState.BorrowLifetime,
                 IsPlace: true,
-                IsDirectVariable: true);
+                IsDirectVariable: true,
+                AggregateState: variableState.AggregateState);
 
             return ApplyUse(binding, state, summary, use, token);
         }
@@ -1025,6 +1069,30 @@ internal sealed class OwnershipValidator
                 : new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
+        if (TryResolveNamedTypeBySourceName(name, out var namedType) && namedType.Kind == DeclarationKind.Enum)
+        {
+            return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
+        }
+
+            if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
+            {
+                if (variant.IsUnit)
+                {
+                    return new ExpressionInfo(
+                        enumTypeSymbol,
+                        BorrowLifetime: BorrowLifetime.None,
+                        AggregateState: CreateEnumAggregateState(enumType, variant));
+                }
+
+            if (!variant.UsesNamedFields && allowFunctionReference)
+            {
+                return new ExpressionInfo(
+                    enumTypeSymbol,
+                    BorrowLifetime: BorrowLifetime.None,
+                    EnumConstructor: new EnumConstructorBinding(name, variant));
+            }
+        }
+
         if (_moduleGraph.HasModule(name))
         {
             return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
@@ -1033,7 +1101,7 @@ internal sealed class OwnershipValidator
         return new ExpressionInfo(StarkTypeSymbols.Error);
     }
 
-    private void BindSwitchPattern(StarkParser.PatternContext pattern, ExpressionInfo switchValue, FlowState state)
+    private void BindSwitchPattern(StarkParser.PatternContext pattern, ExpressionInfo switchValue, FlowState state, FunctionOwnershipBuilder summary)
     {
         if (pattern.VAR() is not null && pattern.Identifier() is { } capture)
         {
@@ -1054,13 +1122,28 @@ internal sealed class OwnershipValidator
             return;
         }
 
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, switchValue, state, summary);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
-            BindAggregateSwitchPattern(aggregatePattern, switchValue.Type, state);
+            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, switchValue, state, summary))
+            {
+                return;
+            }
+
+            BindAggregateSwitchPattern(aggregatePattern, switchValue.Type, state, summary);
         }
     }
 
-    private void BindAggregateSwitchPattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, FlowState state)
+    private void BindAggregateSwitchPattern(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol switchType,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
     {
         var patternType = ResolvePatternSimpleType(aggregatePattern.simpleType());
         if (switchType.Kind != StarkTypeKind.Named
@@ -1087,11 +1170,128 @@ internal sealed class OwnershipValidator
 
         for (var index = 0; index < fieldPatterns.Length; index++)
         {
-            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], state);
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], state, summary);
         }
     }
 
-    private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, FlowState state)
+    private bool TryBindEnumAggregateSwitchPattern(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        ExpressionInfo switchValue,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (!TryResolveEnumCaseReference(aggregatePattern.simpleType().GetText(), out var enumType, out _, out var variant))
+        {
+            return false;
+        }
+
+        if (switchValue.Type.Kind != StarkTypeKind.Named
+            || switchValue.Type.NamedType is null
+            || !string.Equals(switchValue.Type.NamedType, enumType.Name, StringComparison.Ordinal)
+            || variant.UsesNamedFields)
+        {
+            return true;
+        }
+
+        NarrowSwitchValueToEnumCase(switchValue, state, enumType, variant);
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (variant.IsUnit || suffix is null || suffix.Identifier() is not null)
+        {
+            return true;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != variant.Fields.Count)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindEnumVariantFieldPattern(fieldPatterns[index], variant.Fields[index], switchValue, state, summary);
+        }
+
+        return true;
+    }
+
+    private void BindEnumNamedFieldPattern(
+        StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
+        ExpressionInfo switchValue,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (!TryResolveEnumCaseReference(enumNamedFieldPattern.dottedName().GetText(), out var enumType, out _, out var variant)
+            || switchValue.Type.Kind != StarkTypeKind.Named
+            || switchValue.Type.NamedType is null
+            || !string.Equals(switchValue.Type.NamedType, enumType.Name, StringComparison.Ordinal)
+            || !variant.UsesNamedFields)
+        {
+            return;
+        }
+
+        NarrowSwitchValueToEnumCase(switchValue, state, enumType, variant);
+
+        var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+        {
+            var memberName = member.Identifier().GetText();
+            var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
+            if (field is null || !seenMembers.Add(memberName))
+            {
+                continue;
+            }
+
+            BindEnumVariantFieldPattern(member.pattern(), field, switchValue, state, summary);
+        }
+    }
+
+    private void BindEnumVariantFieldPattern(
+        StarkParser.PatternContext pattern,
+        EnumVariantFieldSymbol field,
+        ExpressionInfo switchValue,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (pattern.VAR() is not null
+            && pattern.Identifier() is { } capture)
+        {
+            if (IsMoveOnly(field.Type))
+            {
+                ConsumeSwitchValueForOwnedEnumCapture(switchValue, state, summary, capture.Symbol);
+            }
+
+            state.Declare(new VariableInfo(
+                capture.GetText(),
+                field.Type,
+                StorageClass.None,
+                VariableOrigin.Local,
+                IsMutable: false,
+                IsConstant: false,
+                BorrowLifetime.None,
+                DeclarationLocation: Location(capture.Symbol)),
+                isInitialized: true);
+            return;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, switchValue with { Type = field.Type }, state, summary);
+            return;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, switchValue with { Type = field.Type }, state, summary))
+            {
+                return;
+            }
+
+            BindAggregateSwitchPattern(aggregatePattern, field.Type, state, summary);
+        }
+    }
+
+    private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, FlowState state, FunctionOwnershipBuilder summary)
     {
         if (pattern.VAR() is not null
             && pattern.Identifier() is { } capture
@@ -1107,6 +1307,19 @@ internal sealed class OwnershipValidator
                 BorrowLifetime.None,
                 DeclarationLocation: Location(capture.Symbol)),
                 isInitialized: true);
+            return;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, new ExpressionInfo(field.Type), state, summary);
+            return;
+        }
+
+        if (pattern.aggregatePattern() is { } enumAggregatePattern
+            && TryBindEnumAggregateSwitchPattern(enumAggregatePattern, new ExpressionInfo(field.Type), state, summary))
+        {
+            return;
         }
     }
 
@@ -1132,6 +1345,33 @@ internal sealed class OwnershipValidator
     {
         if (target.Function is null)
         {
+            if (target.EnumConstructor is not null)
+            {
+                foreach (var argument in arguments.argument())
+                {
+                    EvaluateExpression(
+                        argument.expression(),
+                        state,
+                        _signatures[summary.Name],
+                        summary,
+                        ValueUse.ConsumeTemporary,
+                        allowFunctionReference: false);
+                }
+
+                var aggregateState = target.Type.NamedType is not null
+                    && _typeModel.NamedTypes.TryGetValue(target.Type.NamedType, out var enumType)
+                    && enumType.Kind == DeclarationKind.Enum
+                    ? CreateEnumAggregateState(enumType, target.EnumConstructor.Variant)
+                    : null;
+
+                return ApplyUse(
+                    new ExpressionInfo(target.Type, BorrowLifetime: BorrowLifetime.None, AggregateState: aggregateState),
+                    state,
+                    summary,
+                    use,
+                    arguments);
+            }
+
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
@@ -1242,6 +1482,22 @@ internal sealed class OwnershipValidator
             if (_signatures.TryGetValue(qualifiedName, out var function))
             {
                 return new ExpressionInfo(function.ReturnType, Function: function);
+            }
+
+            if (TryResolveEnumCaseReference(qualifiedName, out var enumType, out var enumTypeSymbol, out var variant))
+            {
+                if (variant.IsUnit)
+                {
+                    return new ExpressionInfo(
+                        enumTypeSymbol,
+                        BorrowLifetime: BorrowLifetime.None,
+                        AggregateState: CreateEnumAggregateState(enumType, variant));
+                }
+
+                return new ExpressionInfo(
+                    enumTypeSymbol,
+                    BorrowLifetime: BorrowLifetime.None,
+                    EnumConstructor: new EnumConstructorBinding(qualifiedName, variant));
             }
 
             return new ExpressionInfo(StarkTypeSymbols.Error);
@@ -1566,9 +1822,37 @@ internal sealed class OwnershipValidator
         _context.Diagnostics.Info(code, message, "ownership-validate", location);
     }
 
+    private void RecordImplicitDrops(VariableInfo variable, VariableState state, FunctionOwnershipBuilder summary)
+    {
+        foreach (var target in GetImplicitDropTargets(variable, state))
+        {
+            summary.ImplicitDrops.Add(target);
+        }
+    }
+
     private void ValidateScopeExitState(VariableInfo variable, VariableState state, FunctionOwnershipBuilder summary)
     {
+        var implicitDropTargets = GetImplicitDropTargets(variable, state);
+        if (IsEnumType(variable.Type)
+            && IsAutomaticallyDropped(variable.Type, variable.StorageClass)
+            && state.MayBeInitialized
+            && !state.IsDefinitelyInitialized)
+        {
+            if (implicitDropTargets.Count == 0)
+            {
+                return;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Drop error: cannot drop '{variable.Name}' because enum values must be initialized on every path before scope exit.",
+                variable.DeclarationLocation);
+            return;
+        }
+
         if (!IsAutomaticallyDropped(variable.Type, variable.StorageClass)
+            || implicitDropTargets.Count == 0
             || state.AggregateState is null
             || state.IsDefinitelyInitialized
             || !state.AggregateState.MayHaveAnyAvailableFields)
@@ -1810,6 +2094,54 @@ internal sealed class OwnershipValidator
         return result;
     }
 
+    private bool TryResolveEnumCaseReference(
+        string name,
+        out NamedTypeSymbol enumType,
+        out StarkTypeSymbol enumTypeSymbol,
+        out EnumVariantSymbol variant)
+    {
+        enumType = null!;
+        enumTypeSymbol = StarkTypeSymbols.Error;
+        variant = null!;
+
+        var separator = name.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var enumTypeName = name[..separator];
+        var variantName = name[(separator + 1)..];
+        if (!TryResolveNamedTypeBySourceName(enumTypeName, out enumType)
+            || enumType.Kind != DeclarationKind.Enum
+            || !enumType.TryGetVariant(variantName, out variant, out _))
+        {
+            enumType = null!;
+            variant = null!;
+            return false;
+        }
+
+        enumTypeSymbol = StarkTypeSymbols.Named(enumType.Name);
+        return true;
+    }
+
+    private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
+    {
+        if (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!))
+        {
+            return true;
+        }
+
+        if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _typeModel.NamedTypes.TryGetValue($"{_syntaxModel.ModuleName}.{typeName}", out namedType!))
+        {
+            return true;
+        }
+
+        namedType = null!;
+        return false;
+    }
+
     private static string DescribeDefinitelyUnavailableFields(AggregateFieldState aggregateState) =>
         string.Join(
             ", ",
@@ -1834,6 +2166,155 @@ internal sealed class OwnershipValidator
             _ => $"Value '{name}' is not available in the current flow state."
         };
     }
+
+    private bool IsEnumType(StarkTypeSymbol type)
+    {
+        return type.NamedType is not null
+            && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
+            && namedType.Kind == DeclarationKind.Enum;
+    }
+
+    private IReadOnlyList<string> GetImplicitDropTargets(VariableInfo variable, VariableState state)
+    {
+        if (!state.MayBeInitialized || !IsAutomaticallyDropped(variable.Type, variable.StorageClass))
+        {
+            return [];
+        }
+
+        if (!IsEnumType(variable.Type))
+        {
+            return [variable.Name];
+        }
+
+        if (variable.Type.NamedType is null
+            || !_typeModel.NamedTypes.TryGetValue(variable.Type.NamedType, out var namedType)
+            || namedType.Kind != DeclarationKind.Enum)
+        {
+            return [variable.Name];
+        }
+
+        var dropVariants = namedType.Variants
+            .Where(static variant => VariantRequiresImplicitDrop(variant))
+            .ToArray();
+        if (dropVariants.Length == 0)
+        {
+            return [];
+        }
+
+        if (state.AggregateState is null)
+        {
+            return dropVariants.Select(variant => $"{variable.Name}.{variant.Name}").ToArray();
+        }
+
+        var targets = new List<string>();
+        foreach (var variant in dropVariants)
+        {
+            if (state.AggregateState.GetFieldState(GetEnumCaseMarkerName(variant.Name)).MayBeAvailable)
+            {
+                targets.Add($"{variable.Name}.{variant.Name}");
+            }
+        }
+
+        return targets;
+    }
+
+    private static bool VariantRequiresImplicitDrop(EnumVariantSymbol variant) =>
+        variant.Fields.Any(static field => IsMoveOnly(field.Type));
+
+    private void ConsumeSwitchValueForOwnedEnumCapture(
+        ExpressionInfo switchValue,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        IToken token)
+    {
+        if (switchValue.IsIndirectPlace)
+        {
+            OwnershipError(summary, "STK4203", $"Cannot move out of field or indexed place of type '{switchValue.Type.DisplayName}'.", token);
+            return;
+        }
+
+        if (switchValue.Variable is null)
+        {
+            return;
+        }
+
+        if (switchValue.Variable.Origin == VariableOrigin.Global)
+        {
+            OwnershipError(summary, "STK4204", $"Cannot move out of global or static storage '{switchValue.Variable.Name}'.", token);
+            return;
+        }
+
+        if (!state.TryGetState(switchValue.Variable.Id, out var stateValue))
+        {
+            OwnershipError(summary, "STK4200", $"Value '{switchValue.Variable.Name}' is not available in the current flow state.", token);
+            return;
+        }
+
+        if (stateValue.UnavailableKind == UnavailableValueKind.Moved)
+        {
+            return;
+        }
+
+        if (!stateValue.IsDefinitelyInitialized)
+        {
+            ReportUnavailableValue(switchValue.Variable, stateValue, summary, token);
+            return;
+        }
+
+        state.SetMoved(switchValue.Variable.Id, switchValue.BorrowLifetime, Location(token));
+        summary.Moves.Add(switchValue.Variable.Name);
+    }
+
+    private void NarrowSwitchValueToEnumCase(
+        ExpressionInfo switchValue,
+        FlowState state,
+        NamedTypeSymbol enumType,
+        EnumVariantSymbol variant)
+    {
+        if (switchValue.Variable is not { } variable
+            || !switchValue.IsDirectVariable
+            || switchValue.HasIndexProjection
+            || switchValue.ProjectionPath is not null
+            || !state.TryGetState(variable.Id, out var variableState))
+        {
+            return;
+        }
+
+        state.SetInitialized(variable.Id, variableState.BorrowLifetime, CreateEnumAggregateState(enumType, variant));
+    }
+
+    private AggregateFieldState? CreateInitializedAggregateState(StarkTypeSymbol type)
+    {
+        if (type.NamedType is null || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType))
+        {
+            return null;
+        }
+
+        if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            return AggregateFieldState.Full(namedType);
+        }
+
+        return null;
+    }
+
+    private static AggregateFieldState CreateEnumAggregateState(NamedTypeSymbol enumType, EnumVariantSymbol variant)
+    {
+        var fields = new Dictionary<string, AggregateFieldAvailability>(StringComparer.Ordinal)
+        {
+            [GetEnumCaseMarkerName(variant.Name)] = AggregateFieldAvailability.Initialized()
+        };
+
+        foreach (var field in variant.Fields)
+        {
+            var fieldName = field.Name ?? $"#{field.Position}";
+            fields[$"{variant.Name}.{fieldName}"] = AggregateFieldAvailability.Initialized();
+        }
+
+        return new AggregateFieldState(fields);
+    }
+
+    private static string GetEnumCaseMarkerName(string variantName) => $"$case:{variantName}";
 
     private static string DescribeBorrowSource(ExpressionInfo value)
     {
@@ -2062,13 +2543,19 @@ internal sealed class OwnershipValidator
         string? NamespaceName = null,
         string[]? ProjectionPath = null,
         bool HasIndexProjection = false,
-        ExpressionInfo? Receiver = null)
+        ExpressionInfo? Receiver = null,
+        EnumConstructorBinding? EnumConstructor = null,
+        AggregateFieldState? AggregateState = null)
     {
         public ExpressionInfo(StarkTypeSymbol type)
             : this(type, BorrowLifetime: BorrowLifetime.None)
         {
         }
     }
+
+    private sealed record EnumConstructorBinding(
+        string Name,
+        EnumVariantSymbol Variant);
 
     private sealed class ScopeFrame
     {
@@ -2135,7 +2622,11 @@ internal sealed class OwnershipValidator
             return frame;
         }
 
-        public void ExitScope(ScopeFrame scope, FunctionOwnershipBuilder summary, Action<VariableInfo, VariableState, FunctionOwnershipBuilder> validateScopeExitState)
+        public void ExitScope(
+            ScopeFrame scope,
+            FunctionOwnershipBuilder summary,
+            Action<VariableInfo, VariableState, FunctionOwnershipBuilder> validateScopeExitState,
+            Action<VariableInfo, VariableState, FunctionOwnershipBuilder> recordImplicitDrops)
         {
             foreach (var variableId in scope.DeclaredVariables)
             {
@@ -2149,7 +2640,7 @@ internal sealed class OwnershipValidator
 
                 if (state.MayBeInitialized && IsAutomaticallyDropped(variable.Type, variable.StorageClass))
                 {
-                    summary.ImplicitDrops.Add(variable.Name);
+                    recordImplicitDrops(variable, state, summary);
                 }
 
                 _states.Remove(variableId);
@@ -2160,14 +2651,14 @@ internal sealed class OwnershipValidator
             _scopes.Remove(scope.Id);
         }
 
-        public void Declare(VariableInfo variable, bool isInitialized)
+        public void Declare(VariableInfo variable, bool isInitialized, AggregateFieldState? aggregateState = null)
         {
             var id = _nextVariableId++;
             var bound = variable with { Id = id, DeclarationScopeId = CurrentScope.Id };
             CurrentScope.Symbols[bound.Name] = id;
             CurrentScope.DeclaredVariables.Add(id);
             _variables[id] = bound;
-            var aggregateState = CreateAggregateState(bound.Type, isInitialized);
+            aggregateState ??= CreateAggregateState(bound.Type, isInitialized);
             _states[id] = isInitialized
                 ? VariableState.Initialized(bound.BorrowLifetime, aggregateState)
                 : VariableState.Uninitialized(bound.BorrowLifetime, aggregateState);
@@ -2192,11 +2683,12 @@ internal sealed class OwnershipValidator
 
         public bool TryGetState(int variableId, out VariableState state) => _states.TryGetValue(variableId, out state!);
 
-        public void SetInitialized(int variableId, BorrowLifetime borrowLifetime)
+        public void SetInitialized(int variableId, BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState = null)
         {
             if (_states.ContainsKey(variableId) && _variables.TryGetValue(variableId, out var variable))
             {
-                _states[variableId] = VariableState.Initialized(borrowLifetime, CreateAggregateState(variable.Type, isInitialized: true));
+                aggregateState ??= CreateAggregateState(variable.Type, isInitialized: true);
+                _states[variableId] = VariableState.Initialized(borrowLifetime, aggregateState);
             }
         }
 
@@ -2234,11 +2726,14 @@ internal sealed class OwnershipValidator
 
         public void SetMoved(int variableId, BorrowLifetime borrowLifetime, SourceLocation unavailableLocation)
         {
-            if (_states.ContainsKey(variableId) && _variables.TryGetValue(variableId, out var variable))
+            if (_states.TryGetValue(variableId, out var currentState) && _variables.TryGetValue(variableId, out var variable))
             {
+                var aggregateState = currentState.AggregateState is not null
+                    ? MarkAllAggregateFieldsMoved(currentState.AggregateState, unavailableLocation)
+                    : CreateAggregateState(variable.Type, isInitialized: false);
                 _states[variableId] = VariableState.Moved(
                     borrowLifetime,
-                    CreateAggregateState(variable.Type, isInitialized: false),
+                    aggregateState,
                     unavailableLocation);
             }
         }
@@ -2402,6 +2897,17 @@ internal sealed class OwnershipValidator
 
             namedType = candidate;
             return namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record;
+        }
+
+        private static AggregateFieldState MarkAllAggregateFieldsMoved(AggregateFieldState state, SourceLocation unavailableLocation)
+        {
+            var fields = state.Fields.ToDictionary(
+                static pair => pair.Key,
+                pair => pair.Value.IsDefinitelyAvailable
+                    ? AggregateFieldAvailability.Moved(unavailableLocation)
+                    : pair.Value,
+                StringComparer.Ordinal);
+            return new AggregateFieldState(fields);
         }
     }
 

@@ -12,6 +12,7 @@ internal sealed class SemanticValidator
     private readonly ModuleGraph _moduleGraph;
     private readonly FunctionEffectModel _effectModel;
     private readonly TypeCheckModel _typeModel;
+    private readonly EnumLayoutModel _enumLayoutModel;
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<string, TopLevelDeclarationModel> _syntaxDeclarations;
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
@@ -24,7 +25,8 @@ internal sealed class SemanticValidator
         SyntaxModel syntaxModel,
         ModuleGraph moduleGraph,
         FunctionEffectModel effectModel,
-        TypeCheckModel typeModel)
+        TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel)
     {
         _context = context;
         _parseResult = parseResult;
@@ -32,6 +34,7 @@ internal sealed class SemanticValidator
         _moduleGraph = moduleGraph;
         _effectModel = effectModel;
         _typeModel = typeModel;
+        _enumLayoutModel = enumLayoutModel;
         _typeResolver = new StarkTypeResolver(context, "semantic-validate", moduleGraph, typeModel.NamedTypes);
         _syntaxDeclarations = syntaxModel.Declarations.ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult)
@@ -139,7 +142,7 @@ internal sealed class SemanticValidator
 
         var summary = GetOrCreateSummary(name);
         summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody);
-        summary.SetParameters(signature.Parameters, _typeModel.NamedTypes);
+        summary.SetParameters(signature.Parameters, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
         if (functionDeclaration.Body.block() is not { } block)
@@ -802,6 +805,11 @@ internal sealed class SemanticValidator
             return ResolveValue(identifier.GetText(), scope, function, effects, summary, allowFunctionReference, observation, identifier.Symbol);
         }
 
+        if (expression.enumConstructorExpression() is { } enumConstructorExpression)
+        {
+            return EvaluateEnumConstructorExpression(enumConstructorExpression, scope, function, effects, summary);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), scope, function, effects, summary, allowFunctionReference, observation, qualifiedName.Start);
@@ -841,6 +849,36 @@ internal sealed class SemanticValidator
         }
 
         return new ValidationValue(createdType, NamedType: ResolveNamedTypeSymbol(createdType));
+    }
+
+    private ValidationValue EvaluateEnumConstructorExpression(
+        StarkParser.EnumConstructorExpressionContext expression,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary)
+    {
+        var constructorName = expression.dottedName().GetText();
+        if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        foreach (var member in expression.enumConstructorInitializer().enumConstructorMember())
+        {
+            EvaluateExpression(
+                member.expression(),
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
+        }
+
+        return variant.UsesNamedFields
+            ? new ValidationValue(enumTypeSymbol, NamedType: enumType)
+            : new ValidationValue(StarkTypeSymbols.Error);
     }
 
     private ValidationValue ResolveValue(
@@ -884,9 +922,32 @@ internal sealed class SemanticValidator
             return new ValidationValue(targetFunction.ReturnType, Function: targetFunction);
         }
 
+        if (TryResolveNamedTypeBySourceName(name, out var namedType) && namedType.Kind == DeclarationKind.Enum)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
+        }
+
         if (_moduleGraph.HasModule(name))
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
+        }
+
+        if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            if (variant.IsUnit)
+            {
+                return new ValidationValue(enumTypeSymbol, NamedType: enumType);
+            }
+
+            if (!variant.UsesNamedFields && allowFunctionReference)
+            {
+                return new ValidationValue(
+                    enumTypeSymbol,
+                    NamedType: enumType,
+                    EnumConstructor: new EnumConstructorBinding(name, variant));
+            }
+
+            return new ValidationValue(StarkTypeSymbols.Error);
         }
 
         return new ValidationValue(StarkTypeSymbols.Error);
@@ -904,8 +965,19 @@ internal sealed class SemanticValidator
             return;
         }
 
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, switchType, scope);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
+            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, switchType, scope))
+            {
+                return;
+            }
+
             BindAggregateSwitchPattern(aggregatePattern, switchType, scope);
         }
     }
@@ -941,6 +1013,95 @@ internal sealed class SemanticValidator
         }
     }
 
+    private bool TryBindEnumAggregateSwitchPattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
+    {
+        if (!TryResolveEnumCaseReference(aggregatePattern.simpleType().GetText(), out var enumType, out _, out var variant))
+        {
+            return false;
+        }
+
+        if (switchType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
+            || variant.UsesNamedFields)
+        {
+            return true;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (variant.IsUnit || suffix is null || suffix.Identifier() is not null)
+        {
+            return true;
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != variant.Fields.Count)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            BindEnumVariantFieldPattern(fieldPatterns[index], variant.Fields[index], scope);
+        }
+
+        return true;
+    }
+
+    private void BindEnumNamedFieldPattern(
+        StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
+        StarkTypeSymbol switchType,
+        ValidationScope scope)
+    {
+        if (!TryResolveEnumCaseReference(enumNamedFieldPattern.dottedName().GetText(), out var enumType, out _, out var variant)
+            || switchType.Kind != StarkTypeKind.Named
+            || switchType.NamedType is null
+            || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
+            || !variant.UsesNamedFields)
+        {
+            return;
+        }
+
+        var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+        {
+            var memberName = member.Identifier().GetText();
+            var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
+            if (field is null || !seenMembers.Add(memberName))
+            {
+                continue;
+            }
+
+            BindEnumVariantFieldPattern(member.pattern(), field, scope);
+        }
+    }
+
+    private void BindEnumVariantFieldPattern(StarkParser.PatternContext pattern, EnumVariantFieldSymbol field, ValidationScope scope)
+    {
+        if (pattern.VAR() is not null
+            && pattern.Identifier() is { } capture)
+        {
+            scope.Declare(new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            return;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, field.Type, scope))
+            {
+                return;
+            }
+
+            BindAggregateSwitchPattern(aggregatePattern, field.Type, scope);
+        }
+    }
+
     private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, ValidationScope scope)
     {
         if (pattern.VAR() is not null
@@ -948,6 +1109,18 @@ internal sealed class SemanticValidator
             && SupportsAggregateFieldSubpattern(field.Type))
         {
             scope.Declare(new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            return;
+        }
+
+        if (pattern.aggregatePattern() is { } enumAggregatePattern
+            && TryBindEnumAggregateSwitchPattern(enumAggregatePattern, field.Type, scope))
+        {
             return;
         }
 
@@ -1008,6 +1181,23 @@ internal sealed class SemanticValidator
     {
         if (target.Function is null)
         {
+            if (target.EnumConstructor is not null)
+            {
+                foreach (var argument in arguments.argument())
+                {
+                    EvaluateExpression(
+                        argument.expression(),
+                        scope,
+                        currentFunction,
+                        currentEffects,
+                        summary,
+                        allowFunctionReference: false,
+                        ExpressionObservation.Read);
+                }
+
+                return new ValidationValue(target.Type, NamedType: target.NamedType);
+            }
+
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
@@ -1179,6 +1369,19 @@ internal sealed class SemanticValidator
             {
                 return new ValidationValue(function.ReturnType, Function: function);
             }
+
+            if (TryResolveEnumCaseReference(qualifiedName, out var enumType, out var enumTypeSymbol, out var variant))
+            {
+                if (variant.IsUnit)
+                {
+                    return new ValidationValue(enumTypeSymbol, NamedType: enumType);
+                }
+
+                return new ValidationValue(
+                    enumTypeSymbol,
+                    NamedType: enumType,
+                    EnumConstructor: new EnumConstructorBinding(qualifiedName, variant));
+            }
         }
 
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
@@ -1221,6 +1424,54 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(targetType),
                 IsIndirectStorageAccess: operand.IsIndirectStorageAccess)
             : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
+    }
+
+    private bool TryResolveEnumCaseReference(
+        string name,
+        out NamedTypeSymbol enumType,
+        out StarkTypeSymbol enumTypeSymbol,
+        out EnumVariantSymbol variant)
+    {
+        enumType = null!;
+        enumTypeSymbol = StarkTypeSymbols.Error;
+        variant = null!;
+
+        var separator = name.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var enumTypeName = name[..separator];
+        var variantName = name[(separator + 1)..];
+        if (!TryResolveNamedTypeBySourceName(enumTypeName, out enumType)
+            || enumType.Kind != DeclarationKind.Enum
+            || !enumType.TryGetVariant(variantName, out variant, out _))
+        {
+            enumType = null!;
+            variant = null!;
+            return false;
+        }
+
+        enumTypeSymbol = StarkTypeSymbols.Named(enumType.Name);
+        return true;
+    }
+
+    private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
+    {
+        if (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!))
+        {
+            return true;
+        }
+
+        if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _typeModel.NamedTypes.TryGetValue($"{_syntaxModel.ModuleName}.{typeName}", out namedType!))
+        {
+            return true;
+        }
+
+        namedType = null!;
+        return false;
     }
 
     private ValidationValue CreateAddressOfValidationValue(ValidationValue operand)
@@ -2257,7 +2508,12 @@ internal sealed class SemanticValidator
         NamedTypeSymbol? NamedType = null,
         bool IsIndirectStorageAccess = false,
         string? NamespaceName = null,
-        ValidationValue? Receiver = null);
+        ValidationValue? Receiver = null,
+        EnumConstructorBinding? EnumConstructor = null);
+
+    private sealed record EnumConstructorBinding(
+        string Name,
+        EnumVariantSymbol Variant);
 
     private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
 
@@ -2320,7 +2576,10 @@ internal sealed class SemanticValidator
 
     private sealed class ParameterSummaryBuilder
     {
-        public ParameterSummaryBuilder(TypedParameterSymbol parameter, IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        public ParameterSummaryBuilder(
+            TypedParameterSymbol parameter,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
             Name = parameter.Name;
             Type = parameter.Type;
@@ -2329,7 +2588,7 @@ internal sealed class SemanticValidator
             GuaranteedReadOnly = DeriveGuaranteedReadOnly(parameter.Type);
             GuaranteedWriteOnly = parameter.Type.InitializationKind != StarkInitializationKind.None;
             GuaranteedNoAlias = DeriveGuaranteedNoAlias(parameter.Type);
-            var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(parameter.Type, namedTypes);
+            var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(parameter.Type, namedTypes, enumLayouts);
             DereferenceableBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.SizeBytes : null;
             AlignmentBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.AlignmentBytes : null;
         }
@@ -2451,11 +2710,14 @@ internal sealed class SemanticValidator
             HasBody = hasBody;
         }
 
-        public void SetParameters(IReadOnlyList<TypedParameterSymbol> parameters, IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        public void SetParameters(
+            IReadOnlyList<TypedParameterSymbol> parameters,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
             foreach (var parameter in parameters)
             {
-                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, namedTypes);
+                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, namedTypes, enumLayouts);
             }
         }
 

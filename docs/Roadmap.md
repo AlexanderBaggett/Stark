@@ -460,14 +460,34 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 
 ### Enums
 
-- [ ] define a concrete discriminated runtime representation
-- [ ] model enum constructors and payloads
-- [ ] lower discriminant tests and payload extraction
-- [ ] first-class optional/result lowering if those are part of the surface language plan
-  - [ ] define standard library or surface forms for optional/result values
-  - [ ] define layout and ABI rules
-  - [ ] integrate with `switch` and pattern binding
-  - [ ] define FFI behavior for these types, if allowed
+- [x] define the first concrete enum runtime representation
+  - [x] introduce an internal `EnumLayout` artifact
+  - [x] implement `DirectTag` as the only enum layout strategy
+  - [x] keep niche-based enum packing as a later optimization, not part of the first implementation
+- [x] model enum constructors and payloads
+  - [x] register enum declarations in syntax and type models
+  - [x] retain enum case names and payload shapes in typed artifacts
+  - [x] surface enum constructors in expressions
+  - [x] type value-level constructor symbols for unit, tuple, and named-field cases
+- [x] switch and pattern integration for enum cases
+  - [x] dot-qualified enum case patterns
+  - [x] discriminant-aware exhaustiveness and unreachable-arm diagnostics
+  - [x] bind active-case payload fields in matched arms
+- [x] MIR lowering for enum construct/test/project using `DirectTag`
+  - [x] lower unit, tuple, and named-field constructors
+  - [x] lower discriminant tests
+  - [x] lower active-payload projection
+- [x] ownership and destruction over the active enum case only
+  - [x] move analysis across enum constructors and matches
+  - [x] drop only the active case payload
+- [x] settle optional/result treatment
+  - [x] `Option` and `Result` are ordinary standard-library enums, not compiler-privileged surface forms
+  - [x] they reuse ordinary enum construction, layout, ownership, `switch`, and pattern rules
+  - [x] they do not define separate FFI behavior because Stark enums do not cross `ffi` or `export` boundaries
+- [x] settle enum foreign-boundary policy
+  - [x] Stark enums are never FFI-visible
+  - [x] enum-specific `repr` or ABI annotations are out of scope for the current language surface
+  - [x] `ffi` and `export` reject enum-dependent types rather than assigning them a foreign ABI shape
 
 ### Characters and Strings
 

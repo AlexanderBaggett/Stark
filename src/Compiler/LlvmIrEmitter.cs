@@ -15,6 +15,7 @@ internal sealed class LlvmIrEmitter
     private readonly LoadedModuleSet _loadedModules;
     private readonly FunctionEffectModel _effectModel;
     private readonly TypeCheckModel _typeModel;
+    private readonly EnumLayoutModel _enumLayoutModel;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
     private readonly LlvmTargetInfo? _targetInfo;
@@ -30,6 +31,7 @@ internal sealed class LlvmIrEmitter
         SyntaxModel syntaxModel,
         FunctionEffectModel effectModel,
         TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel,
         AbiModel abiModel,
         SsaIrModule ssa,
         LlvmTargetInfo? targetInfo = null,
@@ -41,6 +43,7 @@ internal sealed class LlvmIrEmitter
             CreateRootLoadedModules(parseResult, syntaxModel, input.FilePath),
             effectModel,
             typeModel,
+            enumLayoutModel,
             abiModel,
             ssa,
             targetInfo,
@@ -55,6 +58,7 @@ internal sealed class LlvmIrEmitter
         LoadedModuleSet loadedModules,
         FunctionEffectModel effectModel,
         TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel,
         AbiModel abiModel,
         SsaIrModule ssa,
         LlvmTargetInfo? targetInfo = null,
@@ -66,6 +70,7 @@ internal sealed class LlvmIrEmitter
         _loadedModules = loadedModules;
         _effectModel = effectModel;
         _typeModel = typeModel;
+        _enumLayoutModel = enumLayoutModel;
         _abiModel = abiModel;
         _ssa = ssa;
         _targetInfo = targetInfo;
@@ -490,13 +495,17 @@ internal sealed class LlvmIrEmitter
         var emittedAny = false;
 
         foreach (var namedType in _typeModel.NamedTypes.Values
-                     .Where(static type => type.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+                     .Where(type => type.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                    || (type.Kind == DeclarationKind.Enum && _enumLayoutModel.Layouts.ContainsKey(type.Name)))
                      .OrderBy(static type => type.Name, StringComparer.Ordinal))
         {
             emittedAny = true;
-            var fields = namedType.OrderedFields.Count == 0
+            var fieldsSource = namedType.Kind == DeclarationKind.Enum
+                ? _enumLayoutModel.Layouts[namedType.Name].OrderedFields
+                : namedType.OrderedFields;
+            var fields = fieldsSource.Count == 0
                 ? string.Empty
-                : string.Join(", ", namedType.OrderedFields.Select(field => MapType(field.Type)));
+                : string.Join(", ", fieldsSource.Select(field => MapType(field.Type)));
             builder.AppendLine($"%{EscapeIdentifier(namedType.Name)} = type {{ {fields} }}");
         }
 
@@ -768,7 +777,8 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Unicode => $"%{UnicodeStringTypeName}",
             StarkTypeKind.Named when type.NamedType is not null
                                      && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
-                                     && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                     && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                         || (namedType.Kind == DeclarationKind.Enum && _enumLayoutModel.Layouts.ContainsKey(namedType.Name)))
                 => $"%{EscapeIdentifier(type.NamedType)}",
             StarkTypeKind.Named => "ptr",
             StarkTypeKind.Null => "ptr",
@@ -1567,7 +1577,7 @@ internal sealed class LlvmIrEmitter
 
     private ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type)
     {
-        return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes);
+        return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
     }
 
     private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type)

@@ -53,6 +53,12 @@ internal sealed record StarkPackageTypeManifest(
     string QualifiedName,
     string Visibility,
     string Kind,
+    IReadOnlyList<StarkPackageFieldManifest> Fields,
+    IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null);
+
+internal sealed record StarkPackageEnumVariantManifest(
+    string Name,
+    bool UsesNamedFields,
     IReadOnlyList<StarkPackageFieldManifest> Fields);
 
 internal sealed record StarkPackageFieldManifest(
@@ -131,6 +137,29 @@ internal static class PackageManifestBuilder
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
                                 namedType.OrderedFields.Select(static field => new StarkPackageFieldManifest(field.Name, field.Type.DisplayName)).ToArray()));
+                        }
+
+                        break;
+
+                    case DeclarationKind.Enum:
+                        if (typeModel.NamedTypes.TryGetValue(lookupName, out var enumType))
+                        {
+                            types.Add(new StarkPackageTypeManifest(
+                                declaration.Name,
+                                qualifiedName,
+                                visibility,
+                                declaration.Kind.ToString().ToLowerInvariant(),
+                                [],
+                                enumType.Variants
+                                    .Select(static variant => new StarkPackageEnumVariantManifest(
+                                        variant.Name,
+                                        variant.UsesNamedFields,
+                                        variant.Fields
+                                            .Select(static field => new StarkPackageFieldManifest(
+                                                field.Name ?? $"Item{field.Position}",
+                                                field.Type.DisplayName))
+                                            .ToArray()))
+                                    .ToArray()));
                         }
 
                         break;
@@ -240,13 +269,42 @@ internal static class PackageManifestLoader
             builder.Append(type.Name);
             builder.AppendLine(" {");
 
-            foreach (var field in type.Fields)
+            if (string.Equals(type.Kind, "enum", StringComparison.Ordinal))
             {
-                builder.Append("    ");
-                builder.Append(field.Type);
-                builder.Append(' ');
-                builder.Append(field.Name);
-                builder.AppendLine(";");
+                foreach (var variant in type.Variants ?? [])
+                {
+                    builder.Append("    ");
+                    builder.Append(variant.Name);
+
+                    if (variant.Fields.Count != 0)
+                    {
+                        if (variant.UsesNamedFields)
+                        {
+                            builder.Append(" { ");
+                            builder.Append(string.Join(", ", variant.Fields.Select(static field => $"{field.Name}: {field.Type}")));
+                            builder.Append(" }");
+                        }
+                        else
+                        {
+                            builder.Append('(');
+                            builder.Append(string.Join(", ", variant.Fields.Select(static field => field.Type)));
+                            builder.Append(')');
+                        }
+                    }
+
+                    builder.AppendLine(",");
+                }
+            }
+            else
+            {
+                foreach (var field in type.Fields)
+                {
+                    builder.Append("    ");
+                    builder.Append(field.Type);
+                    builder.Append(' ');
+                    builder.Append(field.Name);
+                    builder.AppendLine(";");
+                }
             }
 
             builder.AppendLine("}");

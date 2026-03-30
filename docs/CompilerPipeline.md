@@ -18,7 +18,7 @@ The current pass system supports:
 
 ## Default Stages
 
-The current default compilation pipeline contains 18 passes and is dependency-ordered rather than hard-coded as one giant method:
+The current default compilation pipeline contains 19 passes and is dependency-ordered rather than hard-coded as one giant method:
 
 1. `parse`
    Reads source text and produces the ANTLR parse result plus syntax diagnostics.
@@ -40,34 +40,37 @@ The current default compilation pipeline contains 18 passes and is dependency-or
 8. `type-check`
    Resolves named and builtin types, assigns literal types, validates globals and a useful subset of function bodies, and produces typed signatures for later lowering.
    Imported declarations are loaded into the same typed world, so qualified Stark calls and type references can flow across modules before LLVM lowering.
-9. `semantic-validate`
+9. `enum-layout`
+   Derives the current compiler-owned enum layout artifact from the typed enum declarations.
+   Today this pass selects the `DirectTag` runtime representation used by later semantic checks and LLVM lowering.
+10. `semantic-validate`
    Validates Stark-specific semantic contracts after typing.
    This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, recursive finite-call cycles, parameter memory summaries, and call-memory summaries are checked.
-10. `ownership-validate`
+11. `ownership-validate`
    Validates deterministic ownership and lifetime rules after the higher-level semantic checks.
    This is where move tracking, use-after-move rejection, implicit drop scopes, branch-sensitive ownership state, and basic borrow lifetime sources are checked so safe code remains non-GC and leak-resistant by construction.
-11. `lower-hir`
+12. `lower-hir`
    Produces the current compiler-owned HIR shell.
    Today this is intentionally shallow: it packages root-module functions with their typed signatures, body presence, and derived effect profiles so later lowering passes stop depending on declaration-model details.
-12. `lower-mir`
+13. `lower-mir`
    Produces a mid-level IR with explicit locals, basic blocks, typed operands, typed rvalues, and terminators.
    This is where structured source bodies become control-flow-aware CFG form suitable for ownership precision and explicit value lowering, including aggregate field/index operations, slice formation, raw address formation, indirect load/store, and explicit conversions.
-13. `borrow-liveness`
+14. `borrow-liveness`
    Refines ownership validation with non-lexical-style lifetime analysis over normalized MIR.
    This pass computes borrow-local liveness across the CFG and updates the ownership model when a move, overwrite, or return would conflict with still-live borrows.
-14. `lower-ssa`
+15. `lower-ssa`
    Produces SSA form from MIR, prunes unreachable CFG blocks, and inserts phi nodes where control-flow paths merge.
    This is where mutable Stark locals stop looking like source variables and start looking like compiler values, while addressable locals still surface as explicit allocate/store/lifetime operations.
-15. `cleanup-ssa`
+16. `cleanup-ssa`
    Canonicalizes and simplifies SSA before later consumers use it.
    This pass removes trivial copy instructions, collapses identity phi nodes, collapses trampoline blocks, and performs value-numbering-style reuse of repeated SSA computations when memory ordering allows it.
-16. `const-prop`
+17. `const-prop`
    Runs constant propagation over the cleaned SSA graph.
    This pass folds constant arithmetic, conversions, compares, branches, and simple `switch` decisions and republishes the optimized SSA artifact consumed by LLVM emission.
-17. `lower-abi`
+18. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
-18. `emit-llvm`
+19. `emit-llvm`
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
    The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
 
@@ -78,7 +81,7 @@ The current pass skeleton still leaves room for the next substantial compiler wo
 - doctrine and trait constraint solving
 - deeper dead-code elimination beyond the current cleanup/constant-propagation passes
 - richer aggregate copy/move lowering
-- fuller object creation and initializer lowering
+- allocator-backed `heap` and `arena` lowering
 - debug-info and source-span propagation through MIR, SSA, and LLVM
 - monomorphization or specialization planning
 
@@ -95,7 +98,7 @@ The current ownership split is:
 - syntax model:
   Stark-owned representation of modules, declarations, and signatures
 - typed and semantic models:
-  type information, effect summaries, semantic validation, ownership validation, and ABI facts live as explicit artifacts instead of being hidden inside one monolithic IR
+  type information, enum layout, effect summaries, semantic validation, ownership validation, and ABI facts live as explicit artifacts instead of being hidden inside one monolithic IR
 - HIR:
   currently a shallow compiler-owned function catalog for lowering orchestration
 - MIR:

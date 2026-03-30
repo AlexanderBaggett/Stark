@@ -379,6 +379,7 @@ pattern
     : DISCARD
     | literal
     | VAR Identifier
+    | enumNamedFieldPattern
     | aggregatePattern
     ;
 
@@ -389,6 +390,18 @@ aggregatePattern
 aggregatePatternSuffix
     : Identifier
     | LPAREN (pattern (COMMA pattern)*)? COMMA? RPAREN
+    ;
+
+enumNamedFieldPattern
+    : dottedName enumNamedFieldPatternPayload
+    ;
+
+enumNamedFieldPatternPayload
+    : LBRACE (namedPatternMember (COMMA namedPatternMember)*)? COMMA? RBRACE
+    ;
+
+namedPatternMember
+    : Identifier COLON pattern
     ;
 
 expressionList
@@ -508,13 +521,26 @@ postfixPart
 primaryExpression
     : literal
     | Identifier
+    | enumConstructorExpression
     | qualifiedName
     | objectCreationExpression
     | LPAREN expression RPAREN
     ;
 
+enumConstructorExpression
+    : dottedName enumConstructorInitializer
+    ;
+
 objectCreationExpression
     : NEW type_ argumentList? objectInitializer?
+    ;
+
+enumConstructorInitializer
+    : LBRACE (enumConstructorMember (COMMA enumConstructorMember)*)? COMMA? RBRACE
+    ;
+
+enumConstructorMember
+    : Identifier COLON expression
     ;
 
 argumentList
@@ -553,6 +579,10 @@ signedIntegerLiteral
 
 qualifiedName
     : Identifier (DOT Identifier)*
+    ;
+
+dottedName
+    : Identifier (DOT Identifier)+
     ;
 
 IMPORT      : 'import';

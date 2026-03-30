@@ -79,6 +79,125 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void ExportedFunctionsRejectEnumTypesAtAbiBoundaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+            }
+
+            export fn Token Use(Token token);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Type 'Token'", "depends on enum 'Token'", "cannot cross FFI/export boundaries", "parameter 'token'");
+        AssertDiagnostic(result, "STK3008", "Type 'Token'", "depends on enum 'Token'", "cannot cross FFI/export boundaries", "return type of function 'Use'");
+    }
+
+    [Fact]
+    public void FfiFunctionsRejectEnumTypesAtAbiBoundaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+            }
+
+            ffi fn void Use(Token token);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Type 'Token'", "depends on enum 'Token'", "cannot cross FFI/export boundaries", "parameter 'token'");
+    }
+
+    [Fact]
+    public void ExportedFunctionsRejectAggregateTypesThatTransitivelyDependOnEnums()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+            }
+
+            struct Inner {
+                Token Value;
+            }
+
+            struct Outer {
+                Inner Current;
+            }
+
+            export fn Outer Use(Outer value);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Type 'Outer'", "depends on enum 'Token'", "cannot cross FFI/export boundaries", "parameter 'value'");
+        AssertDiagnostic(result, "STK3008", "Type 'Outer'", "depends on enum 'Token'", "cannot cross FFI/export boundaries", "return type of function 'Use'");
+    }
+
+    [Fact]
+    public void FfiFunctionsRejectAggregateTypesThatTransitivelyDependOnEnums()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+            }
+
+            struct State {
+                Token Current;
+            }
+
+            ffi fn void Use(State value);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Type 'State'", "depends on enum 'Token'", "cannot cross FFI/export boundaries", "parameter 'value'");
+    }
+
+    [Fact]
+    public void GlobalTypesRejectAggregateTypesThatTransitivelyDependOnEnums()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+            }
+
+            struct Inner {
+                Token Value;
+            }
+
+            struct Outer {
+                Inner Current;
+            }
+
+            static Outer Shared = new Outer() { Current = new Inner() { Value = Token.End } };
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Type 'Outer'", "depends on enum 'Token'", "not yet supported in a global variable type");
+    }
+
+    [Fact]
     public void AggregateSwitchPatternsRejectMoveOnlyFieldCaptures()
     {
         var result = Compile(
@@ -202,6 +321,67 @@ public sealed class TypeTypingDiagnosticsTests
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3019", "Switch label 'Outer(Pair(1,2),3)' is unreachable", "'Outer(Pair(1,_),_)' already covers it");
         AssertDiagnostic(result, "STK3020", "already covers the later label 'Outer(Pair(1,2),3)'");
+    }
+
+    [Fact]
+    public void ExhaustiveEnumCasePatternsRejectLaterDefaultLabel()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+                Move { X: i32, Y: i32 },
+            }
+
+            fn i32 Run(Token token) {
+                switch (token) {
+                    case Token.End:
+                        return 0;
+                    case Token.Integer(_):
+                        return 1;
+                    case Token.Move { X: _, Y: _ }:
+                        return 2;
+                    default:
+                        return 3;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'default' is unreachable", "already exhaustive", "'Token.Move{X:_,Y:_}'");
+        AssertDiagnostic(result, "STK3020", "Switch coverage becomes exhaustive here for 'Token'.");
+    }
+
+    [Fact]
+    public void BroaderEnumTuplePatternRejectsLaterSpecificArm()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Integer(i32),
+            }
+
+            fn i32 Run(Token token) {
+                switch (token) {
+                    case Token.Integer(_):
+                        return 0;
+                    case Token.Integer(1):
+                        return 1;
+                    default:
+                        return 2;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3019", "Switch label 'Token.Integer(1)' is unreachable", "'Token.Integer(_)' already covers it");
+        AssertDiagnostic(result, "STK3020", "already covers the later label 'Token.Integer(1)'");
     }
 
     [Fact]

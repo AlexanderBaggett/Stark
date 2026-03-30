@@ -8,7 +8,7 @@ The initial standard library focuses on three things:
 
 - a stable module layout
 - packaging as a normal manifest-backed Stark package
-- basic output through `stdout` and `stderr`
+- basic console output plus a small file/path surface
 
 This keeps the first library surface small while exercising the compiler's module, package, ABI, and native-linking pipeline end to end.
 
@@ -20,23 +20,38 @@ Repository source layout:
 
 - `stdlib/src/System.stark`
 - `stdlib/src/System/Console.stark`
+- `stdlib/src/System/IO.stark`
 - `stdlib/src/System/IO/Stdout.stark`
 - `stdlib/src/System/IO/Stderr.stark`
+- `stdlib/src/System/IO/File.stark`
+- `stdlib/src/System/IO/Path.stark`
 
 Public module surface:
 
 - `System`
+- `System.IO`
 - `System.Console`
 - `System.IO.Stdout`
 - `System.IO.Stderr`
+- `System.IO.File`
+- `System.IO.Path`
 
 `System.stark` is a pure package root that re-exports the public submodules:
 
 ```stark
 export import System.Console
+export import System.IO
+module System
+```
+
+`System.IO` is itself a pure namespace module that re-exports the currently implemented IO-related submodules:
+
+```stark
 export import System.IO.Stdout
 export import System.IO.Stderr
-module System
+export import System.IO.File
+export import System.IO.Path
+module System.IO
 ```
 
 ## Current API
@@ -58,7 +73,29 @@ module System
 - `public fn void Write(ascii text)`
 - `public fn void WriteLine(ascii text)`
 
-The initial text surface is intentionally `ascii`. Wider string and formatting helpers can be added later.
+`System.IO.File`:
+
+- `public fn rawptr<i8> OpenRead(ascii path)`
+- `public fn rawptr<i8> OpenWrite(ascii path)`
+- `public fn rawptr<i8> OpenAppend(ascii path)`
+- `public fn i32 Close(rawptr<i8> handle)`
+- `public fn i32 Flush(rawptr<i8> handle)`
+- `public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle)`
+- `public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle)`
+- `public fn void WriteText(rawptr<i8> handle, ascii text)`
+- `public fn void WriteLine(rawptr<i8> handle, ascii text)`
+- `public fn i32 Delete(ascii path)`
+- `public fn i32 Move(ascii oldPath, ascii newPath)`
+
+`System.IO.Path`:
+
+- `public fn ascii DirectorySeparator()`
+- `public fn ascii AlternateDirectorySeparator()`
+- `public fn ascii PathSeparator()`
+- `public fn ascii CurrentDirectory()`
+- `public fn ascii ParentDirectory()`
+
+The initial text surface is intentionally `ascii`. The current file APIs also intentionally expose raw C-runtime-style handles while the higher-level Stark IO model is still small.
 
 ## Runtime Strategy
 
@@ -67,8 +104,15 @@ The current implementation is backed by the C runtime:
 - `fputs`
 - `stdout`
 - `stderr`
+- `fopen`
+- `fclose`
+- `fflush`
+- `fread`
+- `fwrite`
+- `remove`
+- `rename`
 
-These details stay inside the standard library package. User code calls `System.Console` or `System.IO.*` instead of binding those libc symbols directly.
+These details stay inside the standard library package. User code calls `System.Console` or `System.IO.*` instead of binding those libc symbols directly. The current `System.IO.Path` helpers are pure library wrappers returning ASCII path constants.
 
 Two current compiler limitations matter here:
 
@@ -165,13 +209,13 @@ Keep these modules as the minimal stream-backed sinks.
 
 ### `System.IO`
 
-Introduce a parent IO namespace once there is enough surface to justify it.
+`System.IO` now exists as a parent namespace and re-export hub for the current IO-related modules.
 
 Likely first additions:
 
-- file open/read/write/close APIs
-- stream-flush and stream-state helpers
 - file existence and basic metadata queries
+- richer stream-state helpers
+- a less raw handle and ownership model for file operations
 - path-friendly helpers used by file APIs
 
 The parent module should group the related pieces; it should not become a dumping ground for unrelated runtime helpers.
@@ -189,13 +233,12 @@ Likely first additions:
 
 The text layer should be designed so future allocator-backed string types can be added without rewriting the public module layout.
 
-### `System.Path` or `System.IO.Path`
+### `System.IO.Path`
 
-Add path helpers only after the file APIs need them.
+`System.IO.Path` now exists with basic separator and current/parent-directory helpers.
 
 Likely first additions:
 
-- separator and directory-separator constants
 - join/combine helpers
 - extension/base-name helpers
 - normalization helpers that stay platform-aware without overpromising canonicalization
@@ -248,7 +291,7 @@ Stdlib tests should cover the package as a package, not only the individual sour
 - compile the repository stdlib root into a package artifact
 - verify the emitted manifest lists the expected modules
 - verify the package can be consumed without importing stdlib source files directly
-- keep one end-to-end executable test that exercises `System.Console` output on both stdout and stderr
+- keep end-to-end executable coverage for `System.Console` plus packaged `System.IO.File` and `System.IO.Path` consumption
 
 ### Coverage for new modules
 
@@ -280,7 +323,7 @@ The packaging flow should stay simple and scriptable.
 The next implementation pass should focus on:
 
 - factoring shared IO logic under the current `System` slice without widening the public surface prematurely
-- adding a real `System.IO` namespace once file and stream APIs are ready
+- tightening the current `System.IO` namespace around a more intentional handle and error model
 - introducing text helpers only when they can be backed by a clear string and allocator story
 - keeping runtime, allocator, and IO concerns behind narrow stdlib boundaries
 - extending tests and packaging checks alongside each new module family

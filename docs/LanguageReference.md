@@ -127,6 +127,8 @@ Rules:
 - `ffi` marks a foreign-facing function boundary and disables the default internal calling convention behavior
 - `strictfp` selects strict IEEE-style floating-point semantics for the function
 
+The `strictfp` modifier is reserved in the surface syntax, but the current compiler rejects it until strict floating-point lowering is implemented.
+
 ### 5.3 Declarations and Bodies
 
 Function declarations may appear with either:
@@ -161,8 +163,7 @@ Range-constrained integers are written as:
 i32[0 255]
 ```
 
-ALL Declared integers are range constrained.
-It is an error to declare an integer without a range constraint.
+The current implemented surface accepts both ordinary width-based integers such as `i32` and explicit range-constrained integers such as `i32[0 255]`.
 
 `void` is not a first-class Stark value type. It is valid only as a function return type.
 
@@ -273,9 +274,9 @@ Stark `record` declarations do not support inheritance.
 
 ### 8.3 Enums
 
-`enum` declares a closed Rust-style variant family.
+`enum` declares a closed Rust-style enum family.
 
-Enum variants may be:
+Enum cases may be:
 
 - unit-like: `End`
 - tuple-like: `Integer(i32)`
@@ -290,6 +291,49 @@ enum Token {
     Move { X: i32, Y: i32 },
 }
 ```
+
+Value-level enum construction uses `.` qualification from the enum type:
+
+```stark
+stack Token a = Token.End;
+stack Token b = Token.Integer(5);
+stack Token c = Token.Move { X: 1, Y: 2 };
+```
+
+Standard library types such as `Option<T>` or `Result<T, E>`, when provided, are ordinary enums rather than compiler-privileged forms.
+
+Pattern matching uses the same case qualification:
+
+```stark
+switch (token) {
+    case Token.End:
+        return 0;
+    case Token.Integer(var value):
+        return value;
+    case Token.Move { X: var x, Y: var y }:
+        return x + y;
+}
+```
+
+For ownership:
+
+- directly capturing a move-only enum payload with `var` moves that payload out of the matched enum value
+- after such a match, the matched enum value must be reinitialized before later use or scope-exit drop
+- matching through `_` or through nested scalar-only subpatterns does not by itself move the whole enum value
+- enum destruction only applies to the active case payload that actually requires drop; unit-like and copy-only cases do not create enum drop work by themselves
+
+The default enum runtime contract is a direct-tag representation.
+
+- every enum value carries a discriminant and exactly one active payload
+- enum construction selects one case and initializes only that case's payload
+- enum matching tests the discriminant and then projects fields from the matched active case
+- destruction drops only the active case payload
+
+Default enum layout is not a stable FFI contract.
+
+- niche-based enum packing is not part of the current language contract
+- explicit enum `repr` or ABI controls are not part of the current language surface
+- Stark enums do not cross `ffi` or `export` boundaries
 
 ### 8.4 Traits
 
@@ -312,22 +356,22 @@ Doctrines have the following properties:
 
 ## 9. Globals and Storage Classes
 
-Top-level globals do not use local storage-class syntax. Global lifetime is implied by being a top-level declaration.
+Top-level globals use dedicated global declaration forms. In the current implemented syntax, globals are written as `const`, `static`, or `static mut`, and global lifetime is implied by being a top-level declaration.
 
 Stark has three classes of globals:
 
 - `const T name = ...;`
   A fully frozen global object graph. `const` is stronger than an immutable binding: the value and everything transitively reachable through it are deeply immutable for the lifetime of the program.
-- `mut T name = ...;`
+- `static mut T name = ...;`
   A mutable global rebinding. The global binding itself may be reassigned after initialization.
-- `T name = ...;`
+- `static T name = ...;`
   An immutable global binding. The binding itself cannot be rebound, but the referenced value may still contain mutable heap state or other mutability that the type permits. This form also covers ordinary plain immutable global values.
 
 The intended distinction is:
 
 - `const` means fully frozen global object graph
-- bare global means immutable binding, not deep freeze
-- `mut` means mutable global rebinding
+- `static` means immutable binding, not deep freeze
+- `static mut` means mutable global rebinding
 
 This gives Stark the following source-level global model:
 
@@ -406,6 +450,7 @@ The switch surface includes:
 - `when` guards
 - `case var capture`
 - discard `_`
+- dot-qualified enum case patterns for unit, tuple, and named-field enum cases
 - exact-type named aggregate patterns with nested aggregate subpatterns
 
 ## 11. Expressions
@@ -414,6 +459,7 @@ The expression surface includes:
 
 - literals
 - identifiers and qualified names
+- dot-qualified enum constructor expressions
 - calls
 - member access
 - indexing
@@ -593,6 +639,7 @@ At that boundary:
 - nested raw pointers are allowed
 - null may appear in raw-pointer values and raw-pointer checks
 - foreign ABI shape is preserved
+- Stark enums do not cross `ffi` or `export` boundaries
 - foreign code must not unwind through Stark frames
 
 Outside that boundary:
