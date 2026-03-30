@@ -154,8 +154,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
+            static i32 Counter = 1;
+
             fn i32 Impure() {
-                return 1;
+                return Counter;
             }
 
             law i32 PureWrapper() {
@@ -165,6 +167,25 @@ public sealed class SemanticValidationTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK4106");
+    }
+
+    [Fact]
+    public void LawsCanCallPlainFnsWhenTheCompilerCanProveTheyArePure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 PureAdd(i32 left, i32 right) {
+                return left + right;
+            }
+
+            law i32 Use() {
+                return PureAdd(1, 2);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
     }
 
     [Fact]
@@ -240,6 +261,10 @@ public sealed class SemanticValidationTests
             module Demo
 
             fn void Maybe() {
+                while infinite (true) {
+                    break;
+                }
+
                 return;
             }
 
@@ -251,6 +276,25 @@ public sealed class SemanticValidationTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK4107");
+    }
+
+    [Fact]
+    public void FiniteFunctionsCanCallPlainFnsWhenTheCompilerCanProveTheyAreFinite()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Step(i32 value) {
+                return value + 1;
+            }
+
+            finite i32 Outer(i32 value) {
+                return Step(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
     }
 
     [Fact]

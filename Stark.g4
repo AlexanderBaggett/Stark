@@ -734,20 +734,19 @@ FloatLiteral
     ;
 
 CharacterLiteral
-    : '\'' (EscapeSequence | ~['\\\r\n]) '\''
+    : '\'' (LiteralEscapeSequence | ~['\\\r\n])* '\''
     ;
 
 StringLiteral
-    : '"' (EscapeSequence | ~["\\\r\n])* '"'
+    : '"' (LiteralEscapeSequence | ~["\\\r\n])* '"'
     ;
 
 fragment ExponentPart
     : [eE] [+\-]? DIGIT+
     ;
 
-fragment EscapeSequence
-    : '\\' [btnfr"'\\]
-    | '\\u' HexDigit HexDigit HexDigit HexDigit
+fragment LiteralEscapeSequence
+    : '\\' .
     ;
 
 fragment IdentifierStart

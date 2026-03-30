@@ -17,6 +17,7 @@ public static class DefaultCompilerPipeline
             .Add(new TypeCheckPass())
             .Add(new EnumLayoutPass())
             .Add(new SemanticValidationPass())
+            .Add(new RefineFunctionEffectsPass())
             .Add(new OwnershipValidationPass())
             .Add(new LowerToHighLevelIrPass())
             .Add(new LowerToMidLevelIrPass())
@@ -485,6 +486,56 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class RefineFunctionEffectsPass : ICompilerPass
+    {
+        public string Id => "refine-function-effects";
+
+        public CompilerPhase Phase => CompilerPhase.Semantics;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["function-effects", "semantic-validate"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            var validationModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var refined = effectModel.Functions
+                .ToDictionary(
+                    static pair => pair.Key,
+                    static pair => pair.Value,
+                    StringComparer.Ordinal);
+
+            foreach (var (name, summary) in validationModel.Functions)
+            {
+                if (!refined.TryGetValue(name, out var existing))
+                {
+                    continue;
+                }
+
+                var effectiveKind = summary.EffectiveKind;
+                var isLaw = FunctionKindFacts.IsLaw(effectiveKind);
+                var isFinite = FunctionKindFacts.IsFinite(effectiveKind);
+                var readsArgumentMemory = summary.MemoryEffects?.ReadsArgumentMemory ?? existing.ReadsArgumentMemory;
+
+                refined[name] = existing with
+                {
+                    Kind = effectiveKind,
+                    ReadsArgumentMemory = readsArgumentMemory,
+                    IsPure = isLaw,
+                    NoSync = isLaw,
+                    NoFree = isLaw,
+                    WillReturn = isFinite,
+                    MustProgress = isFinite
+                };
+            }
+
+            context.Artifacts.Set(
+                CompilerArtifactKeys.FunctionEffects,
+                new FunctionEffectModel(effectModel.ModuleName, refined));
+        }
+    }
+
     private sealed class LowerToHighLevelIrPass : ICompilerPass
     {
         public string Id => "lower-hir";
@@ -493,7 +544,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "function-effects", "type-check", "semantic-validate", "ownership-validate"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -571,7 +622,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "function-effects", "type-check", "enum-layout", "const-prop", "lower-abi"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "const-prop", "lower-abi"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -662,7 +713,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "function-effects"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "refine-function-effects"];
 
         public void Execute(CompilerPassContext context)
         {

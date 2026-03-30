@@ -15,7 +15,7 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn i32 Run() {
+            finite i32 Run() {
                 heap Box box = new Box() { Value = 1 };
                 return 1;
             }
@@ -37,11 +37,11 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn void Consume(Box value) {
+            finite law void Consume(Box value) {
                 return;
             }
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 Consume(box);
                 return box.Value;
@@ -67,12 +67,12 @@ public sealed class OwnershipValidationTests
             struct Box {
                 i32 Value;
 
-                fn void Consume(Box box) {
+                finite law void Consume(Box box) {
                     return;
                 }
             }
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 box.Consume();
                 return box.Value;
@@ -95,7 +95,7 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 stack i32 x = 1;
                 stack i32 y = x;
                 return x + y;
@@ -119,7 +119,7 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box = new Box() { Value = 2 };
                 return box.Value;
@@ -142,11 +142,11 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn void Consume(Box value) {
+            finite law void Consume(Box value) {
                 return;
             }
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 stack Box box = new Box() { Value = 1 };
                 if (true) {
                     Consume(box);
@@ -171,7 +171,7 @@ public sealed class OwnershipValidationTests
                 i32 Value;
             }
 
-            fn Box Make() {
+            finite law Box Make() {
                 stack Box box = new Box() { Value = 1 };
                 return box;
             }
@@ -195,7 +195,7 @@ public sealed class OwnershipValidationTests
                 ascii Label;
             }
 
-            fn ascii Run() {
+            finite law ascii Run() {
                 stack Container value = new Container() { Name = "hi", Label = "there" };
                 return value.Name;
             }
@@ -222,7 +222,7 @@ public sealed class OwnershipValidationTests
                 NameBox Name;
             }
 
-            fn ascii Run() {
+            finite law ascii Run() {
                 stack Container value = new Container() { Name = new NameBox() { Value = "hi" } };
                 return value.Name.Value;
             }

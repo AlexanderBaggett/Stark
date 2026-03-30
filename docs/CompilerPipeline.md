@@ -18,7 +18,7 @@ The current pass system supports:
 
 ## Default Stages
 
-The current default compilation pipeline contains 19 passes and is dependency-ordered rather than hard-coded as one giant method:
+The current default compilation pipeline contains 20 passes and is dependency-ordered rather than hard-coded as one giant method:
 
 1. `parse`
    Reads source text and produces the ANTLR parse result plus syntax diagnostics.
@@ -46,31 +46,34 @@ The current default compilation pipeline contains 19 passes and is dependency-or
 10. `semantic-validate`
    Validates Stark-specific semantic contracts after typing.
    This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, recursive finite-call cycles, parameter memory summaries, and call-memory summaries are checked.
-11. `ownership-validate`
+11. `refine-function-effects`
+   Refines function guarantees from semantic body analysis after the declaration-driven effect pass.
+   This is where plain `fn` bodies that can be proven `law`, `finite`, or `finite law` are upgraded into the effect profiles consumed by HIR lowering, ABI lowering, and LLVM emission, including more precise readonly memory classification for proven laws.
+12. `ownership-validate`
    Validates deterministic ownership and lifetime rules after the higher-level semantic checks.
    This is where move tracking, use-after-move rejection, implicit drop scopes, branch-sensitive ownership state, and basic borrow lifetime sources are checked so safe code remains non-GC and leak-resistant by construction.
-12. `lower-hir`
+13. `lower-hir`
    Produces the current compiler-owned HIR shell.
    Today this is intentionally shallow: it packages root-module functions with their typed signatures, body presence, and derived effect profiles so later lowering passes stop depending on declaration-model details.
-13. `lower-mir`
+14. `lower-mir`
    Produces a mid-level IR with explicit locals, basic blocks, typed operands, typed rvalues, and terminators.
    This is where structured source bodies become control-flow-aware CFG form suitable for ownership precision and explicit value lowering, including aggregate field/index operations, slice formation, raw address formation, indirect load/store, and explicit conversions.
-14. `borrow-liveness`
+15. `borrow-liveness`
    Refines ownership validation with non-lexical-style lifetime analysis over normalized MIR.
    This pass computes borrow-local liveness across the CFG and updates the ownership model when a move, overwrite, or return would conflict with still-live borrows.
-15. `lower-ssa`
+16. `lower-ssa`
    Produces SSA form from MIR, prunes unreachable CFG blocks, and inserts phi nodes where control-flow paths merge.
    This is where mutable Stark locals stop looking like source variables and start looking like compiler values, while addressable locals still surface as explicit allocate/store/lifetime operations.
-16. `cleanup-ssa`
+17. `cleanup-ssa`
    Canonicalizes and simplifies SSA before later consumers use it.
    This pass removes trivial copy instructions, collapses identity phi nodes, collapses trampoline blocks, and performs value-numbering-style reuse of repeated SSA computations when memory ordering allows it.
-17. `const-prop`
+18. `const-prop`
    Runs constant propagation over the cleaned SSA graph.
    This pass folds constant arithmetic, conversions, compares, branches, and simple `switch` decisions and republishes the optimized SSA artifact consumed by LLVM emission.
-18. `lower-abi`
+19. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
-19. `emit-llvm`
+20. `emit-llvm`
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
    The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
 

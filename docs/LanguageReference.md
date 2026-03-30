@@ -627,7 +627,21 @@ String literals infer to:
 - `ascii` when the literal contents are ASCII
 - `unicode` otherwise
 
+Supported escapes in string and character literals are:
+
+- simple escapes: `\\`, `\"`, `\'`, `\0`, `\b`, `\t`, `\n`, `\f`, `\r`
+- hex escapes: `\xNN`
+- unicode escapes: `\uNNNN`
+
 Character literals follow the same inference path instead of using a dedicated standalone `char` type.
+
+The current implemented runtime model is:
+
+- both `ascii` and `unicode` lower to text views with runtime layout `{ ptr, i64 }`
+- the `i64` length is the UTF-8 byte length of the referenced text
+- compiler-emitted text literals are stored as UTF-8 bytes in static data with a trailing `\0`, but the Stark value length excludes that terminator
+- the current `ascii` / `unicode` explicit conversions are text-view conversions over the same backing bytes rather than a transcoding step
+- indexing and slicing over text values are not part of the current implemented surface yet
 
 ## 13. FFI and Raw Boundaries
 

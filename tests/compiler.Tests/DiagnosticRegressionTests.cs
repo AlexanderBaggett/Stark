@@ -21,6 +21,38 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
+    public void InvalidEscapeSequencesProduceStableParseDiagnostics()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Run() {
+                return "\q";
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK1000", "Invalid escape sequence '\\q' in string literal.");
+    }
+
+    [Fact]
+    public void CharacterLiteralsRequireExactlyOneDecodedCharacter()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Run() {
+                return 'ab';
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK1000", "Character literals must decode to exactly one character.");
+    }
+
+    [Fact]
     public void SelfImportsProduceAStableFrontEndDiagnostic()
     {
         var result = Compile(

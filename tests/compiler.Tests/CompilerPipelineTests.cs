@@ -32,7 +32,7 @@ public sealed class CompilerPipelineTests
         Assert.NotNull(ssaModule);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsaModule));
         Assert.NotNull(optimizedSsaModule);
-        Assert.Equal(19, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
+        Assert.Equal(20, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
     }
 
     [Fact]
@@ -67,6 +67,47 @@ public sealed class CompilerPipelineTests
         Assert.False(accept.NoUnwind);
         Assert.True(accept.IsFfi);
         Assert.True(accept.IsCold);
+    }
+
+    [Fact]
+    public void PlainFnsRefineToStrongerEffectProfilesFromSemanticAnalysis()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Effects
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            fn i32 Read(borrow Box box) {
+                return box.Value;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+
+        var add = effectModel.Functions["Add"];
+        Assert.Equal(StarkFunctionKind.FiniteLaw, add.Kind);
+        Assert.True(add.IsPure);
+        Assert.True(add.WillReturn);
+        Assert.True(add.MustProgress);
+        Assert.False(add.ReadsArgumentMemory);
+
+        var read = effectModel.Functions["Read"];
+        Assert.Equal(StarkFunctionKind.FiniteLaw, read.Kind);
+        Assert.True(read.IsPure);
+        Assert.True(read.WillReturn);
+        Assert.True(read.MustProgress);
+        Assert.True(read.ReadsArgumentMemory);
     }
 
     [Fact]

@@ -1500,58 +1500,10 @@ internal sealed class LlvmIrEmitter
 
     private static byte[] DecodeStringLiteral(string literalText)
     {
-        var content = literalText.Length >= 2 ? literalText[1..^1] : literalText;
-        var chars = new List<char>();
-
-        for (var index = 0; index < content.Length; index++)
-        {
-            var ch = content[index];
-            if (ch != '\\')
-            {
-                chars.Add(ch);
-                continue;
-            }
-
-            if (index + 1 >= content.Length)
-            {
-                chars.Add('\\');
-                break;
-            }
-
-            index++;
-            var escape = content[index];
-            switch (escape)
-            {
-                case '\\':
-                    chars.Add('\\');
-                    break;
-                case '"':
-                    chars.Add('"');
-                    break;
-                case 'n':
-                    chars.Add('\n');
-                    break;
-                case 'r':
-                    chars.Add('\r');
-                    break;
-                case 't':
-                    chars.Add('\t');
-                    break;
-                case '0':
-                    chars.Add('\0');
-                    break;
-                case 'u' when index + 4 < content.Length:
-                    var hex = content.Substring(index + 1, 4);
-                    chars.Add((char)Convert.ToInt32(hex, 16));
-                    index += 4;
-                    break;
-                default:
-                    chars.Add(escape);
-                    break;
-            }
-        }
-
-        return Encoding.UTF8.GetBytes(chars.ToArray());
+        var kind = literalText.StartsWith('\'')
+            ? TextLiteralKind.Character
+            : TextLiteralKind.String;
+        return TextLiteralDecoder.DecodeUtf8BytesOrFallback(literalText, kind);
     }
 
     private static string EncodeLlvmByteString(byte[] bytes)

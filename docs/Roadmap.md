@@ -497,15 +497,15 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
   - [x] ascii character lowering
   - [x] unicode character lowering
   - [x] regression tests for typing and codegen width rules
-- [ ] richer escape support and validation
-  - [ ] simple escapes
-  - [ ] hex and unicode escapes
-  - [ ] invalid escape diagnostics
-  - [ ] tests for escape parsing and typing
+- [x] richer escape support and validation
+  - [x] simple escapes
+  - [x] hex and unicode escapes
+  - [x] invalid escape diagnostics
+  - [x] tests for escape parsing and typing
 - [ ] full `ascii` / `unicode` runtime/value model
-  - [ ] concrete layout for `ascii` and `unicode`
+  - [x] concrete layout for `ascii` and `unicode`
   - [ ] indexing and slicing semantics
-  - [ ] literal storage and encoding guarantees
+  - [x] literal storage and encoding guarantees
   - [ ] stdlib helpers that depend on the text layout model
 
   

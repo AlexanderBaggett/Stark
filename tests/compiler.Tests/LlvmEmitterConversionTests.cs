@@ -76,6 +76,20 @@ public sealed class LlvmEmitterConversionTests
         Assert.Contains("ret %stark_unicode", llvm);
     }
 
+    [Fact]
+    public void UnicodeToAsciiConversionRebuildsTextAggregate()
+    {
+        var llvm = EmitSingleConversion(
+            StarkTypeSymbols.Ascii,
+            new SsaStringConstant("\"\\u03B1\"", StarkTypeSymbols.Unicode));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Run()", llvm);
+        Assert.Contains("extractvalue %stark_unicode", llvm);
+        Assert.Contains("insertvalue %stark_ascii zeroinitializer, ptr", llvm);
+        Assert.Contains("ret %stark_ascii", llvm);
+    }
+
     private static string EmitSingleConversion(
         StarkTypeSymbol targetType,
         SsaValue operand)

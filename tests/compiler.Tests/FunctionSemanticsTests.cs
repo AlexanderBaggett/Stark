@@ -5,6 +5,42 @@ namespace compiler.Tests;
 public sealed class FunctionSemanticsTests
 {
     [Fact]
+    public void PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthened()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            fn void Touch(borrow mut Box box) {
+                box.Value = 1;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var add = validation.Functions["Add"];
+        Assert.Equal(StarkFunctionKind.Fn, add.DeclaredKind);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, add.EffectiveKind);
+        Assert.True(add.CanStrengthenKind);
+
+        var touch = validation.Functions["Touch"];
+        Assert.Equal(StarkFunctionKind.Fn, touch.DeclaredKind);
+        Assert.Equal(StarkFunctionKind.Finite, touch.EffectiveKind);
+        Assert.True(touch.CanStrengthenKind);
+    }
+
+    [Fact]
     public void SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCaptures()
     {
         var result = Compile(
@@ -103,6 +139,44 @@ public sealed class FunctionSemanticsTests
         Assert.Equal("box", argument.CallerParameterName);
         Assert.Equal("box", argument.CalleeParameterName);
         Assert.True(argument.Writes);
+    }
+
+    [Fact]
+    public void LawsCanCallPlainFnsThatInferAsLaws()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            law i32 Use() {
+                return Add(1, 2);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void FiniteFunctionsCanCallPlainFnsThatInferAsFinite()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Step(i32 value) {
+                return value + 1;
+            }
+
+            finite i32 Use(i32 value) {
+                return Step(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
     }
 
     [Fact]

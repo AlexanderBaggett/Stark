@@ -11,7 +11,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 return 2 ** 3;
             }
             """);
@@ -30,7 +30,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn f32 Run() {
+            finite law f32 Run() {
                 return 1.0 ^ 2.0;
             }
             """);
@@ -49,7 +49,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
+            finite law i32 Run(i32 left, i32 right) {
                 stack mut i32 value = left;
                 value +%= right;
                 stack i32 product = left *| right;
@@ -71,7 +71,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            strictfp fn f32 Run(f32 left, f32 right) {
+            strictfp finite law f32 Run(f32 left, f32 right) {
                 return left + right;
             }
             """);
@@ -90,7 +90,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Run(i64 bits, ascii text) {
+            finite law i32 Run(i64 bits, ascii text) {
                 stack mut i32 value = 7;
                 stack rawmutptr<i32> ptr = &value;
                 stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
@@ -102,6 +102,36 @@ public sealed class TypeCheckingTests
                 stack i32[2] values = { 1, 2 };
                 stack i32[] view = (i32[])values;
                 return *roundTrip + view[0];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void TextEscapeLiteralsInferAsciiAndUnicodeByDecodedValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law ascii AsciiString() {
+                return "\0\b\t\n\f\r\\\"\'";
+            }
+
+            finite law ascii AsciiChar() {
+                return '\x41';
+            }
+
+            finite law unicode UnicodeString() {
+                return "\xC9";
+            }
+
+            finite law unicode UnicodeChar() {
+                return '\u03B1';
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -126,7 +156,7 @@ public sealed class TypeCheckingTests
                 rawmutptr<i32> Ptr;
             }
 
-            fn void Run(frozen Box box, frozen PtrBox ptrBox) {
+            finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
                 stack rawptr<frozen i32> valuePtr = &box.Value;
                 stack rawptr<frozen i32> readonlyPtr = ptrBox.Ptr;
                 stack bool same = *valuePtr == *readonlyPtr;
@@ -148,7 +178,7 @@ public sealed class TypeCheckingTests
 
             record Pair(i32 Left, i32 Right) { }
 
-            fn i32 Run(Pair value) {
+            finite law i32 Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -171,7 +201,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Run(bool value, bool allow) {
+            finite law i32 Run(bool value, bool allow) {
                 switch (value) {
                     case true when allow:
                         return 1;
@@ -200,7 +230,7 @@ public sealed class TypeCheckingTests
             record Pair(i32 Left, i32 Right) { }
             record Outer(Pair Values, i32 Tail) { }
 
-            fn i32 Run(Outer value) {
+            finite law i32 Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -229,7 +259,7 @@ public sealed class TypeCheckingTests
                 Move { X: i32, Y: i32 },
             }
 
-            fn i32 Run(Token token) {
+            finite law i32 Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;

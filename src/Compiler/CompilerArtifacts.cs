@@ -52,6 +52,42 @@ public enum StarkFunctionKind
     FiniteLaw
 }
 
+internal static class FunctionKindFacts
+{
+    public static bool IsLaw(StarkFunctionKind kind)
+    {
+        return kind is StarkFunctionKind.Law or StarkFunctionKind.FiniteLaw;
+    }
+
+    public static bool IsFinite(StarkFunctionKind kind)
+    {
+        return kind is StarkFunctionKind.Finite or StarkFunctionKind.FiniteLaw;
+    }
+
+    public static StarkFunctionKind Combine(bool isLaw, bool isFinite)
+    {
+        return (isLaw, isFinite) switch
+        {
+            (true, true) => StarkFunctionKind.FiniteLaw,
+            (true, false) => StarkFunctionKind.Law,
+            (false, true) => StarkFunctionKind.Finite,
+            _ => StarkFunctionKind.Fn
+        };
+    }
+
+    public static int Rank(StarkFunctionKind kind)
+    {
+        return kind switch
+        {
+            StarkFunctionKind.Fn => 0,
+            StarkFunctionKind.Finite => 1,
+            StarkFunctionKind.Law => 2,
+            StarkFunctionKind.FiniteLaw => 3,
+            _ => 0
+        };
+    }
+}
+
 public enum InlinePreference
 {
     InlineHint,
@@ -802,12 +838,17 @@ public sealed record CallMemoryEffectSummary(
 
 public sealed record FunctionValidationSummary(
     string Name,
+    StarkFunctionKind DeclaredKind,
+    StarkFunctionKind EffectiveKind,
     bool EffectsValid,
     bool BorrowingValid,
     IReadOnlyList<string> CalledFunctions,
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
-    IReadOnlyList<CallMemoryEffectSummary>? Calls = null);
+    IReadOnlyList<CallMemoryEffectSummary>? Calls = null)
+{
+    public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
+}
 
 public sealed record SemanticValidationModel(
     string ModuleName,

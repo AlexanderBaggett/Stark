@@ -11,7 +11,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -39,7 +39,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Run() {
+            finite law void Run() {
                 while willexit (true) {
                     break;
                 }
@@ -64,7 +64,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Run() {
+            finite law void Run() {
                 for willexit (stack i32 i = 0; i < 4; i = i + 1) {
                     continue;
                 }
@@ -89,7 +89,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value) {
+            finite law i32 Run(i32 value) {
                 switch (value) {
                     case 1:
                         return 10;
@@ -117,7 +117,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            finite law i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 10;
@@ -142,7 +142,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            finite law i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case _ when allow:
                         return 10;
@@ -167,7 +167,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            finite law i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1:
                     case _ when allow:
@@ -195,7 +195,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            finite law i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -223,7 +223,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            finite law i32 Run(i32 value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -259,7 +259,7 @@ public sealed class MidLevelIrLoweringTests
 
             record Pair(i32 Left, i32 Right) { }
 
-            fn i32 Run(Pair value) {
+            finite law i32 Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -301,7 +301,7 @@ public sealed class MidLevelIrLoweringTests
             record Pair(i32 Left, i32 Right) { }
             record Outer(Pair Values, i32 Tail) { }
 
-            fn i32 Run(Outer value) {
+            finite law i32 Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -620,7 +620,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
+            finite law i32 Run(i32 left, i32 right) {
                 return left ^ right;
             }
             """);
@@ -738,7 +738,7 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn f32 Run() {
+            finite law f32 Run() {
                 return 2.0 ** 3.0;
             }
             """);
@@ -760,11 +760,11 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii AsciiChar() {
+            finite law ascii AsciiChar() {
                 return 'a';
             }
 
-            fn unicode UnicodeChar() {
+            finite law unicode UnicodeChar() {
                 return '\u03B1';
             }
             """);

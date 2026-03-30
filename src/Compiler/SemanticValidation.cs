@@ -53,8 +53,8 @@ internal sealed class SemanticValidator
             ValidateFunction(function);
         }
 
-        ValidateFiniteCallCycles();
         FinalizeMemoryEffectsAndValidateCalls();
+        InferEffectiveFunctionKindsAndValidateDeclaredContracts();
 
         return new SemanticValidationModel(
             _syntaxModel.ModuleName,
@@ -141,7 +141,7 @@ internal sealed class SemanticValidator
         }
 
         var summary = GetOrCreateSummary(name);
-        summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody);
+        summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody, syntaxDeclaration.Function.Kind);
         summary.SetParameters(signature.Parameters, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
@@ -184,9 +184,14 @@ internal sealed class SemanticValidator
                 functionDeclaration.ReturnType);
         }
 
-        if (effects.IsPure && signature.ReturnType.InitializationKind != StarkInitializationKind.None)
+        if (signature.ReturnType.InitializationKind != StarkInitializationKind.None)
         {
-            EffectError(summary, "STK4100", $"Law '{signature.Name}' cannot return an 'out' or 'init' type.", functionDeclaration.ReturnType);
+            summary.DisqualifyLaw();
+
+            if (effects.IsPure)
+            {
+                EffectError(summary, "STK4100", $"Law '{signature.Name}' cannot return an 'out' or 'init' type.", functionDeclaration.ReturnType);
+            }
         }
 
         for (var index = 0; index < functionDeclaration.ParameterList.parameter().Length; index++)
@@ -196,13 +201,18 @@ internal sealed class SemanticValidator
 
             ValidateTypeUsage(parameter.Type, TypeUsage.Parameter, parameterContext.type_(), declaration.Modifiers.IsFfi);
 
-            if (effects.IsPure && parameter.Type.InitializationKind != StarkInitializationKind.None)
+            if (parameter.Type.InitializationKind != StarkInitializationKind.None)
             {
-                EffectError(
-                    summary,
-                    "STK4101",
-                    $"Law '{signature.Name}' cannot declare 'out' or 'init' parameters.",
-                    parameterContext.type_());
+                summary.DisqualifyLaw();
+
+                if (effects.IsPure)
+                {
+                    EffectError(
+                        summary,
+                        "STK4101",
+                        $"Law '{signature.Name}' cannot declare 'out' or 'init' parameters.",
+                        parameterContext.type_());
+                }
             }
         }
     }
@@ -264,9 +274,14 @@ internal sealed class SemanticValidator
             var declaredType = _typeResolver.ResolveType(localVariable.type_());
             ValidateTypeUsage(declaredType, TypeUsage.Local, localVariable.type_(), isFfiBoundary: false);
 
-            if (effects.IsPure && storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
+            if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
             {
-                EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate or publish local '{storageClass.ToString().ToLowerInvariant()}' storage.", localVariable.storageClass());
+                summary.DisqualifyLaw();
+
+                if (effects.IsPure)
+                {
+                    EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate or publish local '{storageClass.ToString().ToLowerInvariant()}' storage.", localVariable.storageClass());
+                }
             }
 
             foreach (var declarator in localVariable.variableDeclarators().variableDeclarator())
@@ -331,9 +346,14 @@ internal sealed class SemanticValidator
 
         if (statement.whileStatement() is { } whileStatement)
         {
-            if (effects.WillReturn && whileStatement.loopBehavior().GetText() != "willexit")
+            if (whileStatement.loopBehavior().GetText() != "willexit")
             {
-                EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", whileStatement.loopBehavior());
+                summary.DisqualifyFinite();
+
+                if (effects.WillReturn)
+                {
+                    EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", whileStatement.loopBehavior());
+                }
             }
 
             EvaluateExpression(whileStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
@@ -343,9 +363,14 @@ internal sealed class SemanticValidator
 
         if (statement.forStatement() is { } forStatement)
         {
-            if (effects.WillReturn && forStatement.loopBehavior().GetText() != "willexit")
+            if (forStatement.loopBehavior().GetText() != "willexit")
             {
-                EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", forStatement.loopBehavior());
+                summary.DisqualifyFinite();
+
+                if (effects.WillReturn)
+                {
+                    EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", forStatement.loopBehavior());
+                }
             }
 
             var loopScope = new ValidationScope(scope);
@@ -356,9 +381,14 @@ internal sealed class SemanticValidator
                 var declaredType = _typeResolver.ResolveType(localForDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Local, localForDeclaration.type_(), isFfiBoundary: false);
 
-                if (effects.IsPure && storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
+                if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
                 {
-                    EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate or publish local '{storageClass.ToString().ToLowerInvariant()}' storage.", localForDeclaration.storageClass());
+                    summary.DisqualifyLaw();
+
+                    if (effects.IsPure)
+                    {
+                        EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate or publish local '{storageClass.ToString().ToLowerInvariant()}' storage.", localForDeclaration.storageClass());
+                    }
                 }
 
                 foreach (var declarator in localForDeclaration.variableDeclarators().variableDeclarator())
@@ -510,9 +540,14 @@ internal sealed class SemanticValidator
 
         RecordObservedMemoryWrite(left, summary);
 
-        if (effects.IsPure && IsVisibleMemoryWrite(left))
+        if (IsVisibleMemoryWrite(left))
         {
-            EffectError(summary, "STK4104", $"Law '{function.Name}' cannot perform externally visible writes.", expression.unaryExpression());
+            summary.DisqualifyLaw();
+
+            if (effects.IsPure)
+            {
+                EffectError(summary, "STK4104", $"Law '{function.Name}' cannot perform externally visible writes.", expression.unaryExpression());
+            }
         }
 
         return new ValidationValue(left.Type);
@@ -898,9 +933,14 @@ internal sealed class SemanticValidator
 
         if (_typeModel.Globals.TryGetValue(name, out var globalType))
         {
-            if (effects.IsPure && observation == ExpressionObservation.Read)
+            if (observation == ExpressionObservation.Read)
             {
-                EffectError(summary, "STK4105", $"Law '{function.Name}' cannot read global state.", token);
+                summary.DisqualifyLaw();
+
+                if (effects.IsPure)
+                {
+                    EffectError(summary, "STK4105", $"Law '{function.Name}' cannot read global state.", token);
+                }
             }
 
             var isMutable = globalType.IsMutable;
@@ -1207,16 +1247,6 @@ internal sealed class SemanticValidator
         if (_effectModel.Functions.TryGetValue(target.Function.Name, out var calleeEffects))
         {
             summary.CalledFunctions.Add(target.Function.Name);
-
-            if (currentEffects.IsPure && !calleeEffects.IsPure)
-            {
-                EffectError(summary, "STK4106", $"Law '{currentFunction.Name}' may only call other laws.", arguments);
-            }
-
-            if (currentEffects.WillReturn && (!calleeEffects.WillReturn || !calleeEffects.MustProgress))
-            {
-                EffectError(summary, "STK4107", $"Finite function '{currentFunction.Name}' may only call finite functions.", arguments);
-            }
 
             if (calleeEffects.IsFfi)
             {
@@ -1586,12 +1616,7 @@ internal sealed class SemanticValidator
 
         foreach (var summary in _summaries.Values)
         {
-            if (!_effectModel.Functions.TryGetValue(summary.Name, out var effects) || !effects.IsPure)
-            {
-                summary.BuildResolvedCalls(call =>
-                    BuildResolvedCallSummary(call));
-                continue;
-            }
+            var declaredLaw = FunctionKindFacts.IsLaw(summary.DeclaredKind);
 
             foreach (var pendingCall in summary.PendingCalls)
             {
@@ -1604,6 +1629,13 @@ internal sealed class SemanticValidator
 
                     var propagated = GetCallArgumentEffects(pendingCall.CalleeName, argument.CalleeParameterName, argument.FallbackEffects);
                     if (!propagated.Writes && propagated.CaptureKind == ParameterCaptureKind.None)
+                    {
+                        continue;
+                    }
+
+                    summary.DisqualifyLaw();
+
+                    if (!declaredLaw)
                     {
                         continue;
                     }
@@ -1663,30 +1695,123 @@ internal sealed class SemanticValidator
             argumentSummaries);
     }
 
-    private void ValidateFiniteCallCycles()
+    private void InferEffectiveFunctionKindsAndValidateDeclaredContracts()
     {
-        var finiteFunctions = _summaries
-            .Where(pair => _effectModel.Functions.TryGetValue(pair.Key, out var effects) && effects.WillReturn && effects.MustProgress)
-            .Select(static pair => pair.Key)
-            .ToHashSet(StringComparer.Ordinal);
+        var effectiveLaw = _summaries.Values.ToDictionary(
+            static summary => summary.Name,
+            static summary => summary.DirectLawCompatible,
+            StringComparer.Ordinal);
+        var effectiveFinite = _summaries.Values.ToDictionary(
+            static summary => summary.Name,
+            static summary => summary.DirectFiniteCompatible,
+            StringComparer.Ordinal);
 
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+
+            foreach (var summary in _summaries.Values.Where(static summary => summary.HasBody))
+            {
+                if (effectiveLaw[summary.Name]
+                    && summary.CalledFunctions.Any(callee => !IsEffectiveLaw(callee, effectiveLaw)))
+                {
+                    effectiveLaw[summary.Name] = false;
+                    changed = true;
+                }
+
+                if (effectiveFinite[summary.Name]
+                    && summary.CalledFunctions.Any(callee => !IsEffectiveFinite(callee, effectiveFinite)))
+                {
+                    effectiveFinite[summary.Name] = false;
+                    changed = true;
+                }
+            }
+        }
+
+        var finiteCycles = FindFiniteCycles(effectiveFinite);
+
+        foreach (var function in finiteCycles)
+        {
+            effectiveFinite[function] = false;
+        }
+
+        foreach (var summary in _summaries.Values)
+        {
+            summary.SetEffectiveKind(
+                summary.HasBody
+                    ? FunctionKindFacts.Combine(effectiveLaw[summary.Name], effectiveFinite[summary.Name])
+                    : summary.DeclaredKind);
+        }
+
+        foreach (var summary in _summaries.Values)
+        {
+            var declaredLaw = FunctionKindFacts.IsLaw(summary.DeclaredKind);
+            var declaredFinite = FunctionKindFacts.IsFinite(summary.DeclaredKind);
+
+            foreach (var pendingCall in summary.PendingCalls)
+            {
+                if (declaredLaw && !IsEffectiveLaw(pendingCall.CalleeName, effectiveLaw))
+                {
+                    EffectError(summary, "STK4106", $"Law '{summary.Name}' may only call other laws.", pendingCall.Location);
+                }
+
+                if (declaredFinite
+                    && !IsEffectiveFinite(pendingCall.CalleeName, effectiveFinite)
+                    && !(finiteCycles.Contains(summary.Name) && finiteCycles.Contains(pendingCall.CalleeName)))
+                {
+                    EffectError(summary, "STK4107", $"Finite function '{summary.Name}' may only call finite functions.", pendingCall.Location);
+                }
+            }
+        }
+
+        foreach (var function in finiteCycles)
+        {
+            if (_functionDeclarations.TryGetValue(function, out var declaration)
+                && _summaries.TryGetValue(function, out var summary)
+                && FunctionKindFacts.IsFinite(summary.DeclaredKind))
+            {
+                EffectError(summary, "STK4108", $"Finite function '{function}' participates in a recursive call cycle and cannot be proven finite.", declaration.NameToken);
+            }
+        }
+    }
+
+    private bool IsEffectiveLaw(string functionName, IReadOnlyDictionary<string, bool> effectiveLaw)
+    {
+        if (_summaries.TryGetValue(functionName, out var summary))
+        {
+            return summary.HasBody
+                ? effectiveLaw[functionName]
+                : FunctionKindFacts.IsLaw(summary.DeclaredKind);
+        }
+
+        return _effectModel.Functions.TryGetValue(functionName, out var effects) && effects.IsPure;
+    }
+
+    private bool IsEffectiveFinite(string functionName, IReadOnlyDictionary<string, bool> effectiveFinite)
+    {
+        if (_summaries.TryGetValue(functionName, out var summary))
+        {
+            return summary.HasBody
+                ? effectiveFinite[functionName]
+                : FunctionKindFacts.IsFinite(summary.DeclaredKind);
+        }
+
+        return _effectModel.Functions.TryGetValue(functionName, out var effects) && effects.WillReturn && effects.MustProgress;
+    }
+
+    private HashSet<string> FindFiniteCycles(IReadOnlyDictionary<string, bool> effectiveFinite)
+    {
         var visited = new Dictionary<string, VisitState>(StringComparer.Ordinal);
         var stack = new List<string>();
         var cyclic = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var function in finiteFunctions)
+        foreach (var function in effectiveFinite.Where(static pair => pair.Value).Select(static pair => pair.Key))
         {
             Visit(function);
         }
 
-        foreach (var function in cyclic)
-        {
-            if (_functionDeclarations.TryGetValue(function, out var declaration))
-            {
-                var summary = GetOrCreateSummary(function);
-                EffectError(summary, "STK4108", $"Finite function '{function}' participates in a recursive call cycle and cannot be proven finite.", declaration.NameToken);
-            }
-        }
+        return cyclic;
 
         void Visit(string function)
         {
@@ -1710,9 +1835,9 @@ internal sealed class SemanticValidator
             visited[function] = VisitState.Visiting;
             stack.Add(function);
 
-            if (_summaries.TryGetValue(function, out var summary))
+            if (_summaries.TryGetValue(function, out var summary) && summary.HasBody)
             {
-                foreach (var callee in summary.CalledFunctions.Where(finiteFunctions.Contains))
+                foreach (var callee in summary.CalledFunctions.Where(callee => IsEffectiveFinite(callee, effectiveFinite)))
                 {
                     Visit(callee);
                 }
@@ -2174,12 +2299,16 @@ internal sealed class SemanticValidator
 
         if (literal.StringLiteral() is { } stringLiteral)
         {
-            return IsAsciiLiteral(stringLiteral.GetText()) ? StarkTypeSymbols.Ascii : StarkTypeSymbols.Unicode;
+            return TextLiteralDecoder.IsAsciiLiteral(stringLiteral.GetText(), TextLiteralKind.String)
+                ? StarkTypeSymbols.Ascii
+                : StarkTypeSymbols.Unicode;
         }
 
         if (literal.CharacterLiteral() is { } characterLiteral)
         {
-            return IsAsciiLiteral(characterLiteral.GetText()) ? StarkTypeSymbols.Ascii : StarkTypeSymbols.Unicode;
+            return TextLiteralDecoder.IsAsciiLiteral(characterLiteral.GetText(), TextLiteralKind.Character)
+                ? StarkTypeSymbols.Ascii
+                : StarkTypeSymbols.Unicode;
         }
 
         if (literal.TRUE() is not null || literal.FALSE() is not null)
@@ -2273,40 +2402,6 @@ internal sealed class SemanticValidator
         }
 
         return StarkTypeSymbols.Integer(widths[^1], value, value);
-    }
-
-    private static bool IsAsciiLiteral(string text)
-    {
-        var content = text.Length >= 2 ? text[1..^1] : text;
-        for (var index = 0; index < content.Length; index++)
-        {
-            var ch = content[index];
-            if (ch == '\\' && index + 1 < content.Length)
-            {
-                if (content[index + 1] == 'u' && index + 5 < content.Length)
-                {
-                    var hex = content.Substring(index + 2, 4);
-                    var value = Convert.ToInt32(hex, 16);
-                    if (value > 0x7F)
-                    {
-                        return false;
-                    }
-
-                    index += 5;
-                    continue;
-                }
-
-                index++;
-                continue;
-            }
-
-            if (ch > 0x7F)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static StarkTypeSymbol ProjectFrozenView(StarkTypeSymbol sourceType, StarkTypeSymbol projectedType)
@@ -2690,7 +2785,15 @@ internal sealed class SemanticValidator
 
         public StarkTypeSymbol ReturnType { get; private set; } = StarkTypeSymbols.Error;
 
+        public StarkFunctionKind DeclaredKind { get; private set; } = StarkFunctionKind.Fn;
+
+        public StarkFunctionKind EffectiveKind { get; private set; } = StarkFunctionKind.Fn;
+
         public bool HasBody { get; private set; }
+
+        public bool DirectLawCompatible { get; private set; }
+
+        public bool DirectFiniteCompatible { get; private set; }
 
         public bool EffectsValid { get; set; } = true;
 
@@ -2704,10 +2807,14 @@ internal sealed class SemanticValidator
 
         public List<CallMemoryEffectSummary> ResolvedCalls { get; } = [];
 
-        public void Configure(StarkTypeSymbol returnType, bool hasBody)
+        public void Configure(StarkTypeSymbol returnType, bool hasBody, StarkFunctionKind declaredKind)
         {
             ReturnType = returnType;
+            DeclaredKind = declaredKind;
             HasBody = hasBody;
+            DirectLawCompatible = hasBody;
+            DirectFiniteCompatible = hasBody;
+            EffectiveKind = hasBody ? StarkFunctionKind.Fn : declaredKind;
         }
 
         public void SetParameters(
@@ -2761,6 +2868,21 @@ internal sealed class SemanticValidator
             ResolvedCalls.AddRange(PendingCalls.Select(projector));
         }
 
+        public void DisqualifyLaw()
+        {
+            DirectLawCompatible = false;
+        }
+
+        public void DisqualifyFinite()
+        {
+            DirectFiniteCompatible = false;
+        }
+
+        public void SetEffectiveKind(StarkFunctionKind kind)
+        {
+            EffectiveKind = kind;
+        }
+
         public FunctionValidationSummary Build()
         {
             var parameterSummaries = Parameters.Values
@@ -2774,6 +2896,8 @@ internal sealed class SemanticValidator
 
             return new FunctionValidationSummary(
                 Name,
+                DeclaredKind,
+                EffectiveKind,
                 EffectsValid,
                 BorrowingValid,
                 CalledFunctions.OrderBy(static item => item, StringComparer.Ordinal).ToArray(),

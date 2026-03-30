@@ -11,7 +11,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 stack mut i32 value = 1;
                 value = value + 1;
                 return value;
@@ -35,7 +35,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 if (true) {
                     return 1;
                 }
@@ -59,7 +59,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(bool flag) {
+            finite law i32 Run(bool flag) {
                 stack mut i32 value = 0;
                 if (flag) {
                     value = 1;
@@ -89,7 +89,7 @@ public sealed class LlvmIrEmissionTests
             internal static rawptr<i8> Buffer = null;
             export static mut rawptr<i8> Visible = null;
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 return 0;
             }
             """);
@@ -114,7 +114,7 @@ public sealed class LlvmIrEmissionTests
 
             static mut i32 Counter = 0;
 
-            fn i32 Run() {
+            finite i32 Run() {
                 Counter = 7;
                 return Counter;
             }
@@ -140,7 +140,7 @@ public sealed class LlvmIrEmissionTests
             static i32 Hidden = 1;
             export static mut i32 Visible = 0;
 
-            fn i32 Run() {
+            finite i32 Run() {
                 Counter = 7;
                 return Counter;
             }
@@ -175,7 +175,7 @@ public sealed class LlvmIrEmissionTests
             const Pair Origin = new Pair() { Left = 1, Right = 2 };
             static i32[3] Values = { 4, 7, 9 };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 return Origin.Right + Values[1];
             }
             """);
@@ -201,7 +201,7 @@ public sealed class LlvmIrEmissionTests
 
             const Point Origin = new Point(3) { Y = 9 };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 return Origin.Y;
             }
             """);
@@ -222,7 +222,7 @@ public sealed class LlvmIrEmissionTests
 
             const i32[3] Values = { 4, 7, 9 };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 return Values[1];
             }
             """);
@@ -254,7 +254,7 @@ public sealed class LlvmIrEmissionTests
                 Label = "ok"
             };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 return Graph.Item.Value;
             }
             """);
@@ -290,7 +290,7 @@ public sealed class LlvmIrEmissionTests
                 View = { 1, 2, 3 }
             };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 return Frozen.Node.Pair[1] + Frozen.View[0];
             }
             """);
@@ -318,7 +318,7 @@ public sealed class LlvmIrEmissionTests
             static mut Pair Current = new Pair() { Left = 5, Right = 8 };
             static mut i32[3] Values = { 1, 2, 3 };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 Current.Right = 9;
                 Values[1] = 7;
                 return Current.Right + Values[1];
@@ -352,7 +352,7 @@ public sealed class LlvmIrEmissionTests
 
             static Buffer Shared = { Values = { 5, 8 } };
 
-            fn i32 Run() {
+            finite i32 Run() {
                 return Shared.Values[1];
             }
             """);
@@ -373,7 +373,7 @@ public sealed class LlvmIrEmissionTests
 
             const rawptr<i8> stdout = null;
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 return 0;
             }
             """);
@@ -834,11 +834,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn ascii Echo(ascii text) {
+            finite law ascii Echo(ascii text) {
                 return text;
             }
 
-            fn ascii Run() {
+            finite law ascii Run() {
                 return Echo("Hi");
             }
             """);
@@ -859,11 +859,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn ascii AsciiChar() {
+            finite law ascii AsciiChar() {
                 return 'a';
             }
 
-            fn unicode UnicodeChar() {
+            finite law unicode UnicodeChar() {
                 return '\u03B1';
             }
             """);
@@ -879,6 +879,87 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc %stark_unicode @UnicodeChar()", llvm);
         Assert.Contains("ret %stark_ascii { ptr getelementptr inbounds ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }", llvm);
         Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.1, i32 0, i32 0), i64 2 }", llvm);
+    }
+
+    [Fact]
+    public void UnicodeStringLiteralsUseUtf8ByteLengthInRuntimeValues()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law unicode Greek() {
+                return "\u03B1";
+            }
+
+            finite law unicode Accented() {
+                return "\xC9";
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
+        Assert.Contains("@.str.0 = private unnamed_addr constant [3 x i8] c\"\\CE\\B1\\00\"", llvm);
+        Assert.Contains("@.str.1 = private unnamed_addr constant [3 x i8] c\"\\C3\\89\\00\"", llvm);
+        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 }", llvm);
+        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.1, i32 0, i32 0), i64 2 }", llvm);
+    }
+
+    [Fact]
+    public void PlainFnsEmitInferredPureAndFiniteAttributes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            fn i32 Read(borrow Box box) {
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none)", llvm);
+        Assert.Contains("memory(argmem: read)", llvm);
+    }
+
+    [Fact]
+    public void EscapedTextLiteralsEmitDecodedBytes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law ascii Controls() {
+                return "\0\b\t\n\f\r\\\"\'";
+            }
+
+            finite law ascii HexChar() {
+                return '\x41';
+            }
+
+            finite law unicode Wide() {
+                return "\xC9";
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@.str.0 = private unnamed_addr constant [10 x i8] c\"\\00\\08\\09\\0A\\0C\\0D\\5C\\22'\\00\"", llvm);
+        Assert.Contains("@.str.1 = private unnamed_addr constant [2 x i8] c\"A\\00\"", llvm);
+        Assert.Contains("@.str.2 = private unnamed_addr constant [3 x i8] c\"\\C3\\89\\00\"", llvm);
     }
 
     [Fact]

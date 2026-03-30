@@ -27,7 +27,38 @@ public static class StarkSyntax
         parser.AddErrorListener(errors);
 
         var root = parser.compilationUnit();
+        tokens.Fill();
+        ValidateTextLiterals(tokens, errors);
         return new ParseResult(root, errors.Diagnostics);
+    }
+
+    private static void ValidateTextLiterals(CommonTokenStream tokens, CountingErrorListener errors)
+    {
+        foreach (var token in tokens.GetTokens())
+        {
+            if (token.Type == StarkLexer.StringLiteral)
+            {
+                ValidateTextLiteral(token, TextLiteralKind.String, errors);
+            }
+            else if (token.Type == StarkLexer.CharacterLiteral)
+            {
+                ValidateTextLiteral(token, TextLiteralKind.Character, errors);
+            }
+        }
+    }
+
+    private static void ValidateTextLiteral(IToken token, TextLiteralKind kind, CountingErrorListener errors)
+    {
+        if (token.Text is null
+            || TextLiteralDecoder.TryDecode(token.Text, kind, out _, out var diagnostic))
+        {
+            return;
+        }
+
+        errors.AddDiagnostic(
+            token.Line,
+            token.Column + 1 + diagnostic.Offset,
+            diagnostic.Message);
     }
 
     private sealed class CountingErrorListener : IAntlrErrorListener<int>, IAntlrErrorListener<IToken>
@@ -35,6 +66,11 @@ public static class StarkSyntax
         private readonly List<ParseDiagnostic> _diagnostics = [];
 
         public IReadOnlyList<ParseDiagnostic> Diagnostics => _diagnostics;
+
+        public void AddDiagnostic(int line, int column, string message)
+        {
+            _diagnostics.Add(new ParseDiagnostic(line, column, message));
+        }
 
         public void SyntaxError(
             TextWriter output,

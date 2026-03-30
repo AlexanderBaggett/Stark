@@ -3814,46 +3814,16 @@ internal sealed class TypeChecker
 
     private static StarkTypeSymbol InferStringLiteralType(string text)
     {
-        return IsAsciiLiteral(text) ? StarkTypeSymbols.Ascii : StarkTypeSymbols.Unicode;
+        return TextLiteralDecoder.IsAsciiLiteral(text, TextLiteralKind.String)
+            ? StarkTypeSymbols.Ascii
+            : StarkTypeSymbols.Unicode;
     }
 
     private static StarkTypeSymbol InferCharacterLiteralType(string text)
     {
-        return IsAsciiLiteral(text) ? StarkTypeSymbols.Ascii : StarkTypeSymbols.Unicode;
-    }
-
-    private static bool IsAsciiLiteral(string text)
-    {
-        var content = text.Length >= 2 ? text[1..^1] : text;
-        for (var index = 0; index < content.Length; index++)
-        {
-            var ch = content[index];
-            if (ch == '\\' && index + 1 < content.Length)
-            {
-                if (content[index + 1] == 'u' && index + 5 < content.Length)
-                {
-                    var hex = content.Substring(index + 2, 4);
-                    var value = Convert.ToInt32(hex, 16);
-                    if (value > 0x7F)
-                    {
-                        return false;
-                    }
-
-                    index += 5;
-                    continue;
-                }
-
-                index++;
-                continue;
-            }
-
-            if (ch > 0x7F)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return TextLiteralDecoder.IsAsciiLiteral(text, TextLiteralKind.Character)
+            ? StarkTypeSymbols.Ascii
+            : StarkTypeSymbols.Unicode;
     }
 
     private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type)

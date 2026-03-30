@@ -62,7 +62,7 @@ public sealed class ParserSmokeTests
                 Move { X: i32, Y: i32 },
             }
 
-            fn i32 Use(Result<i32, ascii> result, Token token) {
+            finite law i32 Use(Result<i32, ascii> result, Token token) {
                 stack Token end = Token.End;
                 stack Token integer = Token.Integer(5);
                 stack Token moveToken = Token.Move { X: 1, Y: 2 };
@@ -87,13 +87,28 @@ public sealed class ParserSmokeTests
             internal static rawptr<i8> Buffer = null;
             export static i32[0 255] Limit = 255;
 
-            public fn void Accept(
+            public finite void Accept(
                 borrow i8[] input,
                 frozen ascii name,
                 shared i32[0 10] state,
                 out i8[16] output,
                 init rawmutptr<i8> rawBuffer)
             {
+                return;
+            }
+            """
+        },
+        {
+            "text literals with supported escapes",
+            """
+            module Escapes
+
+            finite law void Run() {
+                stack ascii nul = '\0';
+                stack ascii hex = '\x41';
+                stack unicode greek = '\u03B1';
+                stack ascii controls = "\0\b\t\n\f\r\\\"\'";
+                stack unicode wide = "\xC9";
                 return;
             }
             """
@@ -107,7 +122,7 @@ public sealed class ParserSmokeTests
                 i32 Value;
             }
 
-            fn i32 Run() {
+            finite law i32 Run() {
                 const i32 start = 0;
                 stack mut i32 counter = start;
                 stack Widget item = new Widget() { Value = 1 };
@@ -149,7 +164,7 @@ public sealed class ParserSmokeTests
 
             record Pair(i32 Left, i32 Right) { }
 
-            fn i32 Run(Pair value) {
+            finite law i32 Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -167,7 +182,7 @@ public sealed class ParserSmokeTests
             record Pair(i32 Left, i32 Right) { }
             record Outer(Pair Values, i32 Tail) { }
 
-            fn i32 Run(Outer value) {
+            finite law i32 Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -217,16 +232,16 @@ public sealed class ParserSmokeTests
             """
             module Operators
 
-            strictfp fn f32 Precise(f32 left, f32 right) {
+            strictfp finite law f32 Precise(f32 left, f32 right) {
                 return left + right;
             }
 
-            fn i32 Wrap(i32 left, i32 right) {
+            finite law i32 Wrap(i32 left, i32 right) {
                 left +%= right;
                 return -%left +% right *% 2;
             }
 
-            fn i32 Saturate(i32 left, i32 right) {
+            finite law i32 Saturate(i32 left, i32 right) {
                 left +|= right;
                 return left +| right *| 2;
             }
