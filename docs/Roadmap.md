@@ -541,7 +541,8 @@ Goal: Stark's abstraction system becomes real, optimizable, and usable.
   - [ ] regression tests for emitted LLVM attributes and call shapes
 
 
-  ### Standard Library Core
+  ## Milestone 7 Standard Library
+  ### Standard Library Core Linux using Syscall (no libc/glibc)
 
 - [x] Define the first standard library module layout
 - [x] `Console` or `Stdout` output abstraction
@@ -568,7 +569,34 @@ Goal: Stark's abstraction system becomes real, optimizable, and usable.
   - [ ] ascii/unicode conversion helpers if the surface supports them
 
 
-## Milestone 7: Optimization and Backend Quality
+  ### Standard Library Core Windows
+
+- [x] Define the first standard library module layout
+- [ ] `Console` or `Stdout` output abstraction
+- [ ] `Stderr` output abstraction
+- [ ] File read API
+  - [ ] bytes read-all API
+  - [ ] text read-all API for Stark string types
+  - [ ] handle-based read API if handles are exposed
+  - [ ] tests through stdlib package import paths
+- [ ] File write API
+  - [ ] bytes write-all API
+  - [ ] text write-all API for Stark string types
+  - [ ] overwrite vs append mode selection
+  - [ ] flush/close semantics if handles are exposed
+- [ ] Basic path/file error modeling
+  - [ ] canonical file/path error value cases
+  - [ ] result-style IO return shapes
+  - [ ] platform failure translation into Stark error values
+  - [ ] tests and docs for file/path failure behavior
+- [ ] String helpers required by the standard library
+  - [ ] length and emptiness helpers
+  - [ ] string slicing helpers required by IO APIs
+  - [ ] basic search helpers required by stdlib code
+  - [ ] ascii/unicode conversion helpers if the surface supports them
+
+
+## Milestone 8: Optimization and Backend Quality
 
 Goal: emitted LLVM becomes richer, more correct, and more competitive.
 
@@ -651,7 +679,7 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
   - [ ] emit local variable debug info where feasible
   - [ ] tests that debug metadata is present in LLVM output
 
-## Milestone 8: Tooling, Diagnostics, and Developer Experience
+## Milestone 9: Tooling, Diagnostics, and Developer Experience
 
 Goal: Stark is pleasant to work on and pleasant to use.
 
@@ -719,7 +747,7 @@ Goal: Stark is pleasant to work on and pleasant to use.
   - [x] struct/record/object-initializer example
   - [x] static-library or FFI example
 
-## Milestone 9: Release Readiness
+## Milestone 10 (aka v1.0): Release Readiness
 
 Goal: Stark is not just a compiler experiment, but a coherent language/toolchain release.
 
