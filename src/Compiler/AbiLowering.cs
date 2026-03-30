@@ -41,8 +41,7 @@ internal sealed class AbiLowerer
 
     private AbiFunctionSignature LowerFunction(TypedFunctionSignature function, FunctionEffectProfile effects)
     {
-        var (moduleName, sourceName) = SplitFunctionName(function.Name);
-        var visibility = LookupVisibility(moduleName, sourceName);
+        var (moduleName, sourceName, visibility) = ResolveFunctionIdentity(function.Name);
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
         var returnsIndirect = !isFfi && RequiresIndirectReturnAbi(function.ReturnType);
@@ -111,28 +110,33 @@ internal sealed class AbiLowerer
         return false;
     }
 
-    private (string ModuleName, string SourceName) SplitFunctionName(string functionName)
+    private (string ModuleName, string SourceName, StarkVisibility Visibility) ResolveFunctionIdentity(string functionName)
     {
-        var separator = functionName.LastIndexOf('.');
-        return separator < 0
-            ? (_syntaxModel.ModuleName, functionName)
-            : (functionName[..separator], functionName[(separator + 1)..]);
-    }
-
-    private StarkVisibility LookupVisibility(string moduleName, string sourceName)
-    {
-        if (_loadedModules.TryGet(moduleName, out var module) && module is not null)
+        foreach (var module in _loadedModules.Modules.Values)
         {
-            var declaration = module.SyntaxModel.Declarations.FirstOrDefault(
-                candidate => candidate.Kind == DeclarationKind.Function
-                             && string.Equals(candidate.Name, sourceName, StringComparison.Ordinal));
-            if (declaration is not null)
+            foreach (var declaration in module.SyntaxModel.Declarations)
             {
-                return declaration.Visibility;
+                if (declaration.Kind != DeclarationKind.Function)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(QualifyName(module, declaration.Name), functionName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return (module.SyntaxModel.ModuleName, declaration.Name, declaration.Visibility);
             }
         }
 
-        return StarkVisibility.Module;
+        var separator = functionName.LastIndexOf('.');
+        if (separator < 0)
+        {
+            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module);
+        }
+
+        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module);
     }
 
     private string ComputeSymbolName(
@@ -142,9 +146,20 @@ internal sealed class AbiLowerer
         StarkVisibility visibility,
         bool isFfi)
     {
-        if (isFfi || visibility == StarkVisibility.Export)
+        if (isFfi)
         {
             return sourceName;
+        }
+
+        if (visibility == StarkVisibility.Export
+            && !sourceName.Contains('.', StringComparison.Ordinal))
+        {
+            return sourceName;
+        }
+
+        if (_options.QualifyModuleSymbols)
+        {
+            return $"{moduleName}.{sourceName}";
         }
 
         if (qualifiedName.Contains('.', StringComparison.Ordinal))
@@ -152,8 +167,13 @@ internal sealed class AbiLowerer
             return qualifiedName;
         }
 
-        return _options.QualifyModuleSymbols
-            ? $"{moduleName}.{sourceName}"
-            : sourceName;
+        return sourceName;
+    }
+
+    private string QualifyName(LoadedModuleDocument module, string localName)
+    {
+        return module.Reference.IsRoot
+            ? localName
+            : $"{module.SyntaxModel.ModuleName}.{localName}";
     }
 }

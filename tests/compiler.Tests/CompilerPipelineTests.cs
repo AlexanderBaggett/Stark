@@ -181,6 +181,89 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void DoctrineDeclarationsFlowIntoSyntaxTypeAndSemanticModels()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Laws
+
+            public doctrine Numbers {
+                finite law i32 Add(i32 left, i32 right) {
+                    return left + right;
+                }
+            }
+
+            fn i32 Run() {
+                return Numbers.Add(1, 2);
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+        Assert.Contains(syntaxModel.Declarations, declaration => declaration.Kind == DeclarationKind.Doctrine && declaration.Name == "Numbers");
+        Assert.Contains(syntaxModel.Declarations, declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Numbers.Add");
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.TryGetValue("Numbers", out var doctrineType));
+        Assert.NotNull(doctrineType);
+        Assert.Equal(DeclarationKind.Doctrine, doctrineType.Kind);
+        Assert.True(typeCheckModel.Functions.ContainsKey("Numbers.Add"));
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? semanticValidation));
+        Assert.NotNull(semanticValidation);
+        Assert.Contains("Numbers.Add", semanticValidation.Functions["Run"].CalledFunctions);
+    }
+
+    [Fact]
+    public void ImportedDoctrineMembersFromLoadedModulesParticipateInTypingAndEffects()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                fn i32 Run() {
+                    return Math.Numbers.Add(3, 4);
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public doctrine Numbers {
+                            finite law i32 Add(i32 left, i32 right) {
+                                return left + right;
+                            }
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Math.Numbers"));
+        Assert.True(typeCheckModel.Functions.ContainsKey("Math.Numbers.Add"));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+        Assert.True(effectModel.Functions["Math.Numbers.Add"].WillReturn);
+        Assert.True(effectModel.Functions["Math.Numbers.Add"].IsPure);
+    }
+
+    [Fact]
     public void PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModule()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -361,6 +444,71 @@ public sealed class CompilerPipelineTests
             Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
             Assert.NotNull(typeCheckModel);
             Assert.True(typeCheckModel.Functions.ContainsKey("Math.Add"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedDoctrineLibrariesResolveWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-doctrine-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public doctrine Numbers {
+                    finite law i32 Double(i32 value) {
+                        return value + value;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded);
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run() {
+                        return Facade.Numbers.Double(3);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.Numbers", out var doctrineType));
+            Assert.NotNull(doctrineType);
+            Assert.Equal(DeclarationKind.Doctrine, doctrineType.Kind);
+            Assert.True(typeCheckModel.Functions.ContainsKey("Facade.Numbers.Double"));
         }
         finally
         {
@@ -650,6 +798,30 @@ public sealed class CompilerPipelineTests
 
         Assert.False(result.Succeeded);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK3002");
+    }
+
+    [Fact]
+    public void DoctrineMethodsUseModuleQualifiedSymbolsWhenEmittingLibraries()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Math
+
+                public doctrine Numbers {
+                    finite law i32 Add(i32 left, i32 right) {
+                        return left + right;
+                    }
+                }
+                """),
+            new CompilerOptions(QualifyModuleSymbols: true));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.AbiModel, out AbiModel? abiModel));
+        Assert.NotNull(abiModel);
+        Assert.Equal("Math.Numbers.Add", abiModel.Functions["Numbers.Add"].SymbolName);
     }
 
     [Fact]

@@ -375,6 +375,26 @@ public sealed class SemanticValidationTests
         Assert.True(validation.Functions["Echo"].BorrowingValid);
     }
 
+    [Fact]
+    public void DoctrineMembersParticipateInLawValidation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32 Answer = 42;
+
+            doctrine Numbers {
+                law i32 Read() {
+                    return Answer;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4105");
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

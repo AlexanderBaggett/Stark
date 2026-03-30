@@ -48,13 +48,24 @@ internal sealed record StarkPackageParameterManifest(
     string Name,
     string Type);
 
+internal sealed record StarkPackageMethodManifest(
+    string Name,
+    string QualifiedName,
+    string SymbolName,
+    string Kind,
+    string ReturnType,
+    IReadOnlyList<StarkPackageParameterManifest> Parameters,
+    bool IsFfi,
+    bool UseFastCallingConvention);
+
 internal sealed record StarkPackageTypeManifest(
     string Name,
     string QualifiedName,
     string Visibility,
     string Kind,
     IReadOnlyList<StarkPackageFieldManifest> Fields,
-    IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null);
+    IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null,
+    IReadOnlyList<StarkPackageMethodManifest>? Methods = null);
 
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,
@@ -109,26 +120,27 @@ internal static class PackageManifestBuilder
                 switch (declaration.Kind)
                 {
                     case DeclarationKind.Function when declaration.Function is not null:
-                        if (typeModel.Functions.TryGetValue(lookupName, out var function)
-                            && abiModel.Functions.TryGetValue(lookupName, out var abiFunction)
-                            && effectModel.Functions.TryGetValue(lookupName, out var effects))
-                        {
-                            functions.Add(new StarkPackageFunctionManifest(
+                        if (!declaration.Name.Contains('.', StringComparison.Ordinal)
+                            && TryBuildFunctionManifest(
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
-                                abiFunction.SymbolName,
-                                declaration.Function.Kind.ToString().ToLowerInvariant(),
-                                function.ReturnType.DisplayName,
-                                function.Parameters.Select(static parameter => new StarkPackageParameterManifest(parameter.Name, parameter.Type.DisplayName)).ToArray(),
-                                effects.IsFfi,
-                                effects.UseFastCallingConvention));
+                                lookupName,
+                                declaration.Function.Kind,
+                                typeModel,
+                                abiModel,
+                                effectModel,
+                                out var functionManifest))
+                        {
+                            functions.Add(functionManifest);
                         }
 
                         break;
 
                     case DeclarationKind.Struct:
                     case DeclarationKind.Record:
+                    case DeclarationKind.Trait:
+                    case DeclarationKind.Doctrine:
                         if (typeModel.NamedTypes.TryGetValue(lookupName, out var namedType))
                         {
                             types.Add(new StarkPackageTypeManifest(
@@ -136,7 +148,9 @@ internal static class PackageManifestBuilder
                                 qualifiedName,
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
-                                namedType.OrderedFields.Select(static field => new StarkPackageFieldManifest(field.Name, field.Type.DisplayName)).ToArray()));
+                                namedType.OrderedFields.Select(static field => new StarkPackageFieldManifest(field.Name, field.Type.DisplayName)).ToArray(),
+                                Variants: null,
+                                Methods: BuildTypeMethodManifests(module, declaration.Name, typeModel, abiModel, effectModel)));
                         }
 
                         break;
@@ -206,6 +220,78 @@ internal static class PackageManifestBuilder
     private static string LookupName(string moduleName, bool isRoot, string declarationName)
     {
         return isRoot ? declarationName : $"{moduleName}.{declarationName}";
+    }
+
+    private static bool TryBuildFunctionManifest(
+        string name,
+        string qualifiedName,
+        string visibility,
+        string lookupName,
+        StarkFunctionKind kind,
+        TypeCheckModel typeModel,
+        AbiModel abiModel,
+        FunctionEffectModel effectModel,
+        out StarkPackageFunctionManifest manifest)
+    {
+        manifest = default!;
+
+        if (!typeModel.Functions.TryGetValue(lookupName, out var function)
+            || !abiModel.Functions.TryGetValue(lookupName, out var abiFunction)
+            || !effectModel.Functions.TryGetValue(lookupName, out var effects))
+        {
+            return false;
+        }
+
+        manifest = new StarkPackageFunctionManifest(
+            name,
+            qualifiedName,
+            visibility,
+            abiFunction.SymbolName,
+            kind.ToString().ToLowerInvariant(),
+            function.ReturnType.DisplayName,
+            function.Parameters.Select(static parameter => new StarkPackageParameterManifest(parameter.Name, parameter.Type.DisplayName)).ToArray(),
+            effects.IsFfi,
+            effects.UseFastCallingConvention);
+        return true;
+    }
+
+    private static IReadOnlyList<StarkPackageMethodManifest>? BuildTypeMethodManifests(
+        LoadedModuleDocument module,
+        string containingTypeName,
+        TypeCheckModel typeModel,
+        AbiModel abiModel,
+        FunctionEffectModel effectModel)
+    {
+        var methods = module.SyntaxModel.Declarations
+            .Where(declaration => declaration.Kind == DeclarationKind.Function
+                                  && declaration.Function is not null
+                                  && declaration.Name.StartsWith($"{containingTypeName}.", StringComparison.Ordinal))
+            .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal)
+            .Select(declaration =>
+            {
+                var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);
+                if (!typeModel.Functions.TryGetValue(lookupName, out var function)
+                    || !abiModel.Functions.TryGetValue(lookupName, out var abiFunction)
+                    || !effectModel.Functions.TryGetValue(lookupName, out var effects))
+                {
+                    return null;
+                }
+
+                return new StarkPackageMethodManifest(
+                    declaration.Name[(containingTypeName.Length + 1)..],
+                    $"{module.SyntaxModel.ModuleName}.{declaration.Name}",
+                    abiFunction.SymbolName,
+                    declaration.Function!.Kind.ToString().ToLowerInvariant(),
+                    function.ReturnType.DisplayName,
+                    function.Parameters.Select(static parameter => new StarkPackageParameterManifest(parameter.Name, parameter.Type.DisplayName)).ToArray(),
+                    effects.IsFfi,
+                    effects.UseFastCallingConvention);
+            })
+            .Where(static manifest => manifest is not null)
+            .Cast<StarkPackageMethodManifest>()
+            .ToArray();
+
+        return methods.Length == 0 ? null : methods;
     }
 }
 
@@ -304,6 +390,24 @@ internal static class PackageManifestLoader
                     builder.Append(' ');
                     builder.Append(field.Name);
                     builder.AppendLine(";");
+                }
+
+                foreach (var method in (type.Methods ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))
+                {
+                    builder.Append("    ");
+                    if (method.IsFfi)
+                    {
+                        builder.Append("ffi ");
+                    }
+
+                    builder.Append(RenderFunctionKind(method.Kind));
+                    builder.Append(' ');
+                    builder.Append(method.ReturnType);
+                    builder.Append(' ');
+                    builder.Append(method.Name);
+                    builder.Append('(');
+                    builder.Append(string.Join(", ", method.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}")));
+                    builder.AppendLine(");");
                 }
             }
 

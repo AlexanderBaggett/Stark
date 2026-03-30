@@ -735,6 +735,42 @@ public sealed class TypeTypingDiagnosticsTests
         AssertDiagnostic(result, "STK3002", "Operator '*'", "requires a raw pointer operand");
     }
 
+    [Fact]
+    public void DoctrinesCannotBeUsedAsRuntimeValueTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public doctrine Numbers {
+                law i32 Zero();
+            }
+
+            struct Holder {
+                Numbers Laws;
+            }
+
+            static Numbers Current;
+
+            fn Numbers Echo(Numbers value) {
+                return value;
+            }
+
+            fn void Run() {
+                stack Numbers local = new Numbers();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3013", "field 'Laws' in type 'Holder'");
+        AssertDiagnostic(result, "STK3013", "a global variable type");
+        AssertDiagnostic(result, "STK3013", "parameter 'value'");
+        AssertDiagnostic(result, "STK3013", "the return type of function 'Echo'");
+        AssertDiagnostic(result, "STK3013", "a local variable type");
+        AssertDiagnostic(result, "STK3013", "Cannot create an instance of compile-time-only doctrine 'Numbers'");
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

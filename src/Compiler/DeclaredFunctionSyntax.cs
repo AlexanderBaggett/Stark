@@ -9,7 +9,7 @@ internal sealed record DeclaredFunctionSyntax(
     StarkVisibility Visibility,
     ParserRuleContext DeclarationContext,
     IToken NameToken,
-    StarkParser.FunctionKindContext FunctionKind,
+    StarkFunctionKind DeclaredKind,
     StarkParser.ReturnTypeContext ReturnType,
     StarkParser.ParameterListContext ParameterList,
     StarkParser.TypeParameterListContext? TypeParameters,
@@ -54,6 +54,17 @@ internal static class DeclaredFunctionSyntaxCollector
                         .Select(static member => member.methodDeclaration())
                         .Where(static method => method is not null)!
                         .Select(method => CreateMethod(typeName, method, visibility)));
+                continue;
+            }
+
+            if (declaration.doctrineDeclaration() is { } doctrineDeclaration)
+            {
+                var typeName = doctrineDeclaration.Identifier().GetText();
+                functions.AddRange(
+                    doctrineDeclaration.doctrineBody().doctrineMember()
+                        .Select(static member => member.doctrineMethodDeclaration())
+                        .Where(static method => method is not null)!
+                        .Select(method => CreateDoctrineMethod(typeName, method, visibility)));
             }
         }
 
@@ -70,7 +81,7 @@ internal static class DeclaredFunctionSyntaxCollector
             visibility,
             declaration,
             declaration.Identifier().Symbol,
-            declaration.functionKind(),
+            ParseFunctionKind(declaration.functionKind()),
             declaration.returnType(),
             declaration.parameterList(),
             declaration.typeParameterList(),
@@ -89,7 +100,26 @@ internal static class DeclaredFunctionSyntaxCollector
             visibility,
             declaration,
             declaration.Identifier().Symbol,
-            declaration.functionKind(),
+            ParseFunctionKind(declaration.functionKind()),
+            declaration.returnType(),
+            declaration.parameterList(),
+            declaration.typeParameterList(),
+            declaration.functionModifier(),
+            declaration.functionBody());
+    }
+
+    private static DeclaredFunctionSyntax CreateDoctrineMethod(
+        string containingTypeName,
+        StarkParser.DoctrineMethodDeclarationContext declaration,
+        StarkVisibility visibility)
+    {
+        return new DeclaredFunctionSyntax(
+            $"{containingTypeName}.{declaration.Identifier().GetText()}",
+            containingTypeName,
+            visibility,
+            declaration,
+            declaration.Identifier().Symbol,
+            ParseDoctrineFunctionKind(declaration.doctrineFunctionKind()),
             declaration.returnType(),
             declaration.parameterList(),
             declaration.typeParameterList(),
@@ -110,6 +140,28 @@ internal static class DeclaredFunctionSyntaxCollector
             "public" => StarkVisibility.Public,
             "export" => StarkVisibility.Export,
             _ => StarkVisibility.Module
+        };
+    }
+
+    private static StarkFunctionKind ParseFunctionKind(StarkParser.FunctionKindContext functionKind)
+    {
+        return functionKind.GetText() switch
+        {
+            "fn" => StarkFunctionKind.Fn,
+            "finite" => StarkFunctionKind.Finite,
+            "law" => StarkFunctionKind.Law,
+            "finitelaw" => StarkFunctionKind.FiniteLaw,
+            _ => throw new InvalidOperationException($"Unsupported function kind '{functionKind.GetText()}'.")
+        };
+    }
+
+    private static StarkFunctionKind ParseDoctrineFunctionKind(StarkParser.DoctrineFunctionKindContext functionKind)
+    {
+        return functionKind.GetText() switch
+        {
+            "law" => StarkFunctionKind.Law,
+            "finitelaw" => StarkFunctionKind.FiniteLaw,
+            _ => throw new InvalidOperationException($"Unsupported doctrine function kind '{functionKind.GetText()}'.")
         };
     }
 }

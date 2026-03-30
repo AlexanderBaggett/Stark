@@ -514,11 +514,11 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 
 Goal: Stark's abstraction system becomes real, optimizable, and usable.
 
-- [ ] Finalize doctrine semantics in the compiler
-  - [ ] doctrine declaration and type model
-  - [ ] effect and purity validation for doctrine members
-  - [ ] no-state and no-capture enforcement
-  - [ ] doctrine lookup and name-resolution rules
+- [x] Finalize doctrine semantics in the compiler
+  - [x] doctrine declaration and type model
+  - [x] effect and purity validation for doctrine members
+  - [x] no-state and no-capture enforcement
+  - [x] doctrine lookup and name-resolution rules
 - [ ] Trait/doctrine constraint solving
   - [ ] collect obligations from generic and doctrine use sites
   - [ ] candidate lookup and matching
@@ -535,7 +535,7 @@ Goal: Stark's abstraction system becomes real, optimizable, and usable.
   - [ ] define runtime representation and ABI if they do
   - [ ] tests for dynamic dispatch lowering if supported
 - [ ] Better lowering for laws/doctrines as optimization-friendly abstractions
-  - [ ] lower doctrine calls to direct calls where possible
+  - [x] lower doctrine calls to direct calls where possible
   - [ ] emit stronger readonly/noalias/capture facts
   - [ ] specialize and inline law calls where closed-world facts allow it
   - [ ] regression tests for emitted LLVM attributes and call shapes

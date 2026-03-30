@@ -175,7 +175,15 @@ internal sealed class TypeChecker
                         {
                             var fieldType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
                             var fieldName = parameter.Identifier().GetText();
-                            AddField(fields, orderedFields, new FieldSymbol(fieldName, fieldType));
+                            AddField(
+                                fields,
+                                orderedFields,
+                                new FieldSymbol(
+                                    fieldName,
+                                    ValidateRuntimeValueType(
+                                        fieldType,
+                                        parameter.type_(),
+                                        $"field '{fieldName}' in type '{recordName}'")));
                         }
                     }
 
@@ -183,7 +191,7 @@ internal sealed class TypeChecker
                                  .Select(static member => member.fieldDeclaration())
                                  .Where(static field => field is not null)!)
                     {
-                        AddFields(fields, orderedFields, field, genericParameters, module.SyntaxModel.ModuleName);
+                        AddFields(fields, orderedFields, field, genericParameters, module.SyntaxModel.ModuleName, recordName);
                     }
 
                     _namedTypes[recordName] = new NamedTypeSymbol(
@@ -262,7 +270,7 @@ internal sealed class TypeChecker
 
         foreach (var field in fieldDeclarations)
         {
-            AddFields(fields, orderedFields, field, genericParameters: null, currentModuleName);
+            AddFields(fields, orderedFields, field, genericParameters: null, currentModuleName, name);
         }
 
         return new NamedTypeSymbol(name, kind, fields, orderedFields);
@@ -316,7 +324,10 @@ internal sealed class TypeChecker
                     fields.Add(new EnumVariantFieldSymbol(
                         index,
                         fieldName,
-                        ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName)));
+                        ValidateRuntimeValueType(
+                            ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName),
+                            fieldDeclaration.type_(),
+                            $"enum variant field '{fieldName}' in '{name}.{variantName}'")));
                 }
 
                 variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: true, Fields: fields));
@@ -330,7 +341,10 @@ internal sealed class TypeChecker
                     .Select((fieldType, index) => new EnumVariantFieldSymbol(
                         index,
                         Name: null,
-                        ResolveType(fieldType, genericParameters, currentModuleName)))
+                        ValidateRuntimeValueType(
+                            ResolveType(fieldType, genericParameters, currentModuleName),
+                            fieldType,
+                            $"enum variant field '{name}.{variantName}#{index}'")))
                     .ToArray()));
         }
 
@@ -347,14 +361,23 @@ internal sealed class TypeChecker
         List<FieldSymbol> orderedFields,
         StarkParser.FieldDeclarationContext fieldDeclaration,
         ISet<string>? genericParameters,
-        string currentModuleName)
+        string currentModuleName,
+        string containingTypeName)
     {
         var fieldType = ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName);
 
         foreach (var declarator in fieldDeclaration.variableDeclarators().variableDeclarator())
         {
             var fieldName = declarator.Identifier().GetText();
-            AddField(fields, orderedFields, new FieldSymbol(fieldName, fieldType));
+            AddField(
+                fields,
+                orderedFields,
+                new FieldSymbol(
+                    fieldName,
+                    ValidateRuntimeValueType(
+                        fieldType,
+                        fieldDeclaration.type_(),
+                        $"field '{fieldName}' in type '{containingTypeName}'")));
         }
     }
 
@@ -402,6 +425,7 @@ internal sealed class TypeChecker
 
                 var genericParameters = GetGenericParameterNames(functionSyntax.TypeParameters);
                 var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
+                ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
                 var isAbiBoundary = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal))
                     || declarationModel.Visibility == StarkVisibility.Export;
                 if (isAbiBoundary)
@@ -413,6 +437,7 @@ internal sealed class TypeChecker
                 foreach (var parameter in functionSyntax.ParameterList.parameter())
                 {
                     var parameterType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
+                    ValidateRuntimeValueType(parameterType, parameter.type_(), $"parameter '{parameter.Identifier().GetText()}'");
                     if (isAbiBoundary)
                     {
                         ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
@@ -543,7 +568,10 @@ internal sealed class TypeChecker
         {
             if (declaration.globalConstantDeclaration() is { } constantDeclaration)
             {
-                var declaredType = ResolveType(constantDeclaration.type_());
+                var declaredType = ValidateRuntimeValueType(
+                    ResolveType(constantDeclaration.type_()),
+                    constantDeclaration.type_(),
+                    "a global constant type");
                 ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, constantDeclaration.type_(), "a global constant type");
                 foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                 {
@@ -561,7 +589,10 @@ internal sealed class TypeChecker
 
             if (declaration.globalVariableDeclaration() is { } variableDeclaration)
             {
-                var declaredType = ResolveType(variableDeclaration.type_());
+                var declaredType = ValidateRuntimeValueType(
+                    ResolveType(variableDeclaration.type_()),
+                    variableDeclaration.type_(),
+                    "a global variable type");
                 ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, variableDeclaration.type_(), "a global variable type");
                 var isMutable = variableDeclaration.MUT() is not null;
 
@@ -602,7 +633,10 @@ internal sealed class TypeChecker
             {
                 if (declaration.globalConstantDeclaration() is { } constantDeclaration)
                 {
-                    var declaredType = ResolveType(constantDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
+                    var declaredType = ValidateRuntimeValueType(
+                        ResolveType(constantDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName),
+                        constantDeclaration.type_(),
+                        "a global constant type");
                     ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, constantDeclaration.type_(), "a global constant type");
                     var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
                         candidate => candidate.Kind == DeclarationKind.GlobalConstant
@@ -628,7 +662,10 @@ internal sealed class TypeChecker
 
                 if (declaration.globalVariableDeclaration() is { } variableDeclaration)
                 {
-                    var declaredType = ResolveType(variableDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
+                    var declaredType = ValidateRuntimeValueType(
+                        ResolveType(variableDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName),
+                        variableDeclaration.type_(),
+                        "a global variable type");
                     ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, variableDeclaration.type_(), "a global variable type");
                     var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
                         candidate => candidate.Kind == DeclarationKind.GlobalVariable
@@ -696,7 +733,10 @@ internal sealed class TypeChecker
 
         if (statement.localConstantDeclaration() is { } localConstant)
         {
-            var declaredType = ResolveType(localConstant.type_());
+            var declaredType = ValidateRuntimeValueType(
+                ResolveType(localConstant.type_()),
+                localConstant.type_(),
+                "a local constant type");
             foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
             {
                 CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
@@ -1954,7 +1994,7 @@ internal sealed class TypeChecker
         bool isMutable,
         Scope scope)
     {
-        var declaredType = ResolveType(typeContext);
+        var declaredType = ValidateRuntimeValueType(ResolveType(typeContext), typeContext, "a local variable type");
 
         foreach (var declarator in declarators)
         {
@@ -2418,6 +2458,16 @@ internal sealed class TypeChecker
     {
         var createdType = ResolveType(expression.type_());
         var namedType = ResolveNamedTypeSymbol(createdType);
+        if (namedType is not null
+            && namedType.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+        {
+            ReportError(
+                "STK3013",
+                $"Cannot create an instance of compile-time-only {DescribeCompileTimeOnlyKind(namedType.Kind)} '{namedType.Name}'.",
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
         if (namedType?.Kind == DeclarationKind.Enum)
         {
             ReportError(
@@ -2684,6 +2734,26 @@ internal sealed class TypeChecker
                 return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{qualifiedName}'");
             }
 
+            if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
+            {
+                if (qualifiedType.Kind == DeclarationKind.Doctrine)
+                {
+                    return new ExpressionBinding(
+                        StarkTypeSymbols.Named(qualifiedType.Name),
+                        NamedType: qualifiedType,
+                        DiagnosticName: $"doctrine '{qualifiedName}'");
+                }
+
+                if (qualifiedType.Kind == DeclarationKind.Trait)
+                {
+                    ReportError(
+                        "STK3013",
+                        $"Trait '{qualifiedName}' is compile-time-only and cannot be used as a runtime value.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+            }
+
             if (TryResolveEnumCaseReference(qualifiedName, out var enumType, out var enumTypeSymbol, out var variant))
             {
                 if (variant.IsUnit)
@@ -2730,6 +2800,16 @@ internal sealed class TypeChecker
                     : target.AssignmentErrorMessage);
         }
 
+        if (namedType.Kind == DeclarationKind.Doctrine
+            && _functions.TryGetValue($"{namedType.Name}.{memberName}", out var doctrineMethod))
+        {
+            return new ExpressionBinding(
+                doctrineMethod.ReturnType,
+                NamedType: ResolveNamedTypeSymbol(doctrineMethod.ReturnType),
+                Function: doctrineMethod,
+                DiagnosticName: $"doctrine method '{doctrineMethod.Name}'");
+        }
+
         if (_functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
             && method.Parameters.Count != 0)
         {
@@ -2739,6 +2819,12 @@ internal sealed class TypeChecker
                 Function: method,
                 DiagnosticName: $"method '{method.Name}'",
                 Receiver: target);
+        }
+
+        if (namedType.Kind == DeclarationKind.Doctrine)
+        {
+            ReportError("STK3005", $"Doctrine '{namedType.Name}' does not declare a method named '{memberName}'.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
         ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
@@ -2798,6 +2884,35 @@ internal sealed class TypeChecker
             return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{name}'");
         }
 
+        if (TryResolveNamedTypeBySourceName(name, out var namedType))
+        {
+            if (namedType.Kind == DeclarationKind.Doctrine)
+            {
+                if (!allowFunctionReference)
+                {
+                    ReportError(
+                        "STK3013",
+                        $"Doctrine '{name}' is compile-time-only and cannot be used as a runtime value.",
+                        token);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
+                return new ExpressionBinding(
+                    StarkTypeSymbols.Named(namedType.Name),
+                    NamedType: namedType,
+                    DiagnosticName: $"doctrine '{name}'");
+            }
+
+            if (namedType.Kind == DeclarationKind.Trait)
+            {
+                ReportError(
+                    "STK3013",
+                    $"Trait '{name}' is compile-time-only and cannot be used as a runtime value.",
+                    token);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+        }
+
         if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
         {
             if (variant.IsUnit)
@@ -2824,7 +2939,7 @@ internal sealed class TypeChecker
                 EnumConstructor: new EnumConstructorBinding(name, variant));
         }
 
-        if (TryResolveNamedTypeBySourceName(name, out var namedType) && namedType.Kind == DeclarationKind.Enum)
+        if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
         {
             return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"enum '{name}'");
         }
@@ -3833,6 +3948,19 @@ internal sealed class TypeChecker
             : null;
     }
 
+    private StarkTypeSymbol ValidateRuntimeValueType(StarkTypeSymbol type, ParserRuleContext context, string usage)
+    {
+        if (TryFindCompileTimeOnlyTypeDependency(type, out var dependencyName, out var dependencyKind))
+        {
+            ReportError(
+                "STK3013",
+                $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed for {usage}.",
+                context);
+        }
+
+        return type;
+    }
+
     private void ValidateRuntimeTypeDoesNotDependOnEnum(StarkTypeSymbol type, ParserRuleContext context, string usage)
     {
         if (TryFindEnumDependency(type, out var enumName))
@@ -3907,6 +4035,88 @@ internal sealed class TypeChecker
 
         enumName = string.Empty;
         return false;
+    }
+
+    private bool TryFindCompileTimeOnlyTypeDependency(
+        StarkTypeSymbol type,
+        out string dependencyName,
+        out DeclarationKind dependencyKind)
+    {
+        return TryFindCompileTimeOnlyTypeDependency(type, out dependencyName, out dependencyKind, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool TryFindCompileTimeOnlyTypeDependency(
+        StarkTypeSymbol type,
+        out string dependencyName,
+        out DeclarationKind dependencyKind,
+        ISet<string> activeNamedTypes)
+    {
+        if (type.Kind == StarkTypeKind.Named
+            && type.NamedType is not null
+            && _namedTypes.TryGetValue(type.NamedType, out var namedType)
+            && namedType.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+        {
+            dependencyName = namedType.Name;
+            dependencyKind = namedType.Kind;
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.Named
+            && type.NamedType is not null
+            && _namedTypes.TryGetValue(type.NamedType, out var aggregateType))
+        {
+            if (!activeNamedTypes.Add(aggregateType.Name))
+            {
+                dependencyName = string.Empty;
+                dependencyKind = default;
+                return false;
+            }
+
+            try
+            {
+                foreach (var field in aggregateType.OrderedFields)
+                {
+                    if (TryFindCompileTimeOnlyTypeDependency(field.Type, out dependencyName, out dependencyKind, activeNamedTypes))
+                    {
+                        return true;
+                    }
+                }
+
+                foreach (var variant in aggregateType.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        if (TryFindCompileTimeOnlyTypeDependency(field.Type, out dependencyName, out dependencyKind, activeNamedTypes))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                activeNamedTypes.Remove(aggregateType.Name);
+            }
+        }
+
+        if (type.ElementType is not null)
+        {
+            return TryFindCompileTimeOnlyTypeDependency(type.ElementType, out dependencyName, out dependencyKind, activeNamedTypes);
+        }
+
+        dependencyName = string.Empty;
+        dependencyKind = default;
+        return false;
+    }
+
+    private static string DescribeCompileTimeOnlyKind(DeclarationKind kind)
+    {
+        return kind switch
+        {
+            DeclarationKind.Doctrine => "doctrine",
+            DeclarationKind.Trait => "trait",
+            _ => "type"
+        };
     }
 
     private HashSet<string>? GetGenericParameterNames(StarkParser.TypeParameterListContext? typeParameterList)

@@ -1069,7 +1069,20 @@ internal sealed class OwnershipValidator
                 : new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
-        if (TryResolveNamedTypeBySourceName(name, out var namedType) && namedType.Kind == DeclarationKind.Enum)
+        if (TryResolveNamedTypeBySourceName(name, out var namedType))
+        {
+            if (namedType.Kind == DeclarationKind.Doctrine && allowFunctionReference)
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Named(namedType.Name));
+            }
+
+            if (namedType.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error);
+            }
+        }
+
+        if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
         {
             return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
         }
@@ -1484,6 +1497,19 @@ internal sealed class OwnershipValidator
                 return new ExpressionInfo(function.ReturnType, Function: function);
             }
 
+            if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
+            {
+                if (qualifiedType.Kind == DeclarationKind.Doctrine)
+                {
+                    return new ExpressionInfo(StarkTypeSymbols.Named(qualifiedType.Name));
+                }
+
+                if (qualifiedType.Kind == DeclarationKind.Trait)
+                {
+                    return new ExpressionInfo(StarkTypeSymbols.Error);
+                }
+            }
+
             if (TryResolveEnumCaseReference(qualifiedName, out var enumType, out var enumTypeSymbol, out var variant))
             {
                 if (variant.IsUnit)
@@ -1520,10 +1546,19 @@ internal sealed class OwnershipValidator
                 BorrowLifetime: target.BorrowLifetime,
                 IsPlace: target.IsPlace,
                 IsIndirectPlace: true,
-                ProjectionPath: target.Variable is null
-                    ? target.ProjectionPath
-                    : AppendProjection(target.ProjectionPath, memberName),
-                HasIndexProjection: target.HasIndexProjection);
+            ProjectionPath: target.Variable is null
+                ? target.ProjectionPath
+                : AppendProjection(target.ProjectionPath, memberName),
+            HasIndexProjection: target.HasIndexProjection);
+        }
+
+        if (namedType.Kind == DeclarationKind.Doctrine
+            && _signatures.TryGetValue($"{namedType.Name}.{memberName}", out var doctrineMethod))
+        {
+            return new ExpressionInfo(
+                doctrineMethod.ReturnType,
+                Function: doctrineMethod,
+                BorrowLifetime: BorrowLifetime.None);
         }
 
         if (_signatures.TryGetValue($"{namedType.Name}.{memberName}", out var method)

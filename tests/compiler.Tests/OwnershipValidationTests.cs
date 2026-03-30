@@ -232,6 +232,34 @@ public sealed class OwnershipValidationTests
         AssertDiagnostic(result, "STK4203", "Cannot move out of field or indexed place");
     }
 
+    [Fact]
+    public void DoctrineCallsParticipateInOwnershipFlow()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            doctrine Sink {
+                finite law void Consume(Box value) {
+                    return;
+                }
+            }
+
+            finite law i32 Run() {
+                stack Box box = new Box() { Value = 1 };
+                Sink.Consume(box);
+                return box.Value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

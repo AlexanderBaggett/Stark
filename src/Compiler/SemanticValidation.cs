@@ -962,7 +962,20 @@ internal sealed class SemanticValidator
             return new ValidationValue(targetFunction.ReturnType, Function: targetFunction);
         }
 
-        if (TryResolveNamedTypeBySourceName(name, out var namedType) && namedType.Kind == DeclarationKind.Enum)
+        if (TryResolveNamedTypeBySourceName(name, out var namedType))
+        {
+            if (namedType.Kind == DeclarationKind.Doctrine && allowFunctionReference)
+            {
+                return new ValidationValue(StarkTypeSymbols.Named(namedType.Name), NamedType: namedType);
+            }
+
+            if (namedType.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+        }
+
+        if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
@@ -1400,6 +1413,19 @@ internal sealed class SemanticValidator
                 return new ValidationValue(function.ReturnType, Function: function);
             }
 
+            if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
+            {
+                if (qualifiedType.Kind == DeclarationKind.Doctrine)
+                {
+                    return new ValidationValue(StarkTypeSymbols.Named(qualifiedType.Name), NamedType: qualifiedType);
+                }
+
+                if (qualifiedType.Kind == DeclarationKind.Trait)
+                {
+                    return new ValidationValue(StarkTypeSymbols.Error);
+                }
+            }
+
             if (TryResolveEnumCaseReference(qualifiedName, out var enumType, out var enumTypeSymbol, out var variant))
             {
                 if (variant.IsUnit)
@@ -1429,6 +1455,15 @@ internal sealed class SemanticValidator
                 RootSymbol: target.RootSymbol,
                 NamedType: ResolveNamedTypeSymbol(projectedType),
                 IsIndirectStorageAccess: true);
+        }
+
+        if (namedType.Kind == DeclarationKind.Doctrine
+            && _typeModel.Functions.TryGetValue($"{namedType.Name}.{memberName}", out var doctrineMethod))
+        {
+            return new ValidationValue(
+                doctrineMethod.ReturnType,
+                Function: doctrineMethod,
+                NamedType: ResolveNamedTypeSymbol(doctrineMethod.ReturnType));
         }
 
         if (_typeModel.Functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
@@ -1885,6 +1920,109 @@ internal sealed class SemanticValidator
                 "semantic-validate",
                 Location(context.Start));
         }
+
+        if (TryFindCompileTimeOnlyTypeDependency(type, out var dependencyName, out var dependencyKind))
+        {
+            _context.Diagnostics.Error(
+                "STK4009",
+                $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed in {DescribeTypeUsage(usage)}.",
+                "semantic-validate",
+                Location(context.Start));
+        }
+    }
+
+    private bool TryFindCompileTimeOnlyTypeDependency(
+        StarkTypeSymbol type,
+        out string dependencyName,
+        out DeclarationKind dependencyKind)
+    {
+        return TryFindCompileTimeOnlyTypeDependency(type, out dependencyName, out dependencyKind, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool TryFindCompileTimeOnlyTypeDependency(
+        StarkTypeSymbol type,
+        out string dependencyName,
+        out DeclarationKind dependencyKind,
+        ISet<string> activeNamedTypes)
+    {
+        if (type.Kind == StarkTypeKind.Named
+            && type.NamedType is not null
+            && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
+            && namedType.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+        {
+            dependencyName = namedType.Name;
+            dependencyKind = namedType.Kind;
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.Named
+            && type.NamedType is not null
+            && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var aggregateType))
+        {
+            if (!activeNamedTypes.Add(aggregateType.Name))
+            {
+                dependencyName = string.Empty;
+                dependencyKind = default;
+                return false;
+            }
+
+            try
+            {
+                foreach (var field in aggregateType.OrderedFields)
+                {
+                    if (TryFindCompileTimeOnlyTypeDependency(field.Type, out dependencyName, out dependencyKind, activeNamedTypes))
+                    {
+                        return true;
+                    }
+                }
+
+                foreach (var variant in aggregateType.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        if (TryFindCompileTimeOnlyTypeDependency(field.Type, out dependencyName, out dependencyKind, activeNamedTypes))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                activeNamedTypes.Remove(aggregateType.Name);
+            }
+        }
+
+        if (type.ElementType is not null)
+        {
+            return TryFindCompileTimeOnlyTypeDependency(type.ElementType, out dependencyName, out dependencyKind, activeNamedTypes);
+        }
+
+        dependencyName = string.Empty;
+        dependencyKind = default;
+        return false;
+    }
+
+    private static string DescribeCompileTimeOnlyKind(DeclarationKind kind)
+    {
+        return kind switch
+        {
+            DeclarationKind.Doctrine => "doctrine",
+            DeclarationKind.Trait => "trait",
+            _ => "type"
+        };
+    }
+
+    private static string DescribeTypeUsage(TypeUsage usage)
+    {
+        return usage switch
+        {
+            TypeUsage.Global => "global declarations",
+            TypeUsage.Parameter => "function parameters",
+            TypeUsage.Return => "function return types",
+            TypeUsage.Local => "local declarations",
+            _ => "runtime type positions"
+        };
     }
 
     private bool TryValidateFrozenConstGlobalType(

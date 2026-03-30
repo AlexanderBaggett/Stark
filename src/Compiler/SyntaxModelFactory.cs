@@ -37,7 +37,13 @@ internal static class SyntaxModelFactory
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
                 visibility,
-                CreateFunctionModel(function.Identifier().GetText(), function.functionKind(), function.returnType(), function.parameterList(), function.functionModifier(), function.functionBody())));
+                CreateFunctionModel(
+                    function.Identifier().GetText(),
+                    ParseFunctionKind(function.functionKind()),
+                    function.returnType(),
+                    function.parameterList(),
+                    function.functionModifier(),
+                    function.functionBody())));
             return;
         }
 
@@ -59,7 +65,7 @@ internal static class SyntaxModelFactory
                     visibility,
                     CreateFunctionModel(
                         $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
-                        method.functionKind(),
+                        ParseFunctionKind(method.functionKind()),
                         method.returnType(),
                         method.parameterList(),
                         method.functionModifier(),
@@ -87,7 +93,7 @@ internal static class SyntaxModelFactory
                     visibility,
                     CreateFunctionModel(
                         $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
-                        method.functionKind(),
+                        ParseFunctionKind(method.functionKind()),
                         method.returnType(),
                         method.parameterList(),
                         method.functionModifier(),
@@ -124,6 +130,24 @@ internal static class SyntaxModelFactory
                 DeclarationKind.Doctrine,
                 visibility,
                 null));
+
+            foreach (var method in doctrineDeclaration.doctrineBody().doctrineMember()
+                         .Select(static member => member.doctrineMethodDeclaration())
+                         .Where(static method => method is not null)!)
+            {
+                declarations.Add(new TopLevelDeclarationModel(
+                    $"{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                    DeclarationKind.Function,
+                    visibility,
+                    CreateFunctionModel(
+                        $"{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                        ParseDoctrineFunctionKind(method.doctrineFunctionKind()),
+                        method.returnType(),
+                        method.parameterList(),
+                        method.functionModifier(),
+                        method.functionBody())));
+            }
+
             return;
         }
 
@@ -149,7 +173,7 @@ internal static class SyntaxModelFactory
 
     private static FunctionDeclarationModel CreateFunctionModel(
         string name,
-        StarkParser.FunctionKindContext functionKind,
+        StarkFunctionKind functionKind,
         StarkParser.ReturnTypeContext returnType,
         StarkParser.ParameterListContext parameterList,
         IReadOnlyList<StarkParser.FunctionModifierContext> modifiersList,
@@ -164,7 +188,7 @@ internal static class SyntaxModelFactory
 
         return new FunctionDeclarationModel(
             Name: name,
-            Kind: ParseFunctionKind(functionKind),
+            Kind: functionKind,
             ReturnType: returnType.GetText(),
             Parameters: parameterList.parameter()
                 .Select(static parameter => new ParameterModel(
@@ -204,6 +228,16 @@ internal static class SyntaxModelFactory
             "law" => StarkFunctionKind.Law,
             "finitelaw" => StarkFunctionKind.FiniteLaw,
             _ => throw new InvalidOperationException($"Unsupported function kind '{functionKind.GetText()}'.")
+        };
+    }
+
+    private static StarkFunctionKind ParseDoctrineFunctionKind(StarkParser.DoctrineFunctionKindContext functionKind)
+    {
+        return functionKind.GetText() switch
+        {
+            "law" => StarkFunctionKind.Law,
+            "finitelaw" => StarkFunctionKind.FiniteLaw,
+            _ => throw new InvalidOperationException($"Unsupported doctrine function kind '{functionKind.GetText()}'.")
         };
     }
 }
