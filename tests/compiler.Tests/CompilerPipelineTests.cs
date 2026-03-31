@@ -111,6 +111,272 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ClosedWorldModulePrivateLawHelpersInferAlwaysInline()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Effects
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            law i32 Use() {
+                return Add(1, 2);
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+
+        var add = effectModel.Functions["Add"];
+        Assert.Equal(StarkFunctionKind.FiniteLaw, add.Kind);
+        Assert.Equal(InlinePreference.Inline, add.InlinePreference);
+
+        var use = effectModel.Functions["Use"];
+        Assert.Equal(InlinePreference.InlineHint, use.InlinePreference);
+    }
+
+    [Fact]
+    public void ClosedWorldLawInliningRespectsExplicitHintsAndSkipsRecursiveHelpers()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Effects
+
+            inlinehint fn i32 Hint(i32 value) {
+                return value + 1;
+            }
+
+            noinline fn i32 Stop(i32 value) {
+                return value + 1;
+            }
+
+            fn i32 Loop(i32 value) {
+                if (value == 0) {
+                    return 0;
+                }
+
+                return Loop(value - 1);
+            }
+
+            law i32 Use(i32 value) {
+                return Hint(Stop(Loop(value)));
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+
+        Assert.Equal(InlinePreference.InlineHint, effectModel.Functions["Hint"].InlinePreference);
+        Assert.Equal(InlinePreference.NoInline, effectModel.Functions["Stop"].InlinePreference);
+        Assert.Equal(InlinePreference.InlineHint, effectModel.Functions["Loop"].InlinePreference);
+    }
+
+    [Fact]
+    public void ClosedWorldImportedModulePrivateLawHelpersInferAlwaysInline()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                fn i32 Run() {
+                    return Math.UseLaw();
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        law i32 LawOnly() {
+                            return 1;
+                        }
+
+                        law i32 LawBlocked() {
+                            return 2;
+                        }
+
+                        public law i32 UseLaw() {
+                            return LawOnly();
+                        }
+
+                        public fn i32 UseFn() {
+                            return LawBlocked();
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+
+        Assert.Equal(InlinePreference.Inline, effectModel.Functions["Math.LawOnly"].InlinePreference);
+        Assert.Equal(InlinePreference.InlineHint, effectModel.Functions["Math.LawBlocked"].InlinePreference);
+        Assert.Equal(InlinePreference.Inline, effectModel.Functions["Math.UseLaw"].InlinePreference);
+    }
+
+    [Fact]
+    public void ClosedWorldRootLawCallersCanInlineImportedNonExportLawChains()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                law i32 Run() {
+                    return Math.UseLaw();
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        law i32 LawOnly() {
+                            return 1;
+                        }
+
+                        public law i32 UseLaw() {
+                            return LawOnly();
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+
+        Assert.Equal(InlinePreference.Inline, effectModel.Functions["Math.UseLaw"].InlinePreference);
+        Assert.Equal(InlinePreference.Inline, effectModel.Functions["Math.LawOnly"].InlinePreference);
+    }
+
+    [Fact]
+    public void ImportedLawEntrypointsWithMixedLawAndNonLawCallersStayInlineHintGlobally()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                law i32 LawRun() {
+                    return Math.UseLaw();
+                }
+
+                fn i32 FnRun() {
+                    Touch();
+                    return Math.UseLaw();
+                }
+
+                ffi fn void Touch();
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public law i32 UseLaw() {
+                            return 1;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+
+        Assert.Equal(InlinePreference.InlineHint, effectModel.Functions["Math.UseLaw"].InlinePreference);
+    }
+
+    [Fact]
+    public void ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsa()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                law i32 Run() {
+                    return Math.UseLaw();
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        law i32 LawOnly() {
+                            return 1;
+                        }
+
+                        public law i32 UseLaw() {
+                            return LawOnly();
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
+        Assert.NotNull(hir);
+        Assert.Contains(hir.Functions, function => function.Name == "Math.LawOnly" && function.HasBody);
+        Assert.Contains(hir.Functions, function => function.Name == "Math.UseLaw" && function.HasBody);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.Contains(mir.Functions, function => function.Name == "Math.LawOnly" && function.HasBody && function.Blocks.Count != 0);
+        Assert.Contains(mir.Functions, function => function.Name == "Math.UseLaw" && function.HasBody && function.Blocks.Count != 0);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        Assert.Contains(ssa.Functions, function => function.Name == "Math.LawOnly" && function.HasBody && function.Blocks.Count != 0);
+        Assert.Contains(ssa.Functions, function => function.Name == "Math.UseLaw" && function.HasBody && function.Blocks.Count != 0);
+    }
+
+    [Fact]
     public void ImportedModulesResolveThroughTheConfiguredResolver()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -181,6 +447,111 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ImportedSourceModulesFlowIntoHirMirAndSsaArtifacts()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                fn i32 Run() {
+                    return Math.Add(3, 4);
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public finite law i32 Add(i32 left, i32 right) {
+                            return left + right;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
+        Assert.NotNull(hir);
+        Assert.Contains(hir.Functions, function => function.Name == "Math.Add" && function.HasBody);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.Contains(mir.Functions, function => function.Name == "Math.Add" && function.HasBody && function.Blocks.Count != 0);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        Assert.Contains(ssa.Functions, function => function.Name == "Math.Add" && function.HasBody && function.Blocks.Count != 0);
+    }
+
+    [Fact]
+    public void ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsa()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Path
+                module Demo
+
+                fn ascii Run() {
+                    return Path.DirectorySeparator();
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Path", "/virtual/Path.stark", IsExternal: false),
+                        """
+                        module Path
+
+                        ffi fn i32 fputs(ascii text, rawptr<i8> stream);
+                        const rawptr<i8> stdout = null;
+
+                        public fn ascii DirectorySeparator() {
+                            return "/";
+                        }
+
+                        public fn void Write(ascii text) {
+                            fputs(text, stdout);
+                            return;
+                        }
+                        """,
+                        "/virtual/Path.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
+        Assert.NotNull(hir);
+        Assert.Contains(hir.Functions, function => function.Name == "Path.DirectorySeparator" && function.HasBody);
+        Assert.Contains(hir.Functions, function => function.Name == "Path.Write" && function.HasBody);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.Contains(mir.Functions, function => function.Name == "Path.DirectorySeparator" && function.HasBody && function.Blocks.Count != 0);
+        Assert.Contains(mir.Functions, function => function.Name == "Path.Write" && function.HasBody && function.Blocks.Count != 0);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        Assert.Contains(ssa.Functions, function => function.Name == "Path.DirectorySeparator" && function.HasBody && function.Blocks.Count != 0);
+        Assert.Contains(ssa.Functions, function => function.Name == "Path.Write" && function.HasBody && function.Blocks.Count != 0);
+    }
+
+    [Fact]
     public void DoctrineDeclarationsFlowIntoSyntaxTypeAndSemanticModels()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -216,6 +587,43 @@ public sealed class CompilerPipelineTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? semanticValidation));
         Assert.NotNull(semanticValidation);
         Assert.Contains("Numbers.Add", semanticValidation.Functions["Run"].CalledFunctions);
+    }
+
+    [Fact]
+    public void TraitDeclarationsFlowIntoSyntaxTypeAndEffectModels()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Contracts
+
+            public trait Comparable {
+                law i32 Compare(i32 other);
+            }
+
+            fn i32 Run() {
+                return 0;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+        Assert.Contains(syntaxModel.Declarations, declaration => declaration.Kind == DeclarationKind.Trait && declaration.Name == "Comparable");
+        Assert.Contains(syntaxModel.Declarations, declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Comparable.Compare");
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.TryGetValue("Comparable", out var traitType));
+        Assert.NotNull(traitType);
+        Assert.Equal(DeclarationKind.Trait, traitType.Kind);
+        Assert.True(typeCheckModel.Functions.ContainsKey("Comparable.Compare"));
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+        Assert.True(effectModel.Functions["Comparable.Compare"].IsPure);
+        Assert.False(effectModel.Functions["Comparable.Compare"].WillReturn);
     }
 
     [Fact]
@@ -261,6 +669,143 @@ public sealed class CompilerPipelineTests
         Assert.NotNull(effectModel);
         Assert.True(effectModel.Functions["Math.Numbers.Add"].WillReturn);
         Assert.True(effectModel.Functions["Math.Numbers.Add"].IsPure);
+    }
+
+    [Fact]
+    public void ImportedTraitMembersFromLoadedModulesParticipateInTypingAndEffects()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                fn i32 Run() {
+                    return 0;
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public trait Comparable {
+                            law i32 Compare(i32 other);
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Math.Comparable"));
+        Assert.True(typeCheckModel.Functions.ContainsKey("Math.Comparable.Compare"));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+        Assert.NotNull(effectModel);
+        Assert.True(effectModel.Functions["Math.Comparable.Compare"].IsPure);
+    }
+
+    [Fact]
+    public void ClosedWorldOptimizationModelCapturesTraitAndDoctrineRules()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                public doctrine Numbers {
+                    finite law i32 Add(i32 left, i32 right) {
+                        return left + right;
+                    }
+                }
+
+                public trait Comparable {
+                    law i32 Compare(i32 other);
+                }
+
+                law i32 UseLaw() {
+                    return Math.Numbers.Add(1, 2);
+                }
+
+                fn i32 UseFn() {
+                    Touch();
+                    return Math.Numbers.Add(3, 4);
+                }
+
+                ffi fn void Touch();
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public doctrine Numbers {
+                            finite law i32 Add(i32 left, i32 right) {
+                                return left + right;
+                            }
+                        }
+
+                        public trait Comparable {
+                            law i32 Compare(i32 other);
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ClosedWorldOptimization, out ClosedWorldOptimizationModel? closedWorld));
+        Assert.NotNull(closedWorld);
+
+        Assert.Equal(ClosedWorldSealKind.SealedByDefault, closedWorld.Types["Numbers"].Seal);
+        Assert.False(closedWorld.Types["Numbers"].HasRuntimeDispatch);
+        Assert.Equal(ClosedWorldSealKind.SealedByDefault, closedWorld.Types["Comparable"].Seal);
+        Assert.False(closedWorld.Types["Comparable"].HasRuntimeDispatch);
+        Assert.Equal(ClosedWorldSealKind.SealedByDefault, closedWorld.Types["Math.Numbers"].Seal);
+        Assert.Equal(ClosedWorldSealKind.SealedByDefault, closedWorld.Types["Math.Comparable"].Seal);
+
+        Assert.Equal(
+            new[] { ClosedWorldCallLoweringStrategy.DirectSharedBody },
+            closedWorld.Functions["Numbers.Add"].SelectionOrder);
+        Assert.Equal(ClosedWorldCodeGenerationMode.SharedCode, closedWorld.Functions["Numbers.Add"].CodeGenerationMode);
+        Assert.True(closedWorld.Functions["Numbers.Add"].CanDevirtualize);
+
+        Assert.Equal(
+            new[] { ClosedWorldCallLoweringStrategy.CompileTimeOnlyContract },
+            closedWorld.Functions["Comparable.Compare"].SelectionOrder);
+        Assert.Equal(ClosedWorldCodeGenerationMode.MonomorphizationDeferred, closedWorld.Functions["Comparable.Compare"].CodeGenerationMode);
+        Assert.False(closedWorld.Functions["Comparable.Compare"].CanDevirtualize);
+
+        Assert.Equal(
+            new[]
+            {
+                ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone,
+                ClosedWorldCallLoweringStrategy.DirectAbiBoundary
+            },
+            closedWorld.Functions["Math.Numbers.Add"].SelectionOrder);
+        Assert.Equal(ClosedWorldCodeGenerationMode.CallerSpecializedClone, closedWorld.Functions["Math.Numbers.Add"].CodeGenerationMode);
+        Assert.True(closedWorld.Functions["Math.Numbers.Add"].CanDevirtualize);
+
+        Assert.Equal(
+            new[] { ClosedWorldCallLoweringStrategy.CompileTimeOnlyContract },
+            closedWorld.Functions["Math.Comparable.Compare"].SelectionOrder);
+        Assert.Equal(ClosedWorldCodeGenerationMode.MonomorphizationDeferred, closedWorld.Functions["Math.Comparable.Compare"].CodeGenerationMode);
+        Assert.False(closedWorld.Functions["Math.Comparable.Compare"].CanDevirtualize);
     }
 
     [Fact]
@@ -509,6 +1054,151 @@ public sealed class CompilerPipelineTests
             Assert.NotNull(doctrineType);
             Assert.Equal(DeclarationKind.Doctrine, doctrineType.Kind);
             Assert.True(typeCheckModel.Functions.ContainsKey("Facade.Numbers.Double"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedTraitLibrariesResolveWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-trait-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public trait Comparable {
+                    law i32 Compare(i32 other);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded);
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run() {
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.Comparable", out var traitType));
+            Assert.NotNull(traitType);
+            Assert.Equal(DeclarationKind.Trait, traitType.Kind);
+            Assert.True(typeCheckModel.Functions.ContainsKey("Facade.Comparable.Compare"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedTraitAndDoctrineOptimizationRulesStayAbiBounded()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-closed-world-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public doctrine Numbers {
+                    finite law i32 Add(i32 left, i32 right) {
+                        return left + right;
+                    }
+                }
+
+                public trait Comparable {
+                    law i32 Compare(i32 other);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded);
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run() {
+                        return Facade.Numbers.Add(1, 2);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.ClosedWorldOptimization, out ClosedWorldOptimizationModel? closedWorld));
+            Assert.NotNull(closedWorld);
+
+            Assert.Equal(ClosedWorldSealKind.AbiBoundary, closedWorld.Types["Facade.Numbers"].Seal);
+            Assert.Equal(ClosedWorldSealKind.AbiBoundary, closedWorld.Types["Facade.Comparable"].Seal);
+            Assert.False(closedWorld.Types["Facade.Numbers"].HasRuntimeDispatch);
+            Assert.False(closedWorld.Types["Facade.Comparable"].HasRuntimeDispatch);
+
+            Assert.Equal(
+                new[] { ClosedWorldCallLoweringStrategy.DirectAbiBoundary },
+                closedWorld.Functions["Facade.Numbers.Add"].SelectionOrder);
+            Assert.Equal(ClosedWorldCodeGenerationMode.SharedCode, closedWorld.Functions["Facade.Numbers.Add"].CodeGenerationMode);
+            Assert.True(closedWorld.Functions["Facade.Numbers.Add"].CanDevirtualize);
+
+            Assert.Equal(
+                new[] { ClosedWorldCallLoweringStrategy.CompileTimeOnlyContract },
+                closedWorld.Functions["Facade.Comparable.Compare"].SelectionOrder);
+            Assert.Equal(ClosedWorldCodeGenerationMode.MonomorphizationDeferred, closedWorld.Functions["Facade.Comparable.Compare"].CodeGenerationMode);
+            Assert.False(closedWorld.Functions["Facade.Comparable.Compare"].CanDevirtualize);
         }
         finally
         {

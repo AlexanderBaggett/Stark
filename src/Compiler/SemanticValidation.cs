@@ -1925,7 +1925,7 @@ internal sealed class SemanticValidator
         {
             _context.Diagnostics.Error(
                 "STK4009",
-                $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed in {DescribeTypeUsage(usage)}.",
+                $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed in {DescribeTypeUsage(usage)}. {DescribeNoDynamicDispatchPolicy()}",
                 "semantic-validate",
                 Location(context.Start));
         }
@@ -2011,6 +2011,11 @@ internal sealed class SemanticValidator
             DeclarationKind.Trait => "trait",
             _ => "type"
         };
+    }
+
+    private static string DescribeNoDynamicDispatchPolicy()
+    {
+        return "Stark v1.x has no runtime dispatch values for traits or doctrines.";
     }
 
     private static string DescribeTypeUsage(TypeUsage usage)

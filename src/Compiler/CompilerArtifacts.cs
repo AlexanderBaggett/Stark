@@ -12,6 +12,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<LoadedModuleSet> LoadedModules = new("modules.loaded");
     public static readonly ArtifactKey<SymbolCatalog> SymbolCatalog = new("symbols.catalog");
     public static readonly ArtifactKey<FunctionEffectModel> FunctionEffects = new("semantics.function-effects");
+    public static readonly ArtifactKey<ClosedWorldOptimizationModel> ClosedWorldOptimization = new("semantics.closed-world-optimization");
     public static readonly ArtifactKey<TypeCheckModel> TypeCheckModel = new("typing.model");
     public static readonly ArtifactKey<EnumLayoutModel> EnumLayoutModel = new("typing.enum-layout");
     public static readonly ArtifactKey<SemanticValidationModel> SemanticValidation = new("semantics.validation");
@@ -97,6 +98,7 @@ public enum InlinePreference
 
 public sealed record FunctionModifierSet(
     InlinePreference InlinePreference,
+    bool HasExplicitInlinePreference,
     bool IsHot,
     bool IsCold,
     bool IsFfi);
@@ -201,6 +203,47 @@ public sealed record FunctionEffectProfile(
 public sealed record FunctionEffectModel(
     string ModuleName,
     IReadOnlyDictionary<string, FunctionEffectProfile> Functions);
+
+public enum ClosedWorldSealKind
+{
+    SealedByDefault,
+    AbiBoundary
+}
+
+public enum ClosedWorldCallLoweringStrategy
+{
+    CompileTimeOnlyContract,
+    DirectSharedBody,
+    DirectAbiBoundary,
+    LawCallerSpecializedClone
+}
+
+public enum ClosedWorldCodeGenerationMode
+{
+    NoRuntimeCode,
+    SharedCode,
+    CallerSpecializedClone,
+    MonomorphizationDeferred
+}
+
+public sealed record ClosedWorldTypeOptimizationInfo(
+    string Name,
+    DeclarationKind Kind,
+    ClosedWorldSealKind Seal,
+    bool HasRuntimeDispatch);
+
+public sealed record ClosedWorldFunctionOptimizationInfo(
+    string Name,
+    DeclarationKind Kind,
+    ClosedWorldSealKind Seal,
+    IReadOnlyList<ClosedWorldCallLoweringStrategy> SelectionOrder,
+    ClosedWorldCodeGenerationMode CodeGenerationMode,
+    bool CanDevirtualize);
+
+public sealed record ClosedWorldOptimizationModel(
+    string ModuleName,
+    IReadOnlyDictionary<string, ClosedWorldTypeOptimizationInfo> Types,
+    IReadOnlyDictionary<string, ClosedWorldFunctionOptimizationInfo> Functions);
 
 public enum StarkBorrowKind
 {

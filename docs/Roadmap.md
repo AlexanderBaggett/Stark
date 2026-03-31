@@ -519,81 +519,86 @@ Goal: Stark's abstraction system becomes real, optimizable, and usable.
   - [x] effect and purity validation for doctrine members
   - [x] no-state and no-capture enforcement
   - [x] doctrine lookup and name-resolution rules
-- [ ] Trait/doctrine constraint solving
-  - [ ] collect obligations from generic and doctrine use sites
-  - [ ] candidate lookup and matching
-  - [ ] ambiguity and no-solution diagnostics
-  - [ ] instantiate solved obligations into lowered calls
-- [ ] Closed-world optimization rules for doctrines/traits
-  - [ ] sealed-by-default assumption rules
-  - [ ] devirtualization eligibility rules
-  - [ ] monomorphization vs shared-code rules
-  - [ ] specialization selection order
-- [ ] Dynamic dispatch strategy, if any
-  - [ ] decide whether trait objects or equivalent runtime dispatch exist
-  - [ ] define object-safety or equivalent restrictions if they do
-  - [ ] define runtime representation and ABI if they do
-  - [ ] tests for dynamic dispatch lowering if supported
-- [ ] Better lowering for laws/doctrines as optimization-friendly abstractions
+- [x] Closed-world optimization rules for doctrines/traits
+  - [x] sealed-by-default assumption rules
+  - [x] devirtualization eligibility rules
+  - [x] monomorphization vs shared-code rules
+  - [x] specialization selection order
+- [x] Dynamic dispatch strategy for v1.x
+  - [x] decide that trait objects or equivalent runtime dispatch do not exist in v1.x
+  - [x] state the no-dynamic-dispatch policy in docs and diagnostics
+- [x] Better lowering for laws/doctrines as optimization-friendly abstractions
   - [x] lower doctrine calls to direct calls where possible
-  - [ ] emit stronger readonly/noalias/capture facts
-  - [ ] specialize and inline law calls where closed-world facts allow it
-  - [ ] regression tests for emitted LLVM attributes and call shapes
+  - [x] emit stronger readonly/noalias/capture facts
+  - [x] infer closed-world `alwaysinline` for eligible module-private law callees in root-module builds
+  - [x] extend conservative closed-world `alwaysinline` inference to eligible source-loaded imported-module law helpers
+  - [x] infer conservative `alwaysinline` on eligible non-export imported law entrypoints when every known caller in the build is also a law body
+  - [x] carry source-loaded imported modules into HIR, MIR, and SSA artifacts
+  - [x] emit internal root-side clones for eligible imported law bodies so closed-world law calls can optimize without changing dependency ABI
+  - [x] broader specialization and inlining of law calls where closed-world facts allow it
+  - [x] regression tests for emitted LLVM attributes and call shapes
 
+## Milestone 6.5: Pre-StdLib Language Work
 
-  ## Milestone 7 Standard Library
-  ### Standard Library Core Linux using Syscall (no libc/glibc)
+Goal: unlock the language surface the standard library wants before the stdlib is redesigned around it.
 
-- [x] Define the first standard library module layout
-- [x] `Console` or `Stdout` output abstraction
-- [x] `Stderr` output abstraction
-- [ ] File read API
-  - [ ] bytes read-all API
-  - [ ] text read-all API for Stark string types
-  - [ ] handle-based read API if handles are exposed
-  - [ ] tests through stdlib package import paths
-- [ ] File write API
-  - [ ] bytes write-all API
-  - [ ] text write-all API for Stark string types
-  - [ ] overwrite vs append mode selection
-  - [ ] flush/close semantics if handles are exposed
-- [ ] Basic path/file error modeling
-  - [ ] canonical file/path error value cases
-  - [ ] result-style IO return shapes
-  - [ ] platform failure translation into Stark error values
-  - [ ] tests and docs for file/path failure behavior
-- [ ] String helpers required by the standard library
-  - [ ] length and emptiness helpers
-  - [ ] string slicing helpers required by IO APIs
-  - [ ] basic search helpers required by stdlib code
-  - [ ] ascii/unicode conversion helpers if the surface supports them
+- [ ] Generics sufficient for stdlib-facing result and helper types
+  - [ ] generic enums such as `IOResult<T>`
+  - [ ] generic substitution through returns, fields, locals, and methods
+  - [ ] instantiation at normal use sites for stdlib modules and consumers
+  - [ ] package and manifest support for generic stdlib declarations
+- [ ] Overload support for Stark-native APIs
+  - [ ] top-level function overload groups
+  - [ ] method overload groups
+  - [ ] ambiguity and no-match diagnostics
+  - [ ] symbol, manifest, and package behavior for overload sets
+- [ ] Destructor syntax and implementation
+  - [ ] source-level destructor declaration surface
+  - [ ] ownership integration for scope-exit cleanup
+  - [ ] MIR/SSA/LLVM lowering for destructor calls
+  - [ ] stdlib regression tests for owned-resource cleanup
 
+## Milestone 7: Standard Library
 
-  ### Standard Library Core Windows
+Goal: replace the current libc-backed stdlib slice with a cross-platform `System` package that hides platform boundaries behind Stark APIs.
 
-- [x] Define the first standard library module layout
-- [ ] `Console` or `Stdout` output abstraction
-- [ ] `Stderr` output abstraction
-- [ ] File read API
-  - [ ] bytes read-all API
-  - [ ] text read-all API for Stark string types
-  - [ ] handle-based read API if handles are exposed
-  - [ ] tests through stdlib package import paths
-- [ ] File write API
-  - [ ] bytes write-all API
-  - [ ] text write-all API for Stark string types
-  - [ ] overwrite vs append mode selection
-  - [ ] flush/close semantics if handles are exposed
-- [ ] Basic path/file error modeling
-  - [ ] canonical file/path error value cases
-  - [ ] result-style IO return shapes
-  - [ ] platform failure translation into Stark error values
-  - [ ] tests and docs for file/path failure behavior
-- [ ] String helpers required by the standard library
-  - [ ] length and emptiness helpers
-  - [ ] string slicing helpers required by IO APIs
-  - [ ] basic search helpers required by stdlib code
-  - [ ] ascii/unicode conversion helpers if the surface supports them
+- [ ] Define the public `System` module layout
+  - [ ] `System`
+  - [ ] `System.Console`
+  - [ ] `System.IO`
+  - [ ] `System.IO.File`
+  - [ ] `System.IO.Path`
+  - [ ] `System.Text`
+  - [ ] `System.Text.Encoding`
+- [ ] Define the internal runtime/platform module layout
+  - [ ] `System.Runtime`
+  - [ ] `System.Runtime.Platform`
+  - [ ] `System.Runtime.Platform.Linux`
+  - [ ] `System.Runtime.Platform.Windows`
+- [ ] Implement the shared stdlib surface
+  - [ ] `System.Console` output API
+  - [ ] `System.IO` error and result model
+  - [ ] `System.IO.File` owned handle type and destructor-based close behavior
+  - [ ] `System.IO.Path` helpers
+  - [ ] `System.Text.Encoding` enum and shared conversion helpers
+- [ ] Implement userspace file buffering and encoding-aware text IO
+  - [ ] buffering modes
+  - [ ] newline policy
+  - [ ] byte IO
+  - [ ] ascii/unicode text IO
+- [ ] Linux platform implementation without libc/glibc
+  - [ ] syscall-backed write/read/open/close/delete/rename/stat/getcwd/ioctl boundary
+  - [ ] terminal detection and buffering-policy support
+  - [ ] packaged integration tests proving no libc/glibc dependency
+- [ ] Windows platform implementation without CRT dependency
+  - [ ] kernel32-backed console and file APIs
+  - [ ] UTF-16 path conversion boundary
+  - [ ] terminal detection and buffering-policy support
+  - [ ] packaged integration tests proving no CRT dependency
+- [ ] Packaging and documentation
+  - [ ] package manifest coverage for the new module graph
+  - [ ] package consumption tests without stdlib source imports
+  - [ ] reference docs for each public stdlib module family
 
 
 ## Milestone 8: Optimization and Backend Quality
@@ -800,9 +805,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] Generic type parameter handling beyond basic shape support in `v1.1`
   - [ ] bind generic parameters on all declaration kinds that support them
   - [ ] substitute generic parameters through fields, returns, and locals
-  - [ ] bind and validate `where` constraints semantically
   - [ ] instantiate generic functions and types at use sites
-  - [ ] define specialization interaction with generic instantiation
 - [ ] Monomorphization planning
   - [ ] symbol naming scheme
   - [ ] code-size control heuristics
@@ -820,7 +823,7 @@ If the goal is to make Stark feel substantially more complete as a language, the
 - [ ] Field/index/object lowering on top of that
 - [x] Real multi-file module loading and imported symbol binding
 - [ ] Minimal standard library and runtime surface
-- [ ] Doctrine/trait solving and optimization
+- [ ] Doctrine/trait optimization
 - [ ] Optimization and backend quality passes
 - [ ] Tooling, diagnostics, and release hardening
 
@@ -1004,3 +1007,29 @@ Everything before this point is frozen
 - [ ] Re-run benchmarks after every optimization batch
 - [ ] Track which optimizations materially changed results
 - [ ] Add permanent regression tests for every fixed benchmark cliff
+
+
+## Milestone v2.0 TBD
+
+### Constrained Generics
+
+- [ ] Trait/doctrine constraint solving
+  - [ ] collect obligations from generic and doctrine use sites
+  - [ ] candidate lookup and matching
+  - [ ] ambiguity and no-solution diagnostics
+  - [ ] instantiate solved obligations into lowered calls
+- [ ] `where`-clause semantic binding and validation
+- [ ] define specialization interaction with constrained generic instantiation
+
+### Trait/Doctrine Runtime Dispatch, If Ever Added
+
+- [ ] define object-safety or equivalent restrictions if runtime dispatch is ever added
+- [ ] define runtime representation and ABI if runtime dispatch is ever added
+- [ ] tests for dynamic dispatch lowering if runtime dispatch is ever supported
+
+### Low-Level Platform Intrinsics
+
+- [ ] Decide HOW Stark exposes inline assembly, syscall intrinsics, or another first-class low-level platform boundary
+- [ ] Define the safety model and target restrictions for those intrinsics
+- [ ] Evaluate whether the Linux stdlib should migrate from a linked syscall boundary shim to direct Stark-level intrinsics
+- [ ] First class vector types support for SIMD

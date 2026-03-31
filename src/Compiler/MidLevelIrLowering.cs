@@ -7,17 +7,17 @@ namespace Stark.Compiler;
 
 internal sealed class MidLevelIrLowerer(
     CompilerPassContext context,
-    ParseResult parseResult,
+    LoadedModuleSet loadedModules,
     ModuleGraph moduleGraph,
     TypeCheckModel typeModel,
     EnumLayoutModel enumLayoutModel)
 {
-    private readonly ParseResult _parseResult = parseResult;
     private readonly TypeCheckModel _typeModel = typeModel;
     private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
-    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionsByName = DeclaredFunctionSyntaxCollector.Collect(parseResult)
-            .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
+    private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules);
     private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
+    private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, typeModel.NamedTypes, loadedModules);
+    private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, typeModel.NamedTypes, loadedModules);
     private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes = typeModel.Literals
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Type);
@@ -36,8 +36,8 @@ internal sealed class MidLevelIrLowerer(
 
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
     {
-        if (!_functionsByName.TryGetValue(function.Name, out var declaration)
-            || declaration.Body.block() is not { } body)
+        if (!_functionsByName.TryGetValue(function.Name, out var loweringContext)
+            || loweringContext.Declaration.Body.block() is not { } body)
         {
             return new MidLevelIrFunction(
                 function.Name,
@@ -51,7 +51,16 @@ internal sealed class MidLevelIrLowerer(
                 Blocks: []);
         }
 
-        var builder = new FunctionMirBuilder(function, _typeModel, _enumLayoutModel, _typeResolver, _literalTypes, _objectCreationConstructors);
+        var builder = new FunctionMirBuilder(
+            function,
+            loweringContext.ModuleName,
+            _typeModel,
+            _enumLayoutModel,
+            _typeResolver,
+            _fallbackFunctions,
+            _fallbackGlobals,
+            _literalTypes,
+            _objectCreationConstructors);
         builder.Lower(body);
 
         return new MidLevelIrFunction(
@@ -70,6 +79,109 @@ internal sealed class MidLevelIrLowerer(
     {
         return $"{function.ReturnType.DisplayName} {function.Name}({string.Join(", ", function.Parameters.Select(static parameter => $"{parameter.Type.DisplayName} {parameter.Name}"))})";
     }
+
+    private static Dictionary<string, FunctionLoweringContext> CollectFunctionsByQualifiedName(LoadedModuleSet loadedModules)
+    {
+        var functions = new Dictionary<string, FunctionLoweringContext>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            {
+                var qualifiedName = module.Reference.IsRoot
+                    ? declaration.Name
+                    : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
+                functions[qualifiedName] = new FunctionLoweringContext(module.SyntaxModel.ModuleName, declaration);
+            }
+        }
+
+        return functions;
+    }
+
+    private static Dictionary<string, TypedFunctionSignature> CollectFallbackFunctionSignatures(
+        CompilerPassContext context,
+        ModuleGraph moduleGraph,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        LoadedModuleSet loadedModules)
+    {
+        var resolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, namedTypes);
+        var functions = new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            {
+                var genericParameters = resolver.GetGenericParameterNames(declaration.TypeParameters);
+                var qualifiedName = QualifyName(module, declaration.Name);
+                var parameters = declaration.ParameterList.parameter()
+                    .Select(parameter => new TypedParameterSymbol(
+                        parameter.Identifier().GetText(),
+                        resolver.ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName)))
+                    .ToArray();
+                functions[qualifiedName] = new TypedFunctionSignature(
+                    qualifiedName,
+                    resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
+                    parameters);
+            }
+        }
+
+        return functions;
+    }
+
+    private static Dictionary<string, TypedGlobalSymbol> CollectFallbackGlobals(
+        CompilerPassContext context,
+        ModuleGraph moduleGraph,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        LoadedModuleSet loadedModules)
+    {
+        var resolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, namedTypes);
+        var globals = new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+                {
+                    var declaredType = resolver.ResolveType(constantDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
+                    foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                    {
+                        var qualifiedName = QualifyName(module, declarator.Identifier().GetText());
+                        globals[qualifiedName] = new TypedGlobalSymbol(qualifiedName, declaredType, GlobalBindingKind.Const);
+                    }
+
+                    continue;
+                }
+
+                if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+                {
+                    continue;
+                }
+
+                var declaredVariableType = resolver.ResolveType(variableDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
+                var bindingKind = variableDeclaration.MUT() is not null
+                    ? GlobalBindingKind.Mutable
+                    : GlobalBindingKind.Immutable;
+
+                foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+                {
+                    var qualifiedName = QualifyName(module, declarator.Identifier().GetText());
+                    globals[qualifiedName] = new TypedGlobalSymbol(qualifiedName, declaredVariableType, bindingKind);
+                }
+            }
+        }
+
+        return globals;
+    }
+
+    private static string QualifyName(LoadedModuleDocument module, string localName)
+    {
+        return module.Reference.IsRoot
+            ? localName
+            : $"{module.SyntaxModel.ModuleName}.{localName}";
+    }
+
+    private sealed record FunctionLoweringContext(string ModuleName, DeclaredFunctionSyntax Declaration);
 
     private readonly record struct LiteralKey(string Text, int Line, int Column);
     private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
@@ -160,9 +272,12 @@ internal sealed class MidLevelIrLowerer(
         }
 
         private readonly HighLevelIrFunction _function;
+        private readonly string _currentModuleName;
         private readonly TypeCheckModel _typeModel;
         private readonly EnumLayoutModel _enumLayoutModel;
         private readonly StarkTypeResolver _typeResolver;
+        private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _fallbackFunctions;
+        private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _fallbackGlobals;
         private readonly IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
         private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
         private readonly List<MidLevelIrLocal> _locals = [];
@@ -176,16 +291,22 @@ internal sealed class MidLevelIrLowerer(
 
         public FunctionMirBuilder(
             HighLevelIrFunction function,
+            string currentModuleName,
             TypeCheckModel typeModel,
             EnumLayoutModel enumLayoutModel,
             StarkTypeResolver typeResolver,
+            IReadOnlyDictionary<string, TypedFunctionSignature> fallbackFunctions,
+            IReadOnlyDictionary<string, TypedGlobalSymbol> fallbackGlobals,
             IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> literalTypes,
             IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> objectCreationConstructors)
         {
             _function = function;
+            _currentModuleName = currentModuleName;
             _typeModel = typeModel;
             _enumLayoutModel = enumLayoutModel;
             _typeResolver = typeResolver;
+            _fallbackFunctions = fallbackFunctions;
+            _fallbackGlobals = fallbackGlobals;
             _literalTypes = literalTypes;
             _objectCreationConstructors = objectCreationConstructors;
             _parametersByName = function.Signature.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
@@ -308,7 +429,7 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerConstantDeclaration(StarkParser.LocalConstantDeclarationContext declaration)
         {
-            var declaredType = _typeResolver.ResolveType(declaration.type_());
+            var declaredType = _typeResolver.ResolveType(declaration.type_(), currentModuleName: _currentModuleName);
             foreach (var declarator in declaration.constantDeclarators().constantDeclarator())
             {
                 var name = declarator.Identifier().GetText();
@@ -321,7 +442,7 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerVariableDeclaration(StarkParser.LocalVariableDeclarationContext declaration)
         {
-            var declaredType = _typeResolver.ResolveType(declaration.type_());
+            var declaredType = _typeResolver.ResolveType(declaration.type_(), currentModuleName: _currentModuleName);
             var storageClass = declaration.storageClass().GetText();
 
             foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
@@ -1133,7 +1254,7 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
-            var patternType = _typeResolver.ResolveSimpleType(aggregatePattern.simpleType(), currentModuleName: _typeModel.ModuleName);
+            var patternType = _typeResolver.ResolveSimpleType(aggregatePattern.simpleType(), currentModuleName: _currentModuleName);
             if (patternType.Kind != StarkTypeKind.Named
                 || patternType.NamedType is null
                 || !_typeModel.NamedTypes.TryGetValue(patternType.NamedType, out var namedType))
@@ -1769,7 +1890,7 @@ internal sealed class MidLevelIrLowerer(
         {
             if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
             {
-                var declaredType = _typeResolver.ResolveType(localForVariableDeclaration.type_());
+                var declaredType = _typeResolver.ResolveType(localForVariableDeclaration.type_(), currentModuleName: _currentModuleName);
                 var storageClass = localForVariableDeclaration.storageClass().GetText();
 
                 foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
@@ -2461,7 +2582,7 @@ internal sealed class MidLevelIrLowerer(
             StarkParser.ObjectCreationExpressionContext expression,
             StarkTypeSymbol? expectedType)
         {
-            var createdType = _typeResolver.ResolveType(expression.type_());
+            var createdType = _typeResolver.ResolveType(expression.type_(), currentModuleName: _currentModuleName);
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
 
             if (expression.argumentList() is { } argumentList && argumentList.argument().Length != 0)
@@ -3100,7 +3221,7 @@ internal sealed class MidLevelIrLowerer(
         {
             call = default!;
 
-            if (!_typeModel.Functions.TryGetValue(functionName, out var signature))
+            if (!TryResolveFunctionSignature(functionName, out var signature))
             {
                 return false;
             }
@@ -3118,7 +3239,7 @@ internal sealed class MidLevelIrLowerer(
             call = default!;
 
             if (receiver.Type.NamedType is not { } namedTypeName
-                || !_typeModel.Functions.TryGetValue($"{namedTypeName}.{memberName}", out var signature)
+                || !TryResolveFunctionSignature($"{namedTypeName}.{memberName}", out var signature)
                 || signature.Parameters.Count == 0)
             {
                 return false;
@@ -3173,7 +3294,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             call = new MidLevelIrCallRValue(
-                functionName,
+                signature.Name,
                 loweredArguments,
                 signature.ReturnType,
                 text,
@@ -3205,7 +3326,11 @@ internal sealed class MidLevelIrLowerer(
                         ? StarkTypeSymbols.Null
                         : literal.FloatLiteral() is not null
                             ? StarkTypeSymbols.Float(32)
-                            : InferIntegerLiteralType(ParseIntegerLiteral(literal.signedIntegerLiteral()!));
+                            : literal.StringLiteral() is not null
+                                ? InferTextLiteralType(literal.GetText(), TextLiteralKind.String)
+                                : literal.CharacterLiteral() is not null
+                                    ? InferTextLiteralType(literal.GetText(), TextLiteralKind.Character)
+                                    : InferIntegerLiteralType(ParseIntegerLiteral(literal.signedIntegerLiteral()!));
         }
 
         private static MidLevelIrOperand CreateLiteralOperand(StarkParser.LiteralContext literal, StarkTypeSymbol type)
@@ -3243,6 +3368,13 @@ internal sealed class MidLevelIrLowerer(
             throw new InvalidOperationException($"Unsupported literal '{literal.GetText()}'.");
         }
 
+        private static StarkTypeSymbol InferTextLiteralType(string text, TextLiteralKind kind)
+        {
+            return TextLiteralDecoder.IsAsciiLiteral(text, kind)
+                ? StarkTypeSymbols.Ascii
+                : StarkTypeSymbols.Unicode;
+        }
+
         private MidLevelIrOperand? ResolveNamedOperand(string name)
         {
             var operand = TryResolveNamedValueOperand(name);
@@ -3251,7 +3383,7 @@ internal sealed class MidLevelIrLowerer(
                 return operand;
             }
 
-            if (_typeModel.Functions.ContainsKey(name))
+            if (TryResolveFunctionSignature(name, out _))
             {
                 MarkUnsupported();
                 return null;
@@ -3273,9 +3405,9 @@ internal sealed class MidLevelIrLowerer(
                 return new MidLevelIrParameterOperand(parameter.Name, parameter.Type);
             }
 
-            if (_typeModel.Globals.TryGetValue(name, out var global))
+            if (TryResolveGlobal(name, out var global))
             {
-                return new MidLevelIrGlobalOperand(name, global.Type);
+                return new MidLevelIrGlobalOperand(global.Name, global.Type);
             }
 
             if (TryResolveEnumCaseReference(name, out var enumType, out var enumLayout, out var variant) && variant.Fields.Count == 0)
@@ -3284,6 +3416,38 @@ internal sealed class MidLevelIrLowerer(
             }
 
             return null;
+        }
+
+        private bool TryResolveFunctionSignature(string name, out TypedFunctionSignature signature)
+        {
+            if (_typeModel.Functions.TryGetValue(name, out signature!))
+            {
+                return true;
+            }
+
+            if (!name.Contains('.', StringComparison.Ordinal)
+                && _fallbackFunctions.TryGetValue($"{_currentModuleName}.{name}", out signature!))
+            {
+                return true;
+            }
+
+            return _fallbackFunctions.TryGetValue(name, out signature!);
+        }
+
+        private bool TryResolveGlobal(string name, out TypedGlobalSymbol global)
+        {
+            if (_typeModel.Globals.TryGetValue(name, out global!))
+            {
+                return true;
+            }
+
+            if (!name.Contains('.', StringComparison.Ordinal)
+                && _fallbackGlobals.TryGetValue($"{_currentModuleName}.{name}", out global!))
+            {
+                return true;
+            }
+
+            return _fallbackGlobals.TryGetValue(name, out global!);
         }
 
         private bool TryResolveEnumCaseReference(
@@ -3326,7 +3490,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             if (!typeName.Contains('.', StringComparison.Ordinal)
-                && _typeModel.NamedTypes.TryGetValue($"{_typeModel.ModuleName}.{typeName}", out namedType!))
+                && _typeModel.NamedTypes.TryGetValue($"{_currentModuleName}.{typeName}", out namedType!))
             {
                 return true;
             }

@@ -57,6 +57,17 @@ internal static class DeclaredFunctionSyntaxCollector
                 continue;
             }
 
+            if (declaration.traitDeclaration() is { } traitDeclaration)
+            {
+                var typeName = traitDeclaration.Identifier().GetText();
+                functions.AddRange(
+                    traitDeclaration.traitBody().traitMember()
+                        .Select(static member => member.traitMethodDeclaration())
+                        .Where(static method => method is not null)!
+                        .Select(method => CreateTraitMethod(typeName, method, visibility)));
+                continue;
+            }
+
             if (declaration.doctrineDeclaration() is { } doctrineDeclaration)
             {
                 var typeName = doctrineDeclaration.Identifier().GetText();
@@ -92,6 +103,25 @@ internal static class DeclaredFunctionSyntaxCollector
     private static DeclaredFunctionSyntax CreateMethod(
         string containingTypeName,
         StarkParser.MethodDeclarationContext declaration,
+        StarkVisibility visibility)
+    {
+        return new DeclaredFunctionSyntax(
+            $"{containingTypeName}.{declaration.Identifier().GetText()}",
+            containingTypeName,
+            visibility,
+            declaration,
+            declaration.Identifier().Symbol,
+            ParseFunctionKind(declaration.functionKind()),
+            declaration.returnType(),
+            declaration.parameterList(),
+            declaration.typeParameterList(),
+            declaration.functionModifier(),
+            declaration.functionBody());
+    }
+
+    private static DeclaredFunctionSyntax CreateTraitMethod(
+        string containingTypeName,
+        StarkParser.TraitMethodDeclarationContext declaration,
         StarkVisibility visibility)
     {
         return new DeclaredFunctionSyntax(

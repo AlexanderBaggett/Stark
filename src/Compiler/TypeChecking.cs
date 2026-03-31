@@ -2463,7 +2463,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3013",
-                $"Cannot create an instance of compile-time-only {DescribeCompileTimeOnlyKind(namedType.Kind)} '{namedType.Name}'.",
+                $"Cannot create an instance of compile-time-only {DescribeCompileTimeOnlyKind(namedType.Kind)} '{namedType.Name}'. {DescribeNoDynamicDispatchPolicy()}",
                 expression);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -2731,6 +2731,15 @@ internal sealed class TypeChecker
 
             if (_functions.TryGetValue(qualifiedName, out var function))
             {
+                if (IsTraitMethodFunctionName(qualifiedName))
+                {
+                    ReportError(
+                        "STK3013",
+                        $"Trait method '{qualifiedName}' is a compile-time-only contract and cannot be called directly.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
                 return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{qualifiedName}'");
             }
 
@@ -2748,7 +2757,7 @@ internal sealed class TypeChecker
                 {
                     ReportError(
                         "STK3013",
-                        $"Trait '{qualifiedName}' is compile-time-only and cannot be used as a runtime value.",
+                        $"Trait '{qualifiedName}' is compile-time-only and cannot be used as a runtime value. {DescribeNoDynamicDispatchPolicy()}",
                         context);
                     return new ExpressionBinding(StarkTypeSymbols.Error);
                 }
@@ -2808,6 +2817,16 @@ internal sealed class TypeChecker
                 NamedType: ResolveNamedTypeSymbol(doctrineMethod.ReturnType),
                 Function: doctrineMethod,
                 DiagnosticName: $"doctrine method '{doctrineMethod.Name}'");
+        }
+
+        if (namedType.Kind == DeclarationKind.Trait
+            && _functions.ContainsKey($"{namedType.Name}.{memberName}"))
+        {
+            ReportError(
+                "STK3013",
+                $"Trait method '{namedType.Name}.{memberName}' is a compile-time-only contract and cannot be called directly.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
         if (_functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
@@ -2875,6 +2894,15 @@ internal sealed class TypeChecker
 
         if (_functions.TryGetValue(name, out var function))
         {
+            if (IsTraitMethodFunctionName(name))
+            {
+                ReportError(
+                    "STK3013",
+                    $"Trait method '{name}' is a compile-time-only contract and cannot be called directly.",
+                    token);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
             if (!allowFunctionReference)
             {
                 ReportError("STK3012", $"Function '{name}' must be called before its value can be used.", token);
@@ -2892,7 +2920,7 @@ internal sealed class TypeChecker
                 {
                     ReportError(
                         "STK3013",
-                        $"Doctrine '{name}' is compile-time-only and cannot be used as a runtime value.",
+                        $"Doctrine '{name}' is compile-time-only and cannot be used as a runtime value. {DescribeNoDynamicDispatchPolicy()}",
                         token);
                     return new ExpressionBinding(StarkTypeSymbols.Error);
                 }
@@ -2905,11 +2933,19 @@ internal sealed class TypeChecker
 
             if (namedType.Kind == DeclarationKind.Trait)
             {
-                ReportError(
-                    "STK3013",
-                    $"Trait '{name}' is compile-time-only and cannot be used as a runtime value.",
-                    token);
-                return new ExpressionBinding(StarkTypeSymbols.Error);
+                if (!allowFunctionReference)
+                {
+                    ReportError(
+                        "STK3013",
+                        $"Trait '{name}' is compile-time-only and cannot be used as a runtime value. {DescribeNoDynamicDispatchPolicy()}",
+                        token);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
+                return new ExpressionBinding(
+                    StarkTypeSymbols.Named(namedType.Name),
+                    NamedType: namedType,
+                    DiagnosticName: $"trait '{name}'");
             }
         }
 
@@ -3948,13 +3984,26 @@ internal sealed class TypeChecker
             : null;
     }
 
+    private bool IsTraitMethodFunctionName(string functionName)
+    {
+        var separator = functionName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var containingTypeName = functionName[..separator];
+        return TryResolveNamedTypeBySourceName(containingTypeName, out var namedType)
+            && namedType.Kind == DeclarationKind.Trait;
+    }
+
     private StarkTypeSymbol ValidateRuntimeValueType(StarkTypeSymbol type, ParserRuleContext context, string usage)
     {
         if (TryFindCompileTimeOnlyTypeDependency(type, out var dependencyName, out var dependencyKind))
         {
             ReportError(
                 "STK3013",
-                $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed for {usage}.",
+                $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed for {usage}. {DescribeNoDynamicDispatchPolicy()}",
                 context);
         }
 
@@ -4117,6 +4166,11 @@ internal sealed class TypeChecker
             DeclarationKind.Trait => "trait",
             _ => "type"
         };
+    }
+
+    private static string DescribeNoDynamicDispatchPolicy()
+    {
+        return "Stark v1.x has no runtime dispatch values for traits or doctrines.";
     }
 
     private HashSet<string>? GetGenericParameterNames(StarkParser.TypeParameterListContext? typeParameterList)

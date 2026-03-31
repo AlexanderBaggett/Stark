@@ -16,6 +16,8 @@ internal sealed class LlvmIrEmitter
     private readonly FunctionEffectModel _effectModel;
     private readonly TypeCheckModel _typeModel;
     private readonly EnumLayoutModel _enumLayoutModel;
+    private readonly SemanticValidationModel? _semanticValidation;
+    private readonly ClosedWorldOptimizationModel? _closedWorldModel;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
     private readonly LlvmTargetInfo? _targetInfo;
@@ -23,6 +25,9 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
     private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
+    private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
+    private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
+    private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
     private int _syntheticGlobalInitializerIndex;
 
     public LlvmIrEmitter(
@@ -35,7 +40,9 @@ internal sealed class LlvmIrEmitter
         AbiModel abiModel,
         SsaIrModule ssa,
         LlvmTargetInfo? targetInfo = null,
-        bool internalizeModulePrivate = false)
+        bool internalizeModulePrivate = false,
+        SemanticValidationModel? semanticValidation = null,
+        ClosedWorldOptimizationModel? closedWorldModel = null)
         : this(
             input,
             parseResult,
@@ -47,7 +54,9 @@ internal sealed class LlvmIrEmitter
             abiModel,
             ssa,
             targetInfo,
-            internalizeModulePrivate)
+            internalizeModulePrivate,
+            semanticValidation,
+            closedWorldModel)
     {
     }
 
@@ -62,7 +71,9 @@ internal sealed class LlvmIrEmitter
         AbiModel abiModel,
         SsaIrModule ssa,
         LlvmTargetInfo? targetInfo = null,
-        bool internalizeModulePrivate = false)
+        bool internalizeModulePrivate = false,
+        SemanticValidationModel? semanticValidation = null,
+        ClosedWorldOptimizationModel? closedWorldModel = null)
     {
         _input = input;
         _parseResult = parseResult;
@@ -71,6 +82,8 @@ internal sealed class LlvmIrEmitter
         _effectModel = effectModel;
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
+        _semanticValidation = semanticValidation;
+        _closedWorldModel = closedWorldModel;
         _abiModel = abiModel;
         _ssa = ssa;
         _targetInfo = targetInfo;
@@ -80,6 +93,9 @@ internal sealed class LlvmIrEmitter
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
+        _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa);
+        _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, effectModel);
+        _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
     }
 
     public LlvmIrModule Emit()
@@ -110,6 +126,7 @@ internal sealed class LlvmIrEmitter
                 .Where(static declaration => declaration.Function is not null)
                 .Select(static declaration => declaration.Function!.Name),
             StringComparer.Ordinal);
+        var resolveCallAbi = CreateCallAbiResolver();
 
         foreach (var declaration in _syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
         {
@@ -118,6 +135,7 @@ internal sealed class LlvmIrEmitter
             var signature = _typeModel.Functions[function.Name];
             var abiSignature = _abiModel.Functions[function.Name];
             var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == function.Name);
+            var parameterEffects = GetRootParameterEffects(function.Name, function.HasBody);
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
@@ -129,7 +147,7 @@ internal sealed class LlvmIrEmitter
             {
                 try
                 {
-                    EmitFunctionDefinition(builder, definitionInternalize, signature, abiSignature, effects, ssaFunction);
+                    EmitFunctionDefinition(builder, definitionInternalize, signature, abiSignature, effects, ssaFunction, parameterEffects, resolveCallAbi);
                     builder.AppendLine();
                     continue;
                 }
@@ -143,7 +161,22 @@ internal sealed class LlvmIrEmitter
                 builder.AppendLine($"; LLVM body emission pending for {function.Name}");
             }
 
-            builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects));
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects));
+            builder.AppendLine();
+        }
+
+        foreach (var clone in _closedWorldImportedLawClones.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
+        {
+            builder.AppendLine($"; closed-world imported law clone: {clone.FunctionName}");
+            EmitFunctionDefinition(
+                builder,
+                internalize: true,
+                clone.Signature,
+                clone.AbiSignature,
+                clone.Effects,
+                clone.SsaFunction,
+                parameterEffects: null,
+                resolveCallAbi);
             builder.AppendLine();
         }
 
@@ -158,11 +191,363 @@ internal sealed class LlvmIrEmitter
             }
 
             builder.AppendLine($"; imported declaration: {abiFunction.Name}");
-            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects));
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, parameterEffects: null));
             builder.AppendLine();
         }
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd());
+    }
+
+    private Func<string, string, AbiFunctionSignature?> CreateCallAbiResolver()
+    {
+        return (callerName, functionName) =>
+        {
+            if (_closedWorldImportedLawClones.TryGetValue(functionName, out var clone)
+                && _effectModel.Functions.TryGetValue(callerName, out var callerEffects)
+                && FunctionKindFacts.IsLaw(callerEffects.Kind))
+            {
+                return clone.AbiSignature;
+            }
+
+            return _allAbiFunctions.TryGetValue(functionName, out var abiFunction)
+                ? abiFunction
+                : null;
+        };
+    }
+
+    private static IReadOnlyDictionary<string, TypedFunctionSignature> BuildAllFunctionSignatures(
+        TypeCheckModel typeModel,
+        SsaIrModule ssa)
+    {
+        var functions = typeModel.Functions.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
+
+        foreach (var function in ssa.Functions)
+        {
+            functions.TryAdd(
+                function.Name,
+                new TypedFunctionSignature(
+                    function.Name,
+                    function.ReturnType,
+                    function.Parameters));
+        }
+
+        return functions;
+    }
+
+    private static IReadOnlyDictionary<string, AbiFunctionSignature> BuildAllAbiFunctions(
+        IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures,
+        AbiModel abiModel,
+        FunctionEffectModel effectModel)
+    {
+        var functions = abiModel.Functions.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
+
+        foreach (var function in allFunctionSignatures.Values)
+        {
+            if (functions.ContainsKey(function.Name))
+            {
+                continue;
+            }
+
+            var isFfi = effectModel.Functions.TryGetValue(function.Name, out var effects) && effects.IsFfi;
+            functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi);
+        }
+
+        return functions;
+    }
+
+    private IReadOnlyDictionary<string, ImportedLawClonePlan> BuildClosedWorldImportedLawClones()
+    {
+        var importedDeclarations = CollectImportedFunctionDeclarations();
+        if (importedDeclarations.Count == 0)
+        {
+            return new Dictionary<string, ImportedLawClonePlan>(StringComparer.Ordinal);
+        }
+
+        var ssaByName = _ssa.Functions.ToDictionary(static function => function.Name, StringComparer.Ordinal);
+        var callsByFunction = CollectCallsByFunction(_ssa);
+        var recursiveImportedLawFunctions = FindRecursiveFunctions(
+            callsByFunction,
+            functionName => importedDeclarations.ContainsKey(functionName)
+                && _effectModel.Functions.TryGetValue(functionName, out var effects)
+                && FunctionKindFacts.IsLaw(effects.Kind));
+        var rootLawFunctions = _syntaxModel.Declarations
+            .Where(static declaration => declaration.Function is not null)
+            .Select(static declaration => declaration.Function!.Name)
+            .Where(name => _effectModel.Functions.TryGetValue(name, out var effects) && FunctionKindFacts.IsLaw(effects.Kind))
+            .ToArray();
+        var clones = new Dictionary<string, ImportedLawClonePlan>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+
+        foreach (var rootFunction in rootLawFunctions)
+        {
+            if (!callsByFunction.TryGetValue(rootFunction, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                EnqueueIfEligible(callee);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (clones.ContainsKey(functionName))
+            {
+                continue;
+            }
+
+            var signature = _allFunctionSignatures[functionName];
+            var effects = BuildLawCloneEffectProfile(functionName);
+            var cloneAbi = BuildSyntheticAbiSignature(signature, GetImportedLawCloneSymbolName(functionName), isFfi: false);
+            clones[functionName] = new ImportedLawClonePlan(functionName, signature, cloneAbi, effects, ssaByName[functionName]);
+
+            if (!callsByFunction.TryGetValue(functionName, out var importedCallees))
+            {
+                continue;
+            }
+
+            foreach (var callee in importedCallees)
+            {
+                EnqueueIfEligible(callee);
+            }
+        }
+
+        return clones;
+
+        void EnqueueIfEligible(string functionName)
+        {
+            if (!visited.Add(functionName)
+                || !IsImportedLawCloneEligible(functionName, importedDeclarations, ssaByName, recursiveImportedLawFunctions))
+            {
+                return;
+            }
+
+            pending.Enqueue(functionName);
+        }
+    }
+
+    private Dictionary<string, TopLevelDeclarationModel> CollectImportedFunctionDeclarations()
+    {
+        var declarations = new Dictionary<string, TopLevelDeclarationModel>(StringComparer.Ordinal);
+
+        foreach (var module in _loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+        {
+            foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            {
+                declarations[$"{module.SyntaxModel.ModuleName}.{declaration.Function!.Name}"] = declaration;
+            }
+        }
+
+        return declarations;
+    }
+
+    private FunctionEffectProfile BuildLawCloneEffectProfile(string functionName)
+    {
+        var effects = _effectModel.Functions[functionName];
+        return effects.InlinePreference == InlinePreference.Inline
+            ? effects
+            : effects with { InlinePreference = InlinePreference.Inline };
+    }
+
+    private bool IsImportedLawCloneEligible(
+        string functionName,
+        IReadOnlyDictionary<string, TopLevelDeclarationModel> importedDeclarations,
+        IReadOnlyDictionary<string, SsaFunction> ssaByName,
+        ISet<string> recursiveImportedLawFunctions)
+    {
+        return importedDeclarations.TryGetValue(functionName, out var declaration)
+            && declaration.Function is { HasBody: true } function
+            && declaration.Visibility != StarkVisibility.Export
+            && !function.Modifiers.IsFfi
+            && !function.Modifiers.IsCold
+            && function.Modifiers.InlinePreference != InlinePreference.NoInline
+            && (!function.Modifiers.HasExplicitInlinePreference || function.Modifiers.InlinePreference == InlinePreference.Inline)
+            && !recursiveImportedLawFunctions.Contains(functionName)
+            && _effectModel.Functions.TryGetValue(functionName, out var effects)
+            && FunctionKindFacts.IsLaw(effects.Kind)
+            && !effects.IsFfi
+            && !effects.IsCold
+            && _allFunctionSignatures.ContainsKey(functionName)
+            && ssaByName.TryGetValue(functionName, out var ssaFunction)
+            && ssaFunction.HasBody
+            && IsClosedWorldLawCloneEnabled(functionName)
+            && ssaFunction.SupportsDirectCodeGeneration;
+    }
+
+    private bool IsClosedWorldLawCloneEnabled(string functionName)
+    {
+        if (_closedWorldModel?.Functions.TryGetValue(functionName, out var optimization) is not true)
+        {
+            return true;
+        }
+
+        return optimization.SelectionOrder.Contains(ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone);
+    }
+
+    private static Dictionary<string, HashSet<string>> CollectCallsByFunction(SsaIrModule ssa)
+    {
+        var callsByFunction = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        foreach (var function in ssa.Functions)
+        {
+            var callees = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
+                {
+                    if (instruction.Value is SsaCallRValue call)
+                    {
+                        callees.Add(call.FunctionName);
+                    }
+                }
+            }
+
+            callsByFunction[function.Name] = callees;
+        }
+
+        return callsByFunction;
+    }
+
+    private static HashSet<string> FindRecursiveFunctions(
+        IReadOnlyDictionary<string, HashSet<string>> callGraph,
+        Func<string, bool> include)
+    {
+        var visited = new Dictionary<string, VisitState>(StringComparer.Ordinal);
+        var stack = new List<string>();
+        var cyclic = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var function in callGraph.Keys.Where(include))
+        {
+            Visit(function);
+        }
+
+        return cyclic;
+
+        void Visit(string function)
+        {
+            if (visited.TryGetValue(function, out var state))
+            {
+                if (state == VisitState.Visiting)
+                {
+                    var cycleStart = stack.LastIndexOf(function);
+                    if (cycleStart >= 0)
+                    {
+                        foreach (var item in stack.Skip(cycleStart))
+                        {
+                            cyclic.Add(item);
+                        }
+                    }
+                }
+
+                return;
+            }
+
+            visited[function] = VisitState.Visiting;
+            stack.Add(function);
+
+            if (callGraph.TryGetValue(function, out var callees))
+            {
+                foreach (var callee in callees.Where(include))
+                {
+                    Visit(callee);
+                }
+            }
+
+            stack.RemoveAt(stack.Count - 1);
+            visited[function] = VisitState.Visited;
+        }
+    }
+
+    private static AbiFunctionSignature BuildSyntheticAbiSignature(
+        TypedFunctionSignature function,
+        string symbolName,
+        bool isFfi)
+    {
+        var returnsIndirect = !isFfi && SyntheticAbiRequiresIndirectReturn(function.ReturnType);
+        var parameters = new List<AbiParameterSymbol>();
+
+        if (returnsIndirect)
+        {
+            parameters.Add(new AbiParameterSymbol(
+                SourceName: "$ret",
+                LlvmName: "ret",
+                SourceType: function.ReturnType,
+                LlvmType: StarkTypeSymbols.RawPointer(function.ReturnType, isMutable: true),
+                Kind: AbiParameterKind.SRet));
+        }
+
+        foreach (var parameter in function.Parameters)
+        {
+            var kind = !isFfi && SyntheticAbiRequiresIndirectParameter(parameter.Type)
+                ? AbiParameterKind.IndirectIn
+                : AbiParameterKind.Direct;
+
+            parameters.Add(new AbiParameterSymbol(
+                SourceName: parameter.Name,
+                LlvmName: $"arg_{parameter.Name}",
+                SourceType: parameter.Type,
+                LlvmType: kind == AbiParameterKind.Direct
+                    ? SyntheticLowerAbiValueType(parameter.Type, isFfi, forReturnValue: false)
+                    : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
+                Kind: kind));
+        }
+
+        return new AbiFunctionSignature(
+            function.Name,
+            symbolName,
+            function.ReturnType,
+            returnsIndirect
+                ? StarkTypeSymbols.Void
+                : SyntheticLowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
+            parameters,
+            isFfi);
+    }
+
+    private static StarkTypeSymbol SyntheticLowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
+    {
+        if (!isFfi)
+        {
+            return type;
+        }
+
+        return type.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            StarkTypeKind.Unicode when !forReturnValue => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            _ => type
+        };
+    }
+
+    private static bool SyntheticAbiRequiresIndirectParameter(StarkTypeSymbol type)
+    {
+        return type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None;
+    }
+
+    private static bool SyntheticAbiRequiresIndirectReturn(StarkTypeSymbol type)
+    {
+        return false;
+    }
+
+    private static string GetModuleName(string functionName)
+    {
+        var separator = functionName.LastIndexOf('.');
+        return separator < 0 ? string.Empty : functionName[..separator];
+    }
+
+    private static string GetImportedLawCloneSymbolName(string functionName)
+    {
+        return $"__stark_law_clone_{functionName}";
     }
 
     private void EmitGlobals(StringBuilder builder)
@@ -534,17 +919,19 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
-        SsaFunction ssaFunction)
+        SsaFunction ssaFunction,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
     {
         var functionBuilder = new StringBuilder();
-        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects));
+        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects));
         functionBuilder.AppendLine("{");
 
         var bodyEmitter = new FunctionBodyEmitter(
             functionBuilder,
             function,
             abiFunction,
-            _abiModel,
+            resolveCallAbi,
             ssaFunction,
             _stringConstants,
             ResolveGlobalSymbolName,
@@ -555,7 +942,12 @@ internal sealed class LlvmIrEmitter
         builder.Append(functionBuilder);
     }
 
-    private string BuildDeclarationSignature(bool internalize, TypedFunctionSignature function, AbiFunctionSignature abiFunction, FunctionEffectProfile effects)
+    private string BuildDeclarationSignature(
+        bool internalize,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var segments = new List<string> { "declare" };
 
@@ -570,7 +962,7 @@ internal sealed class LlvmIrEmitter
         }
 
         segments.Add(MapType(abiFunction.LlvmReturnType));
-        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: false)))})");
+        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: false, parameterEffects)))})");
 
         var attributes = BuildFunctionAttributes(effects);
         if (!string.IsNullOrWhiteSpace(attributes))
@@ -581,7 +973,12 @@ internal sealed class LlvmIrEmitter
         return string.Join(" ", segments);
     }
 
-    private string BuildDefinitionSignature(bool internalize, TypedFunctionSignature function, AbiFunctionSignature abiFunction, FunctionEffectProfile effects)
+    private string BuildDefinitionSignature(
+        bool internalize,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var segments = new List<string> { "define" };
 
@@ -596,7 +993,7 @@ internal sealed class LlvmIrEmitter
         }
 
         segments.Add(MapType(abiFunction.LlvmReturnType));
-        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: true)))})");
+        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: true, parameterEffects)))})");
 
         var attributes = BuildFunctionAttributes(effects);
         if (!string.IsNullOrWhiteSpace(attributes))
@@ -607,10 +1004,13 @@ internal sealed class LlvmIrEmitter
         return string.Join(" ", segments);
     }
 
-    private string RenderAbiParameter(AbiParameterSymbol parameter, bool includeName)
+    private string RenderAbiParameter(
+        AbiParameterSymbol parameter,
+        bool includeName,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var segments = new List<string> { MapType(parameter.LlvmType) };
-        segments.AddRange(DeriveAbiParameterAttributes(parameter));
+        segments.AddRange(DeriveAbiParameterAttributes(parameter, ResolveParameterEffects(parameter, parameterEffects)));
 
         if (includeName)
         {
@@ -620,7 +1020,7 @@ internal sealed class LlvmIrEmitter
         return string.Join(" ", segments);
     }
 
-    private IReadOnlyList<string> DeriveAbiParameterAttributes(AbiParameterSymbol parameter)
+    private IReadOnlyList<string> DeriveAbiParameterAttributes(AbiParameterSymbol parameter, ParameterMemoryEffectSummary? parameterEffects)
     {
         var attributes = new List<string>();
 
@@ -644,16 +1044,9 @@ internal sealed class LlvmIrEmitter
         if (parameter.Kind == AbiParameterKind.IndirectIn)
         {
             attributes.Add("nonnull");
-            if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
-            {
-                attributes.Add("noalias");
-                attributes.Add("writeonly");
-            }
-            else
-            {
-                attributes.Add("noalias");
-                attributes.Add("readonly");
-            }
+            attributes.Add("noalias");
+            AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
+            AppendNoCaptureAttribute(attributes, parameterEffects);
 
             if (TryGetConcreteTypeLayout(parameter.SourceType) is { } indirectLayout)
             {
@@ -680,16 +1073,84 @@ internal sealed class LlvmIrEmitter
         if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
         {
             attributes.Add("noalias");
-            attributes.Add("writeonly");
         }
-        else if (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
-                 || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && !parameter.SourceType.IsMutablePointer)
-                 || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && !parameter.SourceType.IsMutableView))
+
+        AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
+        AppendNoCaptureAttribute(attributes, parameterEffects);
+
+        return attributes;
+    }
+
+    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetRootParameterEffects(string functionName, bool hasBody)
+    {
+        if (!hasBody
+            || _semanticValidation is null
+            || !_semanticValidation.Functions.TryGetValue(functionName, out var validation)
+            || validation.Parameters is null)
+        {
+            return null;
+        }
+
+        return validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+    }
+
+    private static ParameterMemoryEffectSummary? ResolveParameterEffects(
+        AbiParameterSymbol parameter,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        if (parameterEffects is null
+            || parameter.Kind == AbiParameterKind.SRet
+            || !parameterEffects.TryGetValue(parameter.SourceName, out var effects))
+        {
+            return null;
+        }
+
+        return effects;
+    }
+
+    private static void AppendPointerMemoryAccessAttributes(
+        List<string> attributes,
+        AbiParameterSymbol parameter,
+        ParameterMemoryEffectSummary? parameterEffects)
+    {
+        if (parameterEffects is not null)
+        {
+            if (parameterEffects.Writes)
+            {
+                if (!parameterEffects.Reads)
+                {
+                    attributes.Add("writeonly");
+                }
+            }
+            else
+            {
+                attributes.Add("readonly");
+            }
+
+            return;
+        }
+
+        if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+        {
+            attributes.Add("writeonly");
+            return;
+        }
+
+        if (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && !parameter.SourceType.IsMutablePointer)
+            || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && !parameter.SourceType.IsMutableView)
+            || parameter.Kind == AbiParameterKind.IndirectIn)
         {
             attributes.Add("readonly");
         }
+    }
 
-        return attributes;
+    private static void AppendNoCaptureAttribute(List<string> attributes, ParameterMemoryEffectSummary? parameterEffects)
+    {
+        if (parameterEffects?.CaptureKind == ParameterCaptureKind.None)
+        {
+            attributes.Add("nocapture");
+        }
     }
 
     private static string BuildFunctionAttributes(FunctionEffectProfile effects)
@@ -1544,7 +2005,7 @@ internal sealed class LlvmIrEmitter
         private readonly StringBuilder _builder;
         private readonly TypedFunctionSignature _function;
         private readonly AbiFunctionSignature _abiFunction;
-        private readonly AbiModel _abiModel;
+        private readonly Func<string, string, AbiFunctionSignature?> _resolveCallAbi;
         private readonly SsaFunction _ssaFunction;
         private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
         private readonly Func<string, string> _mapGlobalSymbolName;
@@ -1558,7 +2019,7 @@ internal sealed class LlvmIrEmitter
             StringBuilder builder,
             TypedFunctionSignature function,
             AbiFunctionSignature abiFunction,
-            AbiModel abiModel,
+            Func<string, string, AbiFunctionSignature?> resolveCallAbi,
             SsaFunction ssaFunction,
             IReadOnlyDictionary<string, EmittedStringConstant> stringConstants,
             Func<string, string> mapGlobalSymbolName,
@@ -1568,7 +2029,7 @@ internal sealed class LlvmIrEmitter
             _builder = builder;
             _function = function;
             _abiFunction = abiFunction;
-            _abiModel = abiModel;
+            _resolveCallAbi = resolveCallAbi;
             _ssaFunction = ssaFunction;
             _stringConstants = stringConstants;
             _mapGlobalSymbolName = mapGlobalSymbolName;
@@ -1991,7 +2452,8 @@ internal sealed class LlvmIrEmitter
 
         private void EmitCall(string result, SsaCallRValue call)
         {
-            if (!_abiModel.Functions.TryGetValue(call.FunctionName, out var abiCallee))
+            var abiCallee = _resolveCallAbi(_function.Name, call.FunctionName);
+            if (abiCallee is null)
             {
                 throw new UnsupportedBodyEmissionException($"Missing ABI lowering for call target '{call.FunctionName}'.");
             }
@@ -2408,6 +2870,19 @@ internal sealed class LlvmIrEmitter
     private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
 
     private sealed record GlobalInitializerPlan(string Rendered, IReadOnlyList<string> PreludeDefinitions);
+
+    private sealed record ImportedLawClonePlan(
+        string FunctionName,
+        TypedFunctionSignature Signature,
+        AbiFunctionSignature AbiSignature,
+        FunctionEffectProfile Effects,
+        SsaFunction SsaFunction);
+
+    private enum VisitState
+    {
+        Visiting,
+        Visited
+    }
 
     private sealed record EmittedStringConstant(string SymbolName, string ArrayType, string Initializer, int DataLength);
 }

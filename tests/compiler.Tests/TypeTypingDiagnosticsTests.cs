@@ -769,6 +769,65 @@ public sealed class TypeTypingDiagnosticsTests
         AssertDiagnostic(result, "STK3013", "the return type of function 'Echo'");
         AssertDiagnostic(result, "STK3013", "a local variable type");
         AssertDiagnostic(result, "STK3013", "Cannot create an instance of compile-time-only doctrine 'Numbers'");
+        AssertDiagnostic(result, "STK3013", "no runtime dispatch values for traits or doctrines");
+    }
+
+    [Fact]
+    public void TraitsCannotBeUsedAsRuntimeValueTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public trait Comparable {
+                law i32 Compare(i32 other);
+            }
+
+            struct Holder {
+                Comparable Rules;
+            }
+
+            static Comparable Current;
+
+            fn Comparable Echo(Comparable value) {
+                return value;
+            }
+
+            fn void Run() {
+                stack Comparable local = new Comparable();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3013", "field 'Rules' in type 'Holder'");
+        AssertDiagnostic(result, "STK3013", "a global variable type");
+        AssertDiagnostic(result, "STK3013", "parameter 'value'");
+        AssertDiagnostic(result, "STK3013", "the return type of function 'Echo'");
+        AssertDiagnostic(result, "STK3013", "a local variable type");
+        AssertDiagnostic(result, "STK3013", "Cannot create an instance of compile-time-only trait 'Comparable'");
+        AssertDiagnostic(result, "STK3013", "no runtime dispatch values for traits or doctrines");
+    }
+
+    [Fact]
+    public void TraitMethodsCannotBeCalledDirectly()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public trait Comparable {
+                law i32 Compare(i32 other);
+            }
+
+            fn i32 Run() {
+                return Comparable.Compare(1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3013", "Trait method 'Comparable.Compare'", "cannot be called directly");
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

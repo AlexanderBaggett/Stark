@@ -120,6 +120,24 @@ internal static class SyntaxModelFactory
                 DeclarationKind.Trait,
                 visibility,
                 null));
+
+            foreach (var method in traitDeclaration.traitBody().traitMember()
+                         .Select(static member => member.traitMethodDeclaration())
+                         .Where(static method => method is not null)!)
+            {
+                declarations.Add(new TopLevelDeclarationModel(
+                    $"{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                    DeclarationKind.Function,
+                    visibility,
+                    CreateFunctionModel(
+                        $"{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
+                        ParseFunctionKind(method.functionKind()),
+                        method.returnType(),
+                        method.parameterList(),
+                        method.functionModifier(),
+                        method.functionBody())));
+            }
+
             return;
         }
 
@@ -180,6 +198,9 @@ internal static class SyntaxModelFactory
         StarkParser.FunctionBodyContext functionBody)
     {
         var modifiers = modifiersList.Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
+        var hasExplicitInlinePreference = modifiers.Contains("inline")
+            || modifiers.Contains("noinline")
+            || modifiers.Contains("inlinehint");
         var inlinePreference = modifiers.Contains("inline")
             ? InlinePreference.Inline
             : modifiers.Contains("noinline")
@@ -197,6 +218,7 @@ internal static class SyntaxModelFactory
                 .ToArray(),
             Modifiers: new FunctionModifierSet(
                 inlinePreference,
+                hasExplicitInlinePreference,
                 modifiers.Contains("hot"),
                 modifiers.Contains("cold"),
                 modifiers.Contains("ffi")),

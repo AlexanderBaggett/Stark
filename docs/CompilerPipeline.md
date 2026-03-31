@@ -48,22 +48,22 @@ The current default compilation pipeline contains 20 passes and is dependency-or
    This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, recursive finite-call cycles, parameter memory summaries, and call-memory summaries are checked.
 11. `refine-function-effects`
    Refines function guarantees from semantic body analysis after the declaration-driven effect pass.
-   This is where plain `fn` bodies that can be proven `law`, `finite`, or `finite law` are upgraded into the effect profiles consumed by HIR lowering, ABI lowering, and LLVM emission, including more precise readonly memory classification for proven laws.
+   This is where plain `fn` bodies that can be proven `law`, `finite`, or `finite law` are upgraded into the effect profiles consumed by HIR lowering, ABI lowering, and LLVM emission, including more precise readonly memory classification for proven laws, conservative closed-world `alwaysinline` inference for eligible module-private law helpers in the root module, eligible source-loaded imported law helpers, and eligible non-export imported law entrypoints whose known callers in the current build are also law bodies, and the closed-world optimization model that classifies trait/doctrine sealing, direct-call eligibility, shared-code vs specialized-clone codegen, and specialization fallback order.
 12. `ownership-validate`
    Validates deterministic ownership and lifetime rules after the higher-level semantic checks.
    This is where move tracking, use-after-move rejection, implicit drop scopes, branch-sensitive ownership state, and basic borrow lifetime sources are checked so safe code remains non-GC and leak-resistant by construction.
 13. `lower-hir`
    Produces the current compiler-owned HIR shell.
-   Today this is intentionally shallow: it packages root-module functions with their typed signatures, body presence, and derived effect profiles so later lowering passes stop depending on declaration-model details.
+   Today this is intentionally shallow: it packages root-module functions plus source-loaded imported-module functions that already have typed signatures, body presence, and derived effect profiles so later lowering passes stop depending on declaration-model details.
 14. `lower-mir`
    Produces a mid-level IR with explicit locals, basic blocks, typed operands, typed rvalues, and terminators.
-   This is where structured source bodies become control-flow-aware CFG form suitable for ownership precision and explicit value lowering, including aggregate field/index operations, slice formation, raw address formation, indirect load/store, and explicit conversions.
+   This is where structured source bodies from the lowered module set become control-flow-aware CFG form suitable for ownership precision and explicit value lowering, including aggregate field/index operations, slice formation, raw address formation, indirect load/store, and explicit conversions.
 15. `borrow-liveness`
    Refines ownership validation with non-lexical-style lifetime analysis over normalized MIR.
    This pass computes borrow-local liveness across the CFG and updates the ownership model when a move, overwrite, or return would conflict with still-live borrows.
 16. `lower-ssa`
    Produces SSA form from MIR, prunes unreachable CFG blocks, and inserts phi nodes where control-flow paths merge.
-   This is where mutable Stark locals stop looking like source variables and start looking like compiler values, while addressable locals still surface as explicit allocate/store/lifetime operations.
+   This is where mutable Stark locals stop looking like source variables and start looking like compiler values, while addressable locals still surface as explicit allocate/store/lifetime operations across both root-module and source-loaded imported-module functions.
 17. `cleanup-ssa`
    Canonicalizes and simplifies SSA before later consumers use it.
    This pass removes trivial copy instructions, collapses identity phi nodes, collapses trampoline blocks, and performs value-numbering-style reuse of repeated SSA computations when memory ordering allows it.
@@ -75,13 +75,12 @@ The current default compilation pipeline contains 20 passes and is dependency-or
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
 20. `emit-llvm`
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
-   The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
+   The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, uses parameter memory summaries from semantic validation to emit stronger `readonly`/`writeonly`/`nocapture` facts for root Stark functions, consumes the closed-world optimization model for caller-sensitive law-path specialization decisions, can materialize internal root-side clones of eligible imported law bodies for closed-world law-call optimization with caller-sensitive law-path rewriting, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
 
 ## Near-Term Missing Passes
 
 The current pass skeleton still leaves room for the next substantial compiler work:
 
-- doctrine and trait constraint solving
 - deeper dead-code elimination beyond the current cleanup/constant-propagation passes
 - richer aggregate copy/move lowering
 - allocator-backed `heap` and `arena` lowering

@@ -494,29 +494,60 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["function-effects", "semantic-validate"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "load-modules", "function-effects", "type-check", "semantic-validate"];
 
         public void Execute(CompilerPassContext context)
         {
+            var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var validationModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
             var refined = effectModel.Functions
                 .ToDictionary(
                     static pair => pair.Key,
                     static pair => pair.Value,
                     StringComparer.Ordinal);
+            var rootDeclarations = syntaxModel.Declarations
+                .Where(static declaration => declaration.Function is not null)
+                .ToDictionary(static declaration => declaration.Function!.Name, StringComparer.Ordinal);
+            var recursiveLawFunctions = FindRecursiveFunctions(
+                validationModel.Functions,
+                static summary => FunctionKindFacts.IsLaw(summary.EffectiveKind));
+            var lawOnlyCallTargets = FindLawOnlyCallTargets(validationModel.Functions);
+            var importedDeclarations = CollectImportedFunctionDeclarations(loadedModules);
+            var importedCallGraph = CollectImportedDirectCallGraph(loadedModules);
+            var importedRecursiveLawFunctions = FindRecursiveFunctions(
+                importedCallGraph,
+                functionName => importedDeclarations.TryGetValue(functionName, out var declaration)
+                    && FunctionKindFacts.IsLaw(declaration.Declaration.Function!.Kind));
+            var importedLawOnlyCallTargets = FindImportedLawOnlyCallTargets(
+                validationModel.Functions,
+                importedDeclarations,
+                importedCallGraph);
 
-            foreach (var (name, summary) in validationModel.Functions)
+            foreach (var (name, existing) in effectModel.Functions)
             {
-                if (!refined.TryGetValue(name, out var existing))
+                if (!refined.ContainsKey(name))
                 {
                     continue;
                 }
 
-                var effectiveKind = summary.EffectiveKind;
+                validationModel.Functions.TryGetValue(name, out var summary);
+                var effectiveKind = summary?.EffectiveKind ?? existing.Kind;
                 var isLaw = FunctionKindFacts.IsLaw(effectiveKind);
                 var isFinite = FunctionKindFacts.IsFinite(effectiveKind);
-                var readsArgumentMemory = summary.MemoryEffects?.ReadsArgumentMemory ?? existing.ReadsArgumentMemory;
+                var readsArgumentMemory = summary?.MemoryEffects?.ReadsArgumentMemory ?? existing.ReadsArgumentMemory;
+                var inlinePreference = DetermineInlinePreference(
+                    name,
+                    summary,
+                    existing,
+                    rootDeclarations,
+                    lawOnlyCallTargets,
+                    recursiveLawFunctions,
+                    importedDeclarations,
+                    importedLawOnlyCallTargets,
+                    importedRecursiveLawFunctions);
 
                 refined[name] = existing with
                 {
@@ -526,13 +557,580 @@ public static class DefaultCompilerPipeline
                     NoSync = isLaw,
                     NoFree = isLaw,
                     WillReturn = isFinite,
-                    MustProgress = isFinite
+                    MustProgress = isFinite,
+                    InlinePreference = inlinePreference
                 };
             }
 
+            var refinedModel = new FunctionEffectModel(effectModel.ModuleName, refined);
+            context.Artifacts.Set(CompilerArtifactKeys.FunctionEffects, refinedModel);
             context.Artifacts.Set(
-                CompilerArtifactKeys.FunctionEffects,
-                new FunctionEffectModel(effectModel.ModuleName, refined));
+                CompilerArtifactKeys.ClosedWorldOptimization,
+                BuildClosedWorldOptimizationModel(
+                    syntaxModel,
+                    loadedModules,
+                    typeModel,
+                    refinedModel,
+                    rootDeclarations,
+                    importedDeclarations,
+                    importedRecursiveLawFunctions));
+        }
+
+        private static InlinePreference DetermineInlinePreference(
+            string functionName,
+            FunctionValidationSummary? summary,
+            FunctionEffectProfile existing,
+            IReadOnlyDictionary<string, TopLevelDeclarationModel> rootDeclarations,
+            ISet<string> lawOnlyCallTargets,
+            ISet<string> recursiveLawFunctions,
+            IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations,
+            ISet<string> importedLawOnlyCallTargets,
+            ISet<string> importedRecursiveLawFunctions)
+        {
+            if (summary is not null
+                && rootDeclarations.TryGetValue(functionName, out var rootDeclaration)
+                && rootDeclaration.Function is { HasBody: true } rootFunction
+                && rootDeclaration.Visibility == StarkVisibility.Module
+                && !rootFunction.Modifiers.HasExplicitInlinePreference
+                && existing.InlinePreference == InlinePreference.InlineHint
+                && !existing.IsFfi
+                && !existing.IsCold
+                && FunctionKindFacts.IsLaw(summary.EffectiveKind)
+                && lawOnlyCallTargets.Contains(functionName)
+                && !recursiveLawFunctions.Contains(functionName))
+            {
+                return InlinePreference.Inline;
+            }
+
+            if (!importedDeclarations.TryGetValue(functionName, out var importedDeclaration)
+                || importedDeclaration.Declaration.Function is not { HasBody: true } importedFunction
+                || importedDeclaration.Declaration.Visibility == StarkVisibility.Export
+                || importedFunction.Modifiers.HasExplicitInlinePreference
+                || existing.InlinePreference != InlinePreference.InlineHint
+                || existing.IsFfi
+                || existing.IsCold
+                || !FunctionKindFacts.IsLaw(importedFunction.Kind)
+                || !importedLawOnlyCallTargets.Contains(functionName)
+                || importedRecursiveLawFunctions.Contains(functionName))
+            {
+                return existing.InlinePreference;
+            }
+
+            return InlinePreference.Inline;
+        }
+
+        private static ClosedWorldOptimizationModel BuildClosedWorldOptimizationModel(
+            SyntaxModel syntaxModel,
+            LoadedModuleSet loadedModules,
+            TypeCheckModel typeModel,
+            FunctionEffectModel effectModel,
+            IReadOnlyDictionary<string, TopLevelDeclarationModel> rootDeclarations,
+            IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations,
+            ISet<string> importedRecursiveLawFunctions)
+        {
+            var sealedModules = loadedModules.Modules.Values
+                .Where(static module => module.Reference.ManifestPath is null && module.Reference.LibraryPath is null)
+                .Select(static module => module.SyntaxModel.ModuleName)
+                .ToHashSet(StringComparer.Ordinal);
+            var rootFunctionNames = rootDeclarations.Keys.ToHashSet(StringComparer.Ordinal);
+            var typeInfos = typeModel.NamedTypes.Values
+                .Where(static type => type.Kind is DeclarationKind.Trait or DeclarationKind.Doctrine)
+                .ToDictionary(
+                    type => type.Name,
+                    type => new ClosedWorldTypeOptimizationInfo(
+                        type.Name,
+                        type.Kind,
+                        ResolveClosedWorldSeal(type.Name, syntaxModel.ModuleName, sealedModules),
+                        HasRuntimeDispatch: false),
+                    StringComparer.Ordinal);
+            var sourceFunctionDeclarations = CollectSourceLoadedFunctionDeclarations(
+                rootDeclarations,
+                importedDeclarations);
+            var functionInfos = new Dictionary<string, ClosedWorldFunctionOptimizationInfo>(StringComparer.Ordinal);
+
+            foreach (var function in effectModel.Functions.Values)
+            {
+                if (!TryResolveContainingAbstraction(function.Name, typeInfos, out var abstraction))
+                {
+                    continue;
+                }
+
+                functionInfos[function.Name] = BuildClosedWorldFunctionInfo(
+                    function,
+                    abstraction,
+                    rootFunctionNames,
+                    sourceFunctionDeclarations,
+                    importedRecursiveLawFunctions);
+            }
+
+            return new ClosedWorldOptimizationModel(
+                syntaxModel.ModuleName,
+                typeInfos,
+                functionInfos);
+        }
+
+        private static Dictionary<string, TopLevelDeclarationModel> CollectSourceLoadedFunctionDeclarations(
+            IReadOnlyDictionary<string, TopLevelDeclarationModel> rootDeclarations,
+            IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations)
+        {
+            var declarations = rootDeclarations.ToDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value,
+                StringComparer.Ordinal);
+
+            foreach (var (name, declaration) in importedDeclarations)
+            {
+                declarations[name] = declaration.Declaration;
+            }
+
+            return declarations;
+        }
+
+        private static ClosedWorldFunctionOptimizationInfo BuildClosedWorldFunctionInfo(
+            FunctionEffectProfile function,
+            ClosedWorldTypeOptimizationInfo abstraction,
+            ISet<string> rootFunctionNames,
+            IReadOnlyDictionary<string, TopLevelDeclarationModel> sourceFunctionDeclarations,
+            ISet<string> importedRecursiveLawFunctions)
+        {
+            if (abstraction.Kind == DeclarationKind.Trait)
+            {
+                return new ClosedWorldFunctionOptimizationInfo(
+                    function.Name,
+                    abstraction.Kind,
+                    abstraction.Seal,
+                    [ClosedWorldCallLoweringStrategy.CompileTimeOnlyContract],
+                    ClosedWorldCodeGenerationMode.MonomorphizationDeferred,
+                    CanDevirtualize: false);
+            }
+
+            if (rootFunctionNames.Contains(function.Name) && sourceFunctionDeclarations.TryGetValue(function.Name, out var rootDeclaration))
+            {
+                return new ClosedWorldFunctionOptimizationInfo(
+                    function.Name,
+                    abstraction.Kind,
+                    abstraction.Seal,
+                    rootDeclaration.Function is { HasBody: true }
+                        ? [ClosedWorldCallLoweringStrategy.DirectSharedBody]
+                        : [ClosedWorldCallLoweringStrategy.DirectAbiBoundary],
+                    ClosedWorldCodeGenerationMode.SharedCode,
+                    CanDevirtualize: true);
+            }
+
+            if (!sourceFunctionDeclarations.TryGetValue(function.Name, out var sourceDeclaration))
+            {
+                return new ClosedWorldFunctionOptimizationInfo(
+                    function.Name,
+                    abstraction.Kind,
+                    abstraction.Seal,
+                    [ClosedWorldCallLoweringStrategy.DirectAbiBoundary],
+                    ClosedWorldCodeGenerationMode.SharedCode,
+                    CanDevirtualize: true);
+            }
+
+            IReadOnlyList<ClosedWorldCallLoweringStrategy> selectionOrder = CanUseLawCallerSpecializedClone(function, sourceDeclaration, importedRecursiveLawFunctions)
+                ? [
+                    ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone,
+                    ClosedWorldCallLoweringStrategy.DirectAbiBoundary]
+                : [ClosedWorldCallLoweringStrategy.DirectAbiBoundary];
+            var codeGenerationMode = selectionOrder.Contains(ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone)
+                ? ClosedWorldCodeGenerationMode.CallerSpecializedClone
+                : ClosedWorldCodeGenerationMode.SharedCode;
+
+            return new ClosedWorldFunctionOptimizationInfo(
+                function.Name,
+                abstraction.Kind,
+                abstraction.Seal,
+                selectionOrder,
+                codeGenerationMode,
+                CanDevirtualize: true);
+        }
+
+        private static bool TryResolveContainingAbstraction(
+            string functionName,
+            IReadOnlyDictionary<string, ClosedWorldTypeOptimizationInfo> typeInfos,
+            out ClosedWorldTypeOptimizationInfo abstraction)
+        {
+            abstraction = null!;
+
+            var separatorIndex = functionName.LastIndexOf('.');
+            if (separatorIndex <= 0)
+            {
+                return false;
+            }
+
+            var containingTypeName = functionName[..separatorIndex];
+            if (!typeInfos.TryGetValue(containingTypeName, out var resolvedAbstraction))
+            {
+                return false;
+            }
+
+            abstraction = resolvedAbstraction;
+            return true;
+        }
+
+        private static ClosedWorldSealKind ResolveClosedWorldSeal(
+            string qualifiedName,
+            string rootModuleName,
+            ISet<string> sealedModules)
+        {
+            var moduleName = GetModuleName(qualifiedName, rootModuleName);
+            return sealedModules.Contains(moduleName)
+                ? ClosedWorldSealKind.SealedByDefault
+                : ClosedWorldSealKind.AbiBoundary;
+        }
+
+        private static string GetModuleName(string qualifiedName, string rootModuleName)
+        {
+            var separatorIndex = qualifiedName.IndexOf('.');
+            return separatorIndex >= 0
+                ? qualifiedName[..separatorIndex]
+                : rootModuleName;
+        }
+
+        private static bool CanUseLawCallerSpecializedClone(
+            FunctionEffectProfile function,
+            TopLevelDeclarationModel declaration,
+            ISet<string> importedRecursiveLawFunctions)
+        {
+            return declaration.Function is { HasBody: true } sourceFunction
+                && declaration.Visibility != StarkVisibility.Export
+                && !sourceFunction.Modifiers.IsFfi
+                && !sourceFunction.Modifiers.IsCold
+                && sourceFunction.Modifiers.InlinePreference != InlinePreference.NoInline
+                && (!sourceFunction.Modifiers.HasExplicitInlinePreference || sourceFunction.Modifiers.InlinePreference == InlinePreference.Inline)
+                && FunctionKindFacts.IsLaw(function.Kind)
+                && !function.IsFfi
+                && !function.IsCold
+                && !importedRecursiveLawFunctions.Contains(function.Name);
+        }
+
+        private static Dictionary<string, ImportedFunctionDeclaration> CollectImportedFunctionDeclarations(LoadedModuleSet loadedModules)
+        {
+            var declarations = new Dictionary<string, ImportedFunctionDeclaration>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                {
+                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Function!.Name}";
+                    declarations[qualifiedName] = new ImportedFunctionDeclaration(module.SyntaxModel.ModuleName, declaration);
+                }
+            }
+
+            return declarations;
+        }
+
+        private static Dictionary<string, HashSet<string>> CollectImportedDirectCallGraph(LoadedModuleSet loadedModules)
+        {
+            var callGraph = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+            {
+                var localFunctionNames = module.SyntaxModel.Declarations
+                    .Where(static declaration => declaration.Function is not null)
+                    .Select(static declaration => declaration.Function!.Name)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                foreach (var function in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+                {
+                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                    var callees = new HashSet<string>(StringComparer.Ordinal);
+
+                    if (function.Body.block() is { } body)
+                    {
+                        foreach (var callName in CollectDirectCallNames(body))
+                        {
+                            if (localFunctionNames.Contains(callName))
+                            {
+                                callees.Add($"{module.SyntaxModel.ModuleName}.{callName}");
+                            }
+                        }
+                    }
+
+                    callGraph[qualifiedName] = callees;
+                }
+            }
+
+            return callGraph;
+        }
+
+        private static HashSet<string> CollectDirectCallNames(Antlr4.Runtime.Tree.IParseTree node)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            Collect(node, names);
+            return names;
+
+            static void Collect(Antlr4.Runtime.Tree.IParseTree current, HashSet<string> accumulator)
+            {
+                if (current is StarkParser.PostfixExpressionContext postfixExpression
+                    && TryGetDirectCallName(postfixExpression, out var callName))
+                {
+                    accumulator.Add(callName);
+                }
+
+                for (var index = 0; index < current.ChildCount; index++)
+                {
+                    Collect(current.GetChild(index), accumulator);
+                }
+            }
+        }
+
+        private static bool TryGetDirectCallName(StarkParser.PostfixExpressionContext expression, out string callName)
+        {
+            callName = string.Empty;
+
+            if (expression.primaryExpression() is not { } primaryExpression)
+            {
+                return false;
+            }
+
+            string? currentName = primaryExpression.Identifier()?.GetText()
+                ?? primaryExpression.qualifiedName()?.GetText();
+            if (currentName is null)
+            {
+                return false;
+            }
+
+            foreach (var postfixPart in expression.postfixPart())
+            {
+                if (postfixPart.argumentList() is not null)
+                {
+                    callName = currentName;
+                    return true;
+                }
+
+                if (postfixPart.Identifier() is { } identifier)
+                {
+                    currentName = $"{currentName}.{identifier.GetText()}";
+                    continue;
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+
+        private static HashSet<string> FindLawOnlyCallTargets(IReadOnlyDictionary<string, FunctionValidationSummary> summaries)
+        {
+            var callersByCallee = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            foreach (var summary in summaries.Values)
+            {
+                foreach (var callee in summary.CalledFunctions)
+                {
+                    if (!summaries.ContainsKey(callee))
+                    {
+                        continue;
+                    }
+
+                    if (!callersByCallee.TryGetValue(callee, out var callers))
+                    {
+                        callers = new HashSet<string>(StringComparer.Ordinal);
+                        callersByCallee[callee] = callers;
+                    }
+
+                    callers.Add(summary.Name);
+                }
+            }
+
+            return callersByCallee
+                .Where(static pair => pair.Value.Count != 0)
+                .Where(pair => pair.Value.All(caller => FunctionKindFacts.IsLaw(summaries[caller].EffectiveKind)))
+                .Select(static pair => pair.Key)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        private static HashSet<string> FindLawOnlyCallTargets(
+            IReadOnlyDictionary<string, HashSet<string>> callGraph,
+            Func<string, bool> isLawFunction)
+        {
+            var callersByCallee = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            foreach (var (caller, callees) in callGraph)
+            {
+                foreach (var callee in callees)
+                {
+                    if (!callersByCallee.TryGetValue(callee, out var callers))
+                    {
+                        callers = new HashSet<string>(StringComparer.Ordinal);
+                        callersByCallee[callee] = callers;
+                    }
+
+                    callers.Add(caller);
+                }
+            }
+
+            return callersByCallee
+                .Where(static pair => pair.Value.Count != 0)
+                .Where(pair => pair.Value.All(isLawFunction))
+                .Select(static pair => pair.Key)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        private static HashSet<string> FindImportedLawOnlyCallTargets(
+            IReadOnlyDictionary<string, FunctionValidationSummary> rootSummaries,
+            IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations,
+            IReadOnlyDictionary<string, HashSet<string>> importedCallGraph)
+        {
+            var callersByCallee = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            foreach (var summary in rootSummaries.Values)
+            {
+                foreach (var callee in summary.CalledFunctions.Where(importedDeclarations.ContainsKey))
+                {
+                    AddCaller(callee, summary.Name);
+                }
+            }
+
+            foreach (var (caller, callees) in importedCallGraph)
+            {
+                foreach (var callee in callees.Where(importedDeclarations.ContainsKey))
+                {
+                    AddCaller(callee, caller);
+                }
+            }
+
+            return callersByCallee
+                .Where(static pair => pair.Value.Count != 0)
+                .Where(pair => pair.Value.All(IsLawCaller))
+                .Select(static pair => pair.Key)
+                .ToHashSet(StringComparer.Ordinal);
+
+            bool IsLawCaller(string caller)
+            {
+                if (rootSummaries.TryGetValue(caller, out var rootSummary))
+                {
+                    return FunctionKindFacts.IsLaw(rootSummary.EffectiveKind);
+                }
+
+                return importedDeclarations.TryGetValue(caller, out var importedDeclaration)
+                    && importedDeclaration.Declaration.Function is { } importedFunction
+                    && FunctionKindFacts.IsLaw(importedFunction.Kind);
+            }
+
+            void AddCaller(string callee, string caller)
+            {
+                if (!callersByCallee.TryGetValue(callee, out var callers))
+                {
+                    callers = new HashSet<string>(StringComparer.Ordinal);
+                    callersByCallee[callee] = callers;
+                }
+
+                callers.Add(caller);
+            }
+        }
+
+        private static HashSet<string> FindRecursiveFunctions(
+            IReadOnlyDictionary<string, FunctionValidationSummary> summaries,
+            Func<FunctionValidationSummary, bool> include)
+        {
+            var visited = new Dictionary<string, VisitState>(StringComparer.Ordinal);
+            var stack = new List<string>();
+            var cyclic = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var function in summaries.Values.Where(include).Select(static summary => summary.Name))
+            {
+                Visit(function);
+            }
+
+            return cyclic;
+
+            void Visit(string function)
+            {
+                if (visited.TryGetValue(function, out var state))
+                {
+                    if (state == VisitState.Visiting)
+                    {
+                        var cycleStart = stack.LastIndexOf(function);
+                        if (cycleStart >= 0)
+                        {
+                            foreach (var item in stack.Skip(cycleStart))
+                            {
+                                cyclic.Add(item);
+                            }
+                        }
+                    }
+
+                    return;
+                }
+
+                visited[function] = VisitState.Visiting;
+                stack.Add(function);
+
+                if (summaries.TryGetValue(function, out var summary))
+                {
+                    foreach (var callee in summary.CalledFunctions)
+                    {
+                        if (summaries.TryGetValue(callee, out var calleeSummary) && include(calleeSummary))
+                        {
+                            Visit(callee);
+                        }
+                    }
+                }
+
+                stack.RemoveAt(stack.Count - 1);
+                visited[function] = VisitState.Visited;
+            }
+        }
+
+        private static HashSet<string> FindRecursiveFunctions(
+            IReadOnlyDictionary<string, HashSet<string>> callGraph,
+            Func<string, bool> include)
+        {
+            var visited = new Dictionary<string, VisitState>(StringComparer.Ordinal);
+            var stack = new List<string>();
+            var cyclic = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var function in callGraph.Keys.Where(include))
+            {
+                Visit(function);
+            }
+
+            return cyclic;
+
+            void Visit(string function)
+            {
+                if (visited.TryGetValue(function, out var state))
+                {
+                    if (state == VisitState.Visiting)
+                    {
+                        var cycleStart = stack.LastIndexOf(function);
+                        if (cycleStart >= 0)
+                        {
+                            foreach (var item in stack.Skip(cycleStart))
+                            {
+                                cyclic.Add(item);
+                            }
+                        }
+                    }
+
+                    return;
+                }
+
+                visited[function] = VisitState.Visiting;
+                stack.Add(function);
+
+                if (callGraph.TryGetValue(function, out var callees))
+                {
+                    foreach (var callee in callees.Where(include))
+                    {
+                        Visit(callee);
+                    }
+                }
+
+                stack.RemoveAt(stack.Count - 1);
+                visited[function] = VisitState.Visited;
+            }
+        }
+
+        private sealed record ImportedFunctionDeclaration(string ModuleName, TopLevelDeclarationModel Declaration);
+
+        private enum VisitState
+        {
+            Visiting,
+            Visited
         }
     }
 
@@ -544,30 +1142,78 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "load-modules", "module-graph", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate"];
 
         public void Execute(CompilerPassContext context)
         {
-            var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
             var effects = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var types = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var fallbackSignatures = CollectFallbackFunctionSignatures(context, moduleGraph, types.NamedTypes, loadedModules);
 
-            var functions = syntaxModel.Declarations
-                .Where(static declaration => declaration.Function is not null)
-                .Select(declaration =>
-                {
-                    var function = declaration.Function!;
-                    return new HighLevelIrFunction(
-                        function.Name,
-                        types.Functions[function.Name],
-                        function.HasBody,
-                        effects.Functions[function.Name]);
-                })
+            var functions = loadedModules.Modules.Values
+                .OrderBy(static module => module.Reference.IsRoot ? 0 : 1)
+                .ThenBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal)
+                .SelectMany(module => module.SyntaxModel.Declarations
+                    .Where(static declaration => declaration.Function is not null)
+                    .Select(declaration =>
+                    {
+                        var function = declaration.Function!;
+                        var qualifiedName = module.Reference.IsRoot
+                            ? function.Name
+                            : $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                        if (!effects.Functions.ContainsKey(qualifiedName)
+                            || (!types.Functions.ContainsKey(qualifiedName) && !fallbackSignatures.ContainsKey(qualifiedName)))
+                        {
+                            return null;
+                        }
+
+                        return new HighLevelIrFunction(
+                            qualifiedName,
+                            types.Functions.TryGetValue(qualifiedName, out var signature)
+                                ? signature
+                                : fallbackSignatures[qualifiedName],
+                            function.HasBody,
+                            effects.Functions[qualifiedName]);
+                    })
+                    .Where(static function => function is not null)
+                    .Select(static function => function!))
                 .ToArray();
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.HighLevelIr,
-                new HighLevelIrModule(syntaxModel.ModuleName, functions));
+                new HighLevelIrModule(loadedModules.RootModuleName, functions));
+        }
+
+        private static Dictionary<string, TypedFunctionSignature> CollectFallbackFunctionSignatures(
+            CompilerPassContext context,
+            ModuleGraph moduleGraph,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            LoadedModuleSet loadedModules)
+        {
+            var resolver = new StarkTypeResolver(context, "lower-hir", moduleGraph, namedTypes);
+            var functions = new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+            {
+                foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+                {
+                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
+                    var genericParameters = resolver.GetGenericParameterNames(declaration.TypeParameters);
+                    var parameters = declaration.ParameterList.parameter()
+                        .Select(parameter => new TypedParameterSymbol(
+                            parameter.Identifier().GetText(),
+                            resolver.ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName)))
+                        .ToArray();
+                    functions[qualifiedName] = new TypedFunctionSignature(
+                        qualifiedName,
+                        resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
+                        parameters);
+                }
+            }
+
+            return functions;
         }
     }
 
@@ -579,16 +1225,16 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["parse", "module-graph", "type-check", "enum-layout", "lower-hir"];
+        public IReadOnlyList<string> Dependencies => ["load-modules", "module-graph", "type-check", "enum-layout", "lower-hir"];
 
         public void Execute(CompilerPassContext context)
         {
-            var parseResult = context.Artifacts.GetRequired(CompilerArtifactKeys.ParseResult);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
-            var mir = new MidLevelIrLowerer(context, parseResult, moduleGraph, typeModel, enumLayoutModel).Lower(hir);
+            var mir = new MidLevelIrLowerer(context, loadedModules, moduleGraph, typeModel, enumLayoutModel).Lower(hir);
             context.Artifacts.Set(CompilerArtifactKeys.MidLevelIr, mir);
         }
     }
@@ -622,7 +1268,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "const-prop", "lower-abi"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "semantic-validate", "const-prop", "lower-abi"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -632,6 +1278,8 @@ public static class DefaultCompilerPipeline
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
+            var validationModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var closedWorldModel = context.Artifacts.GetRequired(CompilerArtifactKeys.ClosedWorldOptimization);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var llvmModule = new LlvmIrEmitter(
@@ -645,7 +1293,9 @@ public static class DefaultCompilerPipeline
                 abiModel,
                 ssa,
                 context.Options.TargetInfo,
-                internalizeModulePrivate: context.Options.QualifyModuleSymbols).Emit();
+                internalizeModulePrivate: context.Options.QualifyModuleSymbols,
+                semanticValidation: validationModel,
+                closedWorldModel: closedWorldModel).Emit();
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
         }
     }

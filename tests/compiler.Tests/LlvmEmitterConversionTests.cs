@@ -174,17 +174,18 @@ public sealed class LlvmEmitterConversionTests
                     "Run",
                     DeclarationKind.Function,
                     StarkVisibility.Module,
-                    new FunctionDeclarationModel(
-                        "Run",
-                        StarkFunctionKind.Fn,
-                        targetType.DisplayName,
-                        [],
-                        new FunctionModifierSet(
-                            InlinePreference.NoInline,
-                            IsHot: false,
-                            IsCold: false,
-                            IsFfi: false),
-                        HasBody: true))
+                        new FunctionDeclarationModel(
+                            "Run",
+                            StarkFunctionKind.Fn,
+                            targetType.DisplayName,
+                            [],
+                            new FunctionModifierSet(
+                                InlinePreference.NoInline,
+                                HasExplicitInlinePreference: true,
+                                IsHot: false,
+                                IsCold: false,
+                                IsFfi: false),
+                            HasBody: true))
             ]);
 
         return new LlvmIrEmitter(

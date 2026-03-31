@@ -213,11 +213,11 @@ not assign `null` to safe values or borrows.
 
 Generic type parameters may appear on functions, `struct` declarations, `record` declarations, `enum` declarations, `trait` declarations, and `doctrine` declarations.
 
-Generic parameters participate in name resolution, constraint checking, and type substitution.
+Generic parameters participate in name resolution and type substitution.
 
 Generic instantiation is monomorphized by default.
 
-Specialization is permitted when a more specific implementation is available and the closed-world rules select it unambiguously.
+Constrained generics, `where`-clause semantics, and specialization are deferred to `v2.0`.
 
 Type aliases introduce alternate names for existing types.
 
@@ -341,6 +341,15 @@ Default enum layout is not a stable FFI contract.
 
 Traits group function requirements for a type or family of types. Traits do not imply class-style inheritance.
 
+Trait members are compile-time-only contracts. They participate in declaration modeling, package surfaces, and future conformance machinery, but are not directly callable as ordinary runtime functions.
+
+In Stark v1.x, traits have no runtime representation.
+
+- no trait objects
+- no witness-table or vtable-style runtime dispatch values
+- trait names are rejected in runtime value positions such as fields, globals, locals, parameters, and returns
+- any future runtime dispatch design is explicitly post-v1.x work
+
 ### 8.5 Doctrines
 
 `doctrine` declares a compile-time-only bundle of `law` functions and related constraints.
@@ -351,8 +360,18 @@ Doctrines have the following properties:
 - no owned data
 - no heap allocation
 - no environment capture
+- no runtime dispatch representation in v1.x
+- members may be referenced directly through their qualified doctrine name
 - static dispatch by default
 - specialization-friendly in the closed-world model
+
+In the current compiler, closed-world trait/doctrine optimization follows these rules:
+
+- source-available `trait` and `doctrine` declarations are sealed by default for the current build
+- manifest-backed or ABI-only imported `trait` and `doctrine` surfaces are treated as ABI boundaries rather than closed-world bodies
+- doctrine members devirtualize to direct calls or direct ABI calls; trait members remain compile-time-only contracts with no runtime call lowering
+- doctrine members use shared code by default, while eligible imported non-`export` law members may additionally expose law-caller-specialized clone paths
+- trait-constrained monomorphization and other constrained-generic specialization remain deferred to `v2.0`
 
 ## 9. Globals and Storage Classes
 
@@ -690,3 +709,16 @@ The source model assumes:
 - specialization is an explicit closed-world optimization tool
 
 Dynamic dispatch and open-world behavior are explicit concessions, not the default model.
+
+In the current compiler, closed-world inlining is intentionally conservative:
+
+- root-module doctrine and other supported law bodies use direct shared code in the current module
+- the compiler may strengthen the default inline preference to an always-inline lowering intent for eligible module-private root-module `law` or `finite law` bodies
+- the compiler may also do this for eligible module-private helpers inside source-loaded imported modules when those helpers are already declared `law` or `finite law` and are called only from same-module law bodies
+- the compiler may additionally do this for eligible non-export source-loaded imported law entrypoints when every known caller in the current closed-world build is also a law body
+- when a root-module law call targets an eligible non-export imported law body, the current compiler may materialize an internal root-side clone of the imported law chain so LLVM can optimize it without changing the original module ABI
+- those root-side clones are selected per law caller, so mixed law/non-law callers in the same build may split: law callers use the internal specialized clone path while non-law callers keep using the original imported ABI
+- imported ABI-only doctrine and law surfaces fall back to direct ABI calls instead of closed-world body specialization
+- this only happens when no explicit inline modifier was written
+- recursive law helpers are excluded
+- `export` ABI surfaces are still excluded from this rule

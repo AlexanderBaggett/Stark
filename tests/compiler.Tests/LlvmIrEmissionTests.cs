@@ -1256,7 +1256,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly dereferenceable(8) align 4 %arg_pair)", llvm);
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)", llvm);
     }
 
     [Fact]
@@ -1518,9 +1518,33 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Box_Read(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Box_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("call i32 @Box_Read(ptr %", llvm);
+    }
+
+    [Fact]
+    public void MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn void Touch(borrow mut Box box) {
+                box.Value = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.DoesNotContain("define fastcc void @Touch(ptr nonnull noalias readonly", llvm);
     }
 
     [Fact]
@@ -1725,7 +1749,10 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
+            ffi fn void Touch();
+
             fn i32 Run() {
+                Touch();
                 return Math.Add(3, 4);
             }
             """,
@@ -1871,6 +1898,235 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RootLawCallsToImportedAlwaysInlineLawBodiesEmitClosedWorldClones()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            law i32 Use() {
+                return Math.UseLaw();
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        law i32 LawOnly() {
+                            return 1;
+                        }
+
+                        public law i32 UseLaw() {
+                            return LawOnly();
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_UseLaw() nounwind nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_LawOnly() nounwind nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("call i32 @__stark_law_clone_Math_UseLaw()", llvm);
+    }
+
+    [Fact]
+    public void MixedLawAndNonLawRootCallersUseSelectiveImportedLawClones()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            law i32 UseLawClone() {
+                return Math.UseLaw();
+            }
+
+            fn i32 UseDirect() {
+                Touch();
+                return Math.UseLaw();
+            }
+
+            ffi fn void Touch();
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public law i32 UseLaw() {
+                            return 1;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_UseLaw() nounwind nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("call i32 @__stark_law_clone_Math_UseLaw()", llvm);
+        Assert.Contains("call i32 @Math_UseLaw()", llvm);
+    }
+
+    [Fact]
+    public void MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClones()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            law i32 UseLawClone() {
+                return Math.Numbers.Add(1, 2);
+            }
+
+            fn i32 UseDirect() {
+                Touch();
+                return Math.Numbers.Add(3, 4);
+            }
+
+            ffi fn void Touch();
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public doctrine Numbers {
+                            finite law i32 Add(i32 left, i32 right) {
+                                return left + right;
+                            }
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("call i32 @__stark_law_clone_Math_Numbers_Add(i32 1, i32 2)", llvm);
+        Assert.Contains("call i32 @Math_Numbers_Add(i32 3, i32 4)", llvm);
+    }
+
+    [Fact]
+    public void ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvm()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            fn i32 Use() {
+                Touch();
+                return Math.UseLaw();
+            }
+
+            ffi fn void Touch();
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        law i32 LawOnly() {
+                            return 1;
+                        }
+
+                        public law i32 UseLaw() {
+                            return LawOnly();
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.DoesNotContain("__stark_law_clone_Math_UseLaw", llvm);
+        Assert.Contains("call i32 @Math_UseLaw()", llvm);
+    }
+
+    [Fact]
+    public void ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClones()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            law i32 Use() {
+                return Math.UseLaw();
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public inlinehint law i32 UseLaw() {
+                            return 1;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.DoesNotContain("__stark_law_clone_Math_UseLaw", llvm);
+        Assert.Contains("call i32 @Math_UseLaw()", llvm);
+    }
+
+    [Fact]
+    public void ClosedWorldModulePrivateLawHelpersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            law i32 Use() {
+                return Add(1, 2);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("define fastcc i32 @Use() nounwind willreturn mustprogress nosync nofree memory(none) inlinehint", llvm);
+        Assert.Contains("call i32 @Add(i32 1, i32 2)", llvm);
+    }
+
+    [Fact]
     public void LibraryBuildQualifiesPublicRootSymbols()
     {
         var result = Compile(
@@ -1963,11 +2219,41 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("%slot_alias = alloca %Box", llvm);
         Assert.Contains("call void @Touch(ptr %slot_alias)", llvm);
         Assert.DoesNotContain("callarg_box", llvm);
+    }
+
+    [Fact]
+    public void DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            doctrine Inspect {
+                finite law i32 Read(borrow mut Box box) {
+                    return box.Value;
+                }
+            }
+
+            finite law i32 Run(borrow mut Box box) {
+                return Inspect.Read(box);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Inspect_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("call i32 @Inspect_Read(ptr %", llvm);
     }
 
     [Fact]
