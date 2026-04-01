@@ -46,7 +46,6 @@ Repository source layout:
 - `stdlib/src/System/IO/File.stark`
 - `stdlib/src/System/IO/Path.stark`
 - `stdlib/src/System/Text.stark`
-- `stdlib/src/System/Text/Encoding.stark`
 - `stdlib/src/System/Runtime.stark`
 - `stdlib/src/System/Runtime/Platform.stark`
 - `stdlib/src/System/Runtime/Platform/Linux.stark`
@@ -60,7 +59,6 @@ Public module surface:
 - `System.IO.File`
 - `System.IO.Path`
 - `System.Text`
-- `System.Text.Encoding`
 
 Internal modules:
 
@@ -108,19 +106,10 @@ public enum IOStatus {
 
 `IOStatus` exists because Stark does not treat `void` as a first-class value type. Value-returning APIs use `IOResult<T>`. Effect-only APIs use `IOStatus`.
 
-`System.Text` is a namespace module that re-exports the text submodules:
+`System.Text` is the public text module. It declares the shared encoding enum plus the first text helper APIs that future runtime conversions and concatenation paths will build on:
 
 ```stark
-export import System.Text.Encoding
 module System.Text
-```
-
-## Encoding Model
-
-`System.Text.Encoding` defines the encoding enum used by both `System.IO.File` and any future text conversion APIs. It lives in its own module so that both `System.IO` and `System.Text` can depend on it without circular imports.
-
-```stark
-module System.Text.Encoding
 
 public enum Encoding {
     Binary,
@@ -128,7 +117,16 @@ public enum Encoding {
     UTF16,
     UTF32,
 }
+
+public finite law ascii AsciiView(Ascii source);
+public finite law unicode UnicodeView(Unicode source);
+public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 ```
+
+## Encoding Model
+
+`System.Text` defines the `Encoding` enum used by both `System.IO.File` and any future text conversion APIs. The owned text container types themselves are now core language types, so `System.Text` focuses on the shared encoding enum plus helper functions that operate on those core containers.
 
 The semantics are:
 
@@ -138,6 +136,23 @@ The semantics are:
 - `UTF32` means the file stream converts to and from UTF-32. Writing a `unicode` string is a passthrough. Writing an `ascii` string converts UTF-8 to UTF-32 before writing.
 
 `Binary` is the default encoding for file handles. Console output defaults to `UTF8`.
+
+## Owned Text Types
+
+`Ascii` and `Unicode` are the core owned text containers, analogous to Rust's pointer/length/capacity model.
+
+- `Ascii.Data` points at mutable UTF-8 bytes
+- `Unicode.Data` points at mutable UTF-32 code units
+- `Length` counts initialized elements in the same units as the pointer element type
+- `Capacity` counts allocated elements in the same units as the pointer element type
+- these are owning containers, not aliases for the immutable `ascii` and `unicode` view types
+
+The currently implemented bridge APIs are:
+
+- `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` for zero-copy immutable view projection
+- `System.Text.TryConcatAscii(rawmutptr<Ascii>, ascii, ascii)` and `System.Text.TryConcatUnicode(rawmutptr<Unicode>, unicode, unicode)` for explicit concatenation into caller-provided storage
+
+These APIs make allocation visible in user code: the caller owns the backing buffer, fills `Data` and `Capacity`, and concat returns `false` instead of allocating when the destination is too small.
 
 ## Console API
 
@@ -176,7 +191,6 @@ If Stark reaches this redesign before it has a stronger type-opacity story, the 
 
 ```stark
 import System.IO
-import System.Text.Encoding
 module System.IO.File
 
 public struct File {
@@ -195,7 +209,7 @@ public struct File {
 }
 
 public fn IOResult<File> Open(borrow ascii path, FileMode mode);
-public fn IOResult<File> Open(borrow ascii path, FileMode mode, Encoding encoding);
+public fn IOResult<File> Open(borrow ascii path, FileMode mode, System.Text.Encoding encoding);
 public fn IOStatus Delete(borrow ascii path);
 public fn IOStatus Move(borrow ascii oldPath, borrow ascii newPath);
 public fn IOResult<bool> Exists(borrow ascii path);
@@ -394,7 +408,7 @@ The encoding conversions needed by the stdlib are:
 - UTF-32 to UTF-16LE
 - UTF-16LE to UTF-32
 
-These are pure computational functions with no platform dependency. They live in `System.Text` or `System.Text.Encoding` and are shared by both the IO layer and any future user-facing text APIs.
+These are pure computational functions with no platform dependency. They live in `System.Text` and are shared by both the IO layer and any future user-facing text APIs.
 
 Direct UTF-32 to UTF-16 conversion is preferred over routing through UTF-8 when performance matters.
 
@@ -527,7 +541,7 @@ The next implementation pass should focus on:
 2. Implement the Linux platform boundary without libc or glibc
 3. Rewrite `System.Console` to call through the platform layer
 4. Implement the `File` type with userspace buffering and destructor-driven cleanup
-5. Implement the `Encoding` enum and the UTF-8 to UTF-32 and UTF-32 to UTF-8 conversion pair
+5. Implement the `System.Text` UTF-8 to UTF-32 and UTF-32 to UTF-8 conversion pair and connect it to the owned text containers
 6. Implement UTF-8 to UTF-16 and UTF-16 to UTF-8 conversion for Windows path handling
 7. Implement the Windows platform boundary without CRT dependency
 8. Extend `System.IO.Path` with join, extension, base-name, and directory-name helpers

@@ -256,6 +256,8 @@ builtinType
     : BOOL
     | ASCII
     | UNICODE
+    | ASCIISTRING
+    | UNICODESTRING
     | INTEGER_TYPE
     | FLOAT_TYPE
     ;
@@ -650,6 +652,8 @@ VOID        : 'void';
 BOOL        : 'bool';
 ASCII       : 'ascii';
 UNICODE     : 'unicode';
+ASCIISTRING : 'Ascii';
+UNICODESTRING : 'Unicode';
 TRUE        : 'true';
 FALSE       : 'false';
 NULL        : 'null';

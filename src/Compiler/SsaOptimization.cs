@@ -226,6 +226,9 @@ internal sealed class SsaCleanupOptimizer
             case SsaLoadSliceElementRValue loadSlice:
                 key = $"load-slice|m{memoryVersion}|{ValueKey(loadSlice.Slice)}|{ValueKey(loadSlice.Index)}|{TypeKey(loadSlice.Type)}";
                 return true;
+            case SsaTextSliceRValue textSlice:
+                key = $"text-slice|{ValueKey(textSlice.TextValue)}|{ValueKey(textSlice.Start)}|{ValueKey(textSlice.Length)}|{TypeKey(textSlice.Type)}";
+                return true;
             case SsaAddressOfLocalRValue addressOfLocal:
                 key = $"address-of-local|{addressOfLocal.LocalName}|{TypeKey(addressOfLocal.PointeeType)}|{TypeKey(addressOfLocal.Type)}";
                 return true;
@@ -497,6 +500,7 @@ internal sealed class SsaCleanupOptimizer
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
             SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
+            SsaTextSliceRValue textSlice => [textSlice.TextValue, textSlice.Start, textSlice.Length],
             SsaFieldAddressRValue fieldAddress => [fieldAddress.Address],
             SsaElementAddressRValue elementAddress when elementAddress.Index is not null => [elementAddress.Address, elementAddress.Index],
             SsaElementAddressRValue elementAddress => [elementAddress.Address],
@@ -880,6 +884,12 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(loadSlice.Index, replacements),
                 loadSlice.Type,
                 loadSlice.Text),
+            SsaTextSliceRValue textSlice => new SsaTextSliceRValue(
+                RewriteValue(textSlice.TextValue, replacements),
+                RewriteValue(textSlice.Start, replacements),
+                RewriteValue(textSlice.Length, replacements),
+                textSlice.Type,
+                textSlice.Text),
             SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
             SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
                 RewriteValue(fieldAddress.Address, replacements),
@@ -1885,6 +1895,12 @@ internal sealed class SsaConstantPropagator
                 RewriteValue(loadSlice.Index, replacements),
                 loadSlice.Type,
                 loadSlice.Text),
+            SsaTextSliceRValue textSlice => new SsaTextSliceRValue(
+                RewriteValue(textSlice.TextValue, replacements),
+                RewriteValue(textSlice.Start, replacements),
+                RewriteValue(textSlice.Length, replacements),
+                textSlice.Type,
+                textSlice.Text),
             SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
             SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
                 RewriteValue(fieldAddress.Address, replacements),

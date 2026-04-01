@@ -1,0 +1,14 @@
+module System.Text
+
+public enum Encoding {
+    Binary,
+    UTF8,
+    UTF16,
+    UTF32,
+}
+
+public finite law ascii AsciiView(Ascii source);
+public finite law unicode UnicodeView(Unicode source);
+
+public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);

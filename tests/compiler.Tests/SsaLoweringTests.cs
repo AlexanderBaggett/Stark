@@ -525,6 +525,67 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void TextSlicesLowerToSsaViewOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn unicode Run(unicode text, i32 start, i32 length) {
+                return text[start, length];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(
+            instructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaTextSliceRValue
+                {
+                    Type.Kind: StarkTypeKind.Unicode,
+                    Start.Type.Kind: StarkTypeKind.Integer,
+                    Start.Type.BitWidth: 64,
+                    Length.Type.Kind: StarkTypeKind.Integer,
+                    Length.Type.BitWidth: 64
+                }
+            });
+    }
+
+    [Fact]
+    public void ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn unicode Run() {
+                return (unicode)"Hello";
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var returnValue = function.Blocks.Single().Terminator.Value;
+
+        var unicodeConstant = Assert.IsType<SsaStringConstant>(returnValue);
+        Assert.Equal(StarkTypeKind.Unicode, unicodeConstant.Type.Kind);
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaConvertRValue
+                {
+                    Operand.Type.Kind: StarkTypeKind.Ascii,
+                    TargetType.Kind: StarkTypeKind.Unicode
+                }
+            });
+    }
+
+    [Fact]
     public void DynamicFixedArrayIndexMutationUsesIndirectAddressOps()
     {
         var result = Compile(

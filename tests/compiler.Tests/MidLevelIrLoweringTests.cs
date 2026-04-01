@@ -785,6 +785,34 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law unicode Run() {
+                return (unicode)"Hello";
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var returnValue = function.Blocks.Single().Terminator.Value;
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.IsType<MidLevelIrStringConstantOperand>(returnValue);
+        Assert.Equal(StarkTypeKind.Unicode, returnValue!.Type.Kind);
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrConvertRValue
+            {
+                Operand.Type.Kind: StarkTypeKind.Ascii,
+                TargetType.Kind: StarkTypeKind.Unicode
+            });
+    }
+
+    [Fact]
     public void ObjectCreationAndFieldAccessLowerToAggregateOperations()
     {
         var result = Compile(
@@ -1114,6 +1142,35 @@ public sealed class MidLevelIrLoweringTests
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrMakeSliceFromLocalRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrSliceElementAddressRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+    }
+
+    [Fact]
+    public void TextSlicesLowerToViewProducingMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Run(ascii text, i32 start, i32 length) {
+                return text[start, length];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrTextSliceRValue
+            {
+                Type.Kind: StarkTypeKind.Ascii,
+                Start.Type.Kind: StarkTypeKind.Integer,
+                Start.Type.BitWidth: 64,
+                Length.Type.Kind: StarkTypeKind.Integer,
+                Length.Type.BitWidth: 64
+            });
     }
 
     [Fact]

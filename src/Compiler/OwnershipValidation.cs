@@ -1443,6 +1443,20 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature,
         FunctionOwnershipBuilder summary)
     {
+        if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+        {
+            foreach (var index in expressionList.expression())
+            {
+                EvaluateExpression(index, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            }
+
+            var borrowLifetime = target.BorrowLifetime.Kind != BorrowLifetimeKind.None
+                ? target.BorrowLifetime
+                : InferBorrowLifetimeFromValue(target, expressionList.Start);
+
+            return new ExpressionInfo(target.Type, BorrowLifetime: borrowLifetime);
+        }
+
         foreach (var index in expressionList.expression())
         {
             EvaluateExpression(index, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
@@ -1499,6 +1513,11 @@ internal sealed class OwnershipValidator
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (qualifiedType.Kind == DeclarationKind.Enum)
+                {
+                    return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+                }
+
                 if (qualifiedType.Kind == DeclarationKind.Doctrine)
                 {
                     return new ExpressionInfo(StarkTypeSymbols.Named(qualifiedType.Name));
@@ -1786,16 +1805,6 @@ internal sealed class OwnershipValidator
         }
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Float)
-        {
-            return right;
-        }
-
-        if (left.Kind == StarkTypeKind.Unicode && right.Kind == StarkTypeKind.Ascii)
-        {
-            return left;
-        }
-
-        if (left.Kind == StarkTypeKind.Ascii && right.Kind == StarkTypeKind.Unicode)
         {
             return right;
         }

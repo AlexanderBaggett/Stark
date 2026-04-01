@@ -231,7 +231,7 @@ internal sealed class MidLevelIrLowerer(
         private sealed record PartitionedTextSwitchLabel(
             LowerableSwitchLabel Label,
             int TargetBlockId,
-            byte[] Bytes,
+            int[] Units,
             int Order);
 
         private enum PlacePathKind
@@ -970,7 +970,7 @@ internal sealed class MidLevelIrLowerer(
                     flattenedLabels.Add(new PartitionedTextSwitchLabel(
                         label,
                         section.Block.Id,
-                        DecodeTextLiteral(label.Literal.GetText()),
+                        DecodeTextLiteralUnits(label.Literal.GetText(), switchValue.Type),
                         order++));
                 }
             }
@@ -982,7 +982,7 @@ internal sealed class MidLevelIrLowerer(
 
             var lengthType = StarkTypeSymbols.Integer(64);
             var lengthGroups = flattenedLabels
-                .GroupBy(static label => label.Bytes.Length)
+                .GroupBy(static label => label.Units.Length)
                 .OrderBy(static group => group.Key)
                 .Select(group => (
                     Length: group.Key,
@@ -2970,6 +2970,11 @@ internal sealed class MidLevelIrLowerer(
 
         private MidLevelIrOperand? LowerIndexAccess(MidLevelIrOperand target, StarkParser.ExpressionListContext indexes)
         {
+            if (CanUsePartitionedTextSwitchType(target.Type))
+            {
+                return LowerTextSliceAccess(target, indexes);
+            }
+
             var current = target;
 
             foreach (var indexExpression in indexes.expression())
@@ -3088,6 +3093,40 @@ internal sealed class MidLevelIrLowerer(
             }
 
             return current;
+        }
+
+        private MidLevelIrOperand? LowerTextSliceAccess(MidLevelIrOperand target, StarkParser.ExpressionListContext indexes)
+        {
+            var indexExpressions = indexes.expression();
+            if (indexExpressions.Length != 2)
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            var start = LowerExpressionToOperand(indexExpressions[0]);
+            var length = LowerExpressionToOperand(indexExpressions[1]);
+            if (start is null || length is null || start.Type.Kind != StarkTypeKind.Integer || length.Type.Kind != StarkTypeKind.Integer)
+            {
+                MarkUnsupported();
+                return null;
+            }
+
+            start = CoerceOperand(start, StarkTypeSymbols.Integer(64));
+            length = CoerceOperand(length, StarkTypeSymbols.Integer(64));
+            if (start is null || length is null)
+            {
+                return null;
+            }
+
+            return EmitTemporary(
+                new MidLevelIrTextSliceRValue(
+                    target,
+                    start,
+                    length,
+                    target.Type,
+                    $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]"),
+                "slice");
         }
 
         private bool TryLowerCallExpression(StarkParser.PostfixExpressionContext expression, out MidLevelIrCallRValue call)
@@ -4308,6 +4347,11 @@ internal sealed class MidLevelIrLowerer(
             if ((operand.Type.Kind == StarkTypeKind.Ascii && targetType.Kind == StarkTypeKind.Unicode)
                 || (operand.Type.Kind == StarkTypeKind.Unicode && targetType.Kind == StarkTypeKind.Ascii))
             {
+                if (TryConvertTextLiteral(operand, targetType, out var convertedTextLiteral))
+                {
+                    return convertedTextLiteral;
+                }
+
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
                     "textcast");
@@ -4460,7 +4504,7 @@ internal sealed class MidLevelIrLowerer(
             decisionBlocks[0] = CurrentBlock;
             for (var index = 1; index < labels.Count; index++)
             {
-                decisionBlocks[index] = CreateBlock($"textcmp_len_{labels[0].Bytes.Length}_{index}");
+                decisionBlocks[index] = CreateBlock($"textcmp_len_{labels[0].Units.Length}_{index}");
             }
 
             for (var index = 0; index < labels.Count; index++)
@@ -4471,7 +4515,7 @@ internal sealed class MidLevelIrLowerer(
 
                 if (!EmitTextLiteralMatchTransition(
                     dataPointer,
-                    label.Bytes,
+                    label.Units,
                     label.TargetBlockId,
                     nextTarget,
                     $"switch {switchText} == {label.Label.LabelText}"))
@@ -4488,20 +4532,20 @@ internal sealed class MidLevelIrLowerer(
             MidLevelIrStringConstantOperand literal,
             string text)
         {
-            var bytes = DecodeTextLiteral(literal.LiteralText);
+            var units = DecodeTextLiteralUnits(literal.LiteralText, switchValue.Type);
             if (!TryExtractTextSwitchComponents(switchValue, out var dataPointer, out var length))
             {
                 return null;
             }
 
-            var byteType = StarkTypeSymbols.Integer(8);
+            var unitType = GetTextUnitType(switchValue.Type);
             var lengthType = StarkTypeSymbols.Integer(64);
             var lengthMatches = EmitPairComparison(
                 length,
-                new MidLevelIrIntegerConstantOperand(new BigInteger(bytes.Length), lengthType),
+                new MidLevelIrIntegerConstantOperand(new BigInteger(units.Length), lengthType),
                 "==",
                 $"{text}:length");
-            if (lengthMatches is null || bytes.Length == 0)
+            if (lengthMatches is null || units.Length == 0)
             {
                 return lengthMatches;
             }
@@ -4523,47 +4567,46 @@ internal sealed class MidLevelIrLowerer(
 
             CurrentBlock = compareBlock;
 
-            for (var index = 0; index < bytes.Length; index++)
+            for (var index = 0; index < units.Length; index++)
             {
-                var byteAddress = EmitTemporary(
+                var unitAddress = EmitTemporary(
                     new MidLevelIrElementAddressRValue(
                         dataPointer,
-                        byteType,
+                        unitType,
                         Index: null,
                         ConstantIndex: index,
-                        AddressType(byteType, isMutable: false),
+                        AddressType(unitType, isMutable: false),
                         $"{switchValue.Text}.data[{index}]"),
                     "addr");
-                if (byteAddress is null)
+                if (unitAddress is null)
                 {
                     return null;
                 }
 
-                var loadedByte = EmitTemporary(
+                var loadedUnit = EmitTemporary(
                     new MidLevelIrLoadIndirectRValue(
-                        byteAddress,
-                        byteType,
+                        unitAddress,
+                        unitType,
                         $"{switchValue.Text}.data[{index}]"),
                     "load");
-                if (loadedByte is null)
+                if (loadedUnit is null)
                 {
                     return null;
                 }
 
-                var expectedByte = new MidLevelIrIntegerConstantOperand(ToSignedByteValue(bytes[index]), byteType);
-                var byteMatches = EmitPairComparison(
-                    loadedByte,
-                    expectedByte,
+                var unitMatches = EmitPairComparison(
+                    loadedUnit,
+                    CreateTextUnitConstant(units[index], unitType),
                     "==",
-                    $"{text}:byte{index}");
-                if (byteMatches is null)
+                    $"{text}:unit{index}");
+                if (unitMatches is null)
                 {
                     return null;
                 }
 
-                if (index == bytes.Length - 1)
+                if (index == units.Length - 1)
                 {
-                    EmitOperandAssignment(result, byteMatches, byteMatches.Text);
+                    EmitOperandAssignment(result, unitMatches, unitMatches.Text);
                     EnsureGoto(joinBlock.Id);
                     break;
                 }
@@ -4572,8 +4615,8 @@ internal sealed class MidLevelIrLowerer(
                 CurrentBlock.Terminator = new MidLevelIrTerminator(
                     MidLevelIrTerminatorKind.Branch,
                     [nextByteBlock.Id, falseBlock.Id],
-                    ConditionText: byteMatches.Text,
-                    Condition: byteMatches);
+                    ConditionText: unitMatches.Text,
+                    Condition: unitMatches);
                 CurrentBlock = nextByteBlock;
             }
 
@@ -4595,8 +4638,8 @@ internal sealed class MidLevelIrLowerer(
                 return false;
             }
 
-            var byteType = StarkTypeSymbols.Integer(8);
-            var dataPointerType = StarkTypeSymbols.RawPointer(byteType, isMutable: false);
+            var unitType = GetTextUnitType(switchValue.Type);
+            var dataPointerType = StarkTypeSymbols.RawPointer(unitType, isMutable: false);
             var lengthType = StarkTypeSymbols.Integer(64);
 
             var extractedDataPointer = EmitTemporary(
@@ -4627,62 +4670,62 @@ internal sealed class MidLevelIrLowerer(
 
         private bool EmitTextLiteralMatchTransition(
             MidLevelIrOperand dataPointer,
-            byte[] bytes,
+            int[] units,
             int targetBlockId,
             int nextTarget,
             string text)
         {
-            if (bytes.Length == 0)
+            if (units.Length == 0)
             {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
                 return true;
             }
 
-            var byteType = StarkTypeSymbols.Integer(8);
-            for (var index = 0; index < bytes.Length; index++)
+            var unitType = dataPointer.Type.ElementType ?? throw new InvalidOperationException("Text switch data pointer requires an element type.");
+            for (var index = 0; index < units.Length; index++)
             {
-                var byteAddress = EmitTemporary(
+                var unitAddress = EmitTemporary(
                     new MidLevelIrElementAddressRValue(
                         dataPointer,
-                        byteType,
+                        unitType,
                         Index: null,
                         ConstantIndex: index,
-                        AddressType(byteType, isMutable: false),
+                        AddressType(unitType, isMutable: false),
                         $"{dataPointer.Text}[{index}]"),
                     "addr");
-                if (byteAddress is null)
+                if (unitAddress is null)
                 {
                     return false;
                 }
 
-                var loadedByte = EmitTemporary(
+                var loadedUnit = EmitTemporary(
                     new MidLevelIrLoadIndirectRValue(
-                        byteAddress,
-                        byteType,
+                        unitAddress,
+                        unitType,
                         $"{dataPointer.Text}[{index}]"),
                     "load");
-                if (loadedByte is null)
+                if (loadedUnit is null)
                 {
                     return false;
                 }
 
-                var byteMatches = EmitPairComparison(
-                    loadedByte,
-                    new MidLevelIrIntegerConstantOperand(ToSignedByteValue(bytes[index]), byteType),
+                var unitMatches = EmitPairComparison(
+                    loadedUnit,
+                    CreateTextUnitConstant(units[index], unitType),
                     "==",
-                    $"{text}:byte{index}");
-                if (byteMatches is null)
+                    $"{text}:unit{index}");
+                if (unitMatches is null)
                 {
                     return false;
                 }
 
-                if (index == bytes.Length - 1)
+                if (index == units.Length - 1)
                 {
                     CurrentBlock.Terminator = new MidLevelIrTerminator(
                         MidLevelIrTerminatorKind.Branch,
                         [targetBlockId, nextTarget],
-                        ConditionText: byteMatches.Text,
-                        Condition: byteMatches);
+                        ConditionText: unitMatches.Text,
+                        Condition: unitMatches);
                     return true;
                 }
 
@@ -4690,8 +4733,8 @@ internal sealed class MidLevelIrLowerer(
                 CurrentBlock.Terminator = new MidLevelIrTerminator(
                     MidLevelIrTerminatorKind.Branch,
                     [nextByteBlock.Id, nextTarget],
-                    ConditionText: byteMatches.Text,
-                    Condition: byteMatches);
+                    ConditionText: unitMatches.Text,
+                    Condition: unitMatches);
                 CurrentBlock = nextByteBlock;
             }
 
@@ -5294,12 +5337,67 @@ internal sealed class MidLevelIrLowerer(
                 : new BigInteger(unchecked((sbyte)value));
         }
 
-        private static byte[] DecodeTextLiteral(string literalText)
+        private static bool TryConvertTextLiteral(
+            MidLevelIrOperand operand,
+            StarkTypeSymbol targetType,
+            out MidLevelIrOperand converted)
+        {
+            converted = null!;
+            if (operand is not MidLevelIrStringConstantOperand textConstant)
+            {
+                return false;
+            }
+
+            if (targetType.Kind == StarkTypeKind.Unicode && operand.Type.Kind == StarkTypeKind.Ascii)
+            {
+                converted = new MidLevelIrStringConstantOperand(textConstant.LiteralText, targetType);
+                return true;
+            }
+
+            if (targetType.Kind == StarkTypeKind.Ascii
+                && operand.Type.Kind == StarkTypeKind.Unicode
+                && TextLiteralDecoder.IsAsciiLiteral(
+                    textConstant.LiteralText,
+                    textConstant.LiteralText.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String))
+            {
+                converted = new MidLevelIrStringConstantOperand(textConstant.LiteralText, targetType);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int[] DecodeTextLiteralUnits(string literalText, StarkTypeSymbol textType)
         {
             var kind = literalText.StartsWith('\'')
                 ? TextLiteralKind.Character
                 : TextLiteralKind.String;
-            return TextLiteralDecoder.DecodeUtf8BytesOrFallback(literalText, kind);
+
+            return textType.Kind switch
+            {
+                StarkTypeKind.Ascii => TextLiteralDecoder.DecodeUtf8BytesOrFallback(literalText, kind)
+                    .Select(static value => (int)value)
+                    .ToArray(),
+                StarkTypeKind.Unicode => TextLiteralDecoder.DecodeUtf32CodeUnitsOrFallback(literalText, kind),
+                _ => throw new InvalidOperationException($"Text literal decoding requires an ascii/unicode target, but found '{textType.DisplayName}'.")
+            };
+        }
+
+        private static StarkTypeSymbol GetTextUnitType(StarkTypeSymbol textType)
+        {
+            return textType.Kind switch
+            {
+                StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+                StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+                _ => throw new InvalidOperationException($"Text unit type requires an ascii/unicode value, but found '{textType.DisplayName}'.")
+            };
+        }
+
+        private static MidLevelIrIntegerConstantOperand CreateTextUnitConstant(int value, StarkTypeSymbol unitType)
+        {
+            return unitType.BitWidth == 8
+                ? new MidLevelIrIntegerConstantOperand(ToSignedByteValue((byte)value), unitType)
+                : new MidLevelIrIntegerConstantOperand(new BigInteger(value), unitType);
         }
 
         private static StarkTypeSymbol InferIntegerLiteralType(BigInteger value)

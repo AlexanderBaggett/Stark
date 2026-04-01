@@ -84,7 +84,7 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
-    public void ExplicitConversionsAndPointerOperatorsTypeCheck()
+    public void ExplicitConversionsPointerOperatorsAndSliceViewsTypeCheck()
     {
         var result = Compile(
             """
@@ -97,8 +97,6 @@ public sealed class TypeCheckingTests
                 *ptr = (i32)bits;
                 stack i64 address = (i64)ptr;
                 stack rawmutptr<i32> roundTrip = (rawmutptr<i32>)address;
-                stack unicode wide = (unicode)text;
-                stack ascii narrow = (ascii)wide;
                 stack i32[2] values = { 1, 2 };
                 stack i32[] view = (i32[])values;
                 return *roundTrip + view[0];
@@ -132,6 +130,24 @@ public sealed class TypeCheckingTests
 
             finite law unicode UnicodeChar() {
                 return '\u03B1';
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void ExplicitLiteralTextConversionsTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law unicode Widen() {
+                return (unicode)"Hello";
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));

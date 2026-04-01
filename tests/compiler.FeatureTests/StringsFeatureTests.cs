@@ -24,4 +24,110 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             "call %stark_ascii @Echo(%stark_ascii { ptr getelementptr inbounds ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 })",
             llvm);
     }
+
+    [Fact]
+    public void TextSlicesStayZeroCopyViewsThroughTheWholePipeline()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            fn ascii SliceAscii(ascii text, i32 start, i32 length) {
+                return text[start, length];
+            }
+
+            fn unicode SliceUnicode(unicode text, i32 start, i32 length) {
+                return text[start, length];
+            }
+            """);
+
+        Assert.Contains("define fastcc %stark_ascii @SliceAscii(%stark_ascii %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
+        Assert.Contains("getelementptr inbounds i8, ptr", llvm);
+        Assert.Contains("insertvalue %stark_ascii", llvm);
+
+        Assert.Contains("define fastcc %stark_unicode @SliceUnicode(%stark_unicode %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
+        Assert.Contains("getelementptr inbounds i32, ptr", llvm);
+        Assert.Contains("insertvalue %stark_unicode", llvm);
+    }
+
+    [Fact]
+    public void ExplicitAsciiLiteralToUnicodeConversionUsesUnicodeStaticDataThroughTheWholePipeline()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            finite law unicode Run() {
+                return (unicode)"Hello";
+            }
+            """);
+
+        Assert.Contains("define fastcc %stark_unicode @Run()", llvm);
+        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([6 x i32], ptr @.str.", llvm);
+        Assert.DoesNotContain("Unsupported SSA conversion from 'ascii' to 'unicode'", llvm);
+    }
+
+    [Fact]
+    public void OwnedTextCoreTypesNeedNoModuleImport()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            fn i64 Run() {
+                stack mut i8[8] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Ascii asciiOwned = new Ascii() {
+                    Data = &asciiBuffer[0],
+                    Length = 0,
+                    Capacity = 8
+                };
+
+                stack mut i32[4] unicodeBuffer = { 0, 0, 0, 0 };
+                stack mut Unicode unicodeOwned = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 4
+                };
+
+                return asciiOwned.Capacity + unicodeOwned.Capacity;
+            }
+            """);
+
+        Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
+        Assert.Contains("%Unicode = type { ptr, i64, i64 }", llvm);
+        Assert.Contains("define fastcc i64 @Run()", llvm);
+    }
+
+    [Fact]
+    public void OwnedAsciiConcatenationUsesExplicitMemcpyAndViewProjection()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+            public fn ascii Run() {
+                stack mut i8[16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Ascii owned = new Ascii() {
+                    Data = &buffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+                if (!TryConcatAscii(&owned, "Stark", " IO")) {
+                    return "";
+                }
+
+                return AsciiView(owned);
+            }
+            """);
+
+        Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
+        Assert.Contains("define fastcc i1 @TryConcatAscii(", llvm);
+        Assert.Contains("define fastcc %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64", llvm);
+        Assert.Contains("call i1 @TryConcatAscii(", llvm);
+        Assert.Contains("call %stark_ascii @AsciiView(", llvm);
+    }
 }

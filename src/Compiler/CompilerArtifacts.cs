@@ -300,12 +300,21 @@ public sealed record StarkTypeSymbol(
 
 public static class StarkTypeSymbols
 {
+    public const string OwnedAsciiName = "Ascii";
+    public const string OwnedUnicodeName = "Unicode";
+
     public static readonly StarkTypeSymbol Error = new(StarkTypeKind.Error, "<error>");
     public static readonly StarkTypeSymbol Void = new(StarkTypeKind.Void, "void");
     public static readonly StarkTypeSymbol Bool = new(StarkTypeKind.Bool, "bool");
     public static readonly StarkTypeSymbol Ascii = new(StarkTypeKind.Ascii, "ascii");
     public static readonly StarkTypeSymbol Unicode = new(StarkTypeKind.Unicode, "unicode");
+    public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
+    public static readonly StarkTypeSymbol OwnedUnicode = new(StarkTypeKind.Named, OwnedUnicodeName, NamedType: OwnedUnicodeName);
     public static readonly StarkTypeSymbol Null = new(StarkTypeKind.Null, "null");
+    private static readonly NamedTypeSymbol BuiltinOwnedAsciiNamedType = CreateOwnedTextNamedType(OwnedAsciiName, Integer(8));
+    private static readonly NamedTypeSymbol BuiltinOwnedUnicodeNamedType = CreateOwnedTextNamedType(OwnedUnicodeName, Integer(32));
+
+    public static IReadOnlyList<NamedTypeSymbol> BuiltinNamedTypes => [BuiltinOwnedAsciiNamedType, BuiltinOwnedUnicodeNamedType];
 
     public static StarkTypeSymbol Integer(int bitWidth, BigInteger? rangeMin = null, BigInteger? rangeMax = null)
     {
@@ -335,6 +344,22 @@ public static class StarkTypeSymbols
         new(StarkTypeKind.Slice, $"{elementType.DisplayName}[]", ElementType: elementType);
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
+
+    public static bool TryGetBuiltinNamedType(string name, out NamedTypeSymbol namedType)
+    {
+        switch (name)
+        {
+            case OwnedAsciiName:
+                namedType = BuiltinOwnedAsciiNamedType;
+                return true;
+            case OwnedUnicodeName:
+                namedType = BuiltinOwnedUnicodeNamedType;
+                return true;
+            default:
+                namedType = null!;
+                return false;
+        }
+    }
 
     public static StarkTypeSymbol ApplyQualifiers(
         StarkTypeSymbol type,
@@ -456,9 +481,29 @@ public static class StarkTypeSymbols
             StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
             StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength),
             StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
+            StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
+            StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when type.NamedType is not null => Named(type.NamedType),
             _ => type
         };
+    }
+
+    private static NamedTypeSymbol CreateOwnedTextNamedType(string name, StarkTypeSymbol unitType)
+    {
+        var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
+        var orderedFields = new List<FieldSymbol>
+        {
+            new("Data", RawPointer(unitType, isMutable: true)),
+            new("Length", Integer(64)),
+            new("Capacity", Integer(64))
+        };
+
+        foreach (var field in orderedFields)
+        {
+            fields[field.Name] = field;
+        }
+
+        return new NamedTypeSymbol(name, DeclarationKind.Struct, fields, orderedFields);
     }
 }
 
@@ -1089,6 +1134,14 @@ public sealed record MidLevelIrLoadSliceElementRValue(
     string Text)
     : MidLevelIrRValue(Type, Text);
 
+public sealed record MidLevelIrTextSliceRValue(
+    MidLevelIrOperand TextValue,
+    MidLevelIrOperand Start,
+    MidLevelIrOperand Length,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
 public sealed record MidLevelIrAddressOfLocalRValue(
     string LocalName,
     StarkTypeSymbol PointeeType,
@@ -1313,6 +1366,14 @@ public sealed record SsaMakeSliceFromLocalRValue(
 public sealed record SsaLoadSliceElementRValue(
     SsaValue Slice,
     SsaValue Index,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
+public sealed record SsaTextSliceRValue(
+    SsaValue TextValue,
+    SsaValue Start,
+    SsaValue Length,
     StarkTypeSymbol Type,
     string Text)
     : SsaRValue(Type, Text);

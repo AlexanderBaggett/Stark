@@ -105,6 +105,11 @@ internal sealed class TypeChecker
 
     private void SeedNamedTypes()
     {
+        foreach (var builtinNamedType in StarkTypeSymbols.BuiltinNamedTypes)
+        {
+            _namedTypes[builtinNamedType.Name] = builtinNamedType;
+        }
+
         foreach (var module in _loadedModules.Modules.Values)
         {
             foreach (var declaration in module.SyntaxModel.Declarations)
@@ -2662,6 +2667,34 @@ internal sealed class TypeChecker
 
     private ExpressionBinding ApplyIndex(ExpressionBinding target, StarkParser.ExpressionListContext indexes, Scope scope, ParserRuleContext context)
     {
+        if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+        {
+            var indexExpressions = indexes.expression();
+            if (indexExpressions.Length != 2)
+            {
+                ReportError("STK3008", "Text slicing currently requires exactly two integer expressions: start and length.", context);
+                return new ExpressionBinding(StarkTypeSymbols.Error, DiagnosticName: "text slice");
+            }
+
+            foreach (var indexExpression in indexExpressions)
+            {
+                var indexType = EvaluateExpression(indexExpression, scope, allowFunctionReference: false).Type;
+                if (indexType.Kind != StarkTypeKind.Integer)
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Text slicing on {DescribeExpressionTarget(target)} expects integer start/length operands but found '{indexType.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(32), indexType)}",
+                        indexExpression);
+                }
+            }
+
+            return new ExpressionBinding(
+                target.Type,
+                IsAssignable: false,
+                NamedType: ResolveNamedTypeSymbol(target.Type),
+                DiagnosticName: target.DiagnosticName is null ? "text slice" : $"text slice of {target.DiagnosticName}");
+        }
+
         var currentType = target.Type;
         var currentIsAssignable = target.IsAssignable;
 
@@ -2745,6 +2778,11 @@ internal sealed class TypeChecker
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (qualifiedType.Kind == DeclarationKind.Enum)
+                {
+                    return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"enum '{qualifiedName}'");
+                }
+
                 if (qualifiedType.Kind == DeclarationKind.Doctrine)
                 {
                     return new ExpressionBinding(
@@ -2992,6 +3030,8 @@ internal sealed class TypeChecker
     private ExpressionBinding EvaluateLiteral(StarkParser.LiteralContext literal)
     {
         StarkTypeSymbol type;
+        string? textLiteral = null;
+        TextLiteralKind? textLiteralKind = null;
 
         if (literal.signedIntegerLiteral() is { } integerLiteral)
         {
@@ -3005,10 +3045,14 @@ internal sealed class TypeChecker
         else if (literal.StringLiteral() is { } stringLiteral)
         {
             type = InferStringLiteralType(stringLiteral.GetText());
+            textLiteral = stringLiteral.GetText();
+            textLiteralKind = TextLiteralKind.String;
         }
         else if (literal.CharacterLiteral() is { } charLiteral)
         {
             type = InferCharacterLiteralType(charLiteral.GetText());
+            textLiteral = charLiteral.GetText();
+            textLiteralKind = TextLiteralKind.Character;
         }
         else if (literal.TRUE() is not null || literal.FALSE() is not null)
         {
@@ -3020,7 +3064,7 @@ internal sealed class TypeChecker
         }
 
         _literals.Add(new LiteralTypingRecord(literal.GetText(), type, Location(literal)));
-        return new ExpressionBinding(type);
+        return new ExpressionBinding(type, TextLiteral: textLiteral, TextLiteralKind: textLiteralKind);
     }
 
     private StarkTypeSymbol ResolveReturnType(StarkParser.ReturnTypeContext returnType, ISet<string>? genericParameters, string? currentModuleName = null)
@@ -3483,6 +3527,12 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (TryDescribeTextExplicitConversionFailure(targetType, source, out var textConversionMessage))
+        {
+            ReportError("STK3002", textConversionMessage, context);
+            return;
+        }
+
         ReportError(
             "STK3002",
             $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported.",
@@ -3513,9 +3563,9 @@ internal sealed class TypeChecker
             return " An explicit narrowing conversion is required.";
         }
 
-        if (target.Kind == StarkTypeKind.Ascii && source.Kind == StarkTypeKind.Unicode)
+        if (IsTextType(target) && IsTextType(source))
         {
-            return " An explicit conversion is required to convert 'unicode' text to 'ascii'.";
+            return " An explicit text conversion is currently only available for compile-time text constants.";
         }
 
         return string.Empty;
@@ -3621,11 +3671,6 @@ internal sealed class TypeChecker
             return CanAssign(target.ElementType, source.ElementType);
         }
 
-        if (target.Kind == StarkTypeKind.Unicode && source.Kind == StarkTypeKind.Ascii)
-        {
-            return true;
-        }
-
         if (target.Kind == StarkTypeKind.RawPointer && source.Kind == StarkTypeKind.Null)
         {
             return true;
@@ -3686,6 +3731,11 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (IsTextType(target) && IsTextType(source.Type))
+        {
+            return CanExplicitlyConvertTextLiteral(target, source);
+        }
+
         if ((target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Integer)
             || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.Null))
         {
@@ -3712,12 +3762,6 @@ internal sealed class TypeChecker
             return true;
         }
 
-        if ((target.Kind == StarkTypeKind.Unicode && source.Type.Kind == StarkTypeKind.Ascii)
-            || (target.Kind == StarkTypeKind.Ascii && source.Type.Kind == StarkTypeKind.Unicode))
-        {
-            return true;
-        }
-
         if (target.Kind == StarkTypeKind.Slice
             && source.Type.Kind == StarkTypeKind.FixedArray
             && source.IsAddressable
@@ -3729,6 +3773,61 @@ internal sealed class TypeChecker
         }
 
         return false;
+    }
+
+    private static bool CanExplicitlyConvertTextLiteral(StarkTypeSymbol target, ExpressionBinding source)
+    {
+        if (!IsTextType(target)
+            || !IsTextType(source.Type)
+            || source.TextLiteral is null
+            || source.TextLiteralKind is null)
+        {
+            return false;
+        }
+
+        if (target.Kind == StarkTypeKind.Unicode && source.Type.Kind == StarkTypeKind.Ascii)
+        {
+            return true;
+        }
+
+        return target.Kind == StarkTypeKind.Ascii
+            && source.Type.Kind == StarkTypeKind.Unicode
+            && TextLiteralDecoder.IsAsciiLiteral(source.TextLiteral, source.TextLiteralKind.Value);
+    }
+
+    private static bool TryDescribeTextExplicitConversionFailure(
+        StarkTypeSymbol targetType,
+        ExpressionBinding source,
+        out string message)
+    {
+        message = string.Empty;
+        if (!IsTextType(targetType) || !IsTextType(source.Type))
+        {
+            return false;
+        }
+
+        if (source.TextLiteral is null || source.TextLiteralKind is null)
+        {
+            message =
+                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported because text widening and narrowing currently require a compile-time text constant or a future explicit owning-text construction path.";
+            return true;
+        }
+
+        if (targetType.Kind == StarkTypeKind.Ascii
+            && source.Type.Kind == StarkTypeKind.Unicode
+            && !TextLiteralDecoder.IsAsciiLiteral(source.TextLiteral, source.TextLiteralKind.Value))
+        {
+            message =
+                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported because the source text literal contains non-ASCII data.";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
     }
 
     private static bool AreQualifiersAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -3871,16 +3970,6 @@ internal sealed class TypeChecker
         }
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Float)
-        {
-            return right;
-        }
-
-        if (left.Kind == StarkTypeKind.Unicode && right.Kind == StarkTypeKind.Ascii)
-        {
-            return left;
-        }
-
-        if (left.Kind == StarkTypeKind.Ascii && right.Kind == StarkTypeKind.Unicode)
         {
             return right;
         }
@@ -4241,7 +4330,9 @@ internal sealed class TypeChecker
         string? RootGlobalName = null,
         GlobalBindingKind? RootGlobalBindingKind = null,
         string? AssignmentErrorMessage = null,
-        EnumConstructorBinding? EnumConstructor = null);
+        EnumConstructorBinding? EnumConstructor = null,
+        string? TextLiteral = null,
+        TextLiteralKind? TextLiteralKind = null);
 
     private sealed record EnumConstructorBinding(
         string Name,

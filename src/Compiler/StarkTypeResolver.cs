@@ -195,6 +195,8 @@ internal sealed class StarkTypeResolver
             "bool" => StarkTypeSymbols.Bool,
             "ascii" => StarkTypeSymbols.Ascii,
             "unicode" => StarkTypeSymbols.Unicode,
+            "Ascii" => StarkTypeSymbols.OwnedAscii,
+            "Unicode" => StarkTypeSymbols.OwnedUnicode,
             _ when text.StartsWith("i", StringComparison.Ordinal) => StarkTypeSymbols.Integer(int.Parse(text[1..])),
             _ when text.StartsWith("f", StringComparison.Ordinal) => StarkTypeSymbols.Float(int.Parse(text[1..])),
             _ => StarkTypeSymbols.Error

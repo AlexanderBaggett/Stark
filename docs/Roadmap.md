@@ -538,6 +538,18 @@ Goal: Stark's abstraction system becomes real, optimizable, and usable.
   - [x] broader specialization and inlining of law calls where closed-world facts allow it
   - [x] regression tests for emitted LLVM attributes and call shapes
 
+### Strings Revisited
+
+Revisit the temporary text MVP and align the implementation with the intended string model.
+
+- [x] Correct the docs and tests to the intended model
+- [x] Fix `ascii` so it is UTF-8 and `unicode` so it is UTF-32
+- [x] Change literal and codegen representation for `unicode`
+- [x] Replace the current fake `ascii`/`unicode` reinterpret-casts with real widening/narrowing rules
+- [x] Add a slice operator for `ascii` and `unicode`
+- [x] Add separate owning text types for `ascii` and `unicode`, analogous to Rust's pointer/length/capacity model
+- [x] Design and implement a non-hidden-allocation concatenation path
+
 ## Milestone 6.5: Pre-StdLib Language Work
 
 Goal: unlock the language surface the standard library wants before the stdlib is redesigned around it.
@@ -569,7 +581,6 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
   - [ ] `System.IO.File`
   - [ ] `System.IO.Path`
   - [ ] `System.Text`
-  - [ ] `System.Text.Encoding`
 - [ ] Define the internal runtime/platform module layout
   - [ ] `System.Runtime`
   - [ ] `System.Runtime.Platform`
@@ -580,7 +591,7 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
   - [ ] `System.IO` error and result model
   - [ ] `System.IO.File` owned handle type and destructor-based close behavior
   - [ ] `System.IO.Path` helpers
-  - [ ] `System.Text.Encoding` enum and shared conversion helpers
+  - [ ] `System.Text` encoding enum and shared conversion helpers for the core owned text types
 - [ ] Implement userspace file buffering and encoding-aware text IO
   - [ ] buffering modes
   - [ ] newline policy

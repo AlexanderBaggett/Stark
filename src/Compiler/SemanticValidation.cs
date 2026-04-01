@@ -1365,6 +1365,18 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
+        if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+        {
+            foreach (var indexExpression in indexes.expression())
+            {
+                EvaluateExpression(indexExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            }
+
+            return new ValidationValue(
+                target.Type,
+                NamedType: ResolveNamedTypeSymbol(target.Type));
+        }
+
         var currentType = target.Type;
         var currentIsAssignable = target.IsAssignable;
         foreach (var indexExpression in indexes.expression())
@@ -1415,6 +1427,11 @@ internal sealed class SemanticValidator
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (qualifiedType.Kind == DeclarationKind.Enum)
+                {
+                    return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+                }
+
                 if (qualifiedType.Kind == DeclarationKind.Doctrine)
                 {
                     return new ValidationValue(StarkTypeSymbols.Named(qualifiedType.Name), NamedType: qualifiedType);
@@ -2411,8 +2428,7 @@ internal sealed class SemanticValidator
             return true;
         }
 
-        return (target.Kind == StarkTypeKind.Ascii && source.Kind == StarkTypeKind.Unicode)
-            || (target.Kind == StarkTypeKind.Unicode && source.Kind == StarkTypeKind.Ascii);
+        return false;
     }
 
     private static bool IsExternallyVisibleMemory(VariableSymbol symbol)
@@ -2508,16 +2524,6 @@ internal sealed class SemanticValidator
         }
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Float)
-        {
-            return right;
-        }
-
-        if (left.Kind == StarkTypeKind.Unicode && right.Kind == StarkTypeKind.Ascii)
-        {
-            return left;
-        }
-
-        if (left.Kind == StarkTypeKind.Ascii && right.Kind == StarkTypeKind.Unicode)
         {
             return right;
         }

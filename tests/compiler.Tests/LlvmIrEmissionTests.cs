@@ -799,8 +799,115 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc i32 @Run(%stark_unicode %arg_value)", llvm);
         Assert.Contains("extractvalue %stark_unicode %arg_value, 0", llvm);
-        Assert.Contains("load i8, ptr", llvm);
+        Assert.Contains("load i32, ptr", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Run(%stark_unicode)", llvm);
+    }
+
+    [Fact]
+    public void TextSlicesEmitShiftedAsciiAndUnicodeViews()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii SliceAscii(ascii text, i32 start, i32 length) {
+                return text[start, length];
+            }
+
+            fn unicode SliceUnicode(unicode text, i32 start, i32 length) {
+                return text[start, length];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc %stark_ascii @SliceAscii(%stark_ascii %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
+        Assert.Contains("extractvalue %stark_ascii %arg_text, 0", llvm);
+        Assert.Contains("getelementptr inbounds i8, ptr", llvm);
+        Assert.Contains("insertvalue %stark_ascii", llvm);
+        Assert.Contains("i64 %", llvm);
+
+        Assert.Contains("define fastcc %stark_unicode @SliceUnicode(%stark_unicode %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
+        Assert.Contains("extractvalue %stark_unicode %arg_text, 0", llvm);
+        Assert.Contains("getelementptr inbounds i32, ptr", llvm);
+        Assert.Contains("insertvalue %stark_unicode", llvm);
+    }
+
+    [Fact]
+    public void ExplicitAsciiLiteralToUnicodeConversionEmitsUnicodeConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn unicode Run() {
+                return (unicode)"Hello";
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc %stark_unicode @Run()", llvm);
+        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([6 x i32], ptr @.str.", llvm);
+        Assert.DoesNotContain("Unsupported SSA conversion from 'ascii' to 'unicode'", llvm);
+        Assert.DoesNotContain("declare fastcc %stark_unicode @Run()", llvm);
+    }
+
+    [Fact]
+    public void SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitions()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public finite law unicode UnicodeView(Unicode source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+            public fn unicode Run() {
+                stack mut i8[16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Ascii ownedAscii = new Ascii() {
+                    Data = &asciiBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+
+                stack mut i32[8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 8
+                };
+                if (!TryConcatAscii(&ownedAscii, "Stark", " IO")) {
+                    return (unicode)"";
+                }
+
+                if (!TryConcatUnicode(&ownedUnicode, (unicode)"Hi", (unicode)" \u03B1")) {
+                    return (unicode)"";
+                }
+
+                return UnicodeView(ownedUnicode);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
+        Assert.Contains("%Unicode = type { ptr, i64, i64 }", llvm);
+        Assert.Contains("define fastcc %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("define fastcc %stark_unicode @UnicodeView(", llvm);
+        Assert.Contains("define fastcc i1 @TryConcatAscii(", llvm);
+        Assert.Contains("define fastcc i1 @TryConcatUnicode(", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64", llvm);
+        Assert.Contains("getelementptr inbounds i32, ptr %concat_data, i64 %concat_left_length", llvm);
+        Assert.Contains("shl i64 %concat_left_length, 2", llvm);
+        Assert.Contains("call %stark_unicode @UnicodeView(", llvm);
+        Assert.DoesNotContain("declare fastcc i1 @TryConcatAscii(", llvm);
+        Assert.DoesNotContain("declare fastcc i1 @TryConcatUnicode(", llvm);
     }
 
     [Fact]
@@ -874,15 +981,16 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
         Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
         Assert.Contains("@.str.0 = private unnamed_addr constant [2 x i8] c\"a\\00\"", llvm);
-        Assert.Contains("@.str.1 = private unnamed_addr constant [3 x i8] c\"\\CE\\B1\\00\"", llvm);
+        Assert.Contains("private unnamed_addr constant [2 x i32] [i32 945, i32 0]", llvm);
         Assert.Contains("define fastcc %stark_ascii @AsciiChar()", llvm);
         Assert.Contains("define fastcc %stark_unicode @UnicodeChar()", llvm);
         Assert.Contains("ret %stark_ascii { ptr getelementptr inbounds ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }", llvm);
-        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.1, i32 0, i32 0), i64 2 }", llvm);
+        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([2 x i32], ptr @.str.", llvm);
+        Assert.Contains(", i64 1 }", llvm);
     }
 
     [Fact]
-    public void UnicodeStringLiteralsUseUtf8ByteLengthInRuntimeValues()
+    public void UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValues()
     {
         var result = Compile(
             """
@@ -901,10 +1009,10 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
-        Assert.Contains("@.str.0 = private unnamed_addr constant [3 x i8] c\"\\CE\\B1\\00\"", llvm);
-        Assert.Contains("@.str.1 = private unnamed_addr constant [3 x i8] c\"\\C3\\89\\00\"", llvm);
-        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 }", llvm);
-        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds ([3 x i8], ptr @.str.1, i32 0, i32 0), i64 2 }", llvm);
+        Assert.Contains("private unnamed_addr constant [2 x i32] [i32 945, i32 0]", llvm);
+        Assert.Contains("private unnamed_addr constant [2 x i32] [i32 201, i32 0]", llvm);
+        Assert.Equal(2, CountOccurrences(llvm, "ret %stark_unicode { ptr getelementptr inbounds ([2 x i32], ptr @.str."));
+        Assert.Equal(2, CountOccurrences(llvm, ", i64 1 }"));
     }
 
     [Fact]
@@ -959,7 +1067,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("@.str.0 = private unnamed_addr constant [10 x i8] c\"\\00\\08\\09\\0A\\0C\\0D\\5C\\22'\\00\"", llvm);
         Assert.Contains("@.str.1 = private unnamed_addr constant [2 x i8] c\"A\\00\"", llvm);
-        Assert.Contains("@.str.2 = private unnamed_addr constant [3 x i8] c\"\\C3\\89\\00\"", llvm);
+        Assert.Contains("private unnamed_addr constant [2 x i32] [i32 201, i32 0]", llvm);
     }
 
     [Fact]

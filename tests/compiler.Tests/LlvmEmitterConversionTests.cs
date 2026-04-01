@@ -63,31 +63,29 @@ public sealed class LlvmEmitterConversionTests
     }
 
     [Fact]
-    public void AsciiToUnicodeConversionRebuildsTextAggregate()
+    public void AsciiToUnicodeReinterpretCastIsNotLowered()
     {
         var llvm = EmitSingleConversion(
             StarkTypeSymbols.Unicode,
             new SsaStringConstant("hello", StarkTypeSymbols.Ascii));
 
-        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("define", llvm);
         Assert.Contains("@Run()", llvm);
-        Assert.Contains("extractvalue %stark_ascii", llvm);
-        Assert.Contains("insertvalue %stark_unicode zeroinitializer, ptr", llvm);
-        Assert.Contains("ret %stark_unicode", llvm);
+        Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'ascii' to 'unicode'.", llvm);
+        Assert.Contains("declare fastcc %stark_unicode @Run()", llvm);
     }
 
     [Fact]
-    public void UnicodeToAsciiConversionRebuildsTextAggregate()
+    public void UnicodeToAsciiReinterpretCastIsNotLowered()
     {
         var llvm = EmitSingleConversion(
             StarkTypeSymbols.Ascii,
             new SsaStringConstant("\"\\u03B1\"", StarkTypeSymbols.Unicode));
 
-        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("define", llvm);
         Assert.Contains("@Run()", llvm);
-        Assert.Contains("extractvalue %stark_unicode", llvm);
-        Assert.Contains("insertvalue %stark_ascii zeroinitializer, ptr", llvm);
-        Assert.Contains("ret %stark_ascii", llvm);
+        Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'unicode' to 'ascii'.", llvm);
+        Assert.Contains("declare fastcc %stark_ascii @Run()", llvm);
     }
 
     private static string EmitSingleConversion(

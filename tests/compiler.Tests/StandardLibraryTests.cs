@@ -45,11 +45,13 @@ public sealed class StandardLibraryTests
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Stderr");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.File");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Path");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Text");
 
             var rootModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System");
             var reExports = rootModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
             Assert.Contains("System.Console", reExports);
             Assert.Contains("System.IO", reExports);
+            Assert.Contains("System.Text", reExports);
 
             var ioModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.IO");
             var ioReExports = ioModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
@@ -112,9 +114,49 @@ public sealed class StandardLibraryTests
                 module App
 
                 export ffi fn i32 main() {
+                    stack mut i8[16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+                    stack mut Ascii ownedAscii = new Ascii() {
+                        Data = &asciiBuffer[0],
+                        Length = 0,
+                        Capacity = 16
+                    };
+
+                    stack Unicode ownedUnicode = new Unicode() {
+                        Data = null,
+                        Length = 0,
+                        Capacity = 4
+                    };
+
+                    stack System.Text.Encoding encoding = System.Text.Encoding.UTF8;
+                    if (ownedAscii.Capacity != 16) {
+                        return 1;
+                    }
+
+                    if (ownedUnicode.Capacity != 4) {
+                        return 2;
+                    }
+
+                    if (!System.Text.TryConcatAscii(&ownedAscii, "Stark", " IO")) {
+                        return 3;
+                    }
+
+                    stack Ascii fileAscii = new Ascii() {
+                        Data = ownedAscii.Data,
+                        Length = ownedAscii.Length,
+                        Capacity = ownedAscii.Capacity
+                    };
+
+                    stack Ascii consoleAscii = new Ascii() {
+                        Data = ownedAscii.Data,
+                        Length = ownedAscii.Length,
+                        Capacity = ownedAscii.Capacity
+                    };
+
                     stack rawptr<i8> handle = System.IO.File.OpenWrite("io-test.txt");
-                    System.IO.File.WriteLine(handle, "Stark IO");
+                    System.IO.File.WriteLine(handle, System.Text.AsciiView(fileAscii));
                     System.IO.File.Close(handle);
+                    System.Console.WriteLine(System.Text.AsciiView(consoleAscii));
                     System.Console.WriteLine(System.IO.Path.DirectorySeparator());
                     return 0;
                 }
@@ -150,7 +192,7 @@ public sealed class StandardLibraryTests
             await process.WaitForExitAsync();
 
             Assert.Equal(0, process.ExitCode);
-            Assert.Equal("/\n", processStdout);
+            Assert.Equal("Stark IO\n/\n", processStdout);
             Assert.Equal(string.Empty, processStderr);
             Assert.Equal("Stark IO\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "io-test.txt")));
         }

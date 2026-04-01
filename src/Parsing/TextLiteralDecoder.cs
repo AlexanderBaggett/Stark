@@ -29,6 +29,20 @@ internal readonly record struct DecodedTextLiteral(string Value)
     }
 
     public byte[] Utf8Bytes => Encoding.UTF8.GetBytes(Value);
+
+    public int[] Utf32CodeUnits
+    {
+        get
+        {
+            var units = new int[Value.Length];
+            for (var index = 0; index < Value.Length; index++)
+            {
+                units[index] = Value[index];
+            }
+
+            return units;
+        }
+    }
 }
 
 internal static class TextLiteralDecoder
@@ -163,6 +177,23 @@ internal static class TextLiteralDecoder
         }
 
         return Encoding.UTF8.GetBytes(GetContent(literalText));
+    }
+
+    public static int[] DecodeUtf32CodeUnitsOrFallback(string literalText, TextLiteralKind kind)
+    {
+        if (TryDecode(literalText, kind, out var decoded, out _))
+        {
+            return decoded.Utf32CodeUnits;
+        }
+
+        var content = GetContent(literalText);
+        var units = new int[content.Length];
+        for (var index = 0; index < content.Length; index++)
+        {
+            units[index] = content[index];
+        }
+
+        return units;
     }
 
     private static string Describe(TextLiteralKind kind)

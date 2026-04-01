@@ -23,7 +23,7 @@ internal sealed class LlvmIrEmitter
     private readonly LlvmTargetInfo? _targetInfo;
     private readonly bool _internalizeModulePrivate;
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
-    private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
+    private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
@@ -135,11 +135,25 @@ internal sealed class LlvmIrEmitter
             var signature = _typeModel.Functions[function.Name];
             var abiSignature = _abiModel.Functions[function.Name];
             var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == function.Name);
-            var parameterEffects = GetRootParameterEffects(function.Name, function.HasBody);
+            var parameterEffects = GetRootParameterEffects(function.Name, function.HasBody)
+                ?? GetBuiltinParameterEffects(_syntaxModel.ModuleName, function.Name, signature);
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
-            var definitionInternalize = function.HasBody && ShouldInternalize(declaration.Visibility);
+            var definitionInternalize = ShouldInternalize(declaration.Visibility);
+            if (!function.HasBody
+                && TryEmitBuiltinFunctionDefinition(
+                    builder,
+                    definitionInternalize,
+                    _syntaxModel.ModuleName,
+                    signature,
+                    abiSignature,
+                    effects,
+                    parameterEffects))
+            {
+                builder.AppendLine();
+                continue;
+            }
 
             if (function.HasBody
                 && ssaFunction is not null
@@ -190,8 +204,22 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
+            var parameterEffects = GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
+            if (TryEmitBuiltinFunctionDefinition(
+                    builder,
+                    internalize: true,
+                    moduleName: string.Empty,
+                    signature,
+                    abiFunction,
+                    effects,
+                    parameterEffects))
+            {
+                builder.AppendLine();
+                continue;
+            }
+
             builder.AppendLine($"; imported declaration: {abiFunction.Name}");
-            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, parameterEffects: null));
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, parameterEffects));
             builder.AppendLine();
         }
 
@@ -523,7 +551,7 @@ internal sealed class LlvmIrEmitter
         return type.Kind switch
         {
             StarkTypeKind.Ascii => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
-            StarkTypeKind.Unicode when !forReturnValue => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            StarkTypeKind.Unicode when !forReturnValue => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false),
             _ => type
         };
     }
@@ -1004,6 +1032,225 @@ internal sealed class LlvmIrEmitter
         return string.Join(" ", segments);
     }
 
+    private bool TryEmitBuiltinFunctionDefinition(
+        StringBuilder builder,
+        bool internalize,
+        string moduleName,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        if (!TryGetSystemTextBuiltin(moduleName, function.Name, out var builtinKind))
+        {
+            return false;
+        }
+
+        builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects) + " {");
+        switch (builtinKind)
+        {
+            case SystemTextBuiltinKind.AsciiView:
+                EmitOwnedTextViewBuiltin(builder, abiFunction, StarkTypeSymbols.Ascii);
+                break;
+            case SystemTextBuiltinKind.UnicodeView:
+                EmitOwnedTextViewBuiltin(builder, abiFunction, StarkTypeSymbols.Unicode);
+                break;
+            case SystemTextBuiltinKind.TryConcatAscii:
+                EmitOwnedTextConcatBuiltin(builder, abiFunction, StarkTypeSymbols.Integer(8), StarkTypeSymbols.Ascii);
+                break;
+            case SystemTextBuiltinKind.TryConcatUnicode:
+                EmitOwnedTextConcatBuiltin(builder, abiFunction, StarkTypeSymbols.Integer(32), StarkTypeSymbols.Unicode);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported System.Text builtin '{builtinKind}'.");
+        }
+
+        builder.AppendLine("}");
+        return true;
+    }
+
+    private void EmitOwnedTextViewBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction,
+        StarkTypeSymbol viewType)
+    {
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Text view builtin '{abiFunction.Name}' expects exactly one user parameter.");
+        }
+
+        var sourceParameter = abiFunction.UserParameters[0];
+        var aggregateType = MapType(sourceParameter.SourceType);
+        var resultType = MapType(viewType);
+        var sourceValue = $"%{EscapeIdentifier(sourceParameter.LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %view_data = extractvalue {aggregateType} {sourceValue}, 0");
+        builder.AppendLine($"  %view_length = extractvalue {aggregateType} {sourceValue}, 1");
+        builder.AppendLine($"  %view_with_ptr = insertvalue {resultType} zeroinitializer, ptr %view_data, 0");
+        builder.AppendLine($"  %view_result = insertvalue {resultType} %view_with_ptr, i64 %view_length, 1");
+        builder.AppendLine($"  ret {resultType} %view_result");
+    }
+
+    private void EmitOwnedTextConcatBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction,
+        StarkTypeSymbol unitType,
+        StarkTypeSymbol viewType)
+    {
+        if (abiFunction.UserParameters.Count != 3)
+        {
+            throw new InvalidOperationException($"System.Text concat builtin '{abiFunction.Name}' expects exactly three user parameters.");
+        }
+
+        var destinationParameter = abiFunction.UserParameters[0];
+        var leftParameter = abiFunction.UserParameters[1];
+        var rightParameter = abiFunction.UserParameters[2];
+        var aggregateType = destinationParameter.SourceType.ElementType is not null
+            ? MapType(destinationParameter.SourceType.ElementType)
+            : throw new InvalidOperationException($"System.Text concat builtin '{abiFunction.Name}' requires a raw pointer destination to an owning text aggregate.");
+        var viewLlvmType = MapType(viewType);
+        var unitLlvmType = MapType(unitType);
+        var destinationPointer = $"%{EscapeIdentifier(destinationParameter.LlvmName)}";
+        var leftValue = $"%{EscapeIdentifier(leftParameter.LlvmName)}";
+        var rightValue = $"%{EscapeIdentifier(rightParameter.LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %concat_data_addr = getelementptr inbounds {aggregateType}, ptr {destinationPointer}, i32 0, i32 0");
+        builder.AppendLine($"  %concat_length_addr = getelementptr inbounds {aggregateType}, ptr {destinationPointer}, i32 0, i32 1");
+        builder.AppendLine($"  %concat_capacity_addr = getelementptr inbounds {aggregateType}, ptr {destinationPointer}, i32 0, i32 2");
+        builder.AppendLine("  %concat_data = load ptr, ptr %concat_data_addr");
+        builder.AppendLine("  %concat_capacity = load i64, ptr %concat_capacity_addr");
+        builder.AppendLine($"  %concat_left_data = extractvalue {viewLlvmType} {leftValue}, 0");
+        builder.AppendLine($"  %concat_left_length = extractvalue {viewLlvmType} {leftValue}, 1");
+        builder.AppendLine($"  %concat_right_data = extractvalue {viewLlvmType} {rightValue}, 0");
+        builder.AppendLine($"  %concat_right_length = extractvalue {viewLlvmType} {rightValue}, 1");
+        builder.AppendLine("  %concat_required = add i64 %concat_left_length, %concat_right_length");
+        builder.AppendLine("  %concat_has_capacity = icmp ule i64 %concat_required, %concat_capacity");
+        builder.AppendLine("  %concat_needs_storage = icmp ne i64 %concat_required, 0");
+        builder.AppendLine("  %concat_has_data = icmp ne ptr %concat_data, null");
+        builder.AppendLine("  %concat_storage_ready = select i1 %concat_needs_storage, i1 %concat_has_data, i1 true");
+        builder.AppendLine("  %concat_success = and i1 %concat_has_capacity, %concat_storage_ready");
+        builder.AppendLine("  br i1 %concat_success, label %concat_copy_left_check, label %concat_fail");
+        builder.AppendLine("concat_fail:");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine("concat_copy_left_check:");
+        builder.AppendLine("  %concat_left_nonempty = icmp ne i64 %concat_left_length, 0");
+        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left, label %concat_after_left");
+        builder.AppendLine("concat_copy_left:");
+        builder.AppendLine($"  %concat_left_bytes = {RenderTextMemcpyLength(unitType, "%concat_left_length")}");
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly %concat_data, ptr nocapture readonly %concat_left_data, i64 %concat_left_bytes, i1 false)");
+        builder.AppendLine("  br label %concat_after_left");
+        builder.AppendLine("concat_after_left:");
+        builder.AppendLine("  %concat_right_nonempty = icmp ne i64 %concat_right_length, 0");
+        builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right, label %concat_finish");
+        builder.AppendLine("concat_copy_right:");
+        builder.AppendLine($"  %concat_right_dest = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
+        builder.AppendLine($"  %concat_right_bytes = {RenderTextMemcpyLength(unitType, "%concat_right_length")}");
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly %concat_right_dest, ptr nocapture readonly %concat_right_data, i64 %concat_right_bytes, i1 false)");
+        builder.AppendLine("  br label %concat_finish");
+        builder.AppendLine("concat_finish:");
+        builder.AppendLine("  store i64 %concat_required, ptr %concat_length_addr");
+        builder.AppendLine("  ret i1 true");
+    }
+
+    private static string RenderTextMemcpyLength(StarkTypeSymbol unitType, string lengthValue)
+    {
+        return unitType.Kind == StarkTypeKind.Integer && unitType.BitWidth == 32
+            ? $"shl i64 {lengthValue}, 2"
+            : $"add i64 {lengthValue}, 0";
+    }
+
+    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetBuiltinParameterEffects(
+        string moduleName,
+        string functionName,
+        TypedFunctionSignature function)
+    {
+        if (!TryGetSystemTextBuiltin(moduleName, functionName, out var builtinKind))
+        {
+            return null;
+        }
+
+        return builtinKind switch
+        {
+            SystemTextBuiltinKind.AsciiView or SystemTextBuiltinKind.UnicodeView
+                => function.Parameters.ToDictionary(
+                    static parameter => parameter.Name,
+                    static parameter => new ParameterMemoryEffectSummary(
+                        parameter.Name,
+                        parameter.Type.DisplayName,
+                        IsMemoryBacked: true,
+                        GuaranteedNonNull: true,
+                        GuaranteedReadOnly: true,
+                        GuaranteedWriteOnly: false,
+                        GuaranteedNoAlias: true,
+                        DereferenceableBytes: null,
+                        AlignmentBytes: null,
+                        Reads: true,
+                        Writes: false,
+                        CaptureKind: ParameterCaptureKind.None),
+                    StringComparer.Ordinal),
+            SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode
+                => function.Parameters.ToDictionary(
+                    static parameter => parameter.Name,
+                    static parameter => new ParameterMemoryEffectSummary(
+                        parameter.Name,
+                        parameter.Type.DisplayName,
+                        IsMemoryBacked: parameter.Name == "destination",
+                        GuaranteedNonNull: false,
+                        GuaranteedReadOnly: false,
+                        GuaranteedWriteOnly: false,
+                        GuaranteedNoAlias: false,
+                        DereferenceableBytes: null,
+                        AlignmentBytes: null,
+                        Reads: parameter.Name == "destination",
+                        Writes: parameter.Name == "destination",
+                        CaptureKind: ParameterCaptureKind.None),
+                    StringComparer.Ordinal),
+            _ => null
+        };
+    }
+
+    private static bool TryGetSystemTextBuiltin(
+        string moduleName,
+        string functionName,
+        out SystemTextBuiltinKind builtinKind)
+    {
+        builtinKind = default;
+
+        string sourceName;
+        if (functionName.Contains('.', StringComparison.Ordinal))
+        {
+            const string prefix = "System.Text.";
+            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName[prefix.Length..];
+        }
+        else
+        {
+            if (!string.Equals(moduleName, "System.Text", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName;
+        }
+
+        builtinKind = sourceName switch
+        {
+            "AsciiView" => SystemTextBuiltinKind.AsciiView,
+            "UnicodeView" => SystemTextBuiltinKind.UnicodeView,
+            "TryConcatAscii" => SystemTextBuiltinKind.TryConcatAscii,
+            "TryConcatUnicode" => SystemTextBuiltinKind.TryConcatUnicode,
+            _ => default
+        };
+
+        return sourceName is "AsciiView" or "UnicodeView" or "TryConcatAscii" or "TryConcatUnicode";
+    }
+
     private string RenderAbiParameter(
         AbiParameterSymbol parameter,
         bool includeName,
@@ -1289,9 +1536,9 @@ internal sealed class LlvmIrEmitter
             });
     }
 
-    private static IReadOnlyDictionary<string, EmittedStringConstant> CollectStringConstants(ParseResult parseResult, SsaIrModule ssa)
+    private static IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> CollectStringConstants(ParseResult parseResult, SsaIrModule ssa)
     {
-        var result = new Dictionary<string, EmittedStringConstant>(StringComparer.Ordinal);
+        var result = new Dictionary<StringConstantKey, EmittedStringConstant>();
         var index = 0;
 
         AddGlobalStringConstants(parseResult, result, ref index);
@@ -1329,7 +1576,7 @@ internal sealed class LlvmIrEmitter
         return result;
     }
 
-    private static void AddGlobalStringConstants(ParseResult parseResult, Dictionary<string, EmittedStringConstant> constants, ref int index)
+    private static void AddGlobalStringConstants(ParseResult parseResult, Dictionary<StringConstantKey, EmittedStringConstant> constants, ref int index)
     {
         foreach (var declaration in parseResult.Root.topLevelDeclaration())
         {
@@ -1355,14 +1602,14 @@ internal sealed class LlvmIrEmitter
         }
     }
 
-    private static void AddStringConstant(object? source, Dictionary<string, EmittedStringConstant> constants, ref int index)
+    private static void AddStringConstant(object? source, Dictionary<StringConstantKey, EmittedStringConstant> constants, ref int index)
     {
         switch (source)
         {
             case null:
                 return;
             case SsaStringConstant text:
-                AddStringLiteral(text.LiteralText, constants, ref index);
+                AddStringLiteral(text.LiteralText, text.Type, constants, ref index);
                 return;
             case SsaUseRValue use:
                 AddStringConstant(use.Value, constants, ref index);
@@ -1401,6 +1648,11 @@ internal sealed class LlvmIrEmitter
             case SsaLoadSliceElementRValue loadSlice:
                 AddStringConstant(loadSlice.Slice, constants, ref index);
                 AddStringConstant(loadSlice.Index, constants, ref index);
+                return;
+            case SsaTextSliceRValue textSlice:
+                AddStringConstant(textSlice.TextValue, constants, ref index);
+                AddStringConstant(textSlice.Start, constants, ref index);
+                AddStringConstant(textSlice.Length, constants, ref index);
                 return;
             case SsaFieldAddressRValue fieldAddress:
                 AddStringConstant(fieldAddress.Address, constants, ref index);
@@ -1670,11 +1922,11 @@ internal sealed class LlvmIrEmitter
         }
         else if (literal.StringLiteral() is { } stringLiteral)
         {
-            rendered = FormatGlobalStringConstantValue(stringLiteral.GetText());
+            rendered = FormatGlobalStringConstantValue(stringLiteral.GetText(), targetType);
         }
         else if (literal.CharacterLiteral() is { } characterLiteral)
         {
-            rendered = FormatGlobalStringConstantValue(characterLiteral.GetText());
+            rendered = FormatGlobalStringConstantValue(characterLiteral.GetText(), targetType);
         }
         else
         {
@@ -1907,18 +2159,18 @@ internal sealed class LlvmIrEmitter
         return string.Join(" ", segments);
     }
 
-    private string FormatGlobalStringConstantValue(string literalText)
+    private string FormatGlobalStringConstantValue(string literalText, StarkTypeSymbol targetType)
     {
-        var pointer = FormatStringDataPointer(literalText);
-        var constant = _stringConstants[literalText];
+        var pointer = FormatStringDataPointer(literalText, targetType);
+        var constant = _stringConstants[CreateStringConstantKey(literalText, targetType)];
         return $"{{ ptr {pointer}, i64 {constant.DataLength} }}";
     }
 
-    private string FormatStringDataPointer(string literalText)
+    private string FormatStringDataPointer(string literalText, StarkTypeSymbol type)
     {
-        if (!_stringConstants.TryGetValue(literalText, out var constant))
+        if (!_stringConstants.TryGetValue(CreateStringConstantKey(literalText, type), out var constant))
         {
-            throw new InvalidOperationException($"Missing string constant for literal '{literalText}'.");
+            throw new InvalidOperationException($"Missing string constant for literal '{literalText}' with type '{type.DisplayName}'.");
         }
 
         return $"getelementptr inbounds ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
@@ -1941,30 +2193,79 @@ internal sealed class LlvmIrEmitter
         return BigInteger.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private static void AddStringLiteral(string literalText, Dictionary<string, EmittedStringConstant> constants, ref int index)
+    private static void AddStringLiteral(string literalText, Dictionary<StringConstantKey, EmittedStringConstant> constants, ref int index)
     {
-        if (constants.ContainsKey(literalText))
+        var kind = GetTextLiteralKind(literalText);
+        if (TextLiteralDecoder.IsAsciiLiteral(literalText, kind))
+        {
+            AddStringLiteral(literalText, StarkTypeSymbols.Ascii, constants, ref index);
+        }
+
+        AddStringLiteral(literalText, StarkTypeSymbols.Unicode, constants, ref index);
+    }
+
+    private static void AddStringLiteral(
+        string literalText,
+        StarkTypeSymbol type,
+        Dictionary<StringConstantKey, EmittedStringConstant> constants,
+        ref int index)
+    {
+        var key = CreateStringConstantKey(literalText, type);
+        if (constants.ContainsKey(key))
         {
             return;
         }
 
-        var bytes = DecodeStringLiteral(literalText);
-        var terminated = new byte[bytes.Length + 1];
-        bytes.CopyTo(terminated, 0);
+        switch (type.Kind)
+        {
+            case StarkTypeKind.Ascii:
+            {
+                var bytes = DecodeAsciiStringLiteral(literalText);
+                var terminated = new byte[bytes.Length + 1];
+                bytes.CopyTo(terminated, 0);
 
-        constants[literalText] = new EmittedStringConstant(
-            SymbolName: $".str.{index++}",
-            ArrayType: $"[{terminated.Length} x i8]",
-            Initializer: EncodeLlvmByteString(terminated),
-            DataLength: bytes.Length);
+                constants[key] = new EmittedStringConstant(
+                    SymbolName: $".str.{index++}",
+                    ArrayType: $"[{terminated.Length} x i8]",
+                    Initializer: EncodeLlvmByteString(terminated),
+                    DataLength: bytes.Length);
+                return;
+            }
+            case StarkTypeKind.Unicode:
+            {
+                var codeUnits = DecodeUnicodeStringLiteral(literalText);
+                var terminated = new int[codeUnits.Length + 1];
+                codeUnits.CopyTo(terminated, 0);
+
+                constants[key] = new EmittedStringConstant(
+                    SymbolName: $".str.{index++}",
+                    ArrayType: $"[{terminated.Length} x i32]",
+                    Initializer: EncodeLlvmI32Array(terminated),
+                    DataLength: codeUnits.Length);
+                return;
+            }
+            default:
+                throw new InvalidOperationException($"String constants require an ascii/unicode type, but found '{type.DisplayName}'.");
+        }
     }
 
-    private static byte[] DecodeStringLiteral(string literalText)
+    private static byte[] DecodeAsciiStringLiteral(string literalText)
     {
-        var kind = literalText.StartsWith('\'')
+        var kind = GetTextLiteralKind(literalText);
+        return TextLiteralDecoder.DecodeUtf8BytesOrFallback(literalText, kind);
+    }
+
+    private static int[] DecodeUnicodeStringLiteral(string literalText)
+    {
+        var kind = GetTextLiteralKind(literalText);
+        return TextLiteralDecoder.DecodeUtf32CodeUnitsOrFallback(literalText, kind);
+    }
+
+    private static TextLiteralKind GetTextLiteralKind(string literalText)
+    {
+        return literalText.StartsWith('\'')
             ? TextLiteralKind.Character
             : TextLiteralKind.String;
-        return TextLiteralDecoder.DecodeUtf8BytesOrFallback(literalText, kind);
     }
 
     private static string EncodeLlvmByteString(byte[] bytes)
@@ -1988,6 +2289,11 @@ internal sealed class LlvmIrEmitter
         return builder.ToString();
     }
 
+    private static string EncodeLlvmI32Array(int[] values)
+    {
+        return $"[{string.Join(", ", values.Select(static value => $"i32 {value}"))}]";
+    }
+
     private ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type)
     {
         return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
@@ -2007,7 +2313,7 @@ internal sealed class LlvmIrEmitter
         private readonly AbiFunctionSignature _abiFunction;
         private readonly Func<string, string, AbiFunctionSignature?> _resolveCallAbi;
         private readonly SsaFunction _ssaFunction;
-        private readonly IReadOnlyDictionary<string, EmittedStringConstant> _stringConstants;
+        private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
         private readonly Func<string, string> _mapGlobalSymbolName;
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
@@ -2021,7 +2327,7 @@ internal sealed class LlvmIrEmitter
             AbiFunctionSignature abiFunction,
             Func<string, string, AbiFunctionSignature?> resolveCallAbi,
             SsaFunction ssaFunction,
-            IReadOnlyDictionary<string, EmittedStringConstant> stringConstants,
+            IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> stringConstants,
             Func<string, string> mapGlobalSymbolName,
             Func<StarkTypeSymbol, string> mapType,
             Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout)
@@ -2147,6 +2453,9 @@ internal sealed class LlvmIrEmitter
                 case SsaLoadSliceElementRValue loadSlice:
                     EmitLoadSliceElement(result, loadSlice);
                     return;
+                case SsaTextSliceRValue textSlice:
+                    EmitTextSlice(result, textSlice);
+                    return;
                 case SsaAddressOfLocalRValue addressOfLocal:
                     EmitAddressOfLocal(result, addressOfLocal);
                     return;
@@ -2234,20 +2543,6 @@ internal sealed class LlvmIrEmitter
             if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.Integer)
             {
                 AppendLine($"  {result} = ptrtoint ptr {FormatValue(convert.Operand)} to {MapType(targetType)}");
-                return;
-            }
-
-            if ((sourceType.Kind == StarkTypeKind.Ascii && targetType.Kind == StarkTypeKind.Unicode)
-                || (sourceType.Kind == StarkTypeKind.Unicode && targetType.Kind == StarkTypeKind.Ascii))
-            {
-                var data = $"%{EscapeIdentifier($"{result.TrimStart('%')}_data")}";
-                var length = $"%{EscapeIdentifier($"{result.TrimStart('%')}_len")}";
-                var withPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_with_ptr")}";
-
-                AppendLine($"  {data} = extractvalue {MapType(sourceType)} {FormatValue(convert.Operand)}, 0");
-                AppendLine($"  {length} = extractvalue {MapType(sourceType)} {FormatValue(convert.Operand)}, 1");
-                AppendLine($"  {withPointer} = insertvalue {MapType(targetType)} zeroinitializer, ptr {data}, 0");
-                AppendLine($"  {result} = insertvalue {MapType(targetType)} {withPointer}, i64 {length}, 1");
                 return;
             }
 
@@ -2618,6 +2913,19 @@ internal sealed class LlvmIrEmitter
             AppendLine($"  {result} = load {MapType(loadSlice.Type)}, ptr {elementPointer}");
         }
 
+        private void EmitTextSlice(string result, SsaTextSliceRValue textSlice)
+        {
+            var dataPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_data")}";
+            var slicedPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_ptr")}";
+            var withPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_p0")}";
+            var unitType = GetTextUnitType(textSlice.TextValue.Type);
+
+            AppendLine($"  {dataPointer} = extractvalue {MapType(textSlice.TextValue.Type)} {FormatValue(textSlice.TextValue)}, 0");
+            AppendLine($"  {slicedPointer} = getelementptr inbounds {MapType(unitType)}, ptr {dataPointer}, {MapType(textSlice.Start.Type)} {FormatValue(textSlice.Start)}");
+            AppendLine($"  {withPointer} = insertvalue {MapType(textSlice.Type)} zeroinitializer, ptr {slicedPointer}, 0");
+            AppendLine($"  {result} = insertvalue {MapType(textSlice.Type)} {withPointer}, {MapType(textSlice.Length.Type)} {FormatValue(textSlice.Length)}, 1");
+        }
+
         private void EmitAddressOfLocal(string result, SsaAddressOfLocalRValue addressOfLocal)
         {
             EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
@@ -2784,8 +3092,8 @@ internal sealed class LlvmIrEmitter
 
         private string FormatStringConstantValue(SsaStringConstant text)
         {
-            var pointer = FormatStringDataPointer(text.LiteralText);
-            var constant = _stringConstants[text.LiteralText];
+            var pointer = FormatStringDataPointer(text.LiteralText, text.Type);
+            var constant = _stringConstants[CreateStringConstantKey(text.LiteralText, text.Type)];
             return $"{{ ptr {pointer}, i64 {constant.DataLength} }}";
         }
 
@@ -2798,7 +3106,7 @@ internal sealed class LlvmIrEmitter
 
             if (value is SsaStringConstant stringConstant)
             {
-                return FormatStringDataPointer(stringConstant.LiteralText);
+                return FormatStringDataPointer(stringConstant.LiteralText, stringConstant.Type);
             }
 
             var tempName = $"%{EscapeIdentifier(CreateAbiTempName("str_data"))}";
@@ -2806,11 +3114,11 @@ internal sealed class LlvmIrEmitter
             return tempName;
         }
 
-        private string FormatStringDataPointer(string literalText)
+        private string FormatStringDataPointer(string literalText, StarkTypeSymbol type)
         {
-            if (!_stringConstants.TryGetValue(literalText, out var constant))
+            if (!_stringConstants.TryGetValue(CreateStringConstantKey(literalText, type), out var constant))
             {
-                throw new UnsupportedBodyEmissionException($"Missing string constant for literal '{literalText}'.");
+                throw new UnsupportedBodyEmissionException($"Missing string constant for literal '{literalText}' with type '{type.DisplayName}'.");
             }
 
             return $"getelementptr inbounds ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
@@ -2856,6 +3164,16 @@ internal sealed class LlvmIrEmitter
             return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
         }
 
+        private static StarkTypeSymbol GetTextUnitType(StarkTypeSymbol textType)
+        {
+            return textType.Kind switch
+            {
+                StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+                StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+                _ => throw new UnsupportedBodyEmissionException($"Text operations require an ascii/unicode value, but found '{textType.DisplayName}'.")
+            };
+        }
+
         private void AppendLine(string text) => _builder.AppendLine(text);
     }
 
@@ -2883,6 +3201,26 @@ internal sealed class LlvmIrEmitter
         Visiting,
         Visited
     }
+
+    private enum SystemTextBuiltinKind
+    {
+        AsciiView,
+        UnicodeView,
+        TryConcatAscii,
+        TryConcatUnicode
+    }
+
+    private static StringConstantKey CreateStringConstantKey(string literalText, StarkTypeSymbol type)
+    {
+        if (type.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode))
+        {
+            throw new InvalidOperationException($"String constant key requires an ascii/unicode type, but found '{type.DisplayName}'.");
+        }
+
+        return new StringConstantKey(literalText, type.Kind);
+    }
+
+    private readonly record struct StringConstantKey(string LiteralText, StarkTypeKind TypeKind);
 
     private sealed record EmittedStringConstant(string SymbolName, string ArrayType, string Initializer, int DataLength);
 }

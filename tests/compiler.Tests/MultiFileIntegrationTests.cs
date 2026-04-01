@@ -126,6 +126,74 @@ public sealed class MultiFileIntegrationTests
     }
 
     [Fact]
+    public async Task ModuleQualifiedEnumCasesResolveThroughImportedEnumTypes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-multifile-enum-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var textDirectory = Path.Combine(packageDirectory, "System");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(textDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var systemPath = Path.Combine(packageDirectory, "System.stark");
+        var textPath = Path.Combine(textDirectory, "Text.stark");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                systemPath,
+                """
+                export import System.Text
+                module System
+                """);
+
+            await File.WriteAllTextAsync(
+                textPath,
+                """
+                module System.Text
+
+                public enum Encoding {
+                    Binary,
+                    UTF8,
+                    UTF16,
+                    UTF32,
+                }
+                """);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                module App
+
+                fn i32 Run() {
+                    stack System.Text.Encoding encoding = System.Text.Encoding.UTF8;
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--check", "-I", packageDirectory],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Check succeeded.", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task ModulePrivateDeclarationsStayHiddenAcrossModuleBoundaries()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-multifile-visibility-");

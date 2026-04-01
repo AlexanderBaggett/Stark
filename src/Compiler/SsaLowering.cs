@@ -360,6 +360,12 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, loadSlice.Index),
                     loadSlice.Type,
                     loadSlice.Text)),
+                MidLevelIrTextSliceRValue textSlice => EmitValue(block, new SsaTextSliceRValue(
+                    LowerOperand(blockId, block, textSlice.TextValue),
+                    LowerOperand(blockId, block, textSlice.Start),
+                    LowerOperand(blockId, block, textSlice.Length),
+                    textSlice.Type,
+                    textSlice.Text)),
                 MidLevelIrAddressOfLocalRValue addressOfLocal => EmitValue(block, new SsaAddressOfLocalRValue(
                     addressOfLocal.LocalName,
                     addressOfLocal.PointeeType,
@@ -1050,6 +1056,9 @@ internal sealed class SsaLowerer
                 case SsaMakeSliceFromLocalRValue makeSlice:
                     key = $"make-slice|{makeSlice.LocalName}|{TypeKey(makeSlice.SourceType)}|{TypeKey(makeSlice.Type)}";
                     return true;
+                case SsaTextSliceRValue textSlice:
+                    key = $"text-slice|{ValueKey(textSlice.TextValue)}|{ValueKey(textSlice.Start)}|{ValueKey(textSlice.Length)}|{TypeKey(textSlice.Type)}";
+                    return true;
                 case SsaAddressOfLocalRValue addressOfLocal:
                     key = $"address-of-local|{addressOfLocal.LocalName}|{TypeKey(addressOfLocal.PointeeType)}|{TypeKey(addressOfLocal.Type)}";
                     return true;
@@ -1318,6 +1327,12 @@ internal sealed class SsaLowerer
                     RewriteValue(loadSlice.Index, replacements),
                     loadSlice.Type,
                     loadSlice.Text),
+                SsaTextSliceRValue textSlice => new SsaTextSliceRValue(
+                    RewriteValue(textSlice.TextValue, replacements),
+                    RewriteValue(textSlice.Start, replacements),
+                    RewriteValue(textSlice.Length, replacements),
+                    textSlice.Type,
+                    textSlice.Text),
                 SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
                 SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
                     RewriteValue(fieldAddress.Address, replacements),

@@ -140,13 +140,15 @@ Semicolon form is used for declarations such as FFI functions or forward declara
 
 ## 6. Types
 
-### 6.1 Builtin Scalar Types
+### 6.1 Builtin Types
 
-The builtin scalar families are:
+The builtin type families are:
 
 - `bool`
 - `ascii`
 - `unicode`
+- `Ascii`
+- `Unicode`
 - integer widths written as `iN`
 - floating-point widths written as `fN`
 
@@ -490,6 +492,15 @@ The expression surface includes:
 - ternary conditional `?:`
 - assignments and compound assignments
 
+Text slices use the existing postfix indexing form with two expressions:
+
+```stark
+text[start, length]
+```
+
+For `ascii` and `unicode`, this produces another zero-copy text view over the
+same backing storage.
+
 `{ ... }` is an array initializer, not a slice literal.
 
 An array initializer may materialize a fixed array value or participate in
@@ -544,7 +555,7 @@ This is the required surface for conversions that Stark keeps explicit, includin
 - raw pointer to integer and integer to raw pointer conversions
 - raw pointer to raw pointer conversions
 - fixed-array to slice view conversions
-- ascii/unicode text view conversions
+- ascii/unicode text conversions for compile-time text constants
 
 These conversions may not strengthen mutability. In particular, safe code may not use explicit conversions to turn a readonly raw pointer into `rawmutptr<T>`, and may not erase readonly or frozen provenance from a raw pointer in order to regain mutation later.
 
@@ -641,6 +652,11 @@ Stark distinguishes two text forms:
 - `ascii`
 - `unicode`
 
+The core owned text container forms are:
+
+- `Ascii`
+- `Unicode`
+
 String literals infer to:
 
 - `ascii` when the literal contents are ASCII
@@ -657,10 +673,18 @@ Character literals follow the same inference path instead of using a dedicated s
 The current implemented runtime model is:
 
 - both `ascii` and `unicode` lower to text views with runtime layout `{ ptr, i64 }`
-- the `i64` length is the UTF-8 byte length of the referenced text
-- compiler-emitted text literals are stored as UTF-8 bytes in static data with a trailing `\0`, but the Stark value length excludes that terminator
-- the current `ascii` / `unicode` explicit conversions are text-view conversions over the same backing bytes rather than a transcoding step
-- indexing and slicing over text values are not part of the current implemented surface yet
+- for `ascii`, the pointer references UTF-8 bytes and the `i64` length is the byte length of the referenced text
+- for `unicode`, the pointer references UTF-32 code units and the `i64` length is the code-unit count of the referenced text
+- compiler-emitted `ascii` literals are stored as UTF-8 bytes in static data with a trailing `\0`, but the Stark value length excludes that terminator
+- compiler-emitted `unicode` literals are stored as UTF-32 code units in static data with a trailing zero code unit, but the Stark value length excludes that terminator
+- the core owned text containers are `Ascii` and `Unicode`, each using pointer/length/capacity storage and requiring no module import
+- `Ascii.Data` is `rawmutptr<i8>`, `Ascii.Length` counts UTF-8 code units, and `Ascii.Capacity` counts allocated UTF-8 code units
+- `Unicode.Data` is `rawmutptr<i32>`, `Unicode.Length` counts UTF-32 code units, and `Unicode.Capacity` counts allocated UTF-32 code units
+- `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` project those owning containers back to zero-copy immutable `ascii` and `unicode` views
+- `System.Text.TryConcatAscii` and `System.Text.TryConcatUnicode` implement the current non-hidden-allocation concatenation path by writing into caller-provided owned buffers through explicit `rawmutptr` destinations and returning `bool` success instead of allocating implicitly
+- explicit `ascii` / `unicode` widening and narrowing conversions are currently implemented only for compile-time text constants; general runtime text conversion still awaits explicit allocator-backed construction APIs that bridge immutable text views and those owning text containers
+- `text[start, length]` is implemented for both `ascii` and `unicode` and returns another zero-copy text view of the same text kind
+- single-element text indexing is not implemented yet
 
 ## 13. FFI and Raw Boundaries
 

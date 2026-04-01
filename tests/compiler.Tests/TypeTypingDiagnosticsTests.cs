@@ -644,6 +644,62 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void RuntimeAsciiAndUnicodeCastsStillRequireOwningTextStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn unicode Widen(ascii text) {
+                return (unicode)text;
+            }
+
+            fn ascii Narrow(unicode text) {
+                return (ascii)text;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'ascii' to 'unicode' is not supported", "compile-time text constant");
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "compile-time text constant");
+    }
+
+    [Fact]
+    public void NonAsciiUnicodeLiteralsCannotBeNarrowedToAscii()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Run() {
+                return (ascii)"\u03B1";
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "contains non-ASCII data");
+    }
+
+    [Fact]
+    public void TextSlicingRequiresStartAndLength()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Run(ascii text) {
+                return text[1];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Text slicing currently requires exactly two integer expressions: start and length");
+    }
+
+    [Fact]
     public void EmptyIndexAccessProducesATypeDiagnostic()
     {
         var result = Compile(
