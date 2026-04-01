@@ -14,6 +14,7 @@ internal static class ArtifactTextRenderer
         {
             builder.AppendLine($"fn {function.Signature}");
             builder.AppendLine($"  has-body: {function.HasBody.ToString().ToLowerInvariant()}");
+            builder.AppendLine($"  body-kind: {function.BodyLoweringKind}");
             builder.AppendLine($"  direct-codegen: {function.SupportsDirectCodeGeneration.ToString().ToLowerInvariant()}");
 
             if (function.Locals.Count != 0)
@@ -75,6 +76,7 @@ internal static class ArtifactTextRenderer
         {
             builder.AppendLine($"fn {function.Name}({string.Join(", ", function.Parameters.Select(static parameter => $"{parameter.Type.DisplayName} {parameter.Name}"))}) -> {function.ReturnType.DisplayName}");
             builder.AppendLine($"  has-body: {function.HasBody.ToString().ToLowerInvariant()}");
+            builder.AppendLine($"  body-kind: {function.BodyLoweringKind}");
             builder.AppendLine($"  direct-codegen: {function.SupportsDirectCodeGeneration.ToString().ToLowerInvariant()}");
 
             if (function.Blocks.Count != 0)

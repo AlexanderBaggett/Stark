@@ -569,6 +569,39 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [ ] ownership integration for scope-exit cleanup
   - [ ] MIR/SSA/LLVM lowering for destructor calls
   - [ ] stdlib regression tests for owned-resource cleanup
+- [x] Implement ASM Functions
+  - [x] Freeze the v1 surface as `ffi asm(arch) fn` only, keeping v1 focused on syscall-oriented stdlib shims and deferring methods, generics, and trait/doctrine integration.
+  - [x] Extend grammar and parsing for `asm(arch)` plus `in(...)`, `out(...)`, and `clobber(...)` clauses.
+  - [x] Carry asm targets, templates, operands, and clobbers through the syntax model and compiler-owned artifacts.
+  - [x] Normalize architecture names from the active LLVM target triple into a compiler enum used by asm selection.
+  - [x] Select the matching `asm(arch)` declaration for the active target before symbol emission, lowering, and packaging.
+  - [x] Diagnose missing target matches and conflicting target-specific declarations for the same user-facing function.
+  - [x] Validate legal register names for each supported architecture.
+  - [x] Validate operand structure, duplicate bindings, conflicting outputs, and illegal clobbers.
+  - [x] Restrict and validate the v1 parameter and return type set for asm functions.
+  - [x] Define conservative semantic and effect-model rules for asm functions, including memory, unwind, and optimization assumptions.
+  - [x] Integrate selected asm functions with symbol naming and ABI lowering.
+  - [x] Add HIR tracking, or an explicit HIR bypass marker, for selected asm declarations.
+  - [x] Add MIR lowering support, or an explicit MIR bypass, for asm function bodies.
+  - [x] Add SSA lowering support, or an explicit SSA bypass, while preserving correct direct-codegen behavior.
+  - [x] Lower structured operands and clobbers into LLVM inline-asm constraint strings.
+  - [x] Emit correct LLVM inline-asm calls with target-specific register bindings, side effects, and return handling for the syscall-oriented v1 subset.
+  - [x] Persist asm declarations correctly in package manifests for published packages.
+  - [x] Support importing and consuming packaged asm declarations from dependent modules.
+  - [x] Add parser, semantic, and LLVM emission regression tests for asm functions.
+  - [x] Add end-to-end and documentation coverage, including target-selection tests and one minimal asm example.
+- [x] Compiler Logging and Traceability
+  - [x] Add a structured compiler log stream with `info` / `warning` / `error` levels, stage/category tags, source locations, and key/value metadata.
+  - [x] Log pass lifecycle events across the pipeline, including pass start, completion, skip-on-errors, stop-after boundaries, and pass crashes.
+  - [x] Log unsupported or fallback lowering exits explicitly, including `MarkUnsupported()` paths in MIR lowering and LLVM declaration fallbacks in codegen.
+  - [x] Add regression tests that lock down structured logs for normal pass execution, skipped/crashed passes, and unsupported lowering gaps.
+  - [ ] Surface compiler logs through CLI/debug tooling with filtering and human-readable formatting.
+- [ ] Create simple ASM shim to enable invoking of Syscall on Linux
+  - [ ] x86_64 
+  - [ ] aarch64 (ARM64)
+  - [ ] riscv64
+  - [ ] x86 (i386)
+  - [ ] arm (32-bit) 
 
 ## Milestone 7: Standard Library
 
@@ -1043,4 +1076,5 @@ Everything before this point is frozen
 - [ ] Decide HOW Stark exposes inline assembly, syscall intrinsics, or another first-class low-level platform boundary
 - [ ] Define the safety model and target restrictions for those intrinsics
 - [ ] Evaluate whether the Linux stdlib should migrate from a linked syscall boundary shim to direct Stark-level intrinsics
+- [ ] Revisit asm operand widening for `bool` and floating-point values after the syscall-oriented v1 surface ships
 - [ ] First class vector types support for SIMD

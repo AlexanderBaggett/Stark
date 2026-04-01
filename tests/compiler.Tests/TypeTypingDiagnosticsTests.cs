@@ -119,6 +119,31 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void AsmFunctionsRejectUnsupportedParameterAndReturnTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi asm(x86_64) fn bool Broken(ascii text, f32 scale)
+                in("rdi") text,
+                in("rsi") scale,
+                out("rax") return
+            {
+                "syscall"
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "return type 'bool'");
+        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "parameter 'text'", "type 'ascii'");
+        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "parameter 'scale'", "type 'f32'");
+    }
+
+    [Fact]
     public void ExportedFunctionsRejectAggregateTypesThatTransitivelyDependOnEnums()
     {
         var result = Compile(

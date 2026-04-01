@@ -31,7 +31,7 @@ public sealed class StandardLibraryTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted static library:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
@@ -105,7 +105,7 @@ public sealed class StandardLibraryTests
                 buildStderr);
 
             Assert.Equal(0, buildExitCode);
-            Assert.Equal(string.Empty, buildStderr.ToString());
+            AssertCompilerLogsEmitted(buildStderr.ToString());
 
             await File.WriteAllTextAsync(
                 appPath,
@@ -173,7 +173,7 @@ public sealed class StandardLibraryTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -224,5 +224,11 @@ public sealed class StandardLibraryTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root for stdlib integration tests.");
+    }
+
+    private static void AssertCompilerLogsEmitted(string text)
+    {
+        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
+        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
     }
 }

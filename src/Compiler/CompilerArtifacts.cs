@@ -103,6 +103,33 @@ public sealed record FunctionModifierSet(
     bool IsCold,
     bool IsFfi);
 
+public enum StarkAsmArchitecture
+{
+    Unknown,
+    X86_64,
+    AArch64,
+    RiscV64,
+    X86,
+    Arm32
+}
+
+public sealed record AsmInputOperandModel(
+    string RegisterName,
+    string ValueName);
+
+public sealed record AsmOutputOperandModel(
+    string RegisterName,
+    string ValueName,
+    bool BindsReturnValue);
+
+public sealed record AsmFunctionModel(
+    StarkAsmArchitecture Architecture,
+    string ArchitectureText,
+    string TemplateText,
+    IReadOnlyList<AsmInputOperandModel> Inputs,
+    IReadOnlyList<AsmOutputOperandModel> Outputs,
+    IReadOnlyList<string> Clobbers);
+
 public sealed record ParameterModel(string Name, string TypeText);
 
 public sealed record ImportDeclarationModel(
@@ -118,7 +145,8 @@ public sealed record FunctionDeclarationModel(
     string ReturnType,
     IReadOnlyList<ParameterModel> Parameters,
     FunctionModifierSet Modifiers,
-    bool HasBody);
+    bool HasBody,
+    AsmFunctionModel? Asm = null);
 
 public sealed record TopLevelDeclarationModel(
     string Name,
@@ -952,10 +980,18 @@ public sealed record OwnershipValidationModel(
     string ModuleName,
     IReadOnlyDictionary<string, FunctionOwnershipSummary> Functions);
 
+public enum FunctionBodyLoweringKind
+{
+    DeclarationOnly,
+    StarkCfg,
+    AsmBypass
+}
+
 public sealed record HighLevelIrFunction(
     string Name,
     TypedFunctionSignature Signature,
     bool HasBody,
+    FunctionBodyLoweringKind BodyLoweringKind,
     FunctionEffectProfile Effects);
 
 public sealed record HighLevelIrModule(
@@ -1219,7 +1255,8 @@ public sealed record MidLevelIrFunction(
     bool SupportsDirectCodeGeneration,
     int EntryBlockId,
     IReadOnlyList<MidLevelIrLocal> Locals,
-    IReadOnlyList<MidLevelIrBasicBlock> Blocks);
+    IReadOnlyList<MidLevelIrBasicBlock> Blocks,
+    FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly);
 
 public sealed record MidLevelIrModule(
     string ModuleName,
@@ -1524,7 +1561,8 @@ public sealed record SsaFunction(
     bool HasBody,
     bool SupportsDirectCodeGeneration,
     int EntryBlockId,
-    IReadOnlyList<SsaBasicBlock> Blocks);
+    IReadOnlyList<SsaBasicBlock> Blocks,
+    FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly);
 
 public sealed record SsaIrModule(
     string ModuleName,

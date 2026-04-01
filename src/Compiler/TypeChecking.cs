@@ -451,6 +451,11 @@ internal sealed class TypeChecker
                     parameters.Add(new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType));
                 }
 
+                if (declarationModel.Function?.Asm is not null)
+                {
+                    ValidateAsmSignatureSurface(localName, returnType, functionSyntax.ReturnType, parameters, functionSyntax.ParameterList.parameter());
+                }
+
                 var qualifiedName = QualifyName(module, localName);
                 _functions[qualifiedName] = new TypedFunctionSignature(
                     qualifiedName,
@@ -4097,6 +4102,57 @@ internal sealed class TypeChecker
         }
 
         return type;
+    }
+
+    private void ValidateAsmSignatureSurface(
+        string functionName,
+        StarkTypeSymbol returnType,
+        StarkParser.ReturnTypeContext returnContext,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        IReadOnlyList<StarkParser.ParameterContext> parameterContexts)
+    {
+        if (!IsSupportedAsmValueType(returnType, allowVoid: true))
+        {
+            ReportError(
+                "STK3008",
+                $"Asm function '{functionName}' currently supports only integer scalars, raw pointers, and 'void' at the ABI boundary, but found return type '{returnType.DisplayName}'.",
+                returnContext);
+        }
+
+        for (var index = 0; index < parameters.Count; index++)
+        {
+            var parameter = parameters[index];
+            if (IsSupportedAsmValueType(parameter.Type, allowVoid: false))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3008",
+                $"Asm function '{functionName}' currently supports only integer scalars and raw pointers on parameters, but parameter '{parameter.Name}' has type '{parameter.Type.DisplayName}'.",
+                parameterContexts[index].type_());
+        }
+    }
+
+    private static bool IsSupportedAsmValueType(StarkTypeSymbol type, bool allowVoid)
+    {
+        if (type.Kind == StarkTypeKind.Error)
+        {
+            return true;
+        }
+
+        if (allowVoid && type.Kind == StarkTypeKind.Void)
+        {
+            return true;
+        }
+
+        if (type.BorrowKind != StarkBorrowKind.None
+            || type.AccessKind != StarkAccessKind.None)
+        {
+            return false;
+        }
+
+        return type.Kind is StarkTypeKind.Integer or StarkTypeKind.RawPointer;
     }
 
     private void ValidateRuntimeTypeDoesNotDependOnEnum(StarkTypeSymbol type, ParserRuleContext context, string usage)

@@ -1888,6 +1888,81 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RootAsmFunctionsEmitInlineAsmBodiesForTheSyscallSubset()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8> path)
+                in("rax") number,
+                in("rdi") path,
+                out("rax") return,
+                clobber("rcx", "r11")
+            {
+                "syscall"
+            }
+
+            fn i64 Run(rawptr<i8> path) {
+                return Syscall2(2, path);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define i64 @Syscall2(i64 %arg_number, ptr readonly %arg_path) inlinehint", llvm);
+        Assert.Contains("call i64 asm sideeffect \"syscall\", \"={rax},0,{rdi},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(i64 %arg_number, ptr %arg_path)", llvm);
+        Assert.Contains("ret i64 %asm_result", llvm);
+        Assert.DoesNotContain("declare i64 @Syscall2", llvm);
+    }
+
+    [Fact]
+    public void ImportedSourceAsmFunctionsEmitInlineAsmDefinitionsInsteadOfExternalDeclarations()
+    {
+        var result = Compile(
+            """
+            import Syscall
+            module Demo
+
+            fn i64 Run(rawptr<i8> path) {
+                return Syscall.Syscall2(2, path);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Syscall", "/virtual/Syscall.stark", IsExternal: false),
+                        """
+                        module Syscall
+
+                        public ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8> path)
+                            in("rax") number,
+                            in("rdi") path,
+                            out("rax") return,
+                            clobber("rcx", "r11")
+                        {
+                            "syscall"
+                        }
+                        """,
+                        "/virtual/System/Syscall.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("; imported asm definition: Syscall.Syscall2", llvm);
+        Assert.Contains("define i64 @Syscall2(i64 %arg_number, ptr readonly %arg_path) inlinehint", llvm);
+        Assert.Contains("call i64 @Syscall2(i64 2, ptr %arg_path)", llvm);
+        Assert.DoesNotContain("declare i64 @Syscall2", llvm);
+    }
+
+    [Fact]
     public void ImportedGlobalsUseQualifiedDependencySymbols()
     {
         var result = Compile(

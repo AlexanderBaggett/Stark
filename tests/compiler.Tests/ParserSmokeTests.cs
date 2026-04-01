@@ -25,6 +25,23 @@ public sealed class ParserSmokeTests
             """
         },
         {
+            "top level asm functions",
+            """
+            module System.Syscall
+
+            public ffi asm(x86_64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+                in("rax") number,
+                in("rdi") arg1,
+                in("rsi") arg2,
+                in("rdx") arg3,
+                out("rax") return,
+                clobber("rcx", "r11")
+            {
+                "syscall"
+            }
+            """
+        },
+        {
             "struct record trait and doctrine declarations",
             """
             module Shapes

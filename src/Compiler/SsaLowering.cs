@@ -40,7 +40,8 @@ internal sealed class SsaLowerer
                 function.HasBody,
                 SupportsDirectCodeGeneration: false,
                 function.EntryBlockId,
-                []);
+                [],
+                function.BodyLoweringKind);
         }
 
         var builder = new FunctionSsaBuilder(function, _signatures, _globals);
@@ -148,7 +149,8 @@ internal sealed class SsaLowerer
                         phiReplacements,
                         blockId => ResolveCollapsedTarget(blockId, trampolineRedirects, targetCache),
                         blockId => ResolveCollapsedPredecessor(blockId, trampolineRedirects, predecessorCache)))
-                    .ToArray());
+                    .ToArray(),
+                _function.BodyLoweringKind);
         }
 
         private void LowerBlock(int blockId)

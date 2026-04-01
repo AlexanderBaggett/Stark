@@ -123,6 +123,48 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitFunctionBody([NotNull] StarkParser.FunctionBodyContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmSpecifier"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmSpecifier([NotNull] StarkParser.AsmSpecifierContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmClauseList"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmClauseList([NotNull] StarkParser.AsmClauseListContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmClause"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmClause([NotNull] StarkParser.AsmClauseContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmInputClause"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmInputClause([NotNull] StarkParser.AsmInputClauseContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmOutputClause"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmOutputClause([NotNull] StarkParser.AsmOutputClauseContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmClobberClause"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmClobberClause([NotNull] StarkParser.AsmClobberClauseContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmFunctionBody"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmFunctionBody([NotNull] StarkParser.AsmFunctionBodyContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.structDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

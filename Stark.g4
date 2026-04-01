@@ -32,7 +32,7 @@ visibilityModifier
     ;
 
 functionDeclaration
-    : functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* functionBody
+    : functionModifier* asmSpecifier? functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* asmClauseList? functionBody
     ;
 
 functionKind
@@ -80,6 +80,37 @@ typeParameterConstraints
 functionBody
     : block
     | SEMI
+    | asmFunctionBody
+    ;
+
+asmSpecifier
+    : ASM LPAREN Identifier RPAREN
+    ;
+
+asmClauseList
+    : asmClause (COMMA asmClause)* COMMA?
+    ;
+
+asmClause
+    : asmInputClause
+    | asmOutputClause
+    | asmClobberClause
+    ;
+
+asmInputClause
+    : IN LPAREN StringLiteral RPAREN Identifier
+    ;
+
+asmOutputClause
+    : OUT LPAREN StringLiteral RPAREN (Identifier | RETURN)
+    ;
+
+asmClobberClause
+    : CLOBBER LPAREN StringLiteral (COMMA StringLiteral)* COMMA? RPAREN
+    ;
+
+asmFunctionBody
+    : LBRACE StringLiteral RBRACE
     ;
 
 structDeclaration
@@ -604,6 +635,9 @@ HOT         : 'hot';
 COLD        : 'cold';
 FFI         : 'ffi';
 STRICTFP    : 'strictfp';
+ASM         : 'asm';
+CLOBBER     : 'clobber';
+IN          : 'in';
 
 STRUCT      : 'struct';
 RECORD      : 'record';

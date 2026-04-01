@@ -167,6 +167,8 @@ internal static class CompilerCli
             new CompilationInput(source, inputPath),
             compilerOptions);
 
+        await WriteCompilerLogsAsync(stderr, result.Logs);
+
         if (!result.Succeeded)
         {
             foreach (var diagnostic in result.Diagnostics)
@@ -251,6 +253,7 @@ internal static class CompilerCli
                     }
 
                     var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
+                    await WriteCompilerLogsAsync(stderr, dependencyResult.Logs);
                     if (!dependencyResult.Success)
                     {
                         foreach (var diagnostic in dependencyResult.Diagnostics)
@@ -349,6 +352,7 @@ internal static class CompilerCli
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
                     var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
+                    await WriteCompilerLogsAsync(stderr, dependencyResult.Logs);
                     if (!dependencyResult.Success)
                     {
                         foreach (var diagnostic in dependencyResult.Diagnostics)
@@ -502,6 +506,14 @@ internal static class CompilerCli
         }
     }
 
+    private static async Task WriteCompilerLogsAsync(TextWriter stderr, IReadOnlyList<CompilerLogEntry> logs)
+    {
+        foreach (var log in logs)
+        {
+            await stderr.WriteLineAsync(log.ToString());
+        }
+    }
+
     private static DependencyCompileResult CompileDependencyObject(
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
@@ -522,12 +534,12 @@ internal static class CompilerCli
 
         if (!dependencyResult.Succeeded)
         {
-            return new DependencyCompileResult(false, null, dependencyResult.Diagnostics, null);
+            return new DependencyCompileResult(false, null, dependencyResult.Diagnostics, dependencyResult.Logs, null);
         }
 
         if (!dependencyResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
-            return new DependencyCompileResult(false, null, [], null);
+            return new DependencyCompileResult(false, null, [], dependencyResult.Logs, null);
         }
 
         var objectPath = Path.Combine(
@@ -538,8 +550,8 @@ internal static class CompilerCli
             : null;
         var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, objectPath, preservedLlvmOutputPath: llvmPath);
         return toolchainResult.Succeeded
-            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], toolchainResult)
-            : new DependencyCompileResult(false, null, [], toolchainResult);
+            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult)
+            : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult);
     }
 
     private static string CreateIntermediateDirectory(string? requestedDirectory, string tempPrefix, out DirectoryInfo? cleanupDirectory)
@@ -762,6 +774,7 @@ internal static class CompilerCli
         bool Success,
         string? ObjectPath,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
+        IReadOnlyList<CompilerLogEntry> Logs,
         NativeToolchainResult? ToolchainResult);
 
     private sealed record ToolchainCliOptions(

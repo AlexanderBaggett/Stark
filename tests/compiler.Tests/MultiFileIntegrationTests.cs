@@ -51,7 +51,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Check succeeded.", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
         }
         finally
         {
@@ -117,7 +117,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Check succeeded.", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
         }
         finally
         {
@@ -185,7 +185,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Check succeeded.", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
         }
         finally
         {
@@ -317,7 +317,7 @@ public sealed class MultiFileIntegrationTests
             Assert.Equal(0, buildExitCode);
             Assert.Contains("Emitted static library:", buildStdout.ToString());
             Assert.Contains("Emitted package manifest:", buildStdout.ToString());
-            Assert.Equal(string.Empty, buildStderr.ToString());
+            AssertCompilerLogsEmitted(buildStderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
@@ -355,7 +355,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -423,7 +423,7 @@ public sealed class MultiFileIntegrationTests
             Assert.Equal(0, buildExitCode);
             Assert.Contains("Emitted static library:", buildStdout.ToString());
             Assert.Contains("Emitted package manifest:", buildStdout.ToString());
-            Assert.Equal(string.Empty, buildStderr.ToString());
+            AssertCompilerLogsEmitted(buildStderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
@@ -451,7 +451,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -488,5 +488,11 @@ public sealed class MultiFileIntegrationTests
         {
             // Best effort cleanup only.
         }
+    }
+
+    private static void AssertCompilerLogsEmitted(string text)
+    {
+        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
+        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
     }
 }

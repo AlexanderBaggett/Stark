@@ -25,7 +25,7 @@ public sealed class CompilerCliTests
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Check succeeded.", stdout.ToString());
-        Assert.Equal(string.Empty, stderr.ToString());
+        AssertCompilerLogsEmitted(stderr.ToString());
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class CompilerCliTests
         Assert.Contains("mir module Demo", text);
         Assert.Contains("fn i32 Run(bool flag)", text);
         Assert.Contains("blocks:", text);
-        Assert.Equal(string.Empty, stderr.ToString());
+        AssertCompilerLogsEmitted(stderr.ToString());
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class CompilerCliTests
         Assert.Contains("ssa module Demo", text);
         Assert.Contains("phi", text);
         Assert.Contains("branch", text);
-        Assert.Equal(string.Empty, stderr.ToString());
+        AssertCompilerLogsEmitted(stderr.ToString());
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.Contains("mir module Demo", await File.ReadAllTextAsync(outputPath));
         }
@@ -171,7 +171,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted object file:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
         }
@@ -215,7 +215,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted object file:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
         }
@@ -274,7 +274,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Check succeeded.", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
         }
         finally
         {
@@ -339,7 +339,7 @@ public sealed class CompilerCliTests
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted static library:", stdout.ToString());
             Assert.Contains("Emitted package manifest:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
             Assert.True(File.Exists(manifestPath));
@@ -421,7 +421,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -502,7 +502,7 @@ public sealed class CompilerCliTests
                 buildStderr);
 
             Assert.Equal(0, buildExitCode);
-            Assert.Equal(string.Empty, buildStderr.ToString());
+            AssertCompilerLogsEmitted(buildStderr.ToString());
 
             File.Delete(facadePath);
             File.Delete(mathPath);
@@ -529,7 +529,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -544,6 +544,132 @@ public sealed class CompilerCliTests
             Assert.NotNull(process);
             process!.WaitForExit();
             Assert.Equal(7, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeLinksManifestBackedAsmLibrariesWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || !OperatingSystem.IsLinux()
+            || !targetInfo.Triple.StartsWith("x86_64", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-asm-manifest-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var syscallPath = Path.Combine(packageDirectory, "Syscall.stark");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var libraryPath = Path.Combine(packageDirectory, "libSyscall.a");
+        var manifestPath = Path.Combine(packageDirectory, "libSyscall.starkpkg.json");
+        var outputPath = Path.Combine(appDirectory, "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                syscallPath,
+                """
+                module Syscall
+
+                public ffi asm(x86_64) fn i64 Syscall0(i64 number)
+                    in("rax") number,
+                    out("rax") return,
+                    clobber("rcx", "r11")
+                {
+                    "syscall"
+                }
+                """);
+
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [syscallPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+            Assert.True(File.Exists(libraryPath));
+            Assert.True(File.Exists(manifestPath));
+
+            using (var manifest = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath)))
+            {
+                var syscallModule = manifest.RootElement.GetProperty("Modules")
+                    .EnumerateArray()
+                    .Single(module => module.GetProperty("ModuleName").GetString() == "Syscall");
+                var syscallFunction = syscallModule.GetProperty("Functions")
+                    .EnumerateArray()
+                    .Single(function => function.GetProperty("Name").GetString() == "Syscall0");
+                Assert.True(syscallFunction.TryGetProperty("Asm", out var asm));
+                Assert.Equal("x86_64", asm.GetProperty("ArchitectureText").GetString());
+                Assert.Equal("syscall", asm.GetProperty("TemplateText").GetString());
+            }
+
+            File.Delete(syscallPath);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import Syscall
+                module App
+
+                export ffi fn i32 main() {
+                    if (Syscall.Syscall0(39) <= 0) {
+                        return 1;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
         }
         finally
         {
@@ -607,7 +733,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
             Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
@@ -679,7 +805,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
             Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
@@ -739,7 +865,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted static library:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             var archiverLog = await File.ReadAllTextAsync(archiverLogPath);
@@ -781,6 +907,12 @@ public sealed class CompilerCliTests
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;
+    }
+
+    private static void AssertCompilerLogsEmitted(string text)
+    {
+        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
+        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
     }
 
     private static async Task<string> CreateUnixCaptureArchiverAsync(string directory, string logPath)

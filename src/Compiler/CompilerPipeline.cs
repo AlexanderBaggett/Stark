@@ -107,6 +107,8 @@ public sealed class CompilerPassContext
 
     public DiagnosticBag Diagnostics => State.Diagnostics;
 
+    public CompilerLogBag Logs => State.Logs;
+
     public ArtifactStore Artifacts => State.Artifacts;
 }
 
@@ -124,6 +126,8 @@ internal sealed class CompilationState
 
     public DiagnosticBag Diagnostics { get; } = new();
 
+    public CompilerLogBag Logs { get; } = new();
+
     public ArtifactStore Artifacts { get; } = new();
 
     public List<PassExecutionRecord> Executions { get; } = [];
@@ -134,11 +138,14 @@ public sealed class CompilationResult
     internal CompilationResult(CompilationState state)
     {
         Diagnostics = state.Diagnostics.Items;
+        Logs = state.Logs.Items;
         Artifacts = state.Artifacts;
         Executions = state.Executions;
     }
 
     public IReadOnlyList<CompilerDiagnostic> Diagnostics { get; }
+
+    public IReadOnlyList<CompilerLogEntry> Logs { get; }
 
     public ArtifactStore Artifacts { get; }
 
@@ -246,9 +253,23 @@ public sealed class CompilerPipeline
     {
         var state = new CompilationState(input, options ?? new CompilerOptions());
         var context = new CompilerPassContext(state);
+        var compilationLocation = SourceLocation.Synthetic(input.FilePath);
+        var compilationSymbolName = input.FilePath ?? "<compilation>";
 
         foreach (var pass in _passes)
         {
+            state.Logs.Info(
+                "pipeline",
+                "pass-started",
+                $"Starting pass '{pass.Id}'.",
+                stage: pass.Id,
+                symbolName: compilationSymbolName,
+                operation: "pass-start",
+                location: compilationLocation,
+                data: CompilerLogData.Create(
+                    ("phase", pass.Phase.ToString()),
+                    ("executionMode", pass.ExecutionMode.ToString())));
+
             if (state.Diagnostics.HasErrors && pass.ExecutionMode == PassExecutionMode.SkipOnErrors)
             {
                 state.Executions.Add(new PassExecutionRecord(
@@ -258,8 +279,32 @@ public sealed class CompilerPipeline
                     TimeSpan.Zero,
                     0));
 
+                state.Logs.Warning(
+                    "pipeline",
+                    "pass-skipped",
+                    $"Skipping pass '{pass.Id}' because earlier diagnostics contain errors.",
+                    stage: pass.Id,
+                    symbolName: compilationSymbolName,
+                    operation: "pass-skip",
+                    location: compilationLocation,
+                    data: CompilerLogData.Create(
+                        ("phase", pass.Phase.ToString()),
+                        ("reason", "prior-errors"),
+                        ("diagnosticCount", state.Diagnostics.Count.ToString())));
+
                 if (string.Equals(state.Options.StopAfterPassId, pass.Id, StringComparison.Ordinal))
                 {
+                    state.Logs.Info(
+                        "pipeline",
+                        "stop-after-reached",
+                        $"Stopped compilation after pass '{pass.Id}'.",
+                        stage: pass.Id,
+                        symbolName: compilationSymbolName,
+                        operation: "stop-after",
+                        location: compilationLocation,
+                        data: CompilerLogData.Create(
+                            ("phase", pass.Phase.ToString()),
+                            ("status", PassExecutionStatus.Skipped.ToString())));
                     break;
                 }
 
@@ -281,8 +326,33 @@ public sealed class CompilerPipeline
                     stopwatch.Elapsed,
                     state.Diagnostics.Count - diagnosticsBefore));
 
+                state.Logs.Info(
+                    "pipeline",
+                    "pass-completed",
+                    $"Completed pass '{pass.Id}'.",
+                    stage: pass.Id,
+                    symbolName: compilationSymbolName,
+                    operation: "pass-complete",
+                    location: compilationLocation,
+                    data: CompilerLogData.Create(
+                        ("phase", pass.Phase.ToString()),
+                        ("status", PassExecutionStatus.Executed.ToString()),
+                        ("durationMs", stopwatch.ElapsedMilliseconds.ToString()),
+                        ("diagnosticsAdded", (state.Diagnostics.Count - diagnosticsBefore).ToString())));
+
                 if (string.Equals(state.Options.StopAfterPassId, pass.Id, StringComparison.Ordinal))
                 {
+                    state.Logs.Info(
+                        "pipeline",
+                        "stop-after-reached",
+                        $"Stopped compilation after pass '{pass.Id}'.",
+                        stage: pass.Id,
+                        symbolName: compilationSymbolName,
+                        operation: "stop-after",
+                        location: compilationLocation,
+                        data: CompilerLogData.Create(
+                            ("phase", pass.Phase.ToString()),
+                            ("status", PassExecutionStatus.Executed.ToString())));
                     break;
                 }
             }
@@ -300,6 +370,22 @@ public sealed class CompilerPipeline
                     PassExecutionStatus.Failed,
                     stopwatch.Elapsed,
                     state.Diagnostics.Count - diagnosticsBefore));
+
+                state.Logs.Error(
+                    "pipeline",
+                    "pass-failed",
+                    $"Pass '{pass.Id}' failed with an exception.",
+                    stage: pass.Id,
+                    symbolName: compilationSymbolName,
+                    operation: "pass-fail",
+                    location: compilationLocation,
+                    data: CompilerLogData.Create(
+                        ("phase", pass.Phase.ToString()),
+                        ("status", PassExecutionStatus.Failed.ToString()),
+                        ("durationMs", stopwatch.ElapsedMilliseconds.ToString()),
+                        ("diagnosticsAdded", (state.Diagnostics.Count - diagnosticsBefore).ToString()),
+                        ("exceptionType", ex.GetType().FullName),
+                        ("exceptionMessage", ex.Message)));
 
                 if (!state.Options.ContinueAfterErrors)
                 {

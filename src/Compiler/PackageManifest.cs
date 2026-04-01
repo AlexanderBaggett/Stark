@@ -42,11 +42,28 @@ internal sealed record StarkPackageFunctionManifest(
     string ReturnType,
     IReadOnlyList<StarkPackageParameterManifest> Parameters,
     bool IsFfi,
-    bool UseFastCallingConvention);
+    bool UseFastCallingConvention,
+    StarkPackageAsmManifest? Asm = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
     string Type);
+
+internal sealed record StarkPackageAsmManifest(
+    string ArchitectureText,
+    string TemplateText,
+    IReadOnlyList<StarkPackageAsmInputManifest> Inputs,
+    IReadOnlyList<StarkPackageAsmOutputManifest> Outputs,
+    IReadOnlyList<string> Clobbers);
+
+internal sealed record StarkPackageAsmInputManifest(
+    string RegisterName,
+    string ValueName);
+
+internal sealed record StarkPackageAsmOutputManifest(
+    string RegisterName,
+    string ValueName,
+    bool BindsReturnValue);
 
 internal sealed record StarkPackageMethodManifest(
     string Name,
@@ -122,11 +139,11 @@ internal static class PackageManifestBuilder
                     case DeclarationKind.Function when declaration.Function is not null:
                         if (!declaration.Name.Contains('.', StringComparison.Ordinal)
                             && TryBuildFunctionManifest(
+                                declaration.Function,
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
                                 lookupName,
-                                declaration.Function.Kind,
                                 typeModel,
                                 abiModel,
                                 effectModel,
@@ -223,11 +240,11 @@ internal static class PackageManifestBuilder
     }
 
     private static bool TryBuildFunctionManifest(
+        FunctionDeclarationModel declarationFunction,
         string name,
         string qualifiedName,
         string visibility,
         string lookupName,
-        StarkFunctionKind kind,
         TypeCheckModel typeModel,
         AbiModel abiModel,
         FunctionEffectModel effectModel,
@@ -247,12 +264,32 @@ internal static class PackageManifestBuilder
             qualifiedName,
             visibility,
             abiFunction.SymbolName,
-            kind.ToString().ToLowerInvariant(),
+            declarationFunction.Kind.ToString().ToLowerInvariant(),
             function.ReturnType.DisplayName,
             function.Parameters.Select(static parameter => new StarkPackageParameterManifest(parameter.Name, parameter.Type.DisplayName)).ToArray(),
             effects.IsFfi,
-            effects.UseFastCallingConvention);
+            effects.UseFastCallingConvention,
+            BuildAsmManifest(declarationFunction.Asm));
         return true;
+    }
+
+    private static StarkPackageAsmManifest? BuildAsmManifest(AsmFunctionModel? asm)
+    {
+        if (asm is null)
+        {
+            return null;
+        }
+
+        return new StarkPackageAsmManifest(
+            asm.ArchitectureText,
+            asm.TemplateText,
+            asm.Inputs
+                .Select(static input => new StarkPackageAsmInputManifest(input.RegisterName, input.ValueName))
+                .ToArray(),
+            asm.Outputs
+                .Select(static output => new StarkPackageAsmOutputManifest(output.RegisterName, output.ValueName, output.BindsReturnValue))
+                .ToArray(),
+            asm.Clobbers.ToArray());
     }
 
     private static IReadOnlyList<StarkPackageMethodManifest>? BuildTypeMethodManifests(
@@ -450,21 +487,7 @@ internal static class PackageManifestLoader
 
         foreach (var function in module.Module.Functions.OrderBy(static item => item.Name, StringComparer.Ordinal))
         {
-            builder.Append(function.Visibility);
-            builder.Append(' ');
-            if (function.IsFfi)
-            {
-                builder.Append("ffi ");
-            }
-
-            builder.Append(RenderFunctionKind(function.Kind));
-            builder.Append(' ');
-            builder.Append(function.ReturnType);
-            builder.Append(' ');
-            builder.Append(function.Name);
-            builder.Append('(');
-            builder.Append(string.Join(", ", function.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}")));
-            builder.AppendLine(");");
+            EmitFunction(builder, function);
         }
 
         sourceText = builder.ToString();
@@ -481,5 +504,87 @@ internal static class PackageManifestLoader
             "finitelaw" => "finite law",
             _ => "fn"
         };
+    }
+
+    private static void EmitFunction(StringBuilder builder, StarkPackageFunctionManifest function)
+    {
+        builder.Append(function.Visibility);
+        builder.Append(' ');
+        if (function.IsFfi)
+        {
+            builder.Append("ffi ");
+        }
+
+        if (function.Asm is not null)
+        {
+            builder.Append("asm(");
+            builder.Append(function.Asm.ArchitectureText);
+            builder.Append(") ");
+        }
+
+        builder.Append(RenderFunctionKind(function.Kind));
+        builder.Append(' ');
+        builder.Append(function.ReturnType);
+        builder.Append(' ');
+        builder.Append(function.Name);
+        builder.Append('(');
+        builder.Append(string.Join(", ", function.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}")));
+        builder.Append(')');
+
+        if (function.Asm is null)
+        {
+            builder.AppendLine(";");
+            return;
+        }
+
+        builder.AppendLine();
+
+        var clauses = new List<string>();
+        clauses.AddRange(function.Asm.Inputs.Select(static input => $"in(\"{EscapeStarkStringLiteral(input.RegisterName)}\") {input.ValueName}"));
+        clauses.AddRange(function.Asm.Outputs.Select(static output => output.BindsReturnValue
+            ? $"out(\"{EscapeStarkStringLiteral(output.RegisterName)}\") return"
+            : $"out(\"{EscapeStarkStringLiteral(output.RegisterName)}\") {output.ValueName}"));
+
+        if (function.Asm.Clobbers.Count != 0)
+        {
+            clauses.Add($"clobber({string.Join(", ", function.Asm.Clobbers.Select(static register => $"\"{EscapeStarkStringLiteral(register)}\""))})");
+        }
+
+        for (var index = 0; index < clauses.Count; index++)
+        {
+            builder.Append("    ");
+            builder.Append(clauses[index]);
+            if (index + 1 < clauses.Count)
+            {
+                builder.Append(',');
+            }
+
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("{");
+        builder.Append("    \"");
+        builder.Append(EscapeStarkStringLiteral(function.Asm.TemplateText));
+        builder.AppendLine("\"");
+        builder.AppendLine("}");
+    }
+
+    private static string EscapeStarkStringLiteral(string text)
+    {
+        var builder = new StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            builder.Append(ch switch
+            {
+                '\\' => "\\\\",
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                _ => ch.ToString()
+            });
+        }
+
+        return builder.ToString();
     }
 }

@@ -69,9 +69,18 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var parseResult = context.Artifacts.GetRequired(CompilerArtifactKeys.ParseResult);
-            var model = SyntaxModelFactory.Create(parseResult);
+            var buildResult = SyntaxModelFactory.CreateWithDiagnostics(parseResult, context.Options.TargetInfo);
 
-            context.Artifacts.Set(CompilerArtifactKeys.SyntaxModel, model);
+            foreach (var diagnostic in buildResult.Diagnostics)
+            {
+                context.Diagnostics.Error(
+                    diagnostic.Code,
+                    diagnostic.Message,
+                    Id,
+                    new SourceLocation(context.Input.FilePath, diagnostic.Line, diagnostic.Column));
+            }
+
+            context.Artifacts.Set(CompilerArtifactKeys.SyntaxModel, buildResult.Model);
         }
     }
 
@@ -336,7 +345,17 @@ public static class DefaultCompilerPipeline
                             new SourceLocation(filePath ?? module.FilePath, diagnostic.Line, diagnostic.Column));
                     }
 
-                    var importedSyntax = SyntaxModelFactory.Create(importedParse);
+                    var importedBuildResult = SyntaxModelFactory.CreateWithDiagnostics(importedParse, context.Options.TargetInfo);
+                    foreach (var diagnostic in importedBuildResult.Diagnostics)
+                    {
+                        context.Diagnostics.Error(
+                            diagnostic.Code,
+                            diagnostic.Message,
+                            Id,
+                            new SourceLocation(filePath ?? module.FilePath, diagnostic.Line, diagnostic.Column));
+                    }
+
+                    var importedSyntax = importedBuildResult.Model;
                     modules[module.ModuleName] = new LoadedModuleDocument(
                         module with { FilePath = filePath ?? module.FilePath },
                         importedParse,
@@ -386,6 +405,29 @@ public static class DefaultCompilerPipeline
 
         private static FunctionEffectProfile CreateEffectProfile(string name, FunctionDeclarationModel function)
         {
+            if (function.Asm is not null)
+            {
+                var touchesMemory = function.Parameters.Any(static parameter => IsMemoryBackedType(parameter.TypeText))
+                    || function.Asm.Outputs.Any(static output => !output.BindsReturnValue)
+                    || function.Asm.Clobbers.Count != 0;
+
+                return new FunctionEffectProfile(
+                    Name: name,
+                    Kind: StarkFunctionKind.Fn,
+                    ReadsArgumentMemory: touchesMemory,
+                    IsPure: false,
+                    NoSync: false,
+                    NoFree: false,
+                    NoUnwind: false,
+                    WillReturn: false,
+                    MustProgress: false,
+                    UseFastCallingConvention: false,
+                    IsFfi: true,
+                    IsHot: false,
+                    IsCold: false,
+                    InlinePreference: InlinePreference.InlineHint);
+            }
+
             var isLaw = function.Kind is StarkFunctionKind.Law or StarkFunctionKind.FiniteLaw;
             var isFinite = function.Kind is StarkFunctionKind.Finite or StarkFunctionKind.FiniteLaw;
             var readsArgumentMemory = isLaw && function.Parameters.Any(static parameter => IsMemoryBackedType(parameter.TypeText));
@@ -1175,6 +1217,7 @@ public static class DefaultCompilerPipeline
                                 ? signature
                                 : fallbackSignatures[qualifiedName],
                             function.HasBody,
+                            DetermineBodyLoweringKind(function),
                             effects.Functions[qualifiedName]);
                     })
                     .Where(static function => function is not null)
@@ -1184,6 +1227,18 @@ public static class DefaultCompilerPipeline
             context.Artifacts.Set(
                 CompilerArtifactKeys.HighLevelIr,
                 new HighLevelIrModule(loadedModules.RootModuleName, functions));
+        }
+
+        private static FunctionBodyLoweringKind DetermineBodyLoweringKind(FunctionDeclarationModel function)
+        {
+            if (function.Asm is not null)
+            {
+                return FunctionBodyLoweringKind.AsmBypass;
+            }
+
+            return function.HasBody
+                ? FunctionBodyLoweringKind.StarkCfg
+                : FunctionBodyLoweringKind.DeclarationOnly;
         }
 
         private static Dictionary<string, TypedFunctionSignature> CollectFallbackFunctionSignatures(
@@ -1295,7 +1350,8 @@ public static class DefaultCompilerPipeline
                 context.Options.TargetInfo,
                 internalizeModulePrivate: context.Options.QualifyModuleSymbols,
                 semanticValidation: validationModel,
-                closedWorldModel: closedWorldModel).Emit();
+                closedWorldModel: closedWorldModel,
+                logs: context.Logs).Emit();
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
         }
     }

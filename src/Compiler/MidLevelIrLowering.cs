@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Antlr4.Runtime;
 using Stark.Parsing;
@@ -12,6 +13,7 @@ internal sealed class MidLevelIrLowerer(
     TypeCheckModel typeModel,
     EnumLayoutModel enumLayoutModel)
 {
+    private readonly CompilerLogBag _logs = context.Logs;
     private readonly TypeCheckModel _typeModel = typeModel;
     private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
     private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules);
@@ -36,8 +38,7 @@ internal sealed class MidLevelIrLowerer(
 
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
     {
-        if (!_functionsByName.TryGetValue(function.Name, out var loweringContext)
-            || loweringContext.Declaration.Body.block() is not { } body)
+        if (function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass)
         {
             return new MidLevelIrFunction(
                 function.Name,
@@ -48,7 +49,47 @@ internal sealed class MidLevelIrLowerer(
                 SupportsDirectCodeGeneration: false,
                 EntryBlockId: 0,
                 Locals: [],
-                Blocks: []);
+                Blocks: [],
+                BodyLoweringKind: function.BodyLoweringKind);
+        }
+
+        if (!_functionsByName.TryGetValue(function.Name, out var loweringContext)
+            || loweringContext.Declaration.Body.block() is not { } body)
+        {
+            if (function.HasBody)
+            {
+                var logLocation = loweringContext is null
+                    ? SourceLocation.Synthetic()
+                    : new SourceLocation(
+                        loweringContext.FilePath,
+                        loweringContext.Declaration.NameToken.Line,
+                        loweringContext.Declaration.NameToken.Column + 1);
+
+                _logs.Warning(
+                    "lowering",
+                    "missing-function-body",
+                    $"MIR lowering could not find a parsed body for '{function.Name}', so direct code generation was disabled for that function.",
+                    stage: "lower-mir",
+                    symbolName: function.Name,
+                    operation: "LowerFunction",
+                    location: logLocation,
+                    data: CompilerLogData.Create(
+                        ("module", _typeModel.ModuleName),
+                        ("function", function.Name),
+                        ("bodyLoweringKind", function.BodyLoweringKind.ToString())));
+            }
+
+            return new MidLevelIrFunction(
+                function.Name,
+                BuildSignature(function.Signature),
+                function.Signature.ReturnType,
+                function.Signature.Parameters,
+                function.HasBody,
+                SupportsDirectCodeGeneration: false,
+                EntryBlockId: 0,
+                Locals: [],
+                Blocks: [],
+                BodyLoweringKind: function.BodyLoweringKind);
         }
 
         var builder = new FunctionMirBuilder(
@@ -57,6 +98,12 @@ internal sealed class MidLevelIrLowerer(
             _typeModel,
             _enumLayoutModel,
             _typeResolver,
+            _logs,
+            loweringContext.FilePath,
+            new SourceLocation(
+                loweringContext.FilePath,
+                loweringContext.Declaration.NameToken.Line,
+                loweringContext.Declaration.NameToken.Column + 1),
             _fallbackFunctions,
             _fallbackGlobals,
             _literalTypes,
@@ -72,7 +119,8 @@ internal sealed class MidLevelIrLowerer(
             builder.SupportsDirectCodeGeneration,
             builder.EntryBlockId,
             builder.Locals,
-            builder.Blocks);
+            builder.Blocks,
+            function.BodyLoweringKind);
     }
 
     private static string BuildSignature(TypedFunctionSignature function)
@@ -91,7 +139,7 @@ internal sealed class MidLevelIrLowerer(
                 var qualifiedName = module.Reference.IsRoot
                     ? declaration.Name
                     : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
-                functions[qualifiedName] = new FunctionLoweringContext(module.SyntaxModel.ModuleName, declaration);
+                functions[qualifiedName] = new FunctionLoweringContext(module.SyntaxModel.ModuleName, module.Reference.FilePath, declaration);
             }
         }
 
@@ -181,7 +229,7 @@ internal sealed class MidLevelIrLowerer(
             : $"{module.SyntaxModel.ModuleName}.{localName}";
     }
 
-    private sealed record FunctionLoweringContext(string ModuleName, DeclaredFunctionSyntax Declaration);
+    private sealed record FunctionLoweringContext(string ModuleName, string? FilePath, DeclaredFunctionSyntax Declaration);
 
     private readonly record struct LiteralKey(string Text, int Line, int Column);
     private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
@@ -276,10 +324,14 @@ internal sealed class MidLevelIrLowerer(
         private readonly TypeCheckModel _typeModel;
         private readonly EnumLayoutModel _enumLayoutModel;
         private readonly StarkTypeResolver _typeResolver;
+        private readonly CompilerLogBag _logs;
+        private readonly string? _moduleFilePath;
+        private readonly SourceLocation _functionLocation;
         private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _fallbackFunctions;
         private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _fallbackGlobals;
         private readonly IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
         private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
+        private readonly HashSet<string> _unsupportedLogKeys = new(StringComparer.Ordinal);
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
@@ -295,6 +347,9 @@ internal sealed class MidLevelIrLowerer(
             TypeCheckModel typeModel,
             EnumLayoutModel enumLayoutModel,
             StarkTypeResolver typeResolver,
+            CompilerLogBag logs,
+            string? moduleFilePath,
+            SourceLocation functionLocation,
             IReadOnlyDictionary<string, TypedFunctionSignature> fallbackFunctions,
             IReadOnlyDictionary<string, TypedGlobalSymbol> fallbackGlobals,
             IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> literalTypes,
@@ -305,6 +360,9 @@ internal sealed class MidLevelIrLowerer(
             _typeModel = typeModel;
             _enumLayoutModel = enumLayoutModel;
             _typeResolver = typeResolver;
+            _logs = logs;
+            _moduleFilePath = moduleFilePath;
+            _functionLocation = functionLocation;
             _fallbackFunctions = fallbackFunctions;
             _fallbackGlobals = fallbackGlobals;
             _literalTypes = literalTypes;
@@ -472,7 +530,7 @@ internal sealed class MidLevelIrLowerer(
                 var value = LowerObjectInitializer(declaredType, objectInitializer);
                 if (value is null)
                 {
-                    MarkUnsupported();
+                    MarkUnsupported(initializer, "Object initializer lowered without a materialized MIR value.");
                     Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType);
                     return;
                 }
@@ -486,7 +544,7 @@ internal sealed class MidLevelIrLowerer(
                 var value = LowerArrayInitializer(declaredType, arrayInitializer);
                 if (value is null)
                 {
-                    MarkUnsupported();
+                    MarkUnsupported(initializer, "Array initializer lowered without a materialized MIR value.");
                     Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType);
                     return;
                 }
@@ -495,7 +553,7 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            MarkUnsupported();
+            MarkUnsupported(initializer, "Unsupported variable initializer shape.");
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType);
         }
 
@@ -562,7 +620,7 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            MarkUnsupported();
+            MarkUnsupported(expression, "Expression statement could not be lowered to an assignment, rvalue, or operand.");
             Emit(MidLevelIrStatementKind.Evaluate, expression.GetText());
         }
 
@@ -774,7 +832,7 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            MarkUnsupported();
+            MarkUnsupported(switchStatement, "Switch shape is outside the current direct MIR lowering subset.");
 
             var exitBlock = CreateBlock("switch_exit");
             var sectionBlocks = switchStatement.switchSection()
@@ -3002,7 +3060,7 @@ internal sealed class MidLevelIrLowerer(
 
                     if (current is not MidLevelIrLocalOperand local || current.Type.ElementType is null)
                     {
-                        MarkUnsupported();
+                        MarkUnsupported(indexes, "Dynamic fixed-array indexing currently requires a local fixed array source.");
                         return null;
                     }
 
@@ -3012,7 +3070,7 @@ internal sealed class MidLevelIrLowerer(
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
                     {
-                        MarkUnsupported();
+                        MarkUnsupported(indexExpression, "Dynamic fixed-array indexing requires an integer index operand.");
                         return null;
                     }
 
@@ -3057,7 +3115,7 @@ internal sealed class MidLevelIrLowerer(
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
                     {
-                        MarkUnsupported();
+                        MarkUnsupported(indexExpression, "Slice indexing requires an integer index operand.");
                         return null;
                     }
 
@@ -3088,7 +3146,7 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                MarkUnsupported();
+                MarkUnsupported(indexes, "Indexing is only supported for fixed arrays, slices, ascii, and unicode values.");
                 return null;
             }
 
@@ -3100,7 +3158,7 @@ internal sealed class MidLevelIrLowerer(
             var indexExpressions = indexes.expression();
             if (indexExpressions.Length != 2)
             {
-                MarkUnsupported();
+                MarkUnsupported(indexes, "Text slicing currently requires exactly two integer indices.");
                 return null;
             }
 
@@ -3108,7 +3166,7 @@ internal sealed class MidLevelIrLowerer(
             var length = LowerExpressionToOperand(indexExpressions[1]);
             if (start is null || length is null || start.Type.Kind != StarkTypeKind.Integer || length.Type.Kind != StarkTypeKind.Integer)
             {
-                MarkUnsupported();
+                MarkUnsupported(indexes, "Text slicing currently requires integer start and length operands.");
                 return null;
             }
 
@@ -5051,15 +5109,68 @@ internal sealed class MidLevelIrLowerer(
             return block;
         }
 
-        private void MarkUnsupported()
+        private void MarkUnsupported(
+            ParserRuleContext? syntax = null,
+            string? reason = null,
+            [CallerMemberName] string caller = "")
         {
             SupportsDirectCodeGeneration = false;
+
+            var location = CreateSourceLocation(syntax?.Start) ?? _functionLocation;
+            var logKey = string.Join(
+                "|",
+                caller,
+                CurrentBlock.Id.ToString(),
+                location.Line.ToString(),
+                location.Column.ToString(),
+                reason ?? string.Empty);
+
+            if (!_unsupportedLogKeys.Add(logKey))
+            {
+                return;
+            }
+
+            _logs.Warning(
+                "lowering",
+                "unsupported-lowering",
+                reason is null
+                    ? $"MIR lowering marked '{_function.Name}' as unsupported for direct code generation in '{caller}'."
+                    : $"MIR lowering marked '{_function.Name}' as unsupported for direct code generation in '{caller}': {reason}",
+                stage: "lower-mir",
+                symbolName: _function.Name,
+                operation: caller,
+                location: location,
+                data: CompilerLogData.Create(
+                    ("module", _currentModuleName),
+                    ("function", _function.Name),
+                    ("bodyLoweringKind", _function.BodyLoweringKind.ToString()),
+                    ("blockId", CurrentBlock.Id.ToString()),
+                    ("blockLabel", CurrentBlock.Label),
+                    ("reason", reason),
+                    ("syntaxText", TruncateForLog(syntax?.GetText()))));
         }
 
         private MidLevelIrOperand? UnsupportedOperand()
         {
             MarkUnsupported();
             return null;
+        }
+
+        private SourceLocation? CreateSourceLocation(IToken? token)
+        {
+            return token is null
+                ? null
+                : new SourceLocation(_moduleFilePath, token.Line, token.Column + 1);
+        }
+
+        private static string? TruncateForLog(string? text, int maxLength = 120)
+        {
+            if (string.IsNullOrWhiteSpace(text) || text.Length <= maxLength)
+            {
+                return text;
+            }
+
+            return $"{text[..maxLength]}...";
         }
 
         private static string FormatInitializer(StarkParser.VariableInitializerContext initializer)

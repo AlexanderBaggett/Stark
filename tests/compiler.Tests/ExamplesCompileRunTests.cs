@@ -169,7 +169,7 @@ public sealed class ExamplesCompileRunTests
 
         Assert.Equal(0, exitCode);
         Assert.True(File.Exists(libraryPath));
-        Assert.Equal(string.Empty, stderr.ToString());
+        AssertCompilerLogsEmitted(stderr.ToString());
     }
 
     private static async Task<(string Stdout, string Stderr)> CompileExecutableAsync(
@@ -195,7 +195,7 @@ public sealed class ExamplesCompileRunTests
 
         Assert.Equal(0, exitCode);
         Assert.True(File.Exists(outputPath));
-        Assert.Equal(string.Empty, stderr.ToString());
+        AssertCompilerLogsEmitted(stderr.ToString());
         return (stdout.ToString(), stderr.ToString());
     }
 
@@ -212,7 +212,7 @@ public sealed class ExamplesCompileRunTests
 
         Assert.Equal(0, exitCode);
         Assert.True(File.Exists(libraryPath));
-        Assert.Equal(string.Empty, stderr.ToString());
+        AssertCompilerLogsEmitted(stderr.ToString());
     }
 
     private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunNativeExecutableAsync(string executablePath)
@@ -261,5 +261,11 @@ public sealed class ExamplesCompileRunTests
         {
             // Best effort cleanup only.
         }
+    }
+
+    private static void AssertCompilerLogsEmitted(string text)
+    {
+        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
+        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
     }
 }

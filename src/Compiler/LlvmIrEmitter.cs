@@ -18,6 +18,7 @@ internal sealed class LlvmIrEmitter
     private readonly EnumLayoutModel _enumLayoutModel;
     private readonly SemanticValidationModel? _semanticValidation;
     private readonly ClosedWorldOptimizationModel? _closedWorldModel;
+    private readonly CompilerLogBag? _logs;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
     private readonly LlvmTargetInfo? _targetInfo;
@@ -27,6 +28,7 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
+    private readonly IReadOnlyDictionary<string, SourceLocation> _functionLocations;
     private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
     private int _syntheticGlobalInitializerIndex;
 
@@ -42,7 +44,8 @@ internal sealed class LlvmIrEmitter
         LlvmTargetInfo? targetInfo = null,
         bool internalizeModulePrivate = false,
         SemanticValidationModel? semanticValidation = null,
-        ClosedWorldOptimizationModel? closedWorldModel = null)
+        ClosedWorldOptimizationModel? closedWorldModel = null,
+        CompilerLogBag? logs = null)
         : this(
             input,
             parseResult,
@@ -56,7 +59,8 @@ internal sealed class LlvmIrEmitter
             targetInfo,
             internalizeModulePrivate,
             semanticValidation,
-            closedWorldModel)
+            closedWorldModel,
+            logs)
     {
     }
 
@@ -73,7 +77,8 @@ internal sealed class LlvmIrEmitter
         LlvmTargetInfo? targetInfo = null,
         bool internalizeModulePrivate = false,
         SemanticValidationModel? semanticValidation = null,
-        ClosedWorldOptimizationModel? closedWorldModel = null)
+        ClosedWorldOptimizationModel? closedWorldModel = null,
+        CompilerLogBag? logs = null)
     {
         _input = input;
         _parseResult = parseResult;
@@ -84,6 +89,7 @@ internal sealed class LlvmIrEmitter
         _enumLayoutModel = enumLayoutModel;
         _semanticValidation = semanticValidation;
         _closedWorldModel = closedWorldModel;
+        _logs = logs;
         _abiModel = abiModel;
         _ssa = ssa;
         _targetInfo = targetInfo;
@@ -95,6 +101,7 @@ internal sealed class LlvmIrEmitter
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, effectModel);
+        _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
     }
 
@@ -141,6 +148,35 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
             var definitionInternalize = ShouldInternalize(declaration.Visibility);
+            if (function.Asm is not null)
+            {
+                if (TryEmitAsmFunctionDefinition(
+                        builder,
+                        definitionInternalize,
+                        signature,
+                        abiSignature,
+                        effects,
+                        function.Asm,
+                        parameterEffects,
+                        out var asmFailureReason))
+                {
+                    builder.AppendLine();
+                    continue;
+                }
+
+                builder.AppendLine($"; LLVM asm body emission fallback for {function.Name}: {asmFailureReason}");
+                LogLlvmFallback(
+                    "llvm-asm-fallback",
+                    function.Name,
+                    asmFailureReason,
+                    FunctionBodyLoweringKind.AsmBypass,
+                    supportsDirectCodeGeneration: false,
+                    operation: "EmitAsmFunctionDefinition");
+                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects));
+                builder.AppendLine();
+                continue;
+            }
+
             if (!function.HasBody
                 && TryEmitBuiltinFunctionDefinition(
                     builder,
@@ -168,11 +204,25 @@ internal sealed class LlvmIrEmitter
                 catch (UnsupportedBodyEmissionException exception)
                 {
                     builder.AppendLine($"; LLVM body emission fallback for {function.Name}: {exception.Message}");
+                    LogLlvmFallback(
+                        "llvm-body-fallback",
+                        function.Name,
+                        exception.Message,
+                        ssaFunction.BodyLoweringKind,
+                        ssaFunction.SupportsDirectCodeGeneration,
+                        operation: "EmitFunctionDefinition");
                 }
             }
             else if (function.HasBody)
             {
                 builder.AppendLine($"; LLVM body emission pending for {function.Name}");
+                LogLlvmFallback(
+                    "llvm-body-pending",
+                    function.Name,
+                    "SSA lowering did not leave this function in a direct-codegen-capable form, so LLVM emitted only a declaration.",
+                    ssaFunction?.BodyLoweringKind ?? FunctionBodyLoweringKind.DeclarationOnly,
+                    ssaFunction?.SupportsDirectCodeGeneration ?? false,
+                    operation: "EmitFunctionDefinition");
             }
 
             builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects));
@@ -194,8 +244,11 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        var emittedImportedAsmDefinitions = EmitImportedAsmDefinitions(builder);
+
         foreach (var abiFunction in _abiModel.Functions.Values
-                     .Where(function => !rootFunctionNames.Contains(function.Name))
+                     .Where(function => !rootFunctionNames.Contains(function.Name)
+                                        && !emittedImportedAsmDefinitions.Contains(function.Name))
                      .OrderBy(static function => function.Name, StringComparer.Ordinal))
         {
             if (!_typeModel.Functions.TryGetValue(abiFunction.Name, out var signature)
@@ -224,6 +277,111 @@ internal sealed class LlvmIrEmitter
         }
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd());
+    }
+
+    private HashSet<string> EmitImportedAsmDefinitions(StringBuilder builder)
+    {
+        var emitted = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var module in _loadedModules.ImportedModules
+                     .Where(static module => !module.Reference.IsExternal && string.IsNullOrWhiteSpace(module.Reference.ManifestPath))
+                     .OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
+        {
+            foreach (var declaration in module.SyntaxModel.Declarations
+                         .Where(static declaration => declaration.Function?.Asm is not null)
+                         .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
+            {
+                var function = declaration.Function!;
+                var functionName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                if (!_typeModel.Functions.TryGetValue(functionName, out var signature)
+                    || !_abiModel.Functions.TryGetValue(functionName, out var abiSignature)
+                    || !_effectModel.Functions.TryGetValue(functionName, out var effects))
+                {
+                    continue;
+                }
+
+                builder.AppendLine($"; imported asm definition: {functionName}");
+                builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
+
+                if (TryEmitAsmFunctionDefinition(
+                        builder,
+                        internalize: ShouldInternalize(declaration.Visibility),
+                        signature,
+                        abiSignature,
+                        effects,
+                        function.Asm!,
+                        parameterEffects: null,
+                        out var asmFailureReason))
+                {
+                    builder.AppendLine();
+                    emitted.Add(functionName);
+                    continue;
+                }
+
+                builder.AppendLine($"; LLVM asm body emission fallback for {functionName}: {asmFailureReason}");
+                LogLlvmFallback(
+                    "llvm-asm-fallback",
+                    functionName,
+                    asmFailureReason,
+                    FunctionBodyLoweringKind.AsmBypass,
+                    supportsDirectCodeGeneration: false,
+                    operation: "EmitImportedAsmDefinitions");
+                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects: null));
+                builder.AppendLine();
+                emitted.Add(functionName);
+            }
+        }
+
+        return emitted;
+    }
+
+    private void LogLlvmFallback(
+        string eventId,
+        string functionName,
+        string reason,
+        FunctionBodyLoweringKind bodyLoweringKind,
+        bool supportsDirectCodeGeneration,
+        string operation)
+    {
+        _logs?.Warning(
+            "codegen",
+            eventId,
+            $"LLVM emitted a declaration fallback for '{functionName}': {reason}",
+            stage: "emit-llvm",
+            symbolName: functionName,
+            operation: operation,
+            location: _functionLocations.TryGetValue(functionName, out var location)
+                ? location
+                : SourceLocation.Synthetic(_input.FilePath),
+            data: CompilerLogData.Create(
+                ("module", _syntaxModel.ModuleName),
+                ("function", functionName),
+                ("reason", reason),
+                ("bodyLoweringKind", bodyLoweringKind.ToString()),
+                ("supportsDirectCodeGeneration", supportsDirectCodeGeneration.ToString()),
+                ("targetTriple", _targetInfo?.Triple)));
+    }
+
+    private static IReadOnlyDictionary<string, SourceLocation> BuildFunctionLocationMap(LoadedModuleSet loadedModules, string? rootInputFilePath)
+    {
+        var locations = new Dictionary<string, SourceLocation>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            var filePath = module.Reference.FilePath ?? rootInputFilePath;
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            {
+                var qualifiedName = module.Reference.IsRoot
+                    ? declaration.Name
+                    : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
+                locations[qualifiedName] = new SourceLocation(
+                    filePath,
+                    declaration.NameToken.Line,
+                    declaration.NameToken.Column + 1);
+            }
+        }
+
+        return locations;
     }
 
     private Func<string, string, AbiFunctionSignature?> CreateCallAbiResolver()
@@ -970,6 +1128,148 @@ internal sealed class LlvmIrEmitter
         builder.Append(functionBuilder);
     }
 
+    private bool TryEmitAsmFunctionDefinition(
+        StringBuilder builder,
+        bool internalize,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        AsmFunctionModel asmFunction,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out string failureReason)
+    {
+        if (abiFunction.ReturnsIndirect)
+        {
+            failureReason = "v1 asm body emission does not support indirect return ABIs.";
+            return false;
+        }
+
+        if (asmFunction.Outputs.Any(static output => !output.BindsReturnValue))
+        {
+            failureReason = "v1 asm body emission currently supports only direct return bindings and no out/init parameter outputs.";
+            return false;
+        }
+
+        if (function.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            if (asmFunction.Outputs.Count != 0)
+            {
+                failureReason = "void asm functions cannot bind a return register.";
+                return false;
+            }
+        }
+        else if (asmFunction.Outputs.Count != 1)
+        {
+            failureReason = "non-void asm functions must bind exactly one return register.";
+            return false;
+        }
+
+        foreach (var parameter in abiFunction.UserParameters)
+        {
+            if (parameter.Kind != AbiParameterKind.Direct)
+            {
+                failureReason = $"v1 asm body emission requires direct ABI parameters, but '{parameter.SourceName}' lowers indirectly.";
+                return false;
+            }
+        }
+
+        var functionBuilder = new StringBuilder();
+        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects));
+        functionBuilder.AppendLine("{");
+        EmitAsmFunctionBody(functionBuilder, function, abiFunction, asmFunction);
+        functionBuilder.AppendLine("}");
+        builder.Append(functionBuilder);
+
+        failureReason = string.Empty;
+        return true;
+    }
+
+    private void EmitAsmFunctionBody(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        AsmFunctionModel asmFunction)
+    {
+        var abiParametersByName = abiFunction.UserParameters.ToDictionary(static parameter => parameter.SourceName, StringComparer.Ordinal);
+        var outputOperand = asmFunction.Outputs.SingleOrDefault(static output => output.BindsReturnValue);
+        var constraintFragments = new List<string>();
+        var argumentFragments = new List<string>();
+        string? returnRegister = null;
+
+        if (outputOperand is not null)
+        {
+            returnRegister = StarkAsmRegisterFacts.Normalize(outputOperand.RegisterName);
+            constraintFragments.Add($"={{{returnRegister}}}");
+        }
+
+        foreach (var input in asmFunction.Inputs)
+        {
+            if (!abiParametersByName.TryGetValue(input.ValueName, out var parameter))
+            {
+                throw new InvalidOperationException($"Missing ABI parameter '{input.ValueName}' for asm declaration '{function.Name}'.");
+            }
+
+            var inputRegister = StarkAsmRegisterFacts.Normalize(input.RegisterName);
+            constraintFragments.Add(string.Equals(returnRegister, inputRegister, StringComparison.Ordinal)
+                ? "0"
+                : $"{{{inputRegister}}}");
+            argumentFragments.Add($"{MapType(parameter.LlvmType)} %{EscapeIdentifier(parameter.LlvmName)}");
+        }
+
+        foreach (var clobber in BuildAsmConstraintClobbers(asmFunction))
+        {
+            constraintFragments.Add($"~{{{clobber}}}");
+        }
+
+        var escapedTemplate = EscapeInlineAsmString(asmFunction.TemplateText);
+        var escapedConstraints = EscapeInlineAsmString(string.Join(",", constraintFragments));
+
+        builder.AppendLine("entry:");
+        if (function.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            builder.AppendLine(
+                $"  call void asm sideeffect \"{escapedTemplate}\", \"{escapedConstraints}\"({string.Join(", ", argumentFragments)})");
+            builder.AppendLine("  ret void");
+            return;
+        }
+
+        var llvmReturnType = MapType(abiFunction.LlvmReturnType);
+        builder.AppendLine(
+            $"  %asm_result = call {llvmReturnType} asm sideeffect \"{escapedTemplate}\", \"{escapedConstraints}\"({string.Join(", ", argumentFragments)})");
+        builder.AppendLine($"  ret {llvmReturnType} %asm_result");
+    }
+
+    private static IReadOnlyList<string> BuildAsmConstraintClobbers(AsmFunctionModel asmFunction)
+    {
+        var clobbers = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(string name)
+        {
+            var normalized = StarkAsmRegisterFacts.Normalize(name);
+            if (seen.Add(normalized))
+            {
+                clobbers.Add(normalized);
+            }
+        }
+
+        foreach (var clobber in asmFunction.Clobbers)
+        {
+            Add(clobber);
+        }
+
+        Add("memory");
+
+        if (asmFunction.Architecture is StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.X86)
+        {
+            Add("dirflag");
+            Add("fpsr");
+            Add("flags");
+        }
+
+        return clobbers;
+    }
+
     private string BuildDeclarationSignature(
         bool internalize,
         TypedFunctionSignature function,
@@ -1510,6 +1810,24 @@ internal sealed class LlvmIrEmitter
     private static string EscapeFileName(string filePath)
     {
         return filePath.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+    }
+
+    private static string EscapeInlineAsmString(string text)
+    {
+        var builder = new StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            if (ch >= 0x20 && ch <= 0x7E && ch is not '\\' and not '"')
+            {
+                builder.Append(ch);
+                continue;
+            }
+
+            builder.Append('\\');
+            builder.Append(((int)ch).ToString("X2"));
+        }
+
+        return builder.ToString();
     }
 
     private static string EscapeIdentifier(string identifier)
