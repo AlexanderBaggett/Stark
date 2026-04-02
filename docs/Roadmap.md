@@ -565,9 +565,9 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] ambiguity and no-match diagnostics
   - [x] symbol, manifest, and package behavior for overload sets
 - [ ] Destructor syntax and implementation
-  - [ ] source-level destructor declaration surface
-  - [ ] ownership integration for scope-exit cleanup
-  - [ ] MIR/SSA/LLVM lowering for destructor calls
+  - [x] source-level destructor declaration surface
+  - [x] ownership integration for scope-exit cleanup
+  - [x] MIR/SSA/LLVM lowering for destructor calls
   - [ ] stdlib regression tests for owned-resource cleanup
 - [x] Implement ASM Functions
   - [x] Freeze the v1 surface as `ffi asm(arch) fn` only, keeping v1 focused on syscall-oriented stdlib shims and deferring methods, generics, and trait/doctrine integration.
@@ -613,7 +613,7 @@ Goal: unlock the language surface the standard library wants before the stdlib i
 ## Milestone 7: Standard Library
 
 Goal: replace the current libc-backed stdlib slice with a cross-platform `System` package that hides platform boundaries behind Stark APIs.
-
+- Remember to reference StandardLibrary.md
 - [ ] Define the public `System` module layout
   - [ ] `System`
   - [ ] `System.Console`

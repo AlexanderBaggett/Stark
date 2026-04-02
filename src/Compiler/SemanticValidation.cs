@@ -10,6 +10,7 @@ internal sealed class SemanticValidator
     private readonly ParseResult _parseResult;
     private readonly SyntaxModel _syntaxModel;
     private readonly ModuleGraph _moduleGraph;
+    private readonly LoadedModuleSet _loadedModules;
     private readonly FunctionEffectModel _effectModel;
     private readonly TypeCheckModel _typeModel;
     private readonly EnumLayoutModel _enumLayoutModel;
@@ -24,6 +25,7 @@ internal sealed class SemanticValidator
         ParseResult parseResult,
         SyntaxModel syntaxModel,
         ModuleGraph moduleGraph,
+        LoadedModuleSet loadedModules,
         FunctionEffectModel effectModel,
         TypeCheckModel typeModel,
         EnumLayoutModel enumLayoutModel)
@@ -32,6 +34,7 @@ internal sealed class SemanticValidator
         _parseResult = parseResult;
         _syntaxModel = syntaxModel;
         _moduleGraph = moduleGraph;
+        _loadedModules = loadedModules;
         _effectModel = effectModel;
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
@@ -51,6 +54,7 @@ internal sealed class SemanticValidator
     public SemanticValidationModel Validate()
     {
         ValidateGlobalDeclarations();
+        ValidateDestructorDeclarations();
 
         foreach (var function in _functionDeclarations.Values)
         {
@@ -91,6 +95,128 @@ internal sealed class SemanticValidator
                 ValidateTypeUsage(declaredType, TypeUsage.Global, variableDeclaration.type_(), isFfiBoundary: false);
             }
         }
+    }
+
+    private void ValidateDestructorDeclarations()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            var destructors = DeclaredDestructorSyntaxCollector.Collect(module)
+                .GroupBy(static destructor => destructor.QualifiedTypeName, StringComparer.Ordinal);
+
+            foreach (var group in destructors)
+            {
+                ValidateDestructorDeclarations(group.Key, group.ToArray());
+            }
+        }
+    }
+
+    private void ValidateDestructorDeclarations(
+        string qualifiedTypeName,
+        IReadOnlyList<DeclaredDestructorSyntax> destructors)
+    {
+        if (destructors.Count == 0)
+        {
+            return;
+        }
+
+        if (destructors.Count > 1)
+        {
+            foreach (var duplicate in destructors.Skip(1))
+            {
+                _context.Diagnostics.Error(
+                    "STK4012",
+                    $"Type '{qualifiedTypeName}' declares more than one destructor block. Stark currently allows at most one 'drop' or 'mut drop' block per type.",
+                    "semantic-validate",
+                    Location(duplicate.Declaration.Start));
+            }
+        }
+
+        var destructor = destructors[0];
+        var mutatesSelf = BlockMutatesSelf(destructor.Body);
+
+        if (!destructor.IsMutable && mutatesSelf)
+        {
+            _context.Diagnostics.Error(
+                "STK4011",
+                $"Read-only destructor 'drop' on '{qualifiedTypeName}' may not mutate 'self'. Use 'mut drop' if destructor state rewrites are required.",
+                "semantic-validate",
+                Location(destructor.Declaration.Start));
+        }
+
+        if (destructor.IsMutable && !mutatesSelf)
+        {
+            _context.Diagnostics.Warning(
+                "STK4010",
+                $"Destructor 'mut drop' on '{qualifiedTypeName}' does not mutate 'self'. Use 'drop' instead.",
+                "semantic-validate",
+                Location(destructor.Declaration.Start));
+        }
+
+        if (ContainsReturnStatement(destructor.Body))
+        {
+            _context.Diagnostics.Error(
+                "STK4014",
+                $"Destructor block on '{qualifiedTypeName}' may not use 'return' because destructors are not ordinary functions.",
+                "semantic-validate",
+                Location(destructor.Declaration.Start));
+        }
+    }
+
+    private static bool BlockMutatesSelf(StarkParser.BlockContext block)
+    {
+        return ContainsSelfMutation(block);
+    }
+
+    private static bool ContainsSelfMutation(ParserRuleContext context)
+    {
+        if (context is StarkParser.AssignmentExpressionContext assignment
+            && assignment.unaryExpression() is { } target
+            && IsSelfMutationTarget(target))
+        {
+            return true;
+        }
+
+        for (var index = 0; index < context.ChildCount; index++)
+        {
+            if (context.GetChild(index) is ParserRuleContext child && ContainsSelfMutation(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsReturnStatement(ParserRuleContext context)
+    {
+        if (context is StarkParser.ReturnStatementContext)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < context.ChildCount; index++)
+        {
+            if (context.GetChild(index) is ParserRuleContext child && ContainsReturnStatement(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSelfMutationTarget(StarkParser.UnaryExpressionContext target)
+    {
+        var postfix = target.powerExpression()?.postfixExpression();
+        if (postfix is null)
+        {
+            return false;
+        }
+
+        var primary = postfix.primaryExpression();
+        return primary?.Identifier() is { } identifier
+            && string.Equals(identifier.GetText(), "self", StringComparison.Ordinal);
     }
 
     private void ValidateConstGlobal(

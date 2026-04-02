@@ -1518,10 +1518,290 @@ public sealed class MidLevelIrLoweringTests
         Assert.False(returned.Type.IsMutablePointer);
     }
 
-    private CompilationResult Compile(string source)
+    [Fact]
+    public void DestructorBlocksLowerBeforeStorageDeadAtScopeExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            fn void Bump(i32 value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Buffer {
+                i32 Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            fn void Run() {
+                stack Buffer box = new Buffer() { Value = 4 };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        var callIndex = Array.FindIndex(
+            statements,
+            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+        var storageDeadIndex = Array.FindIndex(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "box");
+
+        Assert.True(callIndex >= 0);
+        Assert.True(storageDeadIndex > callIndex);
+    }
+
+    [Fact]
+    public void ReassigningADestructibleLocalLowersTheOldDropBeforeOverwrite()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            fn void Bump(i32 value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Buffer {
+                i32 Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            fn void Run() {
+                stack mut Buffer box = new Buffer() { Value = 1 };
+                box = new Buffer() { Value = 7 };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        var boxAssignments = statements
+            .Select((statement, index) => (statement, index))
+            .Where(static item => item.statement.Kind == MidLevelIrStatementKind.Assign && item.statement.TargetName == "box")
+            .ToArray();
+        var dropCalls = statements
+            .Select((statement, index) => (statement, index))
+            .Where(static item => item.statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" })
+            .ToArray();
+
+        Assert.Equal(2, boxAssignments.Length);
+        Assert.True(dropCalls.Length >= 2);
+        Assert.True(dropCalls[0].index > boxAssignments[0].index);
+        Assert.True(dropCalls[0].index < boxAssignments[1].index);
+    }
+
+    [Fact]
+    public void ImportedTypeDestructorsResolveHelpersInTheirDefiningModule()
+    {
+        var result = Compile(
+            """
+            import Lib
+            module Demo
+
+            fn void Run() {
+                stack Lib.Buffer box = new Lib.Buffer() { Value = 4 };
+                return;
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib", "/virtual/Lib.stark", IsExternal: false),
+                        """
+                        module Lib
+
+                        fn void Bump(i32 value) {
+                            return;
+                        }
+
+                        public struct Buffer {
+                            i32 Value;
+
+                            drop {
+                                Bump(self.Value);
+                            }
+                        }
+                        """,
+                        "/virtual/Lib.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Lib.Bump" });
+    }
+
+    [Fact]
+    public void EnumPayloadDropsLowerThroughActiveTagDispatch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            fn void Bump(i32 value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32 Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Token {
+                End,
+                Text(Resource),
+            }
+
+            fn void Run() {
+                stack Token token = Token.Text(new Resource() { Value = 4 });
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(function.Blocks, static block => block.Label.Contains("enum_drop_", StringComparison.Ordinal));
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+        Assert.Contains(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "token");
+    }
+
+    [Fact]
+    public async Task ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            fn void Bump(i32 value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32 Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Token {
+                End,
+                Text(Resource),
+            }
+
+            export ffi fn i32 main() {
+                stack mut Token token = Token.Text(new Resource() { Value = 1 });
+                token = Token.End;
+                return Counter;
+            }
+            """);
+
+        Assert.Equal(1, exitCode);
+    }
+
+    private CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         using var logScope = CompilerLogOutput.Push(new TestOutputWriter(_output), DiagnosticSeverity.Info);
-        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
+        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);
+    }
+
+    private static async Task<int> CompileAndRunExitCodeAsync(string source)
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-mir-enum-drop-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(sourcePath, source);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [sourcePath, "--emit-exe", "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var standardOutput = await process!.StandardOutput.ReadToEndAsync();
+            var standardError = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(string.Empty, standardOutput);
+            Assert.Equal(string.Empty, standardError);
+            return process.ExitCode;
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     private static MidLevelIrModule GetMir(CompilationResult result)

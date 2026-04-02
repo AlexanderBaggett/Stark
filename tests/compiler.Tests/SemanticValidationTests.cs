@@ -395,9 +395,72 @@ public sealed class SemanticValidationTests
         AssertDiagnostic(result, "STK4105");
     }
 
-    private static CompilationResult Compile(string source)
+    [Fact]
+    public void ReadOnlyDropBlocksCannotMutateSelf()
     {
-        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i32 Value;
+
+                drop {
+                    self.Value = 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4011");
+    }
+
+    [Fact]
+    public void MutDropWithoutSelfMutationProducesWarning()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i32 Value;
+
+                mut drop {
+                    ;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4010"
+                && diagnostic.Severity == DiagnosticSeverity.Warning);
+    }
+
+    [Fact]
+    public void DestructorBlocksCannotReturn()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                drop {
+                    return;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4014");
+    }
+
+    private static CompilationResult Compile(string source, CompilerOptions? options = null)
+    {
+        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);
     }
 
     private static void AssertDiagnostic(CompilationResult result, string code)

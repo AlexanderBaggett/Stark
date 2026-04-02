@@ -33,6 +33,18 @@ public sealed class ParserConformanceTests
                 fn i32 Width() {
                     return 2;
                 }
+
+                drop {
+                    ;
+                }
+            }
+
+            struct Buffer {
+                rawptr<i8> Ptr;
+
+                mut drop {
+                    self.Ptr = null;
+                }
             }
             """
         },

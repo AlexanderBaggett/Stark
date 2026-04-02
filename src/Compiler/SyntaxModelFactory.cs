@@ -619,7 +619,11 @@ internal static class SyntaxModelFactory
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
                 visibility,
-                null));
+                null,
+                Destructor: CreateDestructorModel(
+                    structDeclaration.structBody().structMember()
+                        .Select(static member => member.destructorDeclaration())
+                        .FirstOrDefault(static destructor => destructor is not null))));
 
             foreach (var method in structDeclaration.structBody().structMember()
                          .Select(static member => member.methodDeclaration())
@@ -649,7 +653,11 @@ internal static class SyntaxModelFactory
                 recordDeclaration.Identifier().GetText(),
                 DeclarationKind.Record,
                 visibility,
-                null));
+                null,
+                Destructor: CreateDestructorModel(
+                    recordDeclaration.recordBody().recordMember()
+                        .Select(static member => member.destructorDeclaration())
+                        .FirstOrDefault(static destructor => destructor is not null))));
 
             foreach (var method in recordDeclaration.recordBody().recordMember()
                          .Select(static member => member.methodDeclaration())
@@ -800,6 +808,14 @@ internal static class SyntaxModelFactory
                 modifiers.Contains("ffi")),
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody));
+    }
+
+    private static DestructorDeclarationModel? CreateDestructorModel(
+        StarkParser.DestructorDeclarationContext? destructor)
+    {
+        return destructor is null
+            ? null
+            : new DestructorDeclarationModel(destructor.MUT() is not null);
     }
 
     private static AsmFunctionModel? CreateAsmModel(

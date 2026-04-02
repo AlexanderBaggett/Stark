@@ -161,12 +161,14 @@ structMember
     : fieldDeclaration
     | methodDeclaration
     | constructorDeclaration
+    | destructorDeclaration
     ;
 
 recordMember
     : fieldDeclaration
     | methodDeclaration
     | constructorDeclaration
+    | destructorDeclaration
     ;
 
 enumVariantDeclaration
@@ -213,6 +215,10 @@ doctrineFunctionKind
 
 constructorDeclaration
     : Identifier parameterList block
+    ;
+
+destructorDeclaration
+    : MUT? DROP block
     ;
 
 globalConstantDeclaration
@@ -663,6 +669,7 @@ RECORD      : 'record';
 ENUM        : 'enum';
 TRAIT       : 'trait';
 DOCTRINE    : 'doctrine';
+DROP        : 'drop';
 
 STACK       : 'stack';
 HEAP        : 'heap';

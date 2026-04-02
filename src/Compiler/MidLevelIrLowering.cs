@@ -17,6 +17,7 @@ internal sealed class MidLevelIrLowerer(
     private readonly TypeCheckModel _typeModel = typeModel;
     private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
     private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules);
+    private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
     private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes);
     private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, typeModel.NamedTypes, loadedModules);
     private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, typeModel.NamedTypes, loadedModules);
@@ -106,6 +107,7 @@ internal sealed class MidLevelIrLowerer(
             _typeModel,
             _enumLayoutModel,
             _typeResolver,
+            _destructorsByTypeName,
             _logs,
             loweringContext.FilePath,
             functionLocation,
@@ -183,6 +185,25 @@ internal sealed class MidLevelIrLowerer(
         }
 
         return functions;
+    }
+
+    private static Dictionary<string, DestructorLoweringContext> CollectDestructorsByTypeName(LoadedModuleSet loadedModules)
+    {
+        var destructors = new Dictionary<string, DestructorLoweringContext>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            foreach (var declaration in DeclaredDestructorSyntaxCollector.Collect(module))
+            {
+                destructors[declaration.QualifiedTypeName] = new DestructorLoweringContext(
+                    declaration.QualifiedTypeName,
+                    declaration.ModuleName,
+                    declaration.IsMutable,
+                    declaration.Body);
+            }
+        }
+
+        return destructors;
     }
 
     private static Dictionary<string, TypedFunctionSignature> CollectFallbackFunctionSignatures(
@@ -270,6 +291,11 @@ internal sealed class MidLevelIrLowerer(
     }
 
     private sealed record FunctionLoweringContext(string ModuleName, string? FilePath, DeclaredFunctionSyntax Declaration);
+    private sealed record DestructorLoweringContext(
+        string QualifiedTypeName,
+        string ModuleName,
+        bool IsMutable,
+        StarkParser.BlockContext Body);
 
     private readonly record struct LiteralKey(string Text, int Line, int Column);
     private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
@@ -352,11 +378,48 @@ internal sealed class MidLevelIrLowerer(
             StarkTypeSymbol TargetType,
             MidLevelIrRValue? DirectValue,
             MidLevelIrOperand ResultValue,
-            MidLevelIrOperand? Address);
+            MidLevelIrOperand? Address,
+            bool ReplacesWholeValue);
 
         private sealed class ScopeFrame
         {
             public List<(string Name, StarkTypeSymbol Type)> Locals { get; } = [];
+        }
+
+        private sealed class DestructorContext : IDisposable
+        {
+            private readonly FunctionMirBuilder _builder;
+            private readonly string? _previousModuleName;
+            private readonly string _aliasName;
+            private readonly string? _previousAlias;
+            private readonly bool _hadAlias;
+
+            public DestructorContext(
+                FunctionMirBuilder builder,
+                string? previousModuleName,
+                string aliasName,
+                string? previousAlias,
+                bool hadAlias)
+            {
+                _builder = builder;
+                _previousModuleName = previousModuleName;
+                _aliasName = aliasName;
+                _previousAlias = previousAlias;
+                _hadAlias = hadAlias;
+            }
+
+            public void Dispose()
+            {
+                _builder._moduleNameOverride = _previousModuleName;
+                if (_hadAlias)
+                {
+                    _builder._nameAliases[_aliasName] = _previousAlias!;
+                }
+                else
+                {
+                    _builder._nameAliases.Remove(_aliasName);
+                }
+            }
         }
 
         private readonly HighLevelIrFunction _function;
@@ -364,6 +427,7 @@ internal sealed class MidLevelIrLowerer(
         private readonly TypeCheckModel _typeModel;
         private readonly EnumLayoutModel _enumLayoutModel;
         private readonly StarkTypeResolver _typeResolver;
+        private readonly IReadOnlyDictionary<string, DestructorLoweringContext> _destructorsByTypeName;
         private readonly CompilerLogBag _logs;
         private readonly string? _moduleFilePath;
         private readonly SourceLocation _functionLocation;
@@ -376,9 +440,13 @@ internal sealed class MidLevelIrLowerer(
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
+        private readonly Dictionary<string, bool> _runtimeDropStates = new(StringComparer.Ordinal);
+        private readonly List<string> _parameterDropOrder = [];
+        private readonly Dictionary<string, string> _nameAliases = new(StringComparer.Ordinal);
         private readonly List<BasicBlockBuilder> _blocks = [];
         private readonly Stack<LoopTargets> _loops = [];
         private readonly Stack<ScopeFrame> _scopes = [];
+        private string? _moduleNameOverride;
         private int _nextBlockId;
         private int _nextTempId;
 
@@ -388,6 +456,7 @@ internal sealed class MidLevelIrLowerer(
             TypeCheckModel typeModel,
             EnumLayoutModel enumLayoutModel,
             StarkTypeResolver typeResolver,
+            IReadOnlyDictionary<string, DestructorLoweringContext> destructorsByTypeName,
             CompilerLogBag logs,
             string? moduleFilePath,
             SourceLocation functionLocation,
@@ -401,6 +470,7 @@ internal sealed class MidLevelIrLowerer(
             _typeModel = typeModel;
             _enumLayoutModel = enumLayoutModel;
             _typeResolver = typeResolver;
+            _destructorsByTypeName = destructorsByTypeName;
             _logs = logs;
             _moduleFilePath = moduleFilePath;
             _functionLocation = functionLocation;
@@ -409,6 +479,17 @@ internal sealed class MidLevelIrLowerer(
             _literalTypes = literalTypes;
             _objectCreationConstructors = objectCreationConstructors;
             _parametersByName = function.Signature.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+            foreach (var parameter in function.Signature.Parameters)
+            {
+                if (!RequiresRuntimeDrop(parameter.Type))
+                {
+                    continue;
+                }
+
+                _runtimeDropStates[parameter.Name] = true;
+                _parameterDropOrder.Add(parameter.Name);
+            }
+
             _logScope = _logs.PushContext(
                 stage: "lower-mir",
                 symbolName: function.Name,
@@ -427,6 +508,7 @@ internal sealed class MidLevelIrLowerer(
             .ToArray();
 
         private BasicBlockBuilder CurrentBlock { get; set; }
+        private string CurrentModuleName => _moduleNameOverride ?? _currentModuleName;
 
         public void Lower(StarkParser.BlockContext body)
         {
@@ -537,7 +619,7 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerConstantDeclaration(StarkParser.LocalConstantDeclarationContext declaration)
         {
-            var declaredType = _typeResolver.ResolveType(declaration.type_(), currentModuleName: _currentModuleName);
+            var declaredType = _typeResolver.ResolveType(declaration.type_(), currentModuleName: CurrentModuleName);
             foreach (var declarator in declaration.constantDeclarators().constantDeclarator())
             {
                 var name = declarator.Identifier().GetText();
@@ -545,12 +627,13 @@ internal sealed class MidLevelIrLowerer(
                 TrackDeclaredLocal(name, declaredType);
                 Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
                 LowerVariableInitializer(name, declaredType, declarator.variableInitializer());
+                InitializeRuntimeDropState(name, declaredType, isActive: true);
             }
         }
 
         private void LowerVariableDeclaration(StarkParser.LocalVariableDeclarationContext declaration)
         {
-            var declaredType = _typeResolver.ResolveType(declaration.type_(), currentModuleName: _currentModuleName);
+            var declaredType = _typeResolver.ResolveType(declaration.type_(), currentModuleName: CurrentModuleName);
             var storageClass = declaration.storageClass().GetText();
 
             foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
@@ -559,10 +642,12 @@ internal sealed class MidLevelIrLowerer(
                 RegisterLocal(name, declaredType, storageClass, declaration.MUT() is not null, isConstant: false);
                 TrackDeclaredLocal(name, declaredType);
                 Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
+                InitializeRuntimeDropState(name, declaredType, isActive: false);
 
                 if (declarator.variableInitializer() is { } initializer)
                 {
                     LowerVariableInitializer(name, declaredType, initializer);
+                    SetRuntimeDropState(name, isActive: true);
                 }
             }
         }
@@ -642,6 +727,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             var operand = LowerExpressionToOperand(returnStatement.expression(), _function.Signature.ReturnType);
+            RecordMoveFromOperand(operand, _function.Signature.ReturnType);
             EmitStorageDeadBeyondDepth(0);
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Return,
@@ -767,7 +853,8 @@ internal sealed class MidLevelIrLowerer(
                     pointeeType,
                     DirectValue: null,
                     ResultValue: assignedValue,
-                    Address: address);
+                    Address: address,
+                    ReplacesWholeValue: false);
             }
 
             var currentValue = EmitTemporary(
@@ -812,7 +899,8 @@ internal sealed class MidLevelIrLowerer(
                 pointeeType,
                 DirectValue: null,
                 ResultValue: CoerceOperand(temp, pointeeType) ?? temp,
-                Address: address);
+                Address: address,
+                ReplacesWholeValue: false);
         }
 
         private bool TryResolveIndirectPointerAssignmentTarget(
@@ -1362,7 +1450,7 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
-            var patternType = _typeResolver.ResolveSimpleType(aggregatePattern.simpleType(), currentModuleName: _currentModuleName);
+            var patternType = _typeResolver.ResolveSimpleType(aggregatePattern.simpleType(), currentModuleName: CurrentModuleName);
             if (patternType.Kind != StarkTypeKind.Named
                 || patternType.NamedType is null
                 || !_typeModel.NamedTypes.TryGetValue(patternType.NamedType, out var namedType))
@@ -2100,17 +2188,20 @@ internal sealed class MidLevelIrLowerer(
         {
             if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
             {
-                var declaredType = _typeResolver.ResolveType(localForVariableDeclaration.type_(), currentModuleName: _currentModuleName);
+                var declaredType = _typeResolver.ResolveType(localForVariableDeclaration.type_(), currentModuleName: CurrentModuleName);
                 var storageClass = localForVariableDeclaration.storageClass().GetText();
 
                 foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
                 {
                     var name = declarator.Identifier().GetText();
                     RegisterLocal(name, declaredType, storageClass, localForVariableDeclaration.MUT() is not null, isConstant: false);
+                    TrackDeclaredLocal(name, declaredType);
                     Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
+                    InitializeRuntimeDropState(name, declaredType, isActive: false);
                     if (declarator.variableInitializer() is { } initializer)
                     {
                         LowerVariableInitializer(name, declaredType, initializer);
+                        SetRuntimeDropState(name, isActive: true);
                     }
                 }
             }
@@ -2811,7 +2902,7 @@ internal sealed class MidLevelIrLowerer(
             StarkParser.ObjectCreationExpressionContext expression,
             StarkTypeSymbol? expectedType)
         {
-            var createdType = _typeResolver.ResolveType(expression.type_(), currentModuleName: _currentModuleName);
+            var createdType = _typeResolver.ResolveType(expression.type_(), currentModuleName: CurrentModuleName);
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
 
             if (expression.argumentList() is { } argumentList && argumentList.argument().Length != 0)
@@ -3598,6 +3689,7 @@ internal sealed class MidLevelIrLowerer(
 
                 loweredArguments.Add(receiverOperand);
                 indirectArgumentLocals.Add(ResolveIndirectArgumentLocal(signature.Parameters[0].Type, receiverOperand));
+                RecordMoveFromOperand(receiverOperand, signature.Parameters[0].Type);
             }
 
             for (var index = 0; index < Math.Min(arguments.argument().Length, explicitParameterCount); index++)
@@ -3613,6 +3705,7 @@ internal sealed class MidLevelIrLowerer(
 
                 loweredArguments.Add(argument);
                 indirectArgumentLocals.Add(ResolveIndirectArgumentLocal(parameterType, argument));
+                RecordMoveFromOperand(argument, parameterType);
             }
 
             if (arguments.argument().Length != explicitParameterCount)
@@ -3722,6 +3815,11 @@ internal sealed class MidLevelIrLowerer(
 
         private MidLevelIrOperand? TryResolveNamedValueOperand(string name)
         {
+            if (_nameAliases.TryGetValue(name, out var aliasedName))
+            {
+                name = aliasedName;
+            }
+
             if (_localsByName.TryGetValue(name, out var local))
             {
                 return new MidLevelIrLocalOperand(local.Name, local.Type);
@@ -3753,7 +3851,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             if (!sourceName.Contains('.', StringComparison.Ordinal)
-                && _typeModel.Overloads.TryGetValue($"{_currentModuleName}.{sourceName}", out overloads!))
+                && _typeModel.Overloads.TryGetValue($"{CurrentModuleName}.{sourceName}", out overloads!))
             {
                 return true;
             }
@@ -3776,7 +3874,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             if (!name.Contains('.', StringComparison.Ordinal)
-                && _fallbackFunctions.TryGetValue($"{_currentModuleName}.{name}", out signature!))
+                && _fallbackFunctions.TryGetValue($"{CurrentModuleName}.{name}", out signature!))
             {
                 return true;
             }
@@ -3792,7 +3890,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             if (!name.Contains('.', StringComparison.Ordinal)
-                && _fallbackGlobals.TryGetValue($"{_currentModuleName}.{name}", out global!))
+                && _fallbackGlobals.TryGetValue($"{CurrentModuleName}.{name}", out global!))
             {
                 return true;
             }
@@ -3803,14 +3901,14 @@ internal sealed class MidLevelIrLowerer(
         private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
         {
             var baseName = genericQualifiedName.qualifiedName().GetText();
-            var baseType = _typeResolver.ResolveQualifiedType(baseName, genericParameters: null, genericQualifiedName.qualifiedName().Start, _currentModuleName);
+            var baseType = _typeResolver.ResolveQualifiedType(baseName, genericParameters: null, genericQualifiedName.qualifiedName().Start, CurrentModuleName);
             if (baseType.Kind == StarkTypeKind.Error)
             {
                 return StarkTypeSymbols.Error;
             }
 
             var typeArguments = genericQualifiedName.typeArgumentList().type_()
-                .Select(typeArgument => _typeResolver.ResolveType(typeArgument, currentModuleName: _currentModuleName))
+                .Select(typeArgument => _typeResolver.ResolveType(typeArgument, currentModuleName: CurrentModuleName))
                 .ToArray();
             if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
             {
@@ -3910,7 +4008,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             if (!typeName.Contains('.', StringComparison.Ordinal)
-                && _typeModel.NamedTypes.TryGetValue($"{_currentModuleName}.{typeName}", out namedType!))
+                && _typeModel.NamedTypes.TryGetValue($"{CurrentModuleName}.{typeName}", out namedType!))
             {
                 return true;
             }
@@ -4243,7 +4341,8 @@ internal sealed class MidLevelIrLowerer(
                     target.Type,
                     DirectValue: null,
                     ResultValue: assignedValue,
-                    Address: address);
+                    Address: address,
+                    ReplacesWholeValue: false);
             }
 
             if (target.Path.Count == 0)
@@ -4254,7 +4353,8 @@ internal sealed class MidLevelIrLowerer(
                     target.RootType,
                     new MidLevelIrUseRValue(assignedValue),
                     assignedValue,
-                    Address: null);
+                    Address: null,
+                    ReplacesWholeValue: true);
             }
 
             var root = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
@@ -4265,7 +4365,8 @@ internal sealed class MidLevelIrLowerer(
                 target.RootType,
                 updatedRoot is null ? null : new MidLevelIrUseRValue(updatedRoot),
                 assignedValue,
-                Address: null);
+                Address: null,
+                ReplacesWholeValue: false);
         }
 
         private MidLevelIrOperand? ApplyAggregatePathUpdate(
@@ -5301,6 +5402,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             Emit(MidLevelIrStatementKind.Assign, $"{targetName} = {text}", targetName, targetType, new MidLevelIrUseRValue(operand));
+            RecordMoveFromOperand(operand, targetType);
         }
 
         private void RegisterLocal(string name, StarkTypeSymbol type, string storageClass, bool isMutable, bool isConstant)
@@ -5325,6 +5427,326 @@ internal sealed class MidLevelIrLowerer(
             _scopes.Peek().Locals.Add((name, type));
         }
 
+        private void InitializeRuntimeDropState(string name, StarkTypeSymbol type, bool isActive)
+        {
+            if (!RequiresRuntimeDrop(type))
+            {
+                return;
+            }
+
+            _runtimeDropStates[name] = isActive;
+        }
+
+        private void SetRuntimeDropState(string name, bool isActive)
+        {
+            if (_runtimeDropStates.ContainsKey(name))
+            {
+                _runtimeDropStates[name] = isActive;
+            }
+        }
+
+        private void EmitRuntimeDropIfActive(string name, StarkTypeSymbol type)
+        {
+            if (!_runtimeDropStates.TryGetValue(name, out var isActive) || !isActive)
+            {
+                return;
+            }
+
+            EmitRuntimeDropFromNamedValue(name, type);
+            _runtimeDropStates[name] = false;
+        }
+
+        private void RecordMoveFromOperand(MidLevelIrOperand? operand, StarkTypeSymbol destinationType)
+        {
+            if (operand is null
+                || destinationType.BorrowKind != StarkBorrowKind.None)
+            {
+                return;
+            }
+
+            switch (operand)
+            {
+                case MidLevelIrLocalOperand localOperand when _runtimeDropStates.ContainsKey(localOperand.Name):
+                    _runtimeDropStates[localOperand.Name] = false;
+                    break;
+                case MidLevelIrParameterOperand parameterOperand when _runtimeDropStates.ContainsKey(parameterOperand.Name):
+                    _runtimeDropStates[parameterOperand.Name] = false;
+                    break;
+            }
+        }
+
+        private bool RequiresRuntimeDrop(StarkTypeSymbol type)
+        {
+            return RequiresRuntimeDrop(type, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private bool RequiresRuntimeDrop(StarkTypeSymbol type, HashSet<string> visiting)
+        {
+            if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
+            {
+                return false;
+            }
+
+            if (!visiting.Add(type.NamedType))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (TryGetDestructor(type, out _))
+                {
+                    return true;
+                }
+
+                if (TryGetEnumLayout(type, out var layout))
+                {
+                    foreach (var variant in layout.Variants.Values)
+                    {
+                        foreach (var field in variant.Fields)
+                        {
+                            if (RequiresRuntimeDrop(field.Type, visiting))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                }
+
+                if (!_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
+                    || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+                {
+                    return false;
+                }
+
+                foreach (var field in namedType.OrderedFields)
+                {
+                    if (RequiresRuntimeDrop(field.Type, visiting))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            finally
+            {
+                visiting.Remove(type.NamedType);
+            }
+        }
+
+        private bool TryGetDestructor(StarkTypeSymbol type, out DestructorLoweringContext destructor)
+        {
+            destructor = default!;
+
+            if (type.NamedType is null)
+            {
+                return false;
+            }
+
+            var key = StarkTypeSymbols.GetGenericBaseName(type.NamedType);
+            return _destructorsByTypeName.TryGetValue(key, out destructor!);
+        }
+
+        private bool TryGetEnumLayout(StarkTypeSymbol type, out EnumLayoutSymbol layout)
+        {
+            layout = default!;
+
+            if (type.NamedType is null)
+            {
+                return false;
+            }
+
+            if (_enumLayoutModel.Layouts.TryGetValue(type.NamedType, out layout!))
+            {
+                return true;
+            }
+
+            var key = StarkTypeSymbols.GetGenericBaseName(type.NamedType);
+            return _enumLayoutModel.Layouts.TryGetValue(key, out layout!);
+        }
+
+        private void EmitRuntimeDropFromNamedValue(string name, StarkTypeSymbol type)
+        {
+            var source = ResolveNamedOperand(name);
+            if (source is null)
+            {
+                return;
+            }
+
+            EmitRuntimeDropFromOperand(source, type);
+        }
+
+        private void EmitRuntimeDropFromOperand(MidLevelIrOperand operand, StarkTypeSymbol type)
+        {
+            if (!RequiresRuntimeDrop(type))
+            {
+                return;
+            }
+
+            var temporary = CreateTemporaryLocal(type, "drop");
+            EmitOperandAssignment(temporary, operand, operand.Text);
+
+            if (TryGetDestructor(type, out var destructor))
+            {
+                using var destructorContext = PushDestructorContext(destructor.ModuleName, "self", temporary.Name);
+                LowerBlock(destructor.Body);
+            }
+
+            if (TryGetEnumLayout(type, out var layout))
+            {
+                EmitEnumPayloadDrops(temporary, type, layout, new HashSet<string>(StringComparer.Ordinal));
+                return;
+            }
+
+            EmitStructFieldDrops(temporary, type, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private void EmitStructFieldDrops(
+            MidLevelIrLocalOperand aggregate,
+            StarkTypeSymbol type,
+            HashSet<string> visiting)
+        {
+            if (type.Kind != StarkTypeKind.Named
+                || type.NamedType is null
+                || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
+                || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                || !visiting.Add(type.NamedType))
+            {
+                return;
+            }
+
+            for (var index = namedType.OrderedFields.Count - 1; index >= 0; index--)
+            {
+                var field = namedType.OrderedFields[index];
+                if (!RequiresRuntimeDrop(field.Type))
+                {
+                    continue;
+                }
+
+                var fieldValue = LowerFieldAccess(aggregate, field.Name);
+                if (fieldValue is null)
+                {
+                    MarkUnsupported();
+                    continue;
+                }
+
+                EmitRuntimeDropFromOperand(fieldValue, field.Type);
+            }
+
+            visiting.Remove(type.NamedType);
+        }
+
+        private void EmitEnumPayloadDrops(
+            MidLevelIrLocalOperand aggregate,
+            StarkTypeSymbol type,
+            EnumLayoutSymbol layout,
+            HashSet<string> visiting)
+        {
+            if (!visiting.Add(layout.EnumName))
+            {
+                return;
+            }
+
+            try
+            {
+                var dropVariants = layout.Variants.Values
+                    .Select(variant => (
+                        Variant: variant,
+                        Fields: variant.Fields
+                            .Where(field => RequiresRuntimeDrop(field.Type, visiting))
+                            .ToArray()))
+                    .Where(static item => item.Fields.Length > 0)
+                    .OrderBy(static item => item.Variant.TagValue)
+                    .ToArray();
+                if (dropVariants.Length == 0)
+                {
+                    return;
+                }
+
+                var tagValue = LowerKnownFieldAccess(aggregate, layout.TagField.Name, 0, layout.TagField.Type, "$tag");
+                if (tagValue is null)
+                {
+                    MarkUnsupported();
+                    return;
+                }
+
+                var joinBlock = CreateBlock("enum_drop_join");
+                BasicBlockBuilder? nextDecisionBlock = CurrentBlock;
+
+                for (var variantIndex = 0; variantIndex < dropVariants.Length; variantIndex++)
+                {
+                    if (nextDecisionBlock is null)
+                    {
+                        break;
+                    }
+
+                    CurrentBlock = nextDecisionBlock;
+
+                    var (variant, fields) = dropVariants[variantIndex];
+                    var matchBlock = CreateBlock($"enum_drop_{variant.Name}");
+                    var fallthroughBlock = variantIndex == dropVariants.Length - 1
+                        ? null
+                        : CreateBlock($"enum_drop_next_{variantIndex}");
+                    var expectedTag = new MidLevelIrIntegerConstantOperand(new BigInteger(variant.TagValue), layout.TagField.Type);
+                    var condition = EmitEqualityComparison(tagValue, expectedTag, $"{aggregate.Text}.$tag == {variant.TagValue}");
+                    if (condition is null)
+                    {
+                        MarkUnsupported();
+                        EnsureGoto(joinBlock.Id);
+                        CurrentBlock = joinBlock;
+                        return;
+                    }
+
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Branch,
+                        [matchBlock.Id, fallthroughBlock?.Id ?? joinBlock.Id],
+                        ConditionText: $"{layout.EnumName}.{variant.Name}",
+                        Condition: condition);
+
+                    CurrentBlock = matchBlock;
+                    for (var fieldIndex = fields.Length - 1; fieldIndex >= 0; fieldIndex--)
+                    {
+                        var field = fields[fieldIndex];
+                        var displayName = field.SourceFieldName ?? $"[{field.SourcePosition}]";
+                        var fieldValue = LowerKnownFieldAccess(
+                            aggregate,
+                            field.StorageFieldName,
+                            field.StorageFieldIndex,
+                            field.Type,
+                            displayName);
+                        if (fieldValue is null)
+                        {
+                            MarkUnsupported();
+                            continue;
+                        }
+
+                        EmitRuntimeDropFromOperand(fieldValue, field.Type);
+                    }
+
+                    EnsureGoto(joinBlock.Id);
+                    nextDecisionBlock = fallthroughBlock;
+                }
+
+                CurrentBlock = joinBlock;
+            }
+            finally
+            {
+                visiting.Remove(layout.EnumName);
+            }
+        }
+
+        private IDisposable PushDestructorContext(string moduleName, string aliasName, string localName)
+        {
+            var previousModuleName = _moduleNameOverride;
+            var hadAlias = _nameAliases.TryGetValue(aliasName, out var previousAlias);
+            _moduleNameOverride = moduleName;
+            _nameAliases[aliasName] = localName;
+            return new DestructorContext(this, previousModuleName, aliasName, previousAlias, hadAlias);
+        }
+
         private void EmitStorageDead(ScopeFrame scope)
         {
             if (CurrentBlock.HasTerminator)
@@ -5332,9 +5754,11 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            for (var index = scope.Locals.Count - 1; index >= 0; index--)
+            var locals = scope.Locals.ToArray();
+            for (var index = locals.Length - 1; index >= 0; index--)
             {
-                var (name, type) = scope.Locals[index];
+                var (name, type) = locals[index];
+                EmitRuntimeDropIfActive(name, type);
                 Emit(MidLevelIrStatementKind.StorageDead, name, name, type);
             }
         }
@@ -5346,21 +5770,32 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            var currentDepth = _scopes.Count;
-            foreach (var scope in _scopes)
+            var scopesToDrop = _scopes
+                .Take(Math.Max(0, _scopes.Count - depth))
+                .ToArray();
+            foreach (var scope in scopesToDrop)
             {
-                if (currentDepth <= depth)
+                var locals = scope.Locals.ToArray();
+                for (var index = locals.Length - 1; index >= 0; index--)
                 {
-                    break;
-                }
-
-                for (var index = scope.Locals.Count - 1; index >= 0; index--)
-                {
-                    var (name, type) = scope.Locals[index];
+                    var (name, type) = locals[index];
+                    EmitRuntimeDropIfActive(name, type);
                     Emit(MidLevelIrStatementKind.StorageDead, name, name, type);
                 }
+            }
 
-                currentDepth--;
+            if (depth != 0)
+            {
+                return;
+            }
+
+            for (var index = _parameterDropOrder.Count - 1; index >= 0; index--)
+            {
+                var name = _parameterDropOrder[index];
+                if (_parametersByName.TryGetValue(name, out var parameter))
+                {
+                    EmitRuntimeDropIfActive(name, parameter.Type);
+                }
             }
         }
 
@@ -5384,6 +5819,12 @@ internal sealed class MidLevelIrLowerer(
 
         private void EmitAssignment(LoweredAssignment assignment)
         {
+            if (assignment.ReplacesWholeValue
+                && assignment.TargetName is not null)
+            {
+                EmitRuntimeDropIfActive(assignment.TargetName, assignment.TargetType);
+            }
+
             if (assignment.Address is not null)
             {
                 Emit(
@@ -5396,6 +5837,13 @@ internal sealed class MidLevelIrLowerer(
             }
 
             Emit(MidLevelIrStatementKind.Assign, assignment.Text, assignment.TargetName, assignment.TargetType, value: assignment.DirectValue);
+            if (assignment.ReplacesWholeValue
+                && assignment.TargetName is not null)
+            {
+                SetRuntimeDropState(assignment.TargetName, isActive: true);
+            }
+
+            RecordMoveFromOperand(assignment.ResultValue, assignment.TargetType);
         }
 
         private void Emit(
@@ -5467,7 +5915,7 @@ internal sealed class MidLevelIrLowerer(
                 location: location,
                 outcome: CompilerLogOutcome.Unsupported,
                 data: CompilerLogData.Create(
-                    ("module", _currentModuleName),
+                        ("module", CurrentModuleName),
                     ("function", _function.Name),
                     ("bodyLoweringKind", _function.BodyLoweringKind.ToString()),
                     ("blockId", CurrentBlock.Id.ToString()),

@@ -274,7 +274,58 @@ Stark `struct` declarations do not support inheritance.
 
 Stark `record` declarations do not support inheritance.
 
-### 8.3 Enums
+### 8.3 Destructors
+
+`struct` and `record` declarations may declare one destructor block.
+
+The read-only form is:
+
+```stark
+drop {
+    if (!self.Closed) {
+        PlatformClose(self.Handle);
+    }
+}
+```
+
+The mutable form is:
+
+```stark
+mut drop {
+    self.Ptr = null;
+    self.Closed = true;
+}
+```
+
+Destructor blocks have the following properties:
+
+- they are not ordinary functions or methods
+- they do not declare a name, return type, parameter list, or visibility
+- they run automatically when an owned value is dropped
+- `self` is implicit inside the block
+- they may not use `return`
+- only `struct` and `record` bodies may declare them
+- a type may declare at most one destructor block
+
+The two forms differ in what they may do to `self`:
+
+- `drop { ... }`
+  `self` is read-only. The destructor may inspect fields and perform cleanup work, but it may not assign to `self` or to any field reachable through `self`.
+- `mut drop { ... }`
+  `self` is mutable. This form is for deliberate state rewrites during destruction such as disarming raw-resource state before the final field drop sequence.
+
+If a destructor is declared as `mut drop` but does not actually mutate `self`, the compiler warns and recommends the plain `drop` form instead.
+
+Destructors remain restricted:
+
+- they do not panic
+- they do not synchronize
+- they do not allocate
+- explicit teardown APIs such as `Close` remain the right place for fallible cleanup and user-controlled ordering
+
+After the destructor block runs, ordinary field destruction still proceeds.
+
+### 8.4 Enums
 
 `enum` declares a closed Rust-style enum family.
 
@@ -337,7 +388,7 @@ Default enum layout is not a stable FFI contract.
 - explicit enum `repr` or ABI controls are not part of the current language surface
 - Stark enums do not cross `ffi` or `export` boundaries
 
-### 8.4 Traits
+### 8.5 Traits
 
 `trait` declares a named behavior contract.
 
@@ -352,7 +403,7 @@ In Stark v1.x, traits have no runtime representation.
 - trait names are rejected in runtime value positions such as fields, globals, locals, parameters, and returns
 - any future runtime dispatch design is explicitly post-v1.x work
 
-### 8.5 Doctrines
+### 8.6 Doctrines
 
 `doctrine` declares a compile-time-only bundle of `law` functions and related constraints.
 

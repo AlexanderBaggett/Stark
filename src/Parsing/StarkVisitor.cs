@@ -309,6 +309,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitConstructorDeclaration([NotNull] StarkParser.ConstructorDeclarationContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.destructorDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitDestructorDeclaration([NotNull] StarkParser.DestructorDeclarationContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.globalConstantDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

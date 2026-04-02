@@ -22,6 +22,14 @@ internal sealed record DeclaredFunctionSyntax(
     public string DisplaySourceName => SourceName ?? Name;
 }
 
+internal sealed record DeclaredDestructorSyntax(
+    string QualifiedTypeName,
+    string LocalTypeName,
+    string ModuleName,
+    bool IsMutable,
+    StarkParser.DestructorDeclarationContext Declaration,
+    StarkParser.BlockContext Body);
+
 internal static class DeclaredFunctionSyntaxCollector
 {
     public static IReadOnlyList<DeclaredFunctionSyntax> Collect(ParseResult parseResult)
@@ -306,5 +314,61 @@ internal static class DeclaredFunctionSyntaxCollector
             "finitelaw" => StarkFunctionKind.FiniteLaw,
             _ => throw new InvalidOperationException($"Unsupported doctrine function kind '{functionKind.GetText()}'.")
         };
+    }
+}
+
+internal static class DeclaredDestructorSyntaxCollector
+{
+    public static IReadOnlyList<DeclaredDestructorSyntax> Collect(LoadedModuleDocument module)
+    {
+        var destructors = new List<DeclaredDestructorSyntax>();
+
+        foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.structDeclaration() is { } structDeclaration)
+            {
+                AddDestructors(
+                    destructors,
+                    module,
+                    structDeclaration.Identifier().GetText(),
+                    structDeclaration.structBody().structMember()
+                        .Select(static member => member.destructorDeclaration())
+                        .Where(static destructor => destructor is not null)!
+                        .Cast<StarkParser.DestructorDeclarationContext>());
+                continue;
+            }
+
+            if (declaration.recordDeclaration() is { } recordDeclaration)
+            {
+                AddDestructors(
+                    destructors,
+                    module,
+                    recordDeclaration.Identifier().GetText(),
+                    recordDeclaration.recordBody().recordMember()
+                        .Select(static member => member.destructorDeclaration())
+                        .Where(static destructor => destructor is not null)!
+                        .Cast<StarkParser.DestructorDeclarationContext>());
+            }
+        }
+
+        return destructors;
+    }
+
+    private static void AddDestructors(
+        List<DeclaredDestructorSyntax> destructors,
+        LoadedModuleDocument module,
+        string localTypeName,
+        IEnumerable<StarkParser.DestructorDeclarationContext> declarations)
+    {
+        foreach (var declaration in declarations)
+        {
+            destructors.Add(new DeclaredDestructorSyntax(
+                QualifiedTypeName: module.Reference.IsRoot ? localTypeName : $"{module.SyntaxModel.ModuleName}.{localTypeName}",
+                LocalTypeName: localTypeName,
+                ModuleName: module.SyntaxModel.ModuleName,
+                IsMutable: declaration.MUT() is not null,
+                Declaration: declaration,
+                Body: declaration.block()));
+        }
     }
 }

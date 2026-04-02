@@ -50,9 +50,16 @@ public sealed class ParserSmokeTests
                 i32 Value;
                 Widget() { }
                 fn void Reset() { return; }
+                drop {
+                    ;
+                }
             }
 
-            public record Point(i32 X, i32 Y) { }
+            public record Point(i32 X, i32 Y) {
+                mut drop {
+                    self.X = 0;
+                }
+            }
 
             public trait Comparable<T> {
                 law i32 Compare(T other);

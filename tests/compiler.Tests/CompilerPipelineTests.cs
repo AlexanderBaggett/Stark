@@ -1024,6 +1024,45 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void StructAndRecordDestructorsFlowIntoSyntaxModel()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Buffer {
+                    i32 Value;
+
+                    drop {
+                        ;
+                    }
+                }
+
+                record Cursor(i32 Position) {
+                    mut drop {
+                        self.Position = 0;
+                    }
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "syntax-model"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+
+        var buffer = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.Struct && declaration.Name == "Buffer");
+        Assert.NotNull(buffer.Destructor);
+        Assert.False(buffer.Destructor!.IsMutable);
+
+        var cursor = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.Record && declaration.Name == "Cursor");
+        Assert.NotNull(cursor.Destructor);
+        Assert.True(cursor.Destructor!.IsMutable);
+    }
+
+    [Fact]
     public void ImportedDoctrineMembersFromLoadedModulesParticipateInTypingAndEffects()
     {
         var pipeline = DefaultCompilerPipeline.Create();

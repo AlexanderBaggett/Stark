@@ -148,11 +148,15 @@ public sealed record FunctionDeclarationModel(
     bool HasBody,
     AsmFunctionModel? Asm = null);
 
+public sealed record DestructorDeclarationModel(
+    bool IsMutable);
+
 public sealed record TopLevelDeclarationModel(
     string Name,
     DeclarationKind Kind,
     StarkVisibility Visibility,
-    FunctionDeclarationModel? Function);
+    FunctionDeclarationModel? Function,
+    DestructorDeclarationModel? Destructor = null);
 
 public sealed record SyntaxModel(
     string ModuleName,

@@ -497,11 +497,12 @@ public static class DefaultCompilerPipeline
             var parseResult = context.Artifacts.GetRequired(CompilerArtifactKeys.ParseResult);
             var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
             var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
 
-            var validationModel = new SemanticValidator(context, parseResult, syntaxModel, moduleGraph, effectModel, typeModel, enumLayoutModel).Validate();
+            var validationModel = new SemanticValidator(context, parseResult, syntaxModel, moduleGraph, loadedModules, effectModel, typeModel, enumLayoutModel).Validate();
             context.Artifacts.Set(CompilerArtifactKeys.SemanticValidation, validationModel);
         }
     }
