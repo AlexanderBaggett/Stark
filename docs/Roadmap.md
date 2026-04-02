@@ -554,16 +554,16 @@ Revisit the temporary text MVP and align the implementation with the intended st
 
 Goal: unlock the language surface the standard library wants before the stdlib is redesigned around it.
 
-- [ ] Generics sufficient for stdlib-facing result and helper types
-  - [ ] generic enums such as `IOResult<T>`
-  - [ ] generic substitution through returns, fields, locals, and methods
-  - [ ] instantiation at normal use sites for stdlib modules and consumers
-  - [ ] package and manifest support for generic stdlib declarations
-- [ ] Overload support for Stark-native APIs
-  - [ ] top-level function overload groups
-  - [ ] method overload groups
-  - [ ] ambiguity and no-match diagnostics
-  - [ ] symbol, manifest, and package behavior for overload sets
+- [x] Generics sufficient for stdlib-facing result and helper types
+  - [x] generic enums such as `IOResult<T>`
+  - [x] generic substitution through returns, fields, locals, and methods
+  - [x] instantiation at normal use sites for stdlib modules and consumers
+  - [x] package and manifest support for generic stdlib declarations
+- [x] Overload support for Stark-native APIs
+  - [x] top-level function overload groups
+  - [x] method overload groups
+  - [x] ambiguity and no-match diagnostics
+  - [x] symbol, manifest, and package behavior for overload sets
 - [ ] Destructor syntax and implementation
   - [ ] source-level destructor declaration surface
   - [ ] ownership integration for scope-exit cleanup
@@ -595,13 +595,20 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] Log pass lifecycle events across the pipeline, including pass start, completion, skip-on-errors, stop-after boundaries, and pass crashes.
   - [x] Log unsupported or fallback lowering exits explicitly, including `MarkUnsupported()` paths in MIR lowering and LLVM declaration fallbacks in codegen.
   - [x] Add regression tests that lock down structured logs for normal pass execution, skipped/crashed passes, and unsupported lowering gaps.
-  - [ ] Surface compiler logs through CLI/debug tooling with filtering and human-readable formatting.
-- [ ] Create simple ASM shim to enable invoking of Syscall on Linux
-  - [ ] x86_64 
-  - [ ] aarch64 (ARM64)
-  - [ ] riscv64
-  - [ ] x86 (i386)
-  - [ ] arm (32-bit) 
+  - [x] Surface compiler logs through CLI/debug tooling with filtering and human-readable formatting.
+- [ ] Compiler Observability and Value Tracing
+  - [x] Split verbosity from severity so Stark supports low-noise `normal` output and a richer opt-in `verbose` mode without overloading `info` as the only detail control.
+  - [x] Add lightweight inherited logging scopes so stage, symbol, and source context can flow through nested compiler work without repeating boilerplate on every event.
+  - [x] Introduce first-class `symbol`, `decision`, and `gap` event kinds with explicit outcomes such as `continued`, `stopped`, `skipped`, `bypassed`, and `unsupported`.
+  - [ ] Convert `MarkUnsupported()`, early returns, declaration fallbacks, and other partial-lowering exits into gap events with feature tags, stop reasons, and source spans.
+  - [x] Rework console and test-host formatting so message-first output is concise in `normal` and richer in `verbose`, while suppressing synthetic boilerplate that does not add signal.
+  - [x] Add regression coverage for verbosity filtering, gap events, symbol/source context, and incomplete-feature auditability.
+- [x] Create simple ASM shim to enable invoking of Syscall on Linux
+  - [x] x86_64 
+  - [x] aarch64 (ARM64)
+  - [x] riscv64
+  - [x] x86 (i386)
+  - [x] arm (32-bit) 
 
 ## Milestone 7: Standard Library
 
@@ -846,10 +853,11 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] type instantiation triggers
   - [ ] cross-module instantiation ownership
   - [ ] caching and deduplication of instantiations
-  - [ ] Generic type parameter handling beyond basic shape support in `v1.1`
+  - [x] Generic type parameter handling beyond basic shape support in `v1.1`
   - [ ] bind generic parameters on all declaration kinds that support them
-  - [ ] substitute generic parameters through fields, returns, and locals
+  - [x] substitute generic parameters through fields, returns, and locals
   - [ ] instantiate generic functions and types at use sites
+    - [x] instantiate generic types at use sites for source modules and manifest-backed consumers
 - [ ] Monomorphization planning
   - [ ] symbol naming scheme
   - [ ] code-size control heuristics
@@ -1078,3 +1086,11 @@ Everything before this point is frozen
 - [ ] Evaluate whether the Linux stdlib should migrate from a linked syscall boundary shim to direct Stark-level intrinsics
 - [ ] Revisit asm operand widening for `bool` and floating-point values after the syscall-oriented v1 surface ships
 - [ ] First class vector types support for SIMD
+
+### Compiler Observability and Trace Artifacts
+
+- [ ] Add first-class `value` trace events for expression, HIR, MIR, SSA, and LLVM-entity flow
+- [ ] Assign compilation-local correlation IDs to symbols, source expressions, and lowered values so one entity can be followed across stages
+- [ ] Add opt-in structured trace-file sinks that emit machine-readable logs to disk
+- [ ] Emit per-symbol trace files and gap-only audit artifacts for post-mortem debugging
+- [ ] Add regression coverage for value-flow tracing, correlation IDs, and emitted trace artifacts

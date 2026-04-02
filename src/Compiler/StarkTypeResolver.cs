@@ -183,7 +183,29 @@ internal sealed class StarkTypeResolver
             return ResolveBuiltinType(builtinType);
         }
 
-        return ResolveQualifiedType(simpleType.qualifiedName().GetText(), genericParameters, simpleType.Start, currentModuleName);
+        var qualifiedName = simpleType.qualifiedName().GetText();
+
+        if (simpleType.typeArgumentList() is { } typeArgList)
+        {
+            var typeArgs = typeArgList.type_()
+                .Select(typeArg => ResolveType(typeArg, genericParameters, currentModuleName))
+                .ToArray();
+
+            if (typeArgs.Any(static t => t.Kind == StarkTypeKind.Error))
+            {
+                return StarkTypeSymbols.Error;
+            }
+
+            var baseType = ResolveQualifiedType(qualifiedName, genericParameters: null, simpleType.Start, currentModuleName);
+            if (baseType.Kind == StarkTypeKind.Error)
+            {
+                return StarkTypeSymbols.Error;
+            }
+
+            return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? qualifiedName, typeArgs);
+        }
+
+        return ResolveQualifiedType(qualifiedName, genericParameters, simpleType.Start, currentModuleName);
     }
 
     private static StarkTypeSymbol ResolveBuiltinType(StarkParser.BuiltinTypeContext builtinType)

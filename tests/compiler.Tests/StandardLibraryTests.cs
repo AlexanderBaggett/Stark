@@ -45,6 +45,7 @@ public sealed class StandardLibraryTests
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Stderr");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.File");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Path");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Syscall");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Text");
 
             var rootModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System");
@@ -71,6 +72,29 @@ public sealed class StandardLibraryTests
                 // Best effort cleanup only.
             }
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(SystemSyscallArchitectureCases))]
+    public void SystemSyscallModuleSelectsExpectedLinuxShimPerArchitecture(string targetTriple, string expectedInlineAsm)
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var syscallPath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Syscall.stark");
+        var source = File.ReadAllText(syscallPath);
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(source, syscallPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo(targetTriple, null)));
+
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains(expectedInlineAsm, llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -209,6 +233,102 @@ public sealed class StandardLibraryTests
         }
     }
 
+    [Fact]
+    public async Task PackagedStdLibSyscallModuleCanBeConsumedWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || !OperatingSystem.IsLinux()
+            || !targetInfo.Triple.StartsWith("x86_64", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-syscall-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Syscall
+                module App
+
+                export ffi fn i32 main() {
+                    if (System.Syscall.Syscall0(39) <= 0) {
+                        return 1;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = appDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -228,7 +348,35 @@ public sealed class StandardLibraryTests
 
     private static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
-        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, text);
+    }
+
+    public static IEnumerable<object[]> SystemSyscallArchitectureCases()
+    {
+        yield return
+        [
+            "x86_64-unknown-linux-gnu",
+            "call i64 asm sideeffect \"syscall\", \"={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\""
+        ];
+        yield return
+        [
+            "aarch64-unknown-linux-gnu",
+            "call i64 asm sideeffect \"svc #0\", \"={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}\""
+        ];
+        yield return
+        [
+            "riscv64-unknown-linux-gnu",
+            "call i64 asm sideeffect \"ecall\", \"={a0},{a7},0,{a1},{a2},{a3},{a4},{a5},~{memory}\""
+        ];
+        yield return
+        [
+            "i386-unknown-linux-gnu",
+            "call i64 asm sideeffect \"int $$0x80\", \"={eax},0,{ebx},{ecx},{edx},{esi},{edi},{ebp},~{memory},~{dirflag},~{fpsr},~{flags}\""
+        ];
+        yield return
+        [
+            "arm-unknown-linux-gnueabihf",
+            "call i64 asm sideeffect \"svc #0\", \"={r0},{r7},0,{r1},{r2},{r3},{r4},{r5},~{memory}\""
+        ];
     }
 }

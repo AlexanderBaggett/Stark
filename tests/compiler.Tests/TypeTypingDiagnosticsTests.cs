@@ -911,6 +911,61 @@ public sealed class TypeTypingDiagnosticsTests
         AssertDiagnostic(result, "STK3013", "Trait method 'Comparable.Compare'", "cannot be called directly");
     }
 
+    [Fact]
+    public void OverloadResolutionReportsNoMatchingCandidates()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Convert(i32 value) {
+                return value;
+            }
+
+            fn i32 Convert(ascii value) {
+                return 0;
+            }
+
+            fn i32 Run() {
+                return Convert(true);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3021", "No overload of 'Convert' matches argument types (bool)");
+        AssertDiagnostic(result, "STK3021", "Convert(i32)");
+        AssertDiagnostic(result, "STK3021", "Convert(ascii)");
+    }
+
+    [Fact]
+    public void OverloadResolutionReportsAmbiguousCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Measure(f32 value) {
+                return 1;
+            }
+
+            fn i32 Measure(f64 value) {
+                return 2;
+            }
+
+            fn i32 Run() {
+                stack i32 value = 1;
+                return Measure(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3022", "Call to overloaded function 'Measure' is ambiguous for argument types (i32)");
+        AssertDiagnostic(result, "STK3022", "Measure(f32)");
+        AssertDiagnostic(result, "STK3022", "Measure(f64)");
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

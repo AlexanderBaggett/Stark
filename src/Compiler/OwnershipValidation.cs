@@ -29,7 +29,7 @@ internal sealed class OwnershipValidator
         _moduleGraph = moduleGraph;
         _typeModel = typeModel;
         _typeResolver = new StarkTypeResolver(context, "ownership-validate", moduleGraph, typeModel.NamedTypes);
-        _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult)
+        _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult, syntaxModel)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
 
@@ -899,6 +899,11 @@ internal sealed class OwnershipValidator
             return ApplyUse(created, state, summary, use, enumConstructorExpression);
         }
 
+        if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
+        {
+            return ResolveValue(genericEnumCaseReference.GetText(), genericEnumCaseReference.Start, state, summary, use, allowFunctionReference);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, state, summary, use, allowFunctionReference);
@@ -943,7 +948,7 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature,
         FunctionOwnershipBuilder summary)
     {
-        var constructorName = expression.dottedName().GetText();
+        var constructorName = expression.enumCaseTarget().GetText();
         if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var enumTypeSymbol, out var variant)
             || !variant.UsesNamedFields)
         {
@@ -1062,11 +1067,16 @@ internal sealed class OwnershipValidator
             return binding;
         }
 
-        if (_signatures.TryGetValue(name, out var function))
+        if (TryGetFunctionOverloads(name, out var functions))
         {
-            return allowFunctionReference
-                ? new ExpressionInfo(function.ReturnType, Function: function)
-                : new ExpressionInfo(StarkTypeSymbols.Error);
+            if (!allowFunctionReference)
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error);
+            }
+
+            return functions.Count == 1
+                ? new ExpressionInfo(functions[0].ReturnType, Function: functions[0])
+                : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: name);
         }
 
         if (TryResolveNamedTypeBySourceName(name, out var namedType))
@@ -1111,7 +1121,23 @@ internal sealed class OwnershipValidator
             return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
         }
 
+        if (_moduleGraph.HasModuleNamespace(name))
+        {
+            return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
+        }
+
         return new ExpressionInfo(StarkTypeSymbols.Error);
+    }
+
+    private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
+    {
+        if (_typeModel.Overloads.TryGetValue(sourceName, out overloads!))
+        {
+            return true;
+        }
+
+        overloads = [];
+        return false;
     }
 
     private void BindSwitchPattern(StarkParser.PatternContext pattern, ExpressionInfo switchValue, FlowState state, FunctionOwnershipBuilder summary)
@@ -1138,6 +1164,12 @@ internal sealed class OwnershipValidator
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
             BindEnumNamedFieldPattern(enumNamedFieldPattern, switchValue, state, summary);
+            return;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, switchValue, state, summary);
             return;
         }
 
@@ -1193,11 +1225,47 @@ internal sealed class OwnershipValidator
         FlowState state,
         FunctionOwnershipBuilder summary)
     {
-        if (!TryResolveEnumCaseReference(aggregatePattern.simpleType().GetText(), out var enumType, out _, out var variant))
+        return TryBindResolvedEnumAggregateSwitchPattern(
+            aggregatePattern.simpleType().GetText(),
+            aggregatePattern.aggregatePatternSuffix(),
+            switchValue,
+            state,
+            summary,
+            out var matched)
+            && matched;
+    }
+
+    private bool TryBindEnumAggregateSwitchPattern(
+        StarkParser.GenericEnumAggregatePatternContext aggregatePattern,
+        ExpressionInfo switchValue,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        return TryBindResolvedEnumAggregateSwitchPattern(
+            aggregatePattern.genericEnumCaseReference().GetText(),
+            aggregatePattern.aggregatePatternSuffix(),
+            switchValue,
+            state,
+            summary,
+            out var matched)
+            && matched;
+    }
+
+    private bool TryBindResolvedEnumAggregateSwitchPattern(
+        string caseName,
+        StarkParser.AggregatePatternSuffixContext? suffix,
+        ExpressionInfo switchValue,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        out bool matched)
+    {
+        matched = false;
+        if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant))
         {
             return false;
         }
 
+        matched = true;
         if (switchValue.Type.Kind != StarkTypeKind.Named
             || switchValue.Type.NamedType is null
             || !string.Equals(switchValue.Type.NamedType, enumType.Name, StringComparison.Ordinal)
@@ -1208,7 +1276,6 @@ internal sealed class OwnershipValidator
 
         NarrowSwitchValueToEnumCase(switchValue, state, enumType, variant);
 
-        var suffix = aggregatePattern.aggregatePatternSuffix();
         if (variant.IsUnit || suffix is null || suffix.Identifier() is not null)
         {
             return true;
@@ -1234,7 +1301,7 @@ internal sealed class OwnershipValidator
         FlowState state,
         FunctionOwnershipBuilder summary)
     {
-        if (!TryResolveEnumCaseReference(enumNamedFieldPattern.dottedName().GetText(), out var enumType, out _, out var variant)
+        if (!TryResolveEnumCaseReference(enumNamedFieldPattern.enumCaseTarget().GetText(), out var enumType, out _, out var variant)
             || switchValue.Type.Kind != StarkTypeKind.Named
             || switchValue.Type.NamedType is null
             || !string.Equals(switchValue.Type.NamedType, enumType.Name, StringComparison.Ordinal)
@@ -1293,6 +1360,12 @@ internal sealed class OwnershipValidator
             return;
         }
 
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, switchValue with { Type = field.Type }, state, summary);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
             if (TryBindEnumAggregateSwitchPattern(aggregatePattern, switchValue with { Type = field.Type }, state, summary))
@@ -1329,6 +1402,12 @@ internal sealed class OwnershipValidator
             return;
         }
 
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern
+            && TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, new ExpressionInfo(field.Type), state, summary))
+        {
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } enumAggregatePattern
             && TryBindEnumAggregateSwitchPattern(enumAggregatePattern, new ExpressionInfo(field.Type), state, summary))
         {
@@ -1356,35 +1435,70 @@ internal sealed class OwnershipValidator
         FunctionOwnershipBuilder summary,
         ValueUse use)
     {
-        if (target.Function is null)
+        if (target.EnumConstructor is not null)
         {
-            if (target.EnumConstructor is not null)
+            foreach (var argument in arguments.argument())
             {
-                foreach (var argument in arguments.argument())
-                {
-                    EvaluateExpression(
-                        argument.expression(),
-                        state,
-                        _signatures[summary.Name],
-                        summary,
-                        ValueUse.ConsumeTemporary,
-                        allowFunctionReference: false);
-                }
-
-                var aggregateState = target.Type.NamedType is not null
-                    && _typeModel.NamedTypes.TryGetValue(target.Type.NamedType, out var enumType)
-                    && enumType.Kind == DeclarationKind.Enum
-                    ? CreateEnumAggregateState(enumType, target.EnumConstructor.Variant)
-                    : null;
-
-                return ApplyUse(
-                    new ExpressionInfo(target.Type, BorrowLifetime: BorrowLifetime.None, AggregateState: aggregateState),
+                EvaluateExpression(
+                    argument.expression(),
                     state,
+                    _signatures[summary.Name],
                     summary,
-                    use,
-                    arguments);
+                    ValueUse.ConsumeTemporary,
+                    allowFunctionReference: false);
             }
 
+            var aggregateState = target.Type.NamedType is not null
+                && _typeModel.NamedTypes.TryGetValue(target.Type.NamedType, out var enumType)
+                && enumType.Kind == DeclarationKind.Enum
+                ? CreateEnumAggregateState(enumType, target.EnumConstructor.Variant)
+                : null;
+
+            return ApplyUse(
+                new ExpressionInfo(target.Type, BorrowLifetime: BorrowLifetime.None, AggregateState: aggregateState),
+                state,
+                summary,
+                use,
+                arguments);
+        }
+
+        var argumentValues = arguments.argument()
+            .Select(argument => EvaluateExpression(
+                argument.expression(),
+                state,
+                _signatures[summary.Name],
+                summary,
+                ValueUse.ConsumeTemporary,
+                allowFunctionReference: false))
+            .ToArray();
+
+        if (target.OverloadSourceName is { } overloadSourceName)
+        {
+            if (!TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error);
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                target.Receiver?.Type,
+                argumentValues.Select(static argument => argument.Type).ToArray(),
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded)
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error);
+            }
+
+            target = target with
+            {
+                Function = resolution.Match,
+                OverloadSourceName = null,
+                Type = resolution.Match!.ReturnType
+            };
+        }
+
+        if (target.Function is null)
+        {
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
@@ -1402,18 +1516,12 @@ internal sealed class OwnershipValidator
             }
         }
 
-        for (var index = 0; index < arguments.argument().Length; index++)
+        for (var index = 0; index < argumentValues.Length; index++)
         {
             var parameterType = index < explicitParameterCount
                 ? target.Function.Parameters[index + receiverOffset].Type
                 : StarkTypeSymbols.Error;
-            var argumentValue = EvaluateExpression(
-                arguments.argument(index).expression(),
-                state,
-                target.Function,
-                summary,
-                ValueUse.ForCallArgument(parameterType),
-                allowFunctionReference: false);
+            var argumentValue = argumentValues[index];
 
             if (parameterType.BorrowKind != StarkBorrowKind.None)
             {
@@ -1426,7 +1534,7 @@ internal sealed class OwnershipValidator
             : BorrowLifetime.InferFromCall(
                 borrowArguments,
                 Location(arguments.Start),
-                $"borrow source for call '{target.Function.Name}'");
+                $"borrow source for call '{target.Function.DisplaySourceName}'");
 
         return ApplyUse(
             new ExpressionInfo(target.Function.ReturnType, BorrowLifetime: borrowLifetime),
@@ -1487,6 +1595,11 @@ internal sealed class OwnershipValidator
                 return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
 
+            if (_moduleGraph.HasModuleNamespace(qualifiedName))
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+            }
+
             if (_typeModel.Globals.TryGetValue(qualifiedName, out var globalType))
             {
                 var isMutable = globalType.IsMutable;
@@ -1506,9 +1619,11 @@ internal sealed class OwnershipValidator
                     IsDirectVariable: true);
             }
 
-            if (_signatures.TryGetValue(qualifiedName, out var function))
+            if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
-                return new ExpressionInfo(function.ReturnType, Function: function);
+                return namespaceFunctions.Count == 1
+                    ? new ExpressionInfo(namespaceFunctions[0].ReturnType, Function: namespaceFunctions[0])
+                    : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: qualifiedName);
             }
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
@@ -1571,23 +1686,30 @@ internal sealed class OwnershipValidator
             HasIndexProjection: target.HasIndexProjection);
         }
 
+        var methodSourceName = $"{namedType.Name}.{memberName}";
         if (namedType.Kind == DeclarationKind.Doctrine
-            && _signatures.TryGetValue($"{namedType.Name}.{memberName}", out var doctrineMethod))
+            && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {
-            return new ExpressionInfo(
-                doctrineMethod.ReturnType,
-                Function: doctrineMethod,
-                BorrowLifetime: BorrowLifetime.None);
+            return doctrineMethods.Count == 1
+                ? new ExpressionInfo(
+                    doctrineMethods[0].ReturnType,
+                    Function: doctrineMethods[0],
+                    BorrowLifetime: BorrowLifetime.None)
+                : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: methodSourceName);
         }
 
-        if (_signatures.TryGetValue($"{namedType.Name}.{memberName}", out var method)
-            && method.Parameters.Count != 0)
+        if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            return new ExpressionInfo(
-                method.ReturnType,
-                Function: method,
-                BorrowLifetime: BorrowLifetime.None,
-                Receiver: target);
+            if (methods.Count == 1 && methods[0].Parameters.Count != 0)
+            {
+                return new ExpressionInfo(
+                    methods[0].ReturnType,
+                    Function: methods[0],
+                    BorrowLifetime: BorrowLifetime.None,
+                    Receiver: target);
+            }
+
+            return new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: methodSourceName, Receiver: target);
         }
 
         return new ExpressionInfo(
@@ -2580,6 +2702,7 @@ internal sealed class OwnershipValidator
         StarkTypeSymbol Type,
         VariableInfo? Variable = null,
         TypedFunctionSignature? Function = null,
+        string? OverloadSourceName = null,
         BorrowLifetime BorrowLifetime = null!,
         bool IsPlace = false,
         bool IsDirectVariable = false,

@@ -258,17 +258,22 @@ public sealed class CompilerPipeline
 
         foreach (var pass in _passes)
         {
+            using var passScope = state.Logs.PushContext(
+                stage: pass.Id,
+                symbolName: compilationSymbolName,
+                location: compilationLocation);
+
             state.Logs.Info(
                 "pipeline",
                 "pass-started",
                 $"Starting pass '{pass.Id}'.",
-                stage: pass.Id,
-                symbolName: compilationSymbolName,
                 operation: "pass-start",
-                location: compilationLocation,
                 data: CompilerLogData.Create(
                     ("phase", pass.Phase.ToString()),
-                    ("executionMode", pass.ExecutionMode.ToString())));
+                    ("executionMode", pass.ExecutionMode.ToString())),
+                kind: CompilerLogKind.Pipeline,
+                outcome: CompilerLogOutcome.Continued,
+                verbosity: CompilerLogVerbosity.Verbose);
 
             if (state.Diagnostics.HasErrors && pass.ExecutionMode == PassExecutionMode.SkipOnErrors)
             {
@@ -283,14 +288,13 @@ public sealed class CompilerPipeline
                     "pipeline",
                     "pass-skipped",
                     $"Skipping pass '{pass.Id}' because earlier diagnostics contain errors.",
-                    stage: pass.Id,
-                    symbolName: compilationSymbolName,
                     operation: "pass-skip",
-                    location: compilationLocation,
                     data: CompilerLogData.Create(
                         ("phase", pass.Phase.ToString()),
                         ("reason", "prior-errors"),
-                        ("diagnosticCount", state.Diagnostics.Count.ToString())));
+                        ("diagnosticCount", state.Diagnostics.Count.ToString())),
+                    kind: CompilerLogKind.Pipeline,
+                    outcome: CompilerLogOutcome.Skipped);
 
                 if (string.Equals(state.Options.StopAfterPassId, pass.Id, StringComparison.Ordinal))
                 {
@@ -298,13 +302,13 @@ public sealed class CompilerPipeline
                         "pipeline",
                         "stop-after-reached",
                         $"Stopped compilation after pass '{pass.Id}'.",
-                        stage: pass.Id,
-                        symbolName: compilationSymbolName,
                         operation: "stop-after",
-                        location: compilationLocation,
                         data: CompilerLogData.Create(
                             ("phase", pass.Phase.ToString()),
-                            ("status", PassExecutionStatus.Skipped.ToString())));
+                            ("status", PassExecutionStatus.Skipped.ToString())),
+                        kind: CompilerLogKind.Decision,
+                        outcome: CompilerLogOutcome.Stopped,
+                        verbosity: CompilerLogVerbosity.Verbose);
                     break;
                 }
 
@@ -330,15 +334,15 @@ public sealed class CompilerPipeline
                     "pipeline",
                     "pass-completed",
                     $"Completed pass '{pass.Id}'.",
-                    stage: pass.Id,
-                    symbolName: compilationSymbolName,
                     operation: "pass-complete",
-                    location: compilationLocation,
                     data: CompilerLogData.Create(
                         ("phase", pass.Phase.ToString()),
                         ("status", PassExecutionStatus.Executed.ToString()),
                         ("durationMs", stopwatch.ElapsedMilliseconds.ToString()),
-                        ("diagnosticsAdded", (state.Diagnostics.Count - diagnosticsBefore).ToString())));
+                        ("diagnosticsAdded", (state.Diagnostics.Count - diagnosticsBefore).ToString())),
+                    kind: CompilerLogKind.Pipeline,
+                    outcome: CompilerLogOutcome.Continued,
+                    verbosity: CompilerLogVerbosity.Verbose);
 
                 if (string.Equals(state.Options.StopAfterPassId, pass.Id, StringComparison.Ordinal))
                 {
@@ -346,13 +350,13 @@ public sealed class CompilerPipeline
                         "pipeline",
                         "stop-after-reached",
                         $"Stopped compilation after pass '{pass.Id}'.",
-                        stage: pass.Id,
-                        symbolName: compilationSymbolName,
                         operation: "stop-after",
-                        location: compilationLocation,
                         data: CompilerLogData.Create(
                             ("phase", pass.Phase.ToString()),
-                            ("status", PassExecutionStatus.Executed.ToString())));
+                            ("status", PassExecutionStatus.Executed.ToString())),
+                        kind: CompilerLogKind.Decision,
+                        outcome: CompilerLogOutcome.Stopped,
+                        verbosity: CompilerLogVerbosity.Verbose);
                     break;
                 }
             }
@@ -375,17 +379,16 @@ public sealed class CompilerPipeline
                     "pipeline",
                     "pass-failed",
                     $"Pass '{pass.Id}' failed with an exception.",
-                    stage: pass.Id,
-                    symbolName: compilationSymbolName,
                     operation: "pass-fail",
-                    location: compilationLocation,
                     data: CompilerLogData.Create(
                         ("phase", pass.Phase.ToString()),
                         ("status", PassExecutionStatus.Failed.ToString()),
                         ("durationMs", stopwatch.ElapsedMilliseconds.ToString()),
                         ("diagnosticsAdded", (state.Diagnostics.Count - diagnosticsBefore).ToString()),
                         ("exceptionType", ex.GetType().FullName),
-                        ("exceptionMessage", ex.Message)));
+                        ("exceptionMessage", ex.Message)),
+                    kind: CompilerLogKind.Pipeline,
+                    outcome: CompilerLogOutcome.Stopped);
 
                 if (!state.Options.ContinueAfterErrors)
                 {

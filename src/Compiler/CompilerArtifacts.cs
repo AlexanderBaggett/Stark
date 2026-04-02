@@ -187,6 +187,12 @@ public sealed record ModuleGraph(
 {
     public bool HasModule(string moduleName) => AccessibleModules.Contains(moduleName);
 
+    public bool HasModuleNamespace(string moduleNamePrefix)
+    {
+        var prefix = $"{moduleNamePrefix}.";
+        return AccessibleModules.Any(module => module.StartsWith(prefix, StringComparison.Ordinal));
+    }
+
     public bool ContainsLoadedModule(string moduleName) => Modules.ContainsKey(moduleName);
 }
 
@@ -324,7 +330,8 @@ public sealed record StarkTypeSymbol(
     StarkBorrowKind BorrowKind = StarkBorrowKind.None,
     StarkAccessKind AccessKind = StarkAccessKind.None,
     StarkInitializationKind InitializationKind = StarkInitializationKind.None,
-    bool IsMutableView = false);
+    bool IsMutableView = false,
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null);
 
 public static class StarkTypeSymbols
 {
@@ -372,6 +379,22 @@ public static class StarkTypeSymbols
         new(StarkTypeKind.Slice, $"{elementType.DisplayName}[]", ElementType: elementType);
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
+
+    public static StarkTypeSymbol GenericInstantiation(string templateName, IReadOnlyList<StarkTypeSymbol> typeArgs)
+    {
+        var displayName = $"{templateName}<{string.Join(", ", typeArgs.Select(static t => t.DisplayName))}>";
+        var key = $"{templateName}<{string.Join(",", typeArgs.Select(static t => t.NamedType ?? t.DisplayName))}>";
+        return new StarkTypeSymbol(StarkTypeKind.Named, displayName, NamedType: key, TypeArguments: typeArgs);
+    }
+
+    public static string GetGenericBaseName(string key)
+    {
+        var angle = key.IndexOf('<');
+        return angle >= 0 ? key[..angle] : key;
+    }
+
+    public static bool IsGenericInstantiation(StarkTypeSymbol type)
+        => type.Kind == StarkTypeKind.Named && type.TypeArguments is { Count: > 0 };
 
     public static bool TryGetBuiltinNamedType(string name, out NamedTypeSymbol namedType)
     {
@@ -555,7 +578,8 @@ public sealed record NamedTypeSymbol(
     DeclarationKind Kind,
     IReadOnlyDictionary<string, FieldSymbol> Fields,
     IReadOnlyList<FieldSymbol> OrderedFields,
-    IReadOnlyList<EnumVariantSymbol>? EnumVariants = null)
+    IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
+    IReadOnlyList<string>? GenericParameterNames = null)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -577,6 +601,9 @@ public sealed record NamedTypeSymbol(
 
         return index >= 0;
     }
+
+    public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
 
     public IReadOnlyList<EnumVariantSymbol> Variants => EnumVariants ?? [];
 
@@ -646,7 +673,11 @@ public sealed record TypedConstructorShape(
 public sealed record TypedFunctionSignature(
     string Name,
     StarkTypeSymbol ReturnType,
-    IReadOnlyList<TypedParameterSymbol> Parameters);
+    IReadOnlyList<TypedParameterSymbol> Parameters,
+    string? SourceName = null)
+{
+    public string DisplaySourceName => SourceName ?? Name;
+}
 
 public enum GlobalBindingKind
 {
@@ -681,7 +712,18 @@ public sealed record TypeCheckModel(
     IReadOnlyDictionary<string, TypedFunctionSignature> Functions,
     IReadOnlyDictionary<string, TypedGlobalSymbol> Globals,
     IReadOnlyList<LiteralTypingRecord> Literals,
-    IReadOnlyList<ObjectCreationTypingRecord> ObjectCreations);
+    IReadOnlyList<ObjectCreationTypingRecord> ObjectCreations,
+    IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>>? FunctionOverloads = null)
+{
+    public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
+        FunctionOverloads
+        ?? Functions.Values
+            .GroupBy(static function => function.DisplaySourceName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<TypedFunctionSignature>)group.ToArray(),
+                StringComparer.Ordinal);
+}
 
 public sealed record EnumLayoutModel(
     string ModuleName,
@@ -707,8 +749,11 @@ public sealed record AbiFunctionSignature(
     StarkTypeSymbol SourceReturnType,
     StarkTypeSymbol LlvmReturnType,
     IReadOnlyList<AbiParameterSymbol> Parameters,
-    bool IsFfi)
+    bool IsFfi,
+    string? SourceName = null)
 {
+    public string DisplaySourceName => SourceName ?? Name;
+
     public bool ReturnsIndirect => Parameters.Any(static parameter => parameter.Kind == AbiParameterKind.SRet);
 
     public AbiParameterSymbol? ReturnBufferParameter => Parameters.FirstOrDefault(static parameter => parameter.Kind == AbiParameterKind.SRet);

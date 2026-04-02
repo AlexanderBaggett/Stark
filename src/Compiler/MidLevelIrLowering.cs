@@ -65,14 +65,17 @@ internal sealed class MidLevelIrLowerer(
                         loweringContext.Declaration.NameToken.Line,
                         loweringContext.Declaration.NameToken.Column + 1);
 
-                _logs.Warning(
+                _logs.GapWarning(
                     "lowering",
                     "missing-function-body",
-                    $"MIR lowering could not find a parsed body for '{function.Name}', so direct code generation was disabled for that function.",
+                    $"MIR lowering could not find a parsed body for '{function.Name}', so LLVM can only emit a declaration for that function.",
+                    featureTag: "missing-function-body",
+                    reason: "parsed-body-not-found",
                     stage: "lower-mir",
                     symbolName: function.Name,
                     operation: "LowerFunction",
                     location: logLocation,
+                    outcome: CompilerLogOutcome.Bypassed,
                     data: CompilerLogData.Create(
                         ("module", _typeModel.ModuleName),
                         ("function", function.Name),
@@ -92,7 +95,12 @@ internal sealed class MidLevelIrLowerer(
                 BodyLoweringKind: function.BodyLoweringKind);
         }
 
-        var builder = new FunctionMirBuilder(
+        var functionLocation = new SourceLocation(
+            loweringContext.FilePath,
+            loweringContext.Declaration.NameToken.Line,
+            loweringContext.Declaration.NameToken.Column + 1);
+
+        using var builder = new FunctionMirBuilder(
             function,
             loweringContext.ModuleName,
             _typeModel,
@@ -100,15 +108,46 @@ internal sealed class MidLevelIrLowerer(
             _typeResolver,
             _logs,
             loweringContext.FilePath,
-            new SourceLocation(
-                loweringContext.FilePath,
-                loweringContext.Declaration.NameToken.Line,
-                loweringContext.Declaration.NameToken.Column + 1),
+            functionLocation,
             _fallbackFunctions,
             _fallbackGlobals,
             _literalTypes,
             _objectCreationConstructors);
+
+        _logs.Info(
+            "lowering",
+            "symbol-lowering-started",
+            $"Lowering MIR for '{function.Name}'.",
+            stage: "lower-mir",
+            symbolName: function.Name,
+            operation: "LowerFunction",
+            location: functionLocation,
+            data: CompilerLogData.Create(
+                ("module", loweringContext.ModuleName),
+                ("bodyLoweringKind", function.BodyLoweringKind.ToString())),
+            kind: CompilerLogKind.Symbol,
+            outcome: CompilerLogOutcome.Continued,
+            verbosity: CompilerLogVerbosity.Verbose);
+
         builder.Lower(body);
+
+        _logs.Info(
+            "lowering",
+            "symbol-lowering-completed",
+            $"Finished MIR lowering for '{function.Name}'.",
+            stage: "lower-mir",
+            symbolName: function.Name,
+            operation: "LowerFunction",
+            location: functionLocation,
+            data: CompilerLogData.Create(
+                ("module", loweringContext.ModuleName),
+                ("bodyLoweringKind", function.BodyLoweringKind.ToString()),
+                ("supportsDirectCodeGeneration", builder.SupportsDirectCodeGeneration.ToString())),
+            kind: CompilerLogKind.Symbol,
+            outcome: builder.SupportsDirectCodeGeneration
+                ? CompilerLogOutcome.Continued
+                : CompilerLogOutcome.Bypassed,
+            verbosity: CompilerLogVerbosity.Verbose);
 
         return new MidLevelIrFunction(
             function.Name,
@@ -134,7 +173,7 @@ internal sealed class MidLevelIrLowerer(
 
         foreach (var module in loadedModules.Modules.Values)
         {
-            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
                 var qualifiedName = module.Reference.IsRoot
                     ? declaration.Name
@@ -157,7 +196,7 @@ internal sealed class MidLevelIrLowerer(
 
         foreach (var module in loadedModules.Modules.Values)
         {
-            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
                 var genericParameters = resolver.GetGenericParameterNames(declaration.TypeParameters);
                 var qualifiedName = QualifyName(module, declaration.Name);
@@ -169,7 +208,8 @@ internal sealed class MidLevelIrLowerer(
                 functions[qualifiedName] = new TypedFunctionSignature(
                     qualifiedName,
                     resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
-                    parameters);
+                    parameters,
+                    SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName));
             }
         }
 
@@ -234,7 +274,7 @@ internal sealed class MidLevelIrLowerer(
     private readonly record struct LiteralKey(string Text, int Line, int Column);
     private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
 
-    private sealed class FunctionMirBuilder
+    private sealed class FunctionMirBuilder : IDisposable
     {
         private enum AggregatePatternFieldKind
         {
@@ -332,6 +372,7 @@ internal sealed class MidLevelIrLowerer(
         private readonly IReadOnlyDictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
         private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
         private readonly HashSet<string> _unsupportedLogKeys = new(StringComparer.Ordinal);
+        private readonly IDisposable _logScope;
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
@@ -368,6 +409,10 @@ internal sealed class MidLevelIrLowerer(
             _literalTypes = literalTypes;
             _objectCreationConstructors = objectCreationConstructors;
             _parametersByName = function.Signature.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+            _logScope = _logs.PushContext(
+                stage: "lower-mir",
+                symbolName: function.Name,
+                location: functionLocation);
             CurrentBlock = CreateBlock("entry");
         }
 
@@ -393,6 +438,11 @@ internal sealed class MidLevelIrLowerer(
                     ? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, Targets: [])
                     : new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: []);
             }
+        }
+
+        public void Dispose()
+        {
+            _logScope.Dispose();
         }
 
         private void LowerBlock(StarkParser.BlockContext block)
@@ -1355,12 +1405,72 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
+        private bool TryParseAggregatePattern(StarkParser.GenericEnumAggregatePatternContext genericEnumAggregatePattern, out LowerableAggregatePattern? parsedAggregatePattern)
+        {
+            parsedAggregatePattern = null;
+
+            if (!TryResolveEnumCaseReference(genericEnumAggregatePattern.genericEnumCaseReference(), out var enumType, out _, out var enumVariant)
+                || enumVariant.UsesNamedFields)
+            {
+                return false;
+            }
+
+            var enumSuffix = genericEnumAggregatePattern.aggregatePatternSuffix();
+            if (enumVariant.Fields.Count == 0)
+            {
+                if (enumSuffix is not null)
+                {
+                    return false;
+                }
+
+                parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, [], WholeCaptureName: null);
+                return true;
+            }
+
+            if (enumSuffix is null)
+            {
+                return false;
+            }
+
+            if (enumSuffix.Identifier() is { } enumCapture)
+            {
+                parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, [], enumCapture.GetText());
+                return true;
+            }
+
+            var enumFieldPatterns = enumSuffix.pattern();
+            if (enumFieldPatterns.Length != enumVariant.Fields.Count)
+            {
+                return false;
+            }
+
+            var parsedEnumFieldPatterns = new LowerableAggregateFieldPattern[enumFieldPatterns.Length];
+            for (var index = 0; index < enumFieldPatterns.Length; index++)
+            {
+                var field = enumVariant.Fields[index];
+                if (!TryParseStructuredFieldPattern(
+                        enumFieldPatterns[index],
+                        field.SourceFieldName ?? field.SourcePosition.ToString(),
+                        field.StorageFieldName,
+                        field.StorageFieldIndex,
+                        field.Type,
+                        out var parsedFieldPattern))
+                {
+                    return false;
+                }
+
+                parsedEnumFieldPatterns[index] = parsedFieldPattern;
+            }
+
+            parsedAggregatePattern = new LowerableAggregatePattern(enumType.NamedType!, enumVariant.Name, parsedEnumFieldPatterns, WholeCaptureName: null);
+            return true;
+        }
+
         private bool TryParseEnumNamedFieldPattern(StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern, out LowerableAggregatePattern? parsedAggregatePattern)
         {
             parsedAggregatePattern = null;
 
-            var caseName = enumNamedFieldPattern.dottedName().GetText();
-            if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var enumVariant)
+            if (!TryResolveEnumCaseTarget(enumNamedFieldPattern.enumCaseTarget(), out _, out var enumType, out _, out var enumVariant)
                 || !enumVariant.UsesNamedFields)
             {
                 return false;
@@ -1503,6 +1613,29 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
+            if (pattern.genericEnumAggregatePattern() is { } nestedGenericEnumAggregatePattern)
+            {
+                if (!TryParseAggregatePattern(nestedGenericEnumAggregatePattern, out var parsedNestedPattern)
+                    || parsedNestedPattern is null
+                    || parsedNestedPattern.WholeCaptureName is not null)
+                {
+                    parsedFieldPattern = default!;
+                    return false;
+                }
+
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Nested,
+                    nestedGenericEnumAggregatePattern.GetText(),
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: parsedNestedPattern);
+                return true;
+            }
+
             parsedFieldPattern = default!;
             return false;
         }
@@ -1596,6 +1729,25 @@ internal sealed class MidLevelIrLowerer(
 
                         labels.Add(new LowerableSwitchLabel(
                             aggregatePattern.GetText(),
+                            Literal: null,
+                            GuardExpression: label.whenClause()?.expression(),
+                            IsDefault: false,
+                            IsMatchAll: false,
+                            CaptureName: null,
+                            AggregatePattern: parsedAggregatePattern));
+                        continue;
+                    }
+
+                    if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+                    {
+                        if (!TryParseAggregatePattern(genericEnumAggregatePattern, out var parsedAggregatePattern)
+                            || parsedAggregatePattern is null)
+                        {
+                            return false;
+                        }
+
+                        labels.Add(new LowerableSwitchLabel(
+                            genericEnumAggregatePattern.GetText(),
                             Literal: null,
                             GuardExpression: label.whenClause()?.expression(),
                             IsDefault: false,
@@ -2602,6 +2754,18 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
+            if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
+            {
+                if (!TryBuildGenericEnumCaseName(genericEnumCaseReference, out var genericEnumCaseName))
+                {
+                    return false;
+                }
+
+                currentValue = TryResolveNamedValueOperand(genericEnumCaseName);
+                currentName = currentValue is null ? genericEnumCaseName : null;
+                return true;
+            }
+
             currentValue = LowerPrimaryExpression(expression, expectedType: null);
             return currentValue is not null;
         }
@@ -2621,6 +2785,13 @@ internal sealed class MidLevelIrLowerer(
             if (expression.enumConstructorExpression() is { } enumConstructorExpression)
             {
                 return LowerEnumConstructorExpression(enumConstructorExpression, expectedType);
+            }
+
+            if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
+            {
+                return !TryBuildGenericEnumCaseName(genericEnumCaseReference, out var genericEnumCaseName)
+                    ? null
+                    : ResolveNamedOperand(genericEnumCaseName);
             }
 
             if (expression.qualifiedName() is { } qualifiedName)
@@ -2787,8 +2958,8 @@ internal sealed class MidLevelIrLowerer(
             StarkParser.EnumConstructorExpressionContext expression,
             StarkTypeSymbol? expectedType)
         {
-            var constructorName = expression.dottedName().GetText();
-            if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var layout, out var variant)
+            var constructorName = expression.enumCaseTarget().GetText();
+            if (!TryResolveEnumCaseTarget(expression.enumCaseTarget(), out _, out var enumType, out var layout, out var variant)
                 || !variant.UsesNamedFields)
             {
                 MarkUnsupported();
@@ -3318,6 +3489,11 @@ internal sealed class MidLevelIrLowerer(
         {
             call = default!;
 
+            if (TryGetFunctionOverloads(functionName, out var overloads))
+            {
+                return TryBuildOverloadedCall(overloads, receiver: null, arguments, text, out call);
+            }
+
             if (!TryResolveFunctionSignature(functionName, out var signature))
             {
                 return false;
@@ -3335,8 +3511,18 @@ internal sealed class MidLevelIrLowerer(
         {
             call = default!;
 
-            if (receiver.Type.NamedType is not { } namedTypeName
-                || !TryResolveFunctionSignature($"{namedTypeName}.{memberName}", out var signature)
+            if (receiver.Type.NamedType is not { } namedTypeName)
+            {
+                return false;
+            }
+
+            var sourceName = $"{namedTypeName}.{memberName}";
+            if (TryGetFunctionOverloads(sourceName, out var overloads))
+            {
+                return TryBuildOverloadedCall(overloads, receiver, arguments, text, out call);
+            }
+
+            if (!TryResolveFunctionSignature(sourceName, out var signature)
                 || signature.Parameters.Count == 0)
             {
                 return false;
@@ -3345,13 +3531,55 @@ internal sealed class MidLevelIrLowerer(
             return TryBuildCall(signature.Name, signature, receiver, arguments, text, out call);
         }
 
+        private bool TryBuildOverloadedCall(
+            IReadOnlyList<TypedFunctionSignature> overloads,
+            MidLevelIrOperand? receiver,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+
+            var loweredArguments = new List<MidLevelIrOperand>(arguments.argument().Length);
+            foreach (var argument in arguments.argument())
+            {
+                var lowered = LowerExpressionToOperand(argument.expression(), expectedType: null);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(lowered);
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                receiver?.Type,
+                loweredArguments.Select(static argument => argument.Type).ToArray(),
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded)
+            {
+                return false;
+            }
+
+            return TryBuildCall(
+                resolution.Match!.Name,
+                resolution.Match,
+                receiver,
+                arguments,
+                text,
+                out call,
+                loweredArguments);
+        }
+
         private bool TryBuildCall(
             string functionName,
             TypedFunctionSignature signature,
             MidLevelIrOperand? receiver,
             StarkParser.ArgumentListContext arguments,
             string text,
-            out MidLevelIrCallRValue call)
+            out MidLevelIrCallRValue call,
+            IReadOnlyList<MidLevelIrOperand>? loweredExplicitArguments = null)
         {
             call = default!;
 
@@ -3375,7 +3603,9 @@ internal sealed class MidLevelIrLowerer(
             for (var index = 0; index < Math.Min(arguments.argument().Length, explicitParameterCount); index++)
             {
                 var parameterType = signature.Parameters[index + receiverOffset].Type;
-                var argument = LowerExpressionToOperand(arguments.argument(index).expression(), parameterType);
+                var argument = loweredExplicitArguments is not null && index < loweredExplicitArguments.Count
+                    ? CoerceOperand(loweredExplicitArguments[index], parameterType)
+                    : LowerExpressionToOperand(arguments.argument(index).expression(), parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -3515,10 +3745,33 @@ internal sealed class MidLevelIrLowerer(
             return null;
         }
 
+        private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
+        {
+            if (_typeModel.Overloads.TryGetValue(sourceName, out overloads!))
+            {
+                return true;
+            }
+
+            if (!sourceName.Contains('.', StringComparison.Ordinal)
+                && _typeModel.Overloads.TryGetValue($"{_currentModuleName}.{sourceName}", out overloads!))
+            {
+                return true;
+            }
+
+            overloads = [];
+            return false;
+        }
+
         private bool TryResolveFunctionSignature(string name, out TypedFunctionSignature signature)
         {
             if (_typeModel.Functions.TryGetValue(name, out signature!))
             {
+                return true;
+            }
+
+            if (TryGetFunctionOverloads(name, out var overloads) && overloads.Count == 1)
+            {
+                signature = overloads[0];
                 return true;
             }
 
@@ -3545,6 +3798,42 @@ internal sealed class MidLevelIrLowerer(
             }
 
             return _fallbackGlobals.TryGetValue(name, out global!);
+        }
+
+        private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
+        {
+            var baseName = genericQualifiedName.qualifiedName().GetText();
+            var baseType = _typeResolver.ResolveQualifiedType(baseName, genericParameters: null, genericQualifiedName.qualifiedName().Start, _currentModuleName);
+            if (baseType.Kind == StarkTypeKind.Error)
+            {
+                return StarkTypeSymbols.Error;
+            }
+
+            var typeArguments = genericQualifiedName.typeArgumentList().type_()
+                .Select(typeArgument => _typeResolver.ResolveType(typeArgument, currentModuleName: _currentModuleName))
+                .ToArray();
+            if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+            {
+                return StarkTypeSymbols.Error;
+            }
+
+            return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments);
+        }
+
+        private bool TryBuildGenericEnumCaseName(
+            StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
+            out string name)
+        {
+            name = string.Empty;
+
+            var enumType = ResolveGenericQualifiedName(genericEnumCaseReference.genericQualifiedName());
+            if (enumType.Kind != StarkTypeKind.Named || enumType.NamedType is null)
+            {
+                return false;
+            }
+
+            name = $"{enumType.NamedType}.{genericEnumCaseReference.Identifier().GetText()}";
+            return true;
         }
 
         private bool TryResolveEnumCaseReference(
@@ -3577,6 +3866,40 @@ internal sealed class MidLevelIrLowerer(
 
             enumType = StarkTypeSymbols.Named(namedType.Name);
             return true;
+        }
+
+        private bool TryResolveEnumCaseReference(
+            StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
+            out StarkTypeSymbol enumType,
+            out EnumLayoutSymbol layout,
+            out EnumVariantLayoutSymbol variant)
+        {
+            enumType = StarkTypeSymbols.Error;
+            layout = null!;
+            variant = null!;
+
+            return TryBuildGenericEnumCaseName(genericEnumCaseReference, out var name)
+                && TryResolveEnumCaseReference(name, out enumType, out layout, out variant);
+        }
+
+        private bool TryResolveEnumCaseTarget(
+            StarkParser.EnumCaseTargetContext enumCaseTarget,
+            out string caseName,
+            out StarkTypeSymbol enumType,
+            out EnumLayoutSymbol layout,
+            out EnumVariantLayoutSymbol variant)
+        {
+            caseName = enumCaseTarget.GetText();
+            enumType = StarkTypeSymbols.Error;
+            layout = null!;
+            variant = null!;
+
+            if (enumCaseTarget.genericEnumCaseReference() is { } genericEnumCaseReference)
+            {
+                return TryResolveEnumCaseReference(genericEnumCaseReference, out enumType, out layout, out variant);
+            }
+
+            return TryResolveEnumCaseReference(enumCaseTarget.dottedName().GetText(), out enumType, out layout, out variant);
         }
 
         private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
@@ -5112,6 +5435,7 @@ internal sealed class MidLevelIrLowerer(
         private void MarkUnsupported(
             ParserRuleContext? syntax = null,
             string? reason = null,
+            string? featureTag = null,
             [CallerMemberName] string caller = "")
         {
             SupportsDirectCodeGeneration = false;
@@ -5130,23 +5454,24 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            _logs.Warning(
+            var resolvedFeatureTag = featureTag ?? CreateFeatureTag(caller);
+            var message = reason ?? $"Direct MIR lowering stopped in '{caller}'.";
+
+            _logs.GapWarning(
                 "lowering",
                 "unsupported-lowering",
-                reason is null
-                    ? $"MIR lowering marked '{_function.Name}' as unsupported for direct code generation in '{caller}'."
-                    : $"MIR lowering marked '{_function.Name}' as unsupported for direct code generation in '{caller}': {reason}",
-                stage: "lower-mir",
-                symbolName: _function.Name,
+                message,
+                featureTag: resolvedFeatureTag,
+                reason: reason,
                 operation: caller,
                 location: location,
+                outcome: CompilerLogOutcome.Unsupported,
                 data: CompilerLogData.Create(
                     ("module", _currentModuleName),
                     ("function", _function.Name),
                     ("bodyLoweringKind", _function.BodyLoweringKind.ToString()),
                     ("blockId", CurrentBlock.Id.ToString()),
                     ("blockLabel", CurrentBlock.Label),
-                    ("reason", reason),
                     ("syntaxText", TruncateForLog(syntax?.GetText()))));
         }
 
@@ -5171,6 +5496,28 @@ internal sealed class MidLevelIrLowerer(
             }
 
             return $"{text[..maxLength]}...";
+        }
+
+        private static string CreateFeatureTag(string caller)
+        {
+            if (string.IsNullOrWhiteSpace(caller))
+            {
+                return "mir-lowering-gap";
+            }
+
+            var builder = new StringBuilder();
+            for (var index = 0; index < caller.Length; index++)
+            {
+                var current = caller[index];
+                if (char.IsUpper(current) && index > 0)
+                {
+                    builder.Append('-');
+                }
+
+                builder.Append(char.ToLowerInvariant(current));
+            }
+
+            return builder.ToString();
         }
 
         private static string FormatInitializer(StarkParser.VariableInitializerContext initializer)

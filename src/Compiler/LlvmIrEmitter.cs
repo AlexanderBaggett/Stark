@@ -131,19 +131,20 @@ internal sealed class LlvmIrEmitter
         var rootFunctionNames = new HashSet<string>(
             _syntaxModel.Declarations
                 .Where(static declaration => declaration.Function is not null)
-                .Select(static declaration => declaration.Function!.Name),
+                .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration)),
             StringComparer.Ordinal);
         var resolveCallAbi = CreateCallAbiResolver();
 
         foreach (var declaration in _syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
         {
             var function = declaration.Function!;
-            var effects = _effectModel.Functions[function.Name];
-            var signature = _typeModel.Functions[function.Name];
-            var abiSignature = _abiModel.Functions[function.Name];
-            var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == function.Name);
-            var parameterEffects = GetRootParameterEffects(function.Name, function.HasBody)
-                ?? GetBuiltinParameterEffects(_syntaxModel.ModuleName, function.Name, signature);
+            var resolvedName = FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration);
+            var effects = _effectModel.Functions[resolvedName];
+            var signature = _typeModel.Functions[resolvedName];
+            var abiSignature = _abiModel.Functions[resolvedName];
+            var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == resolvedName);
+            var parameterEffects = GetRootParameterEffects(resolvedName, function.HasBody)
+                ?? GetBuiltinParameterEffects(_syntaxModel.ModuleName, resolvedName, signature);
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
@@ -164,10 +165,10 @@ internal sealed class LlvmIrEmitter
                     continue;
                 }
 
-                builder.AppendLine($"; LLVM asm body emission fallback for {function.Name}: {asmFailureReason}");
+                builder.AppendLine($"; LLVM asm body emission fallback for {resolvedName}: {asmFailureReason}");
                 LogLlvmFallback(
                     "llvm-asm-fallback",
-                    function.Name,
+                    resolvedName,
                     asmFailureReason,
                     FunctionBodyLoweringKind.AsmBypass,
                     supportsDirectCodeGeneration: false,
@@ -203,10 +204,10 @@ internal sealed class LlvmIrEmitter
                 }
                 catch (UnsupportedBodyEmissionException exception)
                 {
-                    builder.AppendLine($"; LLVM body emission fallback for {function.Name}: {exception.Message}");
+                    builder.AppendLine($"; LLVM body emission fallback for {resolvedName}: {exception.Message}");
                     LogLlvmFallback(
                         "llvm-body-fallback",
-                        function.Name,
+                        resolvedName,
                         exception.Message,
                         ssaFunction.BodyLoweringKind,
                         ssaFunction.SupportsDirectCodeGeneration,
@@ -215,10 +216,10 @@ internal sealed class LlvmIrEmitter
             }
             else if (function.HasBody)
             {
-                builder.AppendLine($"; LLVM body emission pending for {function.Name}");
+                builder.AppendLine($"; LLVM body emission pending for {resolvedName}");
                 LogLlvmFallback(
                     "llvm-body-pending",
-                    function.Name,
+                    resolvedName,
                     "SSA lowering did not leave this function in a direct-codegen-capable form, so LLVM emitted only a declaration.",
                     ssaFunction?.BodyLoweringKind ?? FunctionBodyLoweringKind.DeclarationOnly,
                     ssaFunction?.SupportsDirectCodeGeneration ?? false,
@@ -291,8 +292,9 @@ internal sealed class LlvmIrEmitter
                          .Where(static declaration => declaration.Function?.Asm is not null)
                          .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
             {
-                var function = declaration.Function!;
-                var functionName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                var functionName = FunctionOverloadFacts.QualifyResolvedName(
+                    module,
+                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                 if (!_typeModel.Functions.TryGetValue(functionName, out var signature)
                     || !_abiModel.Functions.TryGetValue(functionName, out var abiSignature)
                     || !_effectModel.Functions.TryGetValue(functionName, out var effects))
@@ -309,7 +311,7 @@ internal sealed class LlvmIrEmitter
                         signature,
                         abiSignature,
                         effects,
-                        function.Asm!,
+                        declaration.Function!.Asm!,
                         parameterEffects: null,
                         out var asmFailureReason))
                 {
@@ -343,20 +345,22 @@ internal sealed class LlvmIrEmitter
         bool supportsDirectCodeGeneration,
         string operation)
     {
-        _logs?.Warning(
+        _logs?.GapWarning(
             "codegen",
             eventId,
-            $"LLVM emitted a declaration fallback for '{functionName}': {reason}",
+            $"LLVM emitted only a declaration for '{functionName}': {reason}",
+            featureTag: eventId,
+            reason: reason,
             stage: "emit-llvm",
             symbolName: functionName,
             operation: operation,
             location: _functionLocations.TryGetValue(functionName, out var location)
                 ? location
                 : SourceLocation.Synthetic(_input.FilePath),
+            outcome: CompilerLogOutcome.Bypassed,
             data: CompilerLogData.Create(
                 ("module", _syntaxModel.ModuleName),
                 ("function", functionName),
-                ("reason", reason),
                 ("bodyLoweringKind", bodyLoweringKind.ToString()),
                 ("supportsDirectCodeGeneration", supportsDirectCodeGeneration.ToString()),
                 ("targetTriple", _targetInfo?.Triple)));
@@ -369,7 +373,7 @@ internal sealed class LlvmIrEmitter
         foreach (var module in loadedModules.Modules.Values)
         {
             var filePath = module.Reference.FilePath ?? rootInputFilePath;
-            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
                 var qualifiedName = module.Reference.IsRoot
                     ? declaration.Name
@@ -417,7 +421,8 @@ internal sealed class LlvmIrEmitter
                 new TypedFunctionSignature(
                     function.Name,
                     function.ReturnType,
-                    function.Parameters));
+                    function.Parameters,
+                    SourceName: function.Name));
         }
 
         return functions;
@@ -464,7 +469,7 @@ internal sealed class LlvmIrEmitter
                 && FunctionKindFacts.IsLaw(effects.Kind));
         var rootLawFunctions = _syntaxModel.Declarations
             .Where(static declaration => declaration.Function is not null)
-            .Select(static declaration => declaration.Function!.Name)
+            .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration))
             .Where(name => _effectModel.Functions.TryGetValue(name, out var effects) && FunctionKindFacts.IsLaw(effects.Kind))
             .ToArray();
         var clones = new Dictionary<string, ImportedLawClonePlan>(StringComparer.Ordinal);
@@ -530,7 +535,10 @@ internal sealed class LlvmIrEmitter
         {
             foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
             {
-                declarations[$"{module.SyntaxModel.ModuleName}.{declaration.Function!.Name}"] = declaration;
+                var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                    module,
+                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                declarations[qualifiedName] = declaration;
             }
         }
 
@@ -696,7 +704,8 @@ internal sealed class LlvmIrEmitter
                 ? StarkTypeSymbols.Void
                 : SyntheticLowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
             parameters,
-            isFfi);
+            isFfi,
+            SourceName: function.SourceName);
     }
 
     private static StarkTypeSymbol SyntheticLowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)

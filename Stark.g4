@@ -413,11 +413,16 @@ pattern
     | literal
     | VAR Identifier
     | enumNamedFieldPattern
+    | genericEnumAggregatePattern
     | aggregatePattern
     ;
 
 aggregatePattern
     : simpleType aggregatePatternSuffix?
+    ;
+
+genericEnumAggregatePattern
+    : genericEnumCaseReference aggregatePatternSuffix?
     ;
 
 aggregatePatternSuffix
@@ -426,7 +431,7 @@ aggregatePatternSuffix
     ;
 
 enumNamedFieldPattern
-    : dottedName enumNamedFieldPatternPayload
+    : enumCaseTarget enumNamedFieldPatternPayload
     ;
 
 enumNamedFieldPatternPayload
@@ -555,13 +560,14 @@ primaryExpression
     : literal
     | Identifier
     | enumConstructorExpression
+    | genericEnumCaseReference
     | qualifiedName
     | objectCreationExpression
     | LPAREN expression RPAREN
     ;
 
 enumConstructorExpression
-    : dottedName enumConstructorInitializer
+    : enumCaseTarget enumConstructorInitializer
     ;
 
 objectCreationExpression
@@ -610,12 +616,25 @@ signedIntegerLiteral
     : MINUS? IntegerLiteral
     ;
 
+genericQualifiedName
+    : qualifiedName typeArgumentList
+    ;
+
+genericEnumCaseReference
+    : genericQualifiedName DOT Identifier
+    ;
+
 qualifiedName
     : Identifier (DOT Identifier)*
     ;
 
 dottedName
     : Identifier (DOT Identifier)+
+    ;
+
+enumCaseTarget
+    : dottedName
+    | genericEnumCaseReference
     ;
 
 IMPORT      : 'import';

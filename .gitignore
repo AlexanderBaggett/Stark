@@ -22,6 +22,8 @@ coverage/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+.claude/
+.codex
 
 # Native/compiler-generated artifacts
 *.ll

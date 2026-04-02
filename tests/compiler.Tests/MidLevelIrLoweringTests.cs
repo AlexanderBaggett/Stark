@@ -1,9 +1,18 @@
 using Stark.Compiler;
+using System.Text;
+using Xunit.Abstractions;
 
 namespace compiler.Tests;
 
 public sealed class MidLevelIrLoweringTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public MidLevelIrLoweringTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     [Fact]
     public void IfStatementsLowerToBranchingBlocks()
     {
@@ -1509,8 +1518,9 @@ public sealed class MidLevelIrLoweringTests
         Assert.False(returned.Type.IsMutablePointer);
     }
 
-    private static CompilationResult Compile(string source)
+    private CompilationResult Compile(string source)
     {
+        using var logScope = CompilerLogOutput.Push(new TestOutputWriter(_output), DiagnosticSeverity.Info);
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
     }
 
@@ -1519,5 +1529,15 @@ public sealed class MidLevelIrLoweringTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
         Assert.NotNull(mir);
         return mir;
+    }
+
+    private sealed class TestOutputWriter(ITestOutputHelper output) : TextWriter
+    {
+        public override Encoding Encoding => Encoding.UTF8;
+
+        public override void WriteLine(string? value)
+        {
+            output.WriteLine(value ?? string.Empty);
+        }
     }
 }

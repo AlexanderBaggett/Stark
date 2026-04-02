@@ -36,8 +36,12 @@ internal sealed class SemanticValidator
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
         _typeResolver = new StarkTypeResolver(context, "semantic-validate", moduleGraph, typeModel.NamedTypes);
-        _syntaxDeclarations = syntaxModel.Declarations.ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
-        _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult)
+        _syntaxDeclarations = syntaxModel.Declarations.ToDictionary(
+            declaration => declaration.Function is null
+                ? declaration.Name
+                : FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration),
+            StringComparer.Ordinal);
+        _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult, syntaxModel)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
@@ -845,6 +849,11 @@ internal sealed class SemanticValidator
             return EvaluateEnumConstructorExpression(enumConstructorExpression, scope, function, effects, summary);
         }
 
+        if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
+        {
+            return ResolveValue(genericEnumCaseReference.GetText(), scope, function, effects, summary, allowFunctionReference, observation, genericEnumCaseReference.Start);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), scope, function, effects, summary, allowFunctionReference, observation, qualifiedName.Start);
@@ -893,7 +902,7 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
-        var constructorName = expression.dottedName().GetText();
+        var constructorName = expression.enumCaseTarget().GetText();
         if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var enumTypeSymbol, out var variant))
         {
             return new ValidationValue(StarkTypeSymbols.Error);
@@ -952,14 +961,19 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(globalType.Type));
         }
 
-        if (_typeModel.Functions.TryGetValue(name, out var targetFunction))
+        if (TryGetFunctionOverloads(name, out var targetFunctions))
         {
             if (!allowFunctionReference)
             {
                 return new ValidationValue(StarkTypeSymbols.Error);
             }
 
-            return new ValidationValue(targetFunction.ReturnType, Function: targetFunction);
+            if (targetFunctions.Count == 1)
+            {
+                return new ValidationValue(targetFunctions[0].ReturnType, Function: targetFunctions[0]);
+            }
+
+            return new ValidationValue(StarkTypeSymbols.Error, OverloadSourceName: name);
         }
 
         if (TryResolveNamedTypeBySourceName(name, out var namedType))
@@ -981,6 +995,11 @@ internal sealed class SemanticValidator
         }
 
         if (_moduleGraph.HasModule(name))
+        {
+            return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
+        }
+
+        if (_moduleGraph.HasModuleNamespace(name))
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
@@ -1021,6 +1040,12 @@ internal sealed class SemanticValidator
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
             BindEnumNamedFieldPattern(enumNamedFieldPattern, switchType, scope);
+            return;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, switchType, scope);
             return;
         }
 
@@ -1068,11 +1093,40 @@ internal sealed class SemanticValidator
 
     private bool TryBindEnumAggregateSwitchPattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
     {
-        if (!TryResolveEnumCaseReference(aggregatePattern.simpleType().GetText(), out var enumType, out _, out var variant))
+        return TryBindResolvedEnumAggregateSwitchPattern(
+            aggregatePattern.simpleType().GetText(),
+            aggregatePattern.aggregatePatternSuffix(),
+            switchType,
+            scope,
+            out var matched)
+            && matched;
+    }
+
+    private bool TryBindEnumAggregateSwitchPattern(StarkParser.GenericEnumAggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
+    {
+        return TryBindResolvedEnumAggregateSwitchPattern(
+            aggregatePattern.genericEnumCaseReference().GetText(),
+            aggregatePattern.aggregatePatternSuffix(),
+            switchType,
+            scope,
+            out var matched)
+            && matched;
+    }
+
+    private bool TryBindResolvedEnumAggregateSwitchPattern(
+        string caseName,
+        StarkParser.AggregatePatternSuffixContext? suffix,
+        StarkTypeSymbol switchType,
+        ValidationScope scope,
+        out bool matched)
+    {
+        matched = false;
+        if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant))
         {
             return false;
         }
 
+        matched = true;
         if (switchType.Kind != StarkTypeKind.Named
             || switchType.NamedType is null
             || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
@@ -1081,7 +1135,6 @@ internal sealed class SemanticValidator
             return true;
         }
 
-        var suffix = aggregatePattern.aggregatePatternSuffix();
         if (variant.IsUnit || suffix is null || suffix.Identifier() is not null)
         {
             return true;
@@ -1106,7 +1159,7 @@ internal sealed class SemanticValidator
         StarkTypeSymbol switchType,
         ValidationScope scope)
     {
-        if (!TryResolveEnumCaseReference(enumNamedFieldPattern.dottedName().GetText(), out var enumType, out _, out var variant)
+        if (!TryResolveEnumCaseReference(enumNamedFieldPattern.enumCaseTarget().GetText(), out var enumType, out _, out var variant)
             || switchType.Kind != StarkTypeKind.Named
             || switchType.NamedType is null
             || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
@@ -1144,6 +1197,12 @@ internal sealed class SemanticValidator
             return;
         }
 
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, field.Type, scope);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
             if (TryBindEnumAggregateSwitchPattern(aggregatePattern, field.Type, scope))
@@ -1168,6 +1227,12 @@ internal sealed class SemanticValidator
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
             BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            return;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern
+            && TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, field.Type, scope))
+        {
             return;
         }
 
@@ -1232,25 +1297,62 @@ internal sealed class SemanticValidator
         FunctionEffectProfile currentEffects,
         FunctionValidationBuilder summary)
     {
-        if (target.Function is null)
+        if (target.EnumConstructor is not null)
         {
-            if (target.EnumConstructor is not null)
+            foreach (var argument in arguments.argument())
             {
-                foreach (var argument in arguments.argument())
-                {
-                    EvaluateExpression(
-                        argument.expression(),
-                        scope,
-                        currentFunction,
-                        currentEffects,
-                        summary,
-                        allowFunctionReference: false,
-                        ExpressionObservation.Read);
-                }
-
-                return new ValidationValue(target.Type, NamedType: target.NamedType);
+                EvaluateExpression(
+                    argument.expression(),
+                    scope,
+                    currentFunction,
+                    currentEffects,
+                    summary,
+                    allowFunctionReference: false,
+                    ExpressionObservation.Read);
             }
 
+            return new ValidationValue(target.Type, NamedType: target.NamedType);
+        }
+
+        var argumentValues = arguments.argument()
+            .Select(argument => EvaluateExpression(
+                argument.expression(),
+                scope,
+                currentFunction,
+                currentEffects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read))
+            .ToArray();
+
+        if (target.OverloadSourceName is { } overloadSourceName)
+        {
+            if (!TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                target.Receiver?.Type,
+                argumentValues.Select(static argument => argument.Type).ToArray(),
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded)
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+
+            target = target with
+            {
+                Function = resolution.Match,
+                OverloadSourceName = null,
+                Type = resolution.Match!.ReturnType,
+                NamedType = ResolveNamedTypeSymbol(resolution.Match.ReturnType)
+            };
+        }
+
+        if (target.Function is null)
+        {
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
@@ -1267,22 +1369,15 @@ internal sealed class SemanticValidator
                     && target.Function.Parameters.Count != 0
                     && target.Receiver.Type.BorrowKind != StarkBorrowKind.None)
                 {
-                    BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument 1 to '{target.Function.Name}' must use a raw pointer form instead.", arguments);
+                    BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument 1 to '{target.Function.DisplaySourceName}' must use a raw pointer form instead.", arguments);
                 }
 
-                for (var index = 0; index < Math.Min(explicitParameterCount, arguments.argument().Length); index++)
+                for (var index = 0; index < Math.Min(explicitParameterCount, argumentValues.Length); index++)
                 {
-                    var argumentValue = EvaluateExpression(
-                        arguments.argument(index).expression(),
-                        scope,
-                        currentFunction,
-                        currentEffects,
-                        summary,
-                        allowFunctionReference: false,
-                        ExpressionObservation.Read);
+                    var argumentValue = argumentValues[index];
                     if (argumentValue.Type.BorrowKind != StarkBorrowKind.None)
                     {
-                        BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument {index + receiverOffset + 1} to '{target.Function.Name}' must use a raw pointer form instead.", arguments.argument(index));
+                        BorrowError(summary, "STK4001", $"Safe borrows may not cross an 'ffi' boundary. Argument {index + receiverOffset + 1} to '{target.Function.DisplaySourceName}' must use a raw pointer form instead.", arguments.argument(index));
                     }
                 }
 
@@ -1295,35 +1390,16 @@ internal sealed class SemanticValidator
         if (target.Receiver is not null && target.Function.Parameters.Count != 0)
         {
             var receiverParameter = target.Function.Parameters[0];
-            ValidateBorrowArgumentFlow(target.Receiver.Type, receiverParameter.Type, target.Function.Name, 0, summary, arguments);
+            ValidateBorrowArgumentFlow(target.Receiver.Type, receiverParameter.Type, target.Function.DisplaySourceName, 0, summary, arguments);
             pendingArguments.Add(CreatePendingCallArgument(0, target.Receiver, receiverParameter, target.Function.ReturnType));
         }
 
-        for (var index = 0; index < Math.Min(explicitParameterCount, arguments.argument().Length); index++)
+        for (var index = 0; index < Math.Min(explicitParameterCount, argumentValues.Length); index++)
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
-            var argumentValue = EvaluateExpression(
-                arguments.argument(index).expression(),
-                scope,
-                currentFunction,
-                currentEffects,
-                summary,
-                allowFunctionReference: false,
-                ExpressionObservation.Read);
-            ValidateBorrowArgumentFlow(argumentValue.Type, parameter.Type, target.Function.Name, index + receiverOffset, summary, arguments.argument(index));
+            var argumentValue = argumentValues[index];
+            ValidateBorrowArgumentFlow(argumentValue.Type, parameter.Type, target.Function.DisplaySourceName, index + receiverOffset, summary, arguments.argument(index));
             pendingArguments.Add(CreatePendingCallArgument(index + receiverOffset, argumentValue, parameter, target.Function.ReturnType));
-        }
-
-        for (var index = explicitParameterCount; index < arguments.argument().Length; index++)
-        {
-            EvaluateExpression(
-                arguments.argument(index).expression(),
-                scope,
-                currentFunction,
-                currentEffects,
-                summary,
-                allowFunctionReference: false,
-                ExpressionObservation.Read);
         }
 
         summary.PendingCalls.Add(new PendingCall(target.Function.Name, pendingArguments, arguments.Start));
@@ -1410,6 +1486,11 @@ internal sealed class SemanticValidator
                 return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
 
+            if (_moduleGraph.HasModuleNamespace(qualifiedName))
+            {
+                return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+            }
+
             if (_typeModel.Globals.TryGetValue(qualifiedName, out var globalType))
             {
                 var isMutable = globalType.IsMutable;
@@ -1420,9 +1501,14 @@ internal sealed class SemanticValidator
                     NamedType: ResolveNamedTypeSymbol(globalType.Type));
             }
 
-            if (_typeModel.Functions.TryGetValue(qualifiedName, out var function))
+            if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
-                return new ValidationValue(function.ReturnType, Function: function);
+                if (namespaceFunctions.Count == 1)
+                {
+                    return new ValidationValue(namespaceFunctions[0].ReturnType, Function: namespaceFunctions[0]);
+                }
+
+                return new ValidationValue(StarkTypeSymbols.Error, OverloadSourceName: qualifiedName);
             }
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
@@ -1474,23 +1560,30 @@ internal sealed class SemanticValidator
                 IsIndirectStorageAccess: true);
         }
 
+        var methodSourceName = $"{namedType.Name}.{memberName}";
         if (namedType.Kind == DeclarationKind.Doctrine
-            && _typeModel.Functions.TryGetValue($"{namedType.Name}.{memberName}", out var doctrineMethod))
+            && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {
-            return new ValidationValue(
-                doctrineMethod.ReturnType,
-                Function: doctrineMethod,
-                NamedType: ResolveNamedTypeSymbol(doctrineMethod.ReturnType));
+            return doctrineMethods.Count == 1
+                ? new ValidationValue(
+                    doctrineMethods[0].ReturnType,
+                    Function: doctrineMethods[0],
+                    NamedType: ResolveNamedTypeSymbol(doctrineMethods[0].ReturnType))
+                : new ValidationValue(StarkTypeSymbols.Error, OverloadSourceName: methodSourceName);
         }
 
-        if (_typeModel.Functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
-            && method.Parameters.Count != 0)
+        if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            return new ValidationValue(
-                method.ReturnType,
-                Function: method,
-                NamedType: ResolveNamedTypeSymbol(method.ReturnType),
-                Receiver: target);
+            if (methods.Count == 1 && methods[0].Parameters.Count != 0)
+            {
+                return new ValidationValue(
+                    methods[0].ReturnType,
+                    Function: methods[0],
+                    NamedType: ResolveNamedTypeSymbol(methods[0].ReturnType),
+                    Receiver: target);
+            }
+
+            return new ValidationValue(StarkTypeSymbols.Error, Receiver: target, OverloadSourceName: methodSourceName);
         }
 
         return new ValidationValue(
@@ -1506,6 +1599,17 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(targetType),
                 IsIndirectStorageAccess: operand.IsIndirectStorageAccess)
             : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
+    }
+
+    private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
+    {
+        if (_typeModel.Overloads.TryGetValue(sourceName, out overloads!))
+        {
+            return true;
+        }
+
+        overloads = [];
+        return false;
     }
 
     private bool TryResolveEnumCaseReference(
@@ -2749,6 +2853,7 @@ internal sealed class SemanticValidator
         bool IsAssignable = false,
         VariableSymbol? RootSymbol = null,
         TypedFunctionSignature? Function = null,
+        string? OverloadSourceName = null,
         NamedTypeSymbol? NamedType = null,
         bool IsIndirectStorageAccess = false,
         string? NamespaceName = null,

@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--linker tool] [--archiver tool] [--save-temps dir]";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--linker tool] [--archiver tool] [--save-temps dir] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -17,6 +17,11 @@ internal static class CompilerCli
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
+        var logLevel = DiagnosticSeverity.Info;
+        var logVerbosity = CompilerLogVerbosity.Normal;
+        var logCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var logStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var logKinds = new HashSet<CompilerLogKind>();
         var showHelp = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -75,6 +80,69 @@ internal static class CompilerCli
             if (TryReadOptionValue(argument, "--save-temps", args, ref index, out var saveTempsValue))
             {
                 saveTempsDirectory = saveTempsValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--log-level", args, ref index, out var logLevelValue))
+            {
+                if (!TryParseLogLevel(logLevelValue, out logLevel))
+                {
+                    await stderr.WriteLineAsync($"Unknown log level '{logLevelValue}'. Expected info, warning, or error.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--log-verbosity", args, ref index, out var logVerbosityValue))
+            {
+                if (!TryParseLogVerbosity(logVerbosityValue, out logVerbosity))
+                {
+                    await stderr.WriteLineAsync($"Unknown log verbosity '{logVerbosityValue}'. Expected normal or verbose.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--log-category", args, ref index, out var logCategoryValue))
+            {
+                if (string.IsNullOrWhiteSpace(logCategoryValue))
+                {
+                    await stderr.WriteLineAsync("Compiler log categories must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                logCategories.Add(logCategoryValue.Trim());
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--log-kind", args, ref index, out var logKindValue))
+            {
+                if (!TryParseLogKind(logKindValue, out var logKind))
+                {
+                    await stderr.WriteLineAsync($"Unknown log kind '{logKindValue}'. Expected pipeline, symbol, decision, or gap.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                logKinds.Add(logKind);
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--log-stage", args, ref index, out var logStageValue))
+            {
+                if (string.IsNullOrWhiteSpace(logStageValue))
+                {
+                    await stderr.WriteLineAsync("Compiler log stages must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                logStages.Add(logStageValue.Trim());
                 continue;
             }
 
@@ -163,11 +231,10 @@ internal static class CompilerCli
             librarySearchDirectories,
             linkArguments,
             saveTempsDirectory);
+        using var logOutputScope = CompilerLogOutput.Push(stderr, logLevel, logVerbosity, logCategories, logStages, logKinds);
         var result = pipeline.Run(
             new CompilationInput(source, inputPath),
             compilerOptions);
-
-        await WriteCompilerLogsAsync(stderr, result.Logs);
 
         if (!result.Succeeded)
         {
@@ -253,7 +320,6 @@ internal static class CompilerCli
                     }
 
                     var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
-                    await WriteCompilerLogsAsync(stderr, dependencyResult.Logs);
                     if (!dependencyResult.Success)
                     {
                         foreach (var diagnostic in dependencyResult.Diagnostics)
@@ -352,7 +418,6 @@ internal static class CompilerCli
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
                     var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
-                    await WriteCompilerLogsAsync(stderr, dependencyResult.Logs);
                     if (!dependencyResult.Success)
                     {
                         foreach (var diagnostic in dependencyResult.Diagnostics)
@@ -506,14 +571,6 @@ internal static class CompilerCli
         }
     }
 
-    private static async Task WriteCompilerLogsAsync(TextWriter stderr, IReadOnlyList<CompilerLogEntry> logs)
-    {
-        foreach (var log in logs)
-        {
-            await stderr.WriteLineAsync(log.ToString());
-        }
-    }
-
     private static DependencyCompileResult CompileDependencyObject(
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
@@ -596,6 +653,13 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
         await stdout.WriteLineAsync("  --save-temps <dir>             Preserve intermediate LLVM and object files in <dir>");
+        await stdout.WriteLineAsync();
+        await stdout.WriteLineAsync("Compiler Logs:");
+        await stdout.WriteLineAsync("  --log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr");
+        await stdout.WriteLineAsync("  --log-verbosity <normal|verbose>     Choose low-noise normal output or richer verbose output");
+        await stdout.WriteLineAsync("  --log-category <name>                Print only matching compiler log categories (repeatable)");
+        await stdout.WriteLineAsync("  --log-stage <pass-id>                Print only matching compiler pass stages (repeatable)");
+        await stdout.WriteLineAsync("  --log-kind <pipeline|symbol|decision|gap>  Print only matching compiler log kinds (repeatable)");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
@@ -730,6 +794,44 @@ internal static class CompilerCli
         return Path.GetFullPath($"a{extension}");
     }
 
+    private static bool TryParseLogVerbosity(string value, out CompilerLogVerbosity verbosity)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "normal":
+                verbosity = CompilerLogVerbosity.Normal;
+                return true;
+            case "verbose":
+                verbosity = CompilerLogVerbosity.Verbose;
+                return true;
+            default:
+                verbosity = CompilerLogVerbosity.Normal;
+                return false;
+        }
+    }
+
+    private static bool TryParseLogKind(string value, out CompilerLogKind kind)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "pipeline":
+                kind = CompilerLogKind.Pipeline;
+                return true;
+            case "symbol":
+                kind = CompilerLogKind.Symbol;
+                return true;
+            case "decision":
+                kind = CompilerLogKind.Decision;
+                return true;
+            case "gap":
+                kind = CompilerLogKind.Gap;
+                return true;
+            default:
+                kind = CompilerLogKind.Pipeline;
+                return false;
+        }
+    }
+
     private static string DeriveLibraryOutputPath(string? inputPath, CompilationResult result)
     {
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
@@ -758,6 +860,21 @@ internal static class CompilerCli
         return Path.Combine(directory, $"{baseName}.starkpkg.json");
     }
 
+    private static bool TryParseLogLevel(string text, out DiagnosticSeverity severity)
+    {
+        severity = text.Trim().ToLowerInvariant() switch
+        {
+            "info" => DiagnosticSeverity.Info,
+            "warning" => DiagnosticSeverity.Warning,
+            "error" => DiagnosticSeverity.Error,
+            _ => DiagnosticSeverity.Info
+        };
+
+        return string.Equals(text, "info", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(text, "warning", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(text, "error", StringComparison.OrdinalIgnoreCase);
+    }
+
     private enum CliMode
     {
         Default,
@@ -783,4 +900,5 @@ internal static class CompilerCli
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
         string? SaveTempsDirectory);
+
 }

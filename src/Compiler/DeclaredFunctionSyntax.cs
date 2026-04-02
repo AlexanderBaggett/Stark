@@ -14,16 +14,35 @@ internal sealed record DeclaredFunctionSyntax(
     StarkParser.ParameterListContext ParameterList,
     StarkParser.TypeParameterListContext? TypeParameters,
     IReadOnlyList<StarkParser.FunctionModifierContext> Modifiers,
-    StarkParser.FunctionBodyContext Body)
+    StarkParser.FunctionBodyContext Body,
+    string? SourceName = null)
 {
     public bool HasBody => Body.block() is not null;
+
+    public string DisplaySourceName => SourceName ?? Name;
 }
 
 internal static class DeclaredFunctionSyntaxCollector
 {
     public static IReadOnlyList<DeclaredFunctionSyntax> Collect(ParseResult parseResult)
     {
+        return Collect(parseResult, syntaxModel: null);
+    }
+
+    public static IReadOnlyList<DeclaredFunctionSyntax> Collect(ParseResult parseResult, SyntaxModel? syntaxModel)
+    {
         var functions = new List<DeclaredFunctionSyntax>();
+        var selectedFunctionsByIdentity = syntaxModel?.Declarations
+            .Where(static declaration => declaration.Kind == DeclarationKind.Function && declaration.Function is not null)
+            .GroupBy(static declaration => declaration.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group
+                    .Select(static declaration => CreateFunctionIdentity(
+                        FunctionOverloadFacts.BuildOverloadKey(declaration.Function!.Parameters),
+                        declaration.Function!.Asm?.ArchitectureText))
+                    .ToHashSet(StringComparer.Ordinal),
+                StringComparer.Ordinal);
 
         foreach (var declaration in parseResult.Root.topLevelDeclaration())
         {
@@ -31,7 +50,12 @@ internal static class DeclaredFunctionSyntaxCollector
 
             if (declaration.functionDeclaration() is { } functionDeclaration)
             {
-                functions.Add(CreateTopLevelFunction(functionDeclaration, visibility));
+                if (!ShouldIncludeTopLevelFunction(selectedFunctionsByIdentity, functionDeclaration))
+                {
+                    continue;
+                }
+
+                functions.Add(CreateTopLevelFunction(functionDeclaration, visibility, syntaxModel));
                 continue;
             }
 
@@ -42,7 +66,12 @@ internal static class DeclaredFunctionSyntaxCollector
                     structDeclaration.structBody().structMember()
                         .Select(static member => member.methodDeclaration())
                         .Where(static method => method is not null)!
-                        .Select(method => CreateMethod(typeName, method, visibility)));
+                        .Where(method => ShouldIncludeMemberFunction(
+                            selectedFunctionsByIdentity,
+                            typeName,
+                            method!.Identifier().GetText(),
+                            method.parameterList()))
+                        .Select(method => CreateMethod(typeName, method!, visibility, syntaxModel)));
                 continue;
             }
 
@@ -53,7 +82,12 @@ internal static class DeclaredFunctionSyntaxCollector
                     recordDeclaration.recordBody().recordMember()
                         .Select(static member => member.methodDeclaration())
                         .Where(static method => method is not null)!
-                        .Select(method => CreateMethod(typeName, method, visibility)));
+                        .Where(method => ShouldIncludeMemberFunction(
+                            selectedFunctionsByIdentity,
+                            typeName,
+                            method!.Identifier().GetText(),
+                            method.parameterList()))
+                        .Select(method => CreateMethod(typeName, method!, visibility, syntaxModel)));
                 continue;
             }
 
@@ -64,7 +98,12 @@ internal static class DeclaredFunctionSyntaxCollector
                     traitDeclaration.traitBody().traitMember()
                         .Select(static member => member.traitMethodDeclaration())
                         .Where(static method => method is not null)!
-                        .Select(method => CreateTraitMethod(typeName, method, visibility)));
+                        .Where(method => ShouldIncludeMemberFunction(
+                            selectedFunctionsByIdentity,
+                            typeName,
+                            method!.Identifier().GetText(),
+                            method.parameterList()))
+                        .Select(method => CreateTraitMethod(typeName, method!, visibility, syntaxModel)));
                 continue;
             }
 
@@ -75,19 +114,65 @@ internal static class DeclaredFunctionSyntaxCollector
                     doctrineDeclaration.doctrineBody().doctrineMember()
                         .Select(static member => member.doctrineMethodDeclaration())
                         .Where(static method => method is not null)!
-                        .Select(method => CreateDoctrineMethod(typeName, method, visibility)));
+                        .Where(method => ShouldIncludeMemberFunction(
+                            selectedFunctionsByIdentity,
+                            typeName,
+                            method!.Identifier().GetText(),
+                            method.parameterList()))
+                        .Select(method => CreateDoctrineMethod(typeName, method!, visibility, syntaxModel)));
             }
         }
 
         return functions;
     }
 
+    private static bool ShouldIncludeTopLevelFunction(
+        IReadOnlyDictionary<string, HashSet<string>>? selectedFunctionsByIdentity,
+        StarkParser.FunctionDeclarationContext declaration)
+    {
+        if (selectedFunctionsByIdentity is null)
+        {
+            return true;
+        }
+
+        var name = declaration.Identifier().GetText();
+        if (!selectedFunctionsByIdentity.TryGetValue(name, out var selected))
+        {
+            return false;
+        }
+
+        var identity = CreateFunctionIdentity(
+            FunctionOverloadFacts.BuildOverloadKey(declaration.parameterList()),
+            declaration.asmSpecifier()?.Identifier().GetText());
+        return selected.Contains(identity);
+    }
+
+    private static bool ShouldIncludeMemberFunction(
+        IReadOnlyDictionary<string, HashSet<string>>? selectedFunctionsByIdentity,
+        string containingTypeName,
+        string methodName,
+        StarkParser.ParameterListContext parameterList)
+    {
+        if (selectedFunctionsByIdentity is null)
+        {
+            return true;
+        }
+
+        var sourceName = $"{containingTypeName}.{methodName}";
+        return selectedFunctionsByIdentity.TryGetValue(sourceName, out var selected)
+            && selected.Contains(CreateFunctionIdentity(
+                FunctionOverloadFacts.BuildOverloadKey(parameterList),
+                architectureText: null));
+    }
+
     private static DeclaredFunctionSyntax CreateTopLevelFunction(
         StarkParser.FunctionDeclarationContext declaration,
-        StarkVisibility visibility)
+        StarkVisibility visibility,
+        SyntaxModel? syntaxModel)
     {
+        var sourceName = declaration.Identifier().GetText();
         return new DeclaredFunctionSyntax(
-            declaration.Identifier().GetText(),
+            ResolveFunctionName(syntaxModel, sourceName, declaration.parameterList()),
             ContainingTypeName: null,
             visibility,
             declaration,
@@ -97,16 +182,19 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.parameterList(),
             declaration.typeParameterList(),
             declaration.functionModifier(),
-            declaration.functionBody());
+            declaration.functionBody(),
+            SourceName: sourceName);
     }
 
     private static DeclaredFunctionSyntax CreateMethod(
         string containingTypeName,
         StarkParser.MethodDeclarationContext declaration,
-        StarkVisibility visibility)
+        StarkVisibility visibility,
+        SyntaxModel? syntaxModel)
     {
+        var sourceName = $"{containingTypeName}.{declaration.Identifier().GetText()}";
         return new DeclaredFunctionSyntax(
-            $"{containingTypeName}.{declaration.Identifier().GetText()}",
+            ResolveFunctionName(syntaxModel, sourceName, declaration.parameterList()),
             containingTypeName,
             visibility,
             declaration,
@@ -116,16 +204,19 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.parameterList(),
             declaration.typeParameterList(),
             declaration.functionModifier(),
-            declaration.functionBody());
+            declaration.functionBody(),
+            SourceName: sourceName);
     }
 
     private static DeclaredFunctionSyntax CreateTraitMethod(
         string containingTypeName,
         StarkParser.TraitMethodDeclarationContext declaration,
-        StarkVisibility visibility)
+        StarkVisibility visibility,
+        SyntaxModel? syntaxModel)
     {
+        var sourceName = $"{containingTypeName}.{declaration.Identifier().GetText()}";
         return new DeclaredFunctionSyntax(
-            $"{containingTypeName}.{declaration.Identifier().GetText()}",
+            ResolveFunctionName(syntaxModel, sourceName, declaration.parameterList()),
             containingTypeName,
             visibility,
             declaration,
@@ -135,16 +226,19 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.parameterList(),
             declaration.typeParameterList(),
             declaration.functionModifier(),
-            declaration.functionBody());
+            declaration.functionBody(),
+            SourceName: sourceName);
     }
 
     private static DeclaredFunctionSyntax CreateDoctrineMethod(
         string containingTypeName,
         StarkParser.DoctrineMethodDeclarationContext declaration,
-        StarkVisibility visibility)
+        StarkVisibility visibility,
+        SyntaxModel? syntaxModel)
     {
+        var sourceName = $"{containingTypeName}.{declaration.Identifier().GetText()}";
         return new DeclaredFunctionSyntax(
-            $"{containingTypeName}.{declaration.Identifier().GetText()}",
+            ResolveFunctionName(syntaxModel, sourceName, declaration.parameterList()),
             containingTypeName,
             visibility,
             declaration,
@@ -154,7 +248,26 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.parameterList(),
             declaration.typeParameterList(),
             declaration.functionModifier(),
-            declaration.functionBody());
+            declaration.functionBody(),
+            SourceName: sourceName);
+    }
+
+    private static string ResolveFunctionName(
+        SyntaxModel? syntaxModel,
+        string sourceName,
+        StarkParser.ParameterListContext parameterList)
+    {
+        return syntaxModel is null
+            ? sourceName
+            : FunctionOverloadFacts.GetResolvedLocalName(
+                syntaxModel,
+                sourceName,
+                FunctionOverloadFacts.BuildOverloadKey(parameterList));
+    }
+
+    private static string CreateFunctionIdentity(string overloadKey, string? architectureText)
+    {
+        return $"{overloadKey}|{architectureText ?? string.Empty}";
     }
 
     private static StarkVisibility ParseVisibility(StarkParser.VisibilityModifierContext? visibilityModifier)

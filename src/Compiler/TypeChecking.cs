@@ -59,6 +59,7 @@ internal sealed class TypeChecker
     private readonly Dictionary<string, NamedTypeSymbol> _namedTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<ConstructorShape>> _constructors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypedFunctionSignature> _functions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<TypedFunctionSignature>> _functionOverloads = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VariableSymbol> _globals = new(StringComparer.Ordinal);
     private readonly List<LiteralTypingRecord> _literals = [];
     private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
@@ -100,7 +101,11 @@ internal sealed class TypeChecker
                     pair.Value.BindingKind ?? (pair.Value.IsMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable)),
                 StringComparer.Ordinal),
             _literals,
-            _objectCreations);
+            _objectCreations,
+            _functionOverloads.ToDictionary(
+                static pair => pair.Key,
+                static pair => (IReadOnlyList<TypedFunctionSignature>)pair.Value.ToArray(),
+                StringComparer.Ordinal));
     }
 
     private void SeedNamedTypes()
@@ -150,13 +155,15 @@ internal sealed class TypeChecker
                     }
 
                     var typeName = QualifyName(module, structDeclaration.Identifier().GetText());
+                    var structGenericParams = GetGenericParameterNames(structDeclaration.typeParameterList());
                     _namedTypes[typeName] = BuildStructLikeNamedType(
                         typeName,
                         DeclarationKind.Struct,
                         structDeclaration.structBody().structMember()
                             .Select(static member => member.fieldDeclaration())
                             .Where(static field => field is not null)!,
-                        module.SyntaxModel.ModuleName);
+                        module.SyntaxModel.ModuleName,
+                        structGenericParams);
                     continue;
                 }
 
@@ -203,7 +210,8 @@ internal sealed class TypeChecker
                         recordName,
                         DeclarationKind.Record,
                         fields,
-                        orderedFields);
+                        orderedFields,
+                        GenericParameterNames: genericParameters?.ToList());
                     continue;
                 }
 
@@ -268,17 +276,19 @@ internal sealed class TypeChecker
         string name,
         DeclarationKind kind,
         IEnumerable<StarkParser.FieldDeclarationContext> fieldDeclarations,
-        string currentModuleName)
+        string currentModuleName,
+        ISet<string>? genericParameters = null)
     {
         var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var orderedFields = new List<FieldSymbol>();
 
         foreach (var field in fieldDeclarations)
         {
-            AddFields(fields, orderedFields, field, genericParameters: null, currentModuleName, name);
+            AddFields(fields, orderedFields, field, genericParameters, currentModuleName, name);
         }
 
-        return new NamedTypeSymbol(name, kind, fields, orderedFields);
+        return new NamedTypeSymbol(name, kind, fields, orderedFields,
+            GenericParameterNames: genericParameters?.ToList());
     }
 
     private NamedTypeSymbol BuildEnumNamedType(
@@ -358,7 +368,8 @@ internal sealed class TypeChecker
             DeclarationKind.Enum,
             new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
             [],
-            variants);
+            EnumVariants: variants,
+            GenericParameterNames: genericParameters?.ToList());
     }
 
     private void AddFields(
@@ -407,13 +418,21 @@ internal sealed class TypeChecker
 
     private void BuildFunctionSignatures()
     {
+        var seenOverloadKeys = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
         foreach (var module in _loadedModules.Modules.Values)
         {
-            foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+            foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
-                var localName = functionSyntax.Name;
-                var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
-                    candidate => candidate.Kind == DeclarationKind.Function && string.Equals(candidate.Name, localName, StringComparison.Ordinal));
+                var localName = functionSyntax.DisplaySourceName;
+                if (!FunctionOverloadFacts.TryFindFunctionDeclaration(
+                        module.SyntaxModel,
+                        localName,
+                        FunctionOverloadFacts.BuildOverloadKey(functionSyntax.ParameterList),
+                        out var declarationModel))
+                {
+                    continue;
+                }
 
                 if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
                 {
@@ -456,11 +475,37 @@ internal sealed class TypeChecker
                     ValidateAsmSignatureSurface(localName, returnType, functionSyntax.ReturnType, parameters, functionSyntax.ParameterList.parameter());
                 }
 
-                var qualifiedName = QualifyName(module, localName);
-                _functions[qualifiedName] = new TypedFunctionSignature(
+                var sourceQualifiedName = QualifyName(module, localName);
+                var overloadKey = FunctionOverloadFacts.BuildOverloadKey(parameters.Select(static parameter => parameter.Type.DisplayName));
+                if (!seenOverloadKeys.TryGetValue(sourceQualifiedName, out var overloadKeys))
+                {
+                    overloadKeys = new HashSet<string>(StringComparer.Ordinal);
+                    seenOverloadKeys[sourceQualifiedName] = overloadKeys;
+                }
+
+                if (!overloadKeys.Add(overloadKey))
+                {
+                    ReportError(
+                        "STK3006",
+                        $"Function '{sourceQualifiedName}' declares overload '{sourceQualifiedName}{overloadKey}' more than once.",
+                        functionSyntax.DeclarationContext);
+                    continue;
+                }
+
+                var qualifiedName = QualifyName(module, functionSyntax.Name);
+                var signature = new TypedFunctionSignature(
                     qualifiedName,
                     returnType,
-                    parameters);
+                    parameters,
+                    SourceName: sourceQualifiedName);
+                _functions[qualifiedName] = signature;
+                if (!_functionOverloads.TryGetValue(sourceQualifiedName, out var overloads))
+                {
+                    overloads = [];
+                    _functionOverloads[sourceQualifiedName] = overloads;
+                }
+
+                overloads.Add(signature);
             }
         }
     }
@@ -702,7 +747,7 @@ internal sealed class TypeChecker
 
     private void CheckFunctionBodies()
     {
-        foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(_parseResult))
+        foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(_parseResult, _syntaxModel))
         {
             if (functionSyntax.Body.block() is not { } block)
             {
@@ -1072,6 +1117,19 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (switchPattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern
+            && TryCreateEnumAggregateCoveragePattern(genericEnumAggregatePattern, switchType, out var genericEnumAggregateCoverage))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.EnumCase,
+                genericEnumAggregatePattern.GetText(),
+                label,
+                LiteralKey: null,
+                AggregatePattern: null,
+                EnumPattern: genericEnumAggregateCoverage);
+            return true;
+        }
+
         if (switchPattern.aggregatePattern() is { } enumAggregatePattern
             && TryCreateEnumAggregateCoveragePattern(enumAggregatePattern, switchType, out var enumAggregateCoverage))
         {
@@ -1161,16 +1219,51 @@ internal sealed class TypeChecker
         coveragePattern = null;
 
         var caseName = aggregatePattern.simpleType().GetText();
-        if (switchType.Kind != StarkTypeKind.Named
-            || switchType.NamedType is null
-            || !TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant)
+        return switchType.Kind == StarkTypeKind.Named
+               && switchType.NamedType is not null
+               && TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant)
+               && TryCreateResolvedEnumAggregateCoveragePattern(
+                   aggregatePattern.aggregatePatternSuffix(),
+                   switchType,
+                   enumType,
+                   variant,
+                   out coveragePattern);
+    }
+
+    private bool TryCreateEnumAggregateCoveragePattern(
+        StarkParser.GenericEnumAggregatePatternContext genericEnumAggregatePattern,
+        StarkTypeSymbol switchType,
+        out EnumCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+
+        return switchType.Kind == StarkTypeKind.Named
+               && switchType.NamedType is not null
+               && TryResolveEnumCaseReference(genericEnumAggregatePattern.genericEnumCaseReference(), out var enumType, out _, out var variant)
+               && TryCreateResolvedEnumAggregateCoveragePattern(
+                   genericEnumAggregatePattern.aggregatePatternSuffix(),
+                   switchType,
+                   enumType,
+                   variant,
+                   out coveragePattern);
+    }
+
+    private bool TryCreateResolvedEnumAggregateCoveragePattern(
+        StarkParser.AggregatePatternSuffixContext? suffix,
+        StarkTypeSymbol switchType,
+        NamedTypeSymbol enumType,
+        EnumVariantSymbol variant,
+        out EnumCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+
+        if (switchType.NamedType is null
             || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
             || variant.UsesNamedFields)
         {
             return false;
         }
 
-        var suffix = aggregatePattern.aggregatePatternSuffix();
         if (variant.IsUnit)
         {
             if (suffix is not null)
@@ -1215,10 +1308,10 @@ internal sealed class TypeChecker
     {
         coveragePattern = null;
 
-        var caseName = enumNamedFieldPattern.dottedName().GetText();
+        var caseName = enumNamedFieldPattern.enumCaseTarget().GetText();
         if (switchType.Kind != StarkTypeKind.Named
             || switchType.NamedType is null
-            || !TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant)
+            || !TryResolveEnumCaseTarget(enumNamedFieldPattern.enumCaseTarget(), out _, out var enumType, out _, out var variant)
             || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal)
             || !variant.UsesNamedFields)
         {
@@ -1344,6 +1437,29 @@ internal sealed class TypeChecker
                 LiteralKey: null,
                 NestedAggregatePattern: null,
                 NestedEnumPattern: nestedEnumPattern);
+            return true;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } nestedGenericEnumAggregatePattern
+            && fieldType.Kind == StarkTypeKind.Named
+            && TryCreateEnumAggregateCoveragePattern(nestedGenericEnumAggregatePattern, fieldType, out var nestedGenericEnumPattern)
+            && nestedGenericEnumPattern is not null)
+        {
+            if (IsMatchAllEnumPattern(nestedGenericEnumPattern))
+            {
+                coverageField = new AggregateCoverageField(
+                    AggregateCoverageFieldKind.Wildcard,
+                    LiteralKey: null,
+                    NestedAggregatePattern: null,
+                    NestedEnumPattern: null);
+                return true;
+            }
+
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.NestedEnum,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: nestedGenericEnumPattern);
             return true;
         }
 
@@ -1600,6 +1716,12 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            BindEnumAggregatePattern(genericEnumAggregatePattern, switchType, scope);
+            return;
+        }
+
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
             if (TryBindEnumAggregatePattern(aggregatePattern, switchType, scope))
@@ -1684,15 +1806,50 @@ internal sealed class TypeChecker
             return false;
         }
 
+        BindResolvedEnumAggregatePattern(caseName, aggregatePattern, aggregatePattern.aggregatePatternSuffix(), switchType, scope, enumType, variant);
+        return true;
+    }
+
+    private void BindEnumAggregatePattern(
+        StarkParser.GenericEnumAggregatePatternContext genericEnumAggregatePattern,
+        StarkTypeSymbol switchType,
+        Scope scope)
+    {
+        var caseName = genericEnumAggregatePattern.GetText();
+        if (!TryResolveEnumCaseReference(genericEnumAggregatePattern.genericEnumCaseReference(), out var enumType, out _, out var variant))
+        {
+            ReportError("STK3003", $"Unknown symbol '{caseName}'.", genericEnumAggregatePattern);
+            return;
+        }
+
+        BindResolvedEnumAggregatePattern(
+            caseName,
+            genericEnumAggregatePattern,
+            genericEnumAggregatePattern.aggregatePatternSuffix(),
+            switchType,
+            scope,
+            enumType,
+            variant);
+    }
+
+    private void BindResolvedEnumAggregatePattern(
+        string caseName,
+        ParserRuleContext context,
+        StarkParser.AggregatePatternSuffixContext? suffix,
+        StarkTypeSymbol switchType,
+        Scope scope,
+        NamedTypeSymbol enumType,
+        EnumVariantSymbol variant)
+    {
         if (switchType.Kind != StarkTypeKind.Named
             || switchType.NamedType is null
             || !string.Equals(switchType.NamedType, enumType.Name, StringComparison.Ordinal))
         {
             ReportError(
                 "STK3008",
-                $"Switch enum case pattern '{aggregatePattern.GetText()}' must exactly match the enum switch type '{switchType.DisplayName}'.",
-                aggregatePattern);
-            return true;
+                $"Switch enum case pattern '{context.GetText()}' must exactly match the enum switch type '{switchType.DisplayName}'.",
+                context);
+            return;
         }
 
         if (variant.UsesNamedFields)
@@ -1700,11 +1857,10 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3008",
                 $"Enum case pattern '{caseName}' must use a named-field payload pattern.",
-                aggregatePattern);
-            return true;
+                context);
+            return;
         }
 
-        var suffix = aggregatePattern.aggregatePatternSuffix();
         if (variant.IsUnit)
         {
             if (suffix is not null)
@@ -1712,10 +1868,10 @@ internal sealed class TypeChecker
                 ReportError(
                     "STK3008",
                     $"Unit-like enum case pattern '{caseName}' may not bind payload subpatterns.",
-                    aggregatePattern);
+                    context);
             }
 
-            return true;
+            return;
         }
 
         if (suffix is null)
@@ -1723,17 +1879,17 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Enum case pattern '{caseName}' expects {variant.Fields.Count} payload subpattern{Pluralize(variant.Fields.Count)}.",
-                aggregatePattern);
-            return true;
+                context);
+            return;
         }
 
         if (suffix.Identifier() is not null)
         {
             ReportError(
                 "STK3008",
-                $"Enum case pattern '{aggregatePattern.GetText()}' must currently bind payload subpatterns directly, not as a whole-value typed capture.",
-                aggregatePattern);
-            return true;
+                $"Enum case pattern '{context.GetText()}' must currently bind payload subpatterns directly, not as a whole-value typed capture.",
+                context);
+            return;
         }
 
         var fieldPatterns = suffix.pattern();
@@ -1741,17 +1897,15 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3009",
-                $"Enum case pattern '{aggregatePattern.GetText()}' expects {variant.Fields.Count} payload subpattern{Pluralize(variant.Fields.Count)} but found {fieldPatterns.Length}.",
-                aggregatePattern);
-            return true;
+                $"Enum case pattern '{context.GetText()}' expects {variant.Fields.Count} payload subpattern{Pluralize(variant.Fields.Count)} but found {fieldPatterns.Length}.",
+                context);
+            return;
         }
 
         for (var index = 0; index < fieldPatterns.Length; index++)
         {
             BindEnumVariantFieldPattern(fieldPatterns[index], variant.Fields[index], scope);
         }
-
-        return true;
     }
 
     private void BindEnumNamedFieldPattern(
@@ -1759,8 +1913,8 @@ internal sealed class TypeChecker
         StarkTypeSymbol switchType,
         Scope scope)
     {
-        var caseName = enumNamedFieldPattern.dottedName().GetText();
-        if (!TryResolveEnumCaseReference(caseName, out var enumType, out _, out var variant))
+        var caseName = enumNamedFieldPattern.enumCaseTarget().GetText();
+        if (!TryResolveEnumCaseTarget(enumNamedFieldPattern.enumCaseTarget(), out _, out var enumType, out _, out var variant))
         {
             ReportError("STK3003", $"Unknown symbol '{caseName}'.", enumNamedFieldPattern);
             return;
@@ -1858,6 +2012,11 @@ internal sealed class TypeChecker
         {
             BindPattern(pattern, field.Type, scope);
         }
+
+        if (pattern.genericEnumAggregatePattern() is not null)
+        {
+            BindPattern(pattern, field.Type, scope);
+        }
     }
 
     private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, Scope scope)
@@ -1870,6 +2029,12 @@ internal sealed class TypeChecker
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
             BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            return;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            BindEnumAggregatePattern(genericEnumAggregatePattern, field.Type, scope);
             return;
         }
 
@@ -1987,7 +2152,7 @@ internal sealed class TypeChecker
 
     private StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType)
     {
-        return _typeResolver!.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName);
+        return EnsureMonomorphizedType(_typeResolver!.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName));
     }
 
     private static bool SupportsAggregateFieldSubpattern(StarkTypeSymbol type)
@@ -2155,7 +2320,7 @@ internal sealed class TypeChecker
         if (assignmentOperator == "=")
         {
             EnsureAssignmentTargetCompatible(left, right.Type, expression.assignmentExpression());
-            return new ExpressionBinding(left.Type, left.IsAssignable, left.NamedType, left.Function, left.NamespaceName, left.DiagnosticName);
+            return left;
         }
 
         if (IsExplicitArithmeticAssignmentOperator(assignmentOperator))
@@ -2188,7 +2353,7 @@ internal sealed class TypeChecker
                 expression.assignmentExpression());
         }
 
-        return new ExpressionBinding(left.Type, left.IsAssignable, left.NamedType, left.Function, left.NamespaceName, left.DiagnosticName);
+        return left;
     }
 
     private ExpressionBinding EvaluateConditionalExpression(StarkParser.ConditionalExpressionContext expression, Scope scope, bool allowFunctionReference)
@@ -2451,6 +2616,11 @@ internal sealed class TypeChecker
             return EvaluateEnumConstructorExpression(enumConstructorExpression, scope);
         }
 
+        if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
+        {
+            return ResolveGenericEnumCaseReferenceValue(genericEnumCaseReference, allowFunctionReference);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, scope, allowFunctionReference);
@@ -2516,8 +2686,8 @@ internal sealed class TypeChecker
         StarkParser.EnumConstructorExpressionContext expression,
         Scope scope)
     {
-        var constructorName = expression.dottedName().GetText();
-        if (!TryResolveEnumCaseReference(constructorName, out var enumType, out var enumTypeSymbol, out var variant))
+        var constructorName = expression.enumCaseTarget().GetText();
+        if (!TryResolveEnumCaseTarget(expression.enumCaseTarget(), out _, out var enumType, out var enumTypeSymbol, out var variant))
         {
             ReportError("STK3003", $"Unknown symbol '{constructorName}'.", expression);
             return new ExpressionBinding(StarkTypeSymbols.Error);
@@ -2587,6 +2757,35 @@ internal sealed class TypeChecker
             return InvokeEnumConstructor(target, arguments, scope);
         }
 
+        var argumentTypes = arguments.argument()
+            .Select(argument => EvaluateExpression(argument.expression(), scope, allowFunctionReference: false).Type)
+            .ToArray();
+
+        if (target.OverloadSourceName is { } overloadSourceName)
+        {
+            if (!TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            {
+                ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(overloads, target.Receiver?.Type, argumentTypes, CanAssign);
+            if (!resolution.Succeeded)
+            {
+                ReportOverloadResolutionFailure(overloadSourceName, argumentTypes, resolution, arguments);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            target = target with
+            {
+                Function = resolution.Match,
+                OverloadSourceName = null,
+                Type = resolution.Match!.ReturnType,
+                NamedType = ResolveNamedTypeSymbol(resolution.Match.ReturnType),
+                DiagnosticName = $"function '{resolution.Match.DisplaySourceName}'"
+            };
+        }
+
         if (target.Function is null)
         {
             ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
@@ -2600,28 +2799,27 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3009",
-                $"Function '{target.Function.Name}' expects {explicitParameterCount} arguments but received {arguments.argument().Length}.",
+                $"Function '{target.Function.DisplaySourceName}' expects {explicitParameterCount} arguments but received {arguments.argument().Length}.",
                 arguments);
         }
 
         if (target.Receiver is not null && target.Function.Parameters.Count != 0)
         {
-            EnsureCallArgumentCompatible(
-                target.Function.Name,
-                1,
+            EnsureReceiverArgumentCompatible(
+                target.Function.DisplaySourceName,
                 target.Function.Parameters[0].Type,
-                target.Receiver.Type,
+                target.Receiver,
                 arguments);
         }
 
-        for (var index = 0; index < Math.Min(explicitParameterCount, arguments.argument().Length); index++)
+        for (var index = 0; index < Math.Min(explicitParameterCount, argumentTypes.Length); index++)
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
-            var argumentType = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
-            EnsureCallArgumentCompatible(target.Function.Name, index + receiverOffset + 1, parameter.Type, argumentType, arguments.argument(index).expression());
+            var argumentType = argumentTypes[index];
+            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter.Type, argumentType, arguments.argument(index).expression());
         }
 
-        return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType), DiagnosticName: $"call to '{target.Function.Name}'");
+        return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType), DiagnosticName: $"call to '{target.Function.DisplaySourceName}'");
     }
 
     private ExpressionBinding InvokeEnumConstructor(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
@@ -2752,6 +2950,11 @@ internal sealed class TypeChecker
                 return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"module '{qualifiedName}'");
             }
 
+            if (_moduleGraph.HasModuleNamespace(qualifiedName))
+            {
+                return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"module namespace '{qualifiedName}'");
+            }
+
             if (_globals.TryGetValue(qualifiedName, out var global))
             {
                 return new ExpressionBinding(
@@ -2767,7 +2970,7 @@ internal sealed class TypeChecker
                         : DescribeGlobalRebindingError(qualifiedName, global.BindingKind ?? GlobalBindingKind.Immutable));
             }
 
-            if (_functions.TryGetValue(qualifiedName, out var function))
+            if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
                 if (IsTraitMethodFunctionName(qualifiedName))
                 {
@@ -2778,7 +2981,16 @@ internal sealed class TypeChecker
                     return new ExpressionBinding(StarkTypeSymbols.Error);
                 }
 
-                return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{qualifiedName}'");
+                if (namespaceFunctions.Count == 1)
+                {
+                    var function = namespaceFunctions[0];
+                    return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{qualifiedName}'");
+                }
+
+                return new ExpressionBinding(
+                    StarkTypeSymbols.Error,
+                    DiagnosticName: $"overload group '{qualifiedName}'",
+                    OverloadSourceName: qualifiedName);
             }
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
@@ -2852,35 +3064,54 @@ internal sealed class TypeChecker
                     : target.AssignmentErrorMessage);
         }
 
+        var methodSourceName = $"{namedType.Name}.{memberName}";
         if (namedType.Kind == DeclarationKind.Doctrine
-            && _functions.TryGetValue($"{namedType.Name}.{memberName}", out var doctrineMethod))
+            && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {
+            if (doctrineMethods.Count == 1)
+            {
+                var doctrineMethod = doctrineMethods[0];
+                return new ExpressionBinding(
+                    doctrineMethod.ReturnType,
+                    NamedType: ResolveNamedTypeSymbol(doctrineMethod.ReturnType),
+                    Function: doctrineMethod,
+                    DiagnosticName: $"doctrine method '{doctrineMethod.DisplaySourceName}'");
+            }
+
             return new ExpressionBinding(
-                doctrineMethod.ReturnType,
-                NamedType: ResolveNamedTypeSymbol(doctrineMethod.ReturnType),
-                Function: doctrineMethod,
-                DiagnosticName: $"doctrine method '{doctrineMethod.Name}'");
+                StarkTypeSymbols.Error,
+                DiagnosticName: $"doctrine overload group '{methodSourceName}'",
+                OverloadSourceName: methodSourceName);
         }
 
         if (namedType.Kind == DeclarationKind.Trait
-            && _functions.ContainsKey($"{namedType.Name}.{memberName}"))
+            && TryGetFunctionOverloads(methodSourceName, out _))
         {
             ReportError(
                 "STK3013",
-                $"Trait method '{namedType.Name}.{memberName}' is a compile-time-only contract and cannot be called directly.",
+                $"Trait method '{methodSourceName}' is a compile-time-only contract and cannot be called directly.",
                 context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        if (_functions.TryGetValue($"{namedType.Name}.{memberName}", out var method)
-            && method.Parameters.Count != 0)
+        if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
+            if (methods.Count == 1 && methods[0].Parameters.Count != 0)
+            {
+                var method = methods[0];
+                return new ExpressionBinding(
+                    method.ReturnType,
+                    NamedType: ResolveNamedTypeSymbol(method.ReturnType),
+                    Function: method,
+                    DiagnosticName: $"method '{method.DisplaySourceName}'",
+                    Receiver: target);
+            }
+
             return new ExpressionBinding(
-                method.ReturnType,
-                NamedType: ResolveNamedTypeSymbol(method.ReturnType),
-                Function: method,
-                DiagnosticName: $"method '{method.Name}'",
-                Receiver: target);
+                StarkTypeSymbols.Error,
+                DiagnosticName: $"method overload group '{methodSourceName}'",
+                Receiver: target,
+                OverloadSourceName: methodSourceName);
         }
 
         if (namedType.Kind == DeclarationKind.Doctrine)
@@ -2935,7 +3166,7 @@ internal sealed class TypeChecker
                     : DescribeGlobalRebindingError(name, global.BindingKind ?? GlobalBindingKind.Immutable));
         }
 
-        if (_functions.TryGetValue(name, out var function))
+        if (TryGetFunctionOverloads(name, out var functions))
         {
             if (IsTraitMethodFunctionName(name))
             {
@@ -2948,11 +3179,25 @@ internal sealed class TypeChecker
 
             if (!allowFunctionReference)
             {
-                ReportError("STK3012", $"Function '{name}' must be called before its value can be used.", token);
+                ReportError(
+                    "STK3012",
+                    functions.Count == 1
+                        ? $"Function '{name}' must be called before its value can be used."
+                        : $"Overload group '{name}' must be called before its value can be used.",
+                    token);
                 return new ExpressionBinding(StarkTypeSymbols.Error);
             }
 
-            return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{name}'");
+            if (functions.Count == 1)
+            {
+                var function = functions[0];
+                return new ExpressionBinding(function.ReturnType, Function: function, DiagnosticName: $"function '{name}'");
+            }
+
+            return new ExpressionBinding(
+                StarkTypeSymbols.Error,
+                DiagnosticName: $"overload group '{name}'",
+                OverloadSourceName: name);
         }
 
         if (TryResolveNamedTypeBySourceName(name, out var namedType))
@@ -2994,28 +3239,7 @@ internal sealed class TypeChecker
 
         if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
         {
-            if (variant.IsUnit)
-            {
-                return new ExpressionBinding(enumTypeSymbol, NamedType: enumType, DiagnosticName: $"enum case '{name}'");
-            }
-
-            if (variant.UsesNamedFields)
-            {
-                ReportError("STK3008", $"Enum constructor '{name}' must use a named-field initializer before its value can be used.", token);
-                return new ExpressionBinding(StarkTypeSymbols.Error);
-            }
-
-            if (!allowFunctionReference)
-            {
-                ReportError("STK3012", $"Enum constructor '{name}' must be called before its value can be used.", token);
-                return new ExpressionBinding(StarkTypeSymbols.Error);
-            }
-
-            return new ExpressionBinding(
-                enumTypeSymbol,
-                NamedType: enumType,
-                DiagnosticName: $"enum constructor '{name}'",
-                EnumConstructor: new EnumConstructorBinding(name, variant));
+            return CreateEnumCaseValueBinding(name, enumTypeSymbol, enumType, variant, token, allowFunctionReference);
         }
 
         if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
@@ -3028,8 +3252,50 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"module '{name}'");
         }
 
+        if (_moduleGraph.HasModuleNamespace(name))
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"module namespace '{name}'");
+        }
+
         ReportError("STK3003", $"Unknown symbol '{name}'.", token);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
+    {
+        if (_functionOverloads.TryGetValue(sourceName, out var candidates))
+        {
+            overloads = candidates;
+            return true;
+        }
+
+        overloads = [];
+        return false;
+    }
+
+    private void ReportOverloadResolutionFailure(
+        string sourceName,
+        IReadOnlyList<StarkTypeSymbol> argumentTypes,
+        OverloadResolutionResult resolution,
+        ParserRuleContext context)
+    {
+        var argumentsText = $"({string.Join(", ", argumentTypes.Select(static type => type.DisplayName))})";
+        if (resolution.Failure == OverloadResolutionFailureKind.NoMatch)
+        {
+            ReportError(
+                "STK3021",
+                $"No overload of '{sourceName}' matches argument types {argumentsText}. Available overloads: {string.Join(", ", resolution.Candidates.Select(FunctionOverloadFacts.FormatSignature))}.",
+                context);
+            return;
+        }
+
+        if (resolution.Failure == OverloadResolutionFailureKind.Ambiguous)
+        {
+            ReportError(
+                "STK3022",
+                $"Call to overloaded function '{sourceName}' is ambiguous for argument types {argumentsText}. Matching overloads: {string.Join(", ", resolution.Candidates.Select(FunctionOverloadFacts.FormatSignature))}.",
+                context);
+        }
     }
 
     private ExpressionBinding EvaluateLiteral(StarkParser.LiteralContext literal)
@@ -3074,17 +3340,238 @@ internal sealed class TypeChecker
 
     private StarkTypeSymbol ResolveReturnType(StarkParser.ReturnTypeContext returnType, ISet<string>? genericParameters, string? currentModuleName = null)
     {
-        return _typeResolver!.ResolveReturnType(returnType, genericParameters, currentModuleName);
+        return EnsureMonomorphizedType(_typeResolver!.ResolveReturnType(returnType, genericParameters, currentModuleName));
     }
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type, ISet<string>? genericParameters = null, string? currentModuleName = null)
     {
-        return _typeResolver!.ResolveType(type, genericParameters, currentModuleName);
+        return EnsureMonomorphizedType(_typeResolver!.ResolveType(type, genericParameters, currentModuleName));
     }
 
     private StarkTypeSymbol ResolveQualifiedType(string qualifiedName, ISet<string>? genericParameters, IToken token, string? currentModuleName = null)
     {
         return _typeResolver!.ResolveQualifiedType(qualifiedName, genericParameters, token, currentModuleName);
+    }
+
+    private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
+    {
+        var baseName = genericQualifiedName.qualifiedName().GetText();
+        var baseType = ResolveQualifiedType(baseName, genericParameters: null, genericQualifiedName.qualifiedName().Start, _syntaxModel.ModuleName);
+        if (baseType.Kind == StarkTypeKind.Error)
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        var typeArguments = genericQualifiedName.typeArgumentList().type_()
+            .Select(typeArgument => ResolveType(typeArgument, currentModuleName: _syntaxModel.ModuleName))
+            .ToArray();
+        if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        return EnsureMonomorphizedType(StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments));
+    }
+
+    private ExpressionBinding ResolveGenericEnumCaseReferenceValue(
+        StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
+        bool allowFunctionReference)
+    {
+        if (!TryResolveEnumCaseReference(genericEnumCaseReference, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            ReportError("STK3003", $"Unknown symbol '{genericEnumCaseReference.GetText()}'.", genericEnumCaseReference);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        return CreateEnumCaseValueBinding(
+            genericEnumCaseReference.GetText(),
+            enumTypeSymbol,
+            enumType,
+            variant,
+            genericEnumCaseReference.Start,
+            allowFunctionReference);
+    }
+
+    private ExpressionBinding CreateEnumCaseValueBinding(
+        string caseName,
+        StarkTypeSymbol enumTypeSymbol,
+        NamedTypeSymbol enumType,
+        EnumVariantSymbol variant,
+        IToken token,
+        bool allowFunctionReference)
+    {
+        if (variant.IsUnit)
+        {
+            return new ExpressionBinding(enumTypeSymbol, NamedType: enumType, DiagnosticName: $"enum case '{caseName}'");
+        }
+
+        if (variant.UsesNamedFields)
+        {
+            ReportError("STK3008", $"Enum constructor '{caseName}' must use a named-field initializer before its value can be used.", token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (!allowFunctionReference)
+        {
+            ReportError("STK3012", $"Enum constructor '{caseName}' must be called before its value can be used.", token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        return new ExpressionBinding(
+            enumTypeSymbol,
+            NamedType: enumType,
+            DiagnosticName: $"enum constructor '{caseName}'",
+            EnumConstructor: new EnumConstructorBinding(caseName, variant));
+    }
+
+    private StarkTypeSymbol EnsureMonomorphizedType(StarkTypeSymbol type)
+    {
+        if (!StarkTypeSymbols.IsGenericInstantiation(type))
+        {
+            return type;
+        }
+
+        var key = type.NamedType!;
+        if (_namedTypes.ContainsKey(key))
+        {
+            return type;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(key);
+        if (!_namedTypes.TryGetValue(baseName, out var template)
+            && !TryResolveNamedTypeBySourceName(baseName, out template))
+        {
+            return type;
+        }
+
+        if (!template.IsGeneric)
+        {
+            ReportError("STK3019", $"Type '{baseName}' is not generic and does not accept type arguments.", SourceLocation.Synthetic());
+            return type;
+        }
+
+        if (template.GenericParams.Count != type.TypeArguments!.Count)
+        {
+            ReportError(
+                "STK3019",
+                $"Generic type '{baseName}' expects {template.GenericParams.Count} type argument(s) but {type.TypeArguments.Count} were provided.",
+                SourceLocation.Synthetic());
+            return type;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var i = 0; i < template.GenericParams.Count; i++)
+        {
+            substitution[template.GenericParams[i]] = EnsureMonomorphizedType(type.TypeArguments[i]);
+        }
+
+        _namedTypes[key] = template.Kind == DeclarationKind.Enum
+            ? CreateConcreteEnum(key, template, substitution)
+            : CreateConcreteStructLike(key, template, substitution);
+        if (_constructors.TryGetValue(baseName, out var templateConstructors))
+        {
+            _constructors[key] = CreateConcreteConstructors(templateConstructors, substitution);
+        }
+
+        return type;
+    }
+
+    private NamedTypeSymbol CreateConcreteEnum(
+        string key,
+        NamedTypeSymbol template,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        var concreteVariants = template.Variants
+            .Select(variant => new EnumVariantSymbol(
+                variant.Name,
+                variant.UsesNamedFields,
+                variant.Fields
+                    .Select(f => new EnumVariantFieldSymbol(f.Position, f.Name, SubstituteType(f.Type, substitution)))
+                    .ToArray()))
+            .ToList();
+
+        return new NamedTypeSymbol(
+            key,
+            DeclarationKind.Enum,
+            new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
+            [],
+            EnumVariants: concreteVariants);
+    }
+
+    private NamedTypeSymbol CreateConcreteStructLike(
+        string key,
+        NamedTypeSymbol template,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        var concreteFields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
+        var concreteOrderedFields = new List<FieldSymbol>();
+
+        foreach (var field in template.OrderedFields)
+        {
+            var concreteField = new FieldSymbol(field.Name, SubstituteType(field.Type, substitution));
+            concreteFields[field.Name] = concreteField;
+            concreteOrderedFields.Add(concreteField);
+        }
+
+        return new NamedTypeSymbol(key, template.Kind, concreteFields, concreteOrderedFields);
+    }
+
+    private List<ConstructorShape> CreateConcreteConstructors(
+        IReadOnlyList<ConstructorShape> templateConstructors,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        return templateConstructors
+            .Select(constructor => new ConstructorShape(
+                constructor.Name,
+                constructor.Parameters
+                    .Select(parameter => new TypedParameterSymbol(parameter.Name, SubstituteType(parameter.Type, substitution)))
+                    .ToArray(),
+                constructor.IsPrimaryShape))
+            .ToList();
+    }
+
+    private StarkTypeSymbol SubstituteType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        if (type.Kind == StarkTypeKind.Named && type.NamedType is { } name)
+        {
+            if (substitution.TryGetValue(name, out var substituted))
+            {
+                return substituted;
+            }
+
+            if (StarkTypeSymbols.IsGenericInstantiation(type) && type.TypeArguments is not null)
+            {
+                var newArgs = type.TypeArguments.Select(a => SubstituteType(a, substitution)).ToArray();
+                var instantiated = StarkTypeSymbols.GenericInstantiation(StarkTypeSymbols.GetGenericBaseName(name), newArgs);
+                return EnsureMonomorphizedType(instantiated);
+            }
+        }
+
+        if (type.ElementType is not null)
+        {
+            var newElement = SubstituteType(type.ElementType, substitution);
+            if (ReferenceEquals(newElement, type.ElementType))
+            {
+                return type;
+            }
+
+            return type.Kind switch
+            {
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(newElement, type.FixedLength),
+                StarkTypeKind.Slice => StarkTypeSymbols.Slice(newElement),
+                StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(newElement, type.IsMutablePointer),
+                _ => type
+            };
+        }
+
+        return type;
+    }
+
+    private void ReportError(string code, string message, SourceLocation location)
+    {
+        _context.Diagnostics.Error(code, message, "type-check", location);
     }
 
     private bool TryResolveEnumCaseReference(
@@ -3116,6 +3603,48 @@ internal sealed class TypeChecker
 
         enumTypeSymbol = StarkTypeSymbols.Named(enumType.Name);
         return true;
+    }
+
+    private bool TryResolveEnumCaseReference(
+        StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
+        out NamedTypeSymbol enumType,
+        out StarkTypeSymbol enumTypeSymbol,
+        out EnumVariantSymbol variant)
+    {
+        enumType = null!;
+        enumTypeSymbol = StarkTypeSymbols.Error;
+        variant = null!;
+
+        enumTypeSymbol = ResolveGenericQualifiedName(genericEnumCaseReference.genericQualifiedName());
+        if (enumTypeSymbol.Kind != StarkTypeKind.Named
+            || enumTypeSymbol.NamedType is null
+            || !_namedTypes.TryGetValue(enumTypeSymbol.NamedType, out enumType)
+            || enumType.Kind != DeclarationKind.Enum
+            || !enumType.TryGetVariant(genericEnumCaseReference.Identifier().GetText(), out variant, out _))
+        {
+            enumType = null!;
+            enumTypeSymbol = StarkTypeSymbols.Error;
+            variant = null!;
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryResolveEnumCaseTarget(
+        StarkParser.EnumCaseTargetContext enumCaseTarget,
+        out string caseName,
+        out NamedTypeSymbol enumType,
+        out StarkTypeSymbol enumTypeSymbol,
+        out EnumVariantSymbol variant)
+    {
+        caseName = enumCaseTarget.GetText();
+        if (enumCaseTarget.genericEnumCaseReference() is { } genericEnumCaseReference)
+        {
+            return TryResolveEnumCaseReference(genericEnumCaseReference, out enumType, out enumTypeSymbol, out variant);
+        }
+
+        return TryResolveEnumCaseReference(enumCaseTarget.dottedName().GetText(), out enumType, out enumTypeSymbol, out variant);
     }
 
     private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
@@ -3469,6 +3998,23 @@ internal sealed class TypeChecker
         ReportError(
             "STK3002",
             $"Argument {position} for '{functionName}' expects '{parameterType.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameterType, argumentType)}",
+            context);
+    }
+
+    private void EnsureReceiverArgumentCompatible(
+        string functionName,
+        StarkTypeSymbol parameterType,
+        ExpressionBinding receiver,
+        ParserRuleContext context)
+    {
+        if (FunctionOverloadFacts.CanBindReceiver(parameterType, receiver.Type, CanAssign))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Argument 1 for '{functionName}' expects '{parameterType.DisplayName}' but found '{receiver.Type.DisplayName}'.{GetExplicitConversionHint(parameterType, receiver.Type)}",
             context);
     }
 
@@ -4379,6 +4925,7 @@ internal sealed class TypeChecker
         bool IsAssignable = false,
         NamedTypeSymbol? NamedType = null,
         TypedFunctionSignature? Function = null,
+        string? OverloadSourceName = null,
         string? NamespaceName = null,
         string? DiagnosticName = null,
         ExpressionBinding? Receiver = null,

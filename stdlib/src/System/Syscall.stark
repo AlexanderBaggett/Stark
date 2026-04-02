@@ -1,0 +1,358 @@
+module System.Syscall
+
+public ffi asm(x86_64) fn i64 Syscall0(i64 number)
+    in("rax") number,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(x86_64) fn i64 Syscall1(i64 number, i64 arg1)
+    in("rax") number,
+    in("rdi") arg1,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(x86_64) fn i64 Syscall2(i64 number, i64 arg1, i64 arg2)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(x86_64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(x86_64) fn i64 Syscall4(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(x86_64) fn i64 Syscall5(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    in("r8") arg5,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(x86_64) fn i64 Syscall6(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5, i64 arg6)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    in("r8") arg5,
+    in("r9") arg6,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+public ffi asm(aarch64) fn i64 Syscall0(i64 number)
+    in("x8") number,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(aarch64) fn i64 Syscall1(i64 number, i64 arg1)
+    in("x8") number,
+    in("x0") arg1,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(aarch64) fn i64 Syscall2(i64 number, i64 arg1, i64 arg2)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(aarch64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(aarch64) fn i64 Syscall4(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(aarch64) fn i64 Syscall5(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    in("x4") arg5,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(aarch64) fn i64 Syscall6(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5, i64 arg6)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    in("x4") arg5,
+    in("x5") arg6,
+    out("x0") return
+{
+    "svc #0"
+}
+
+public ffi asm(riscv64) fn i64 Syscall0(i64 number)
+    in("a7") number,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(riscv64) fn i64 Syscall1(i64 number, i64 arg1)
+    in("a7") number,
+    in("a0") arg1,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(riscv64) fn i64 Syscall2(i64 number, i64 arg1, i64 arg2)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(riscv64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(riscv64) fn i64 Syscall4(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(riscv64) fn i64 Syscall5(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    in("a4") arg5,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(riscv64) fn i64 Syscall6(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5, i64 arg6)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    in("a4") arg5,
+    in("a5") arg6,
+    out("a0") return
+{
+    "ecall"
+}
+
+public ffi asm(x86) fn i64 Syscall0(i64 number)
+    in("eax") number,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(x86) fn i64 Syscall1(i64 number, i64 arg1)
+    in("eax") number,
+    in("ebx") arg1,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(x86) fn i64 Syscall2(i64 number, i64 arg1, i64 arg2)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(x86) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(x86) fn i64 Syscall4(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(x86) fn i64 Syscall5(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    in("edi") arg5,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(x86) fn i64 Syscall6(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5, i64 arg6)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    in("edi") arg5,
+    in("ebp") arg6,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+public ffi asm(arm) fn i64 Syscall0(i64 number)
+    in("r7") number,
+    out("r0") return
+{
+    "svc #0"
+}
+
+public ffi asm(arm) fn i64 Syscall1(i64 number, i64 arg1)
+    in("r7") number,
+    in("r0") arg1,
+    out("r0") return
+{
+    "svc #0"
+}
+
+public ffi asm(arm) fn i64 Syscall2(i64 number, i64 arg1, i64 arg2)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    out("r0") return
+{
+    "svc #0"
+}
+
+public ffi asm(arm) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    out("r0") return
+{
+    "svc #0"
+}
+
+public ffi asm(arm) fn i64 Syscall4(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    out("r0") return
+{
+    "svc #0"
+}
+
+public ffi asm(arm) fn i64 Syscall5(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    in("r4") arg5,
+    out("r0") return
+{
+    "svc #0"
+}
+
+public ffi asm(arm) fn i64 Syscall6(i64 number, i64 arg1, i64 arg2, i64 arg3, i64 arg4, i64 arg5, i64 arg6)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    in("r4") arg5,
+    in("r5") arg6,
+    out("r0") return
+{
+    "svc #0"
+}

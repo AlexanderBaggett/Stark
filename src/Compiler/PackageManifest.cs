@@ -81,6 +81,7 @@ internal sealed record StarkPackageTypeManifest(
     string Visibility,
     string Kind,
     IReadOnlyList<StarkPackageFieldManifest> Fields,
+    IReadOnlyList<string>? GenericParameters = null,
     IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null,
     IReadOnlyList<StarkPackageMethodManifest>? Methods = null);
 
@@ -133,6 +134,11 @@ internal static class PackageManifestBuilder
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);
                 var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
                 var visibility = declaration.Visibility.ToString().ToLowerInvariant();
+                var resolvedLookupName = declaration.Function is null
+                    ? lookupName
+                    : FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
 
                 switch (declaration.Kind)
                 {
@@ -143,7 +149,7 @@ internal static class PackageManifestBuilder
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
-                                lookupName,
+                                resolvedLookupName,
                                 typeModel,
                                 abiModel,
                                 effectModel,
@@ -166,6 +172,7 @@ internal static class PackageManifestBuilder
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
                                 namedType.OrderedFields.Select(static field => new StarkPackageFieldManifest(field.Name, field.Type.DisplayName)).ToArray(),
+                                GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
                                 Variants: null,
                                 Methods: BuildTypeMethodManifests(module, declaration.Name, typeModel, abiModel, effectModel)));
                         }
@@ -181,6 +188,7 @@ internal static class PackageManifestBuilder
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
                                 [],
+                                GenericParameters: enumType.GenericParams.Count == 0 ? null : enumType.GenericParams.ToArray(),
                                 enumType.Variants
                                     .Select(static variant => new StarkPackageEnumVariantManifest(
                                         variant.Name,
@@ -306,7 +314,9 @@ internal static class PackageManifestBuilder
             .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal)
             .Select(declaration =>
             {
-                var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);
+                var lookupName = FunctionOverloadFacts.QualifyResolvedName(
+                    module,
+                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                 if (!typeModel.Functions.TryGetValue(lookupName, out var function)
                     || !abiModel.Functions.TryGetValue(lookupName, out var abiFunction)
                     || !effectModel.Functions.TryGetValue(lookupName, out var effects))
@@ -390,6 +400,12 @@ internal static class PackageManifestLoader
             builder.Append(type.Kind);
             builder.Append(' ');
             builder.Append(type.Name);
+            if (type.GenericParameters is { Count: > 0 })
+            {
+                builder.Append('<');
+                builder.Append(string.Join(", ", type.GenericParameters));
+                builder.Append('>');
+            }
             builder.AppendLine(" {");
 
             if (string.Equals(type.Kind, "enum", StringComparison.Ordinal))

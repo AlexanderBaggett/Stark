@@ -555,6 +555,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitAggregatePattern([NotNull] StarkParser.AggregatePatternContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.genericEnumAggregatePattern"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitGenericEnumAggregatePattern([NotNull] StarkParser.GenericEnumAggregatePatternContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.aggregatePatternSuffix"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -783,6 +789,18 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitSignedIntegerLiteral([NotNull] StarkParser.SignedIntegerLiteralContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.genericQualifiedName"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitGenericQualifiedName([NotNull] StarkParser.GenericQualifiedNameContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.genericEnumCaseReference"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitGenericEnumCaseReference([NotNull] StarkParser.GenericEnumCaseReferenceContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.qualifiedName"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -794,5 +812,11 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitDottedName([NotNull] StarkParser.DottedNameContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.enumCaseTarget"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitEnumCaseTarget([NotNull] StarkParser.EnumCaseTargetContext context);
 }
 } // namespace Stark.Parsing

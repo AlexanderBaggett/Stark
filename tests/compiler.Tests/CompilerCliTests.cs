@@ -25,7 +25,7 @@ public sealed class CompilerCliTests
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Check succeeded.", stdout.ToString());
-        AssertCompilerLogsEmitted(stderr.ToString());
+        Assert.Equal(string.Empty, stderr.ToString());
     }
 
     [Fact]
@@ -41,8 +41,14 @@ public sealed class CompilerCliTests
         Assert.Contains("Workflows:", text);
         Assert.Contains("Inputs and Outputs:", text);
         Assert.Contains("Targeting and Native Toolchain:", text);
+        Assert.Contains("Compiler Logs:", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
+        Assert.Contains("--log-level <info|warning|error>", text);
+        Assert.Contains("--log-verbosity <normal|verbose>", text);
+        Assert.Contains("--log-category <name>", text);
+        Assert.Contains("--log-stage <pass-id>", text);
+        Assert.Contains("--log-kind <pipeline|symbol|decision|gap>", text);
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
@@ -72,7 +78,7 @@ public sealed class CompilerCliTests
         Assert.Contains("mir module Demo", text);
         Assert.Contains("fn i32 Run(bool flag)", text);
         Assert.Contains("blocks:", text);
-        AssertCompilerLogsEmitted(stderr.ToString());
+        Assert.Equal(string.Empty, stderr.ToString());
     }
 
     [Fact]
@@ -99,7 +105,89 @@ public sealed class CompilerCliTests
         Assert.Contains("ssa module Demo", text);
         Assert.Contains("phi", text);
         Assert.Contains("branch", text);
-        AssertCompilerLogsEmitted(stderr.ToString());
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public async Task VerboseLogVerbosityPrintsPipelineLifecycleEvents()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--log-verbosity", "verbose", "--log-kind", "pipeline"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32 Run() {
+                    return 7;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Check succeeded.", stdout.ToString());
+
+        var text = stderr.ToString();
+        Assert.Contains("Starting pass 'parse'. [info pipeline stage=parse", text, StringComparison.Ordinal);
+        Assert.Contains("Completed pass 'ownership-validate'. [info pipeline stage=ownership-validate", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LogLevelFilterCanSuppressInformationalPassLogs()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--log-level", "warning"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32 Run() {
+                    return 7;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Check succeeded.", stdout.ToString());
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public async Task LogFiltersRenderHumanReadableStructuredWarnings()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--emit-mir", "--log-level", "warning", "--log-kind", "gap", "--log-category", "lowering", "--log-stage", "lower-mir"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32 Run(i32[2] values, i32 index) {
+                    return values[index];
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("mir module Demo", stdout.ToString());
+
+        var text = stderr.ToString();
+        Assert.Contains("Dynamic fixed-array indexing currently requires a local fixed array source.", text, StringComparison.Ordinal);
+        Assert.Contains("[warn gap lowering stage=lower-mir symbol=Run", text, StringComparison.Ordinal);
+        Assert.Contains("op=LowerIndexAccess", text, StringComparison.Ordinal);
+        Assert.Contains("outcome=unsupported", text, StringComparison.Ordinal);
+        Assert.Contains("feature=lower-index-access", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Starting pass", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -127,7 +215,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.Contains("mir module Demo", await File.ReadAllTextAsync(outputPath));
         }
@@ -171,7 +259,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted object file:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
         }
@@ -215,7 +303,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted object file:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
         }
@@ -274,7 +362,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Check succeeded.", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
         }
         finally
         {
@@ -339,7 +427,7 @@ public sealed class CompilerCliTests
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted static library:", stdout.ToString());
             Assert.Contains("Emitted package manifest:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
             Assert.True(File.Exists(manifestPath));
@@ -421,7 +509,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -502,7 +590,7 @@ public sealed class CompilerCliTests
                 buildStderr);
 
             Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
+            Assert.Equal(string.Empty, buildStderr.ToString());
 
             File.Delete(facadePath);
             File.Delete(mathPath);
@@ -529,7 +617,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -605,7 +693,7 @@ public sealed class CompilerCliTests
                 buildStderr);
 
             Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
+            Assert.Equal(string.Empty, buildStderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
@@ -650,7 +738,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -733,7 +821,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
             Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
@@ -805,7 +893,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
             Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
@@ -865,7 +953,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted static library:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             var archiverLog = await File.ReadAllTextAsync(archiverLogPath);
@@ -907,12 +995,6 @@ public sealed class CompilerCliTests
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;
-    }
-
-    private static void AssertCompilerLogsEmitted(string text)
-    {
-        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
-        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
     }
 
     private static async Task<string> CreateUnixCaptureArchiverAsync(string directory, string logPath)

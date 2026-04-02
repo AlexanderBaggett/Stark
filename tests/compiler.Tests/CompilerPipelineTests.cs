@@ -39,6 +39,9 @@ public sealed class CompilerPipelineTests
                 && log.Category == "pipeline"
                 && log.EventId == "pass-completed"
                 && log.Stage == "emit-llvm"
+                && log.Verbosity == CompilerLogVerbosity.Verbose
+                && log.Kind == CompilerLogKind.Pipeline
+                && log.Outcome == CompilerLogOutcome.Continued
                 && log.Data is not null
                 && log.Data.TryGetValue("status", out var status)
                 && string.Equals(status, PassExecutionStatus.Executed.ToString(), StringComparison.Ordinal));
@@ -458,9 +461,12 @@ public sealed class CompilerPipelineTests
             && log.Operation == "LowerIndexAccess");
 
         Assert.Equal(DiagnosticSeverity.Warning, log.Severity);
+        Assert.Equal(CompilerLogKind.Gap, log.Kind);
+        Assert.Equal(CompilerLogOutcome.Unsupported, log.Outcome);
         Assert.NotNull(log.Data);
         Assert.Equal("Demo", log.Data["module"]);
         Assert.Equal("Dynamic fixed-array indexing currently requires a local fixed array source.", log.Data["reason"]);
+        Assert.Equal("lower-index-access", log.Data["feature"]);
         Assert.Equal("StarkCfg", log.Data["bodyLoweringKind"]);
     }
 
@@ -491,10 +497,13 @@ public sealed class CompilerPipelineTests
             && log.SymbolName == "Run");
 
         Assert.Equal(DiagnosticSeverity.Warning, log.Severity);
+        Assert.Equal(CompilerLogKind.Gap, log.Kind);
+        Assert.Equal(CompilerLogOutcome.Bypassed, log.Outcome);
         Assert.NotNull(log.Data);
         Assert.Equal("Demo", log.Data["module"]);
         Assert.Equal("StarkCfg", log.Data["bodyLoweringKind"]);
         Assert.Equal("True", log.Data["supportsDirectCodeGeneration"]);
+        Assert.Equal("llvm-body-fallback", log.Data["feature"]);
         Assert.Contains("Local storage class 'heap'", log.Data["reason"], StringComparison.Ordinal);
     }
 
@@ -1349,7 +1358,7 @@ public sealed class CompilerPipelineTests
                 buildStderr);
 
             Assert.Equal(0, buildExitCode);
-            Assert.Contains("pipeline:pass-started", buildStderr.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, buildStderr.ToString());
 
             File.Delete(facadePath);
             File.Delete(mathPath);
@@ -1830,6 +1839,86 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedGenericEnumsCanBeInstantiatedWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-enum-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public enum IOResult<T> {
+                    Ok(T),
+                    Err(i32),
+                }
+
+                fn void Touch() {
+                    return;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var ioResultManifest = Assert.Single(facadeModule.Types, static type => type.Name == "IOResult");
+            Assert.Equal(new[] { "T" }, ioResultManifest.GenericParameters);
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32 Unwrap(Facade.IOResult<i32> result) {
+                        switch (result) {
+                            case Facade.IOResult<i32>.Ok(var value):
+                                return value;
+                            case Facade.IOResult<i32>.Err(var code):
+                                return code;
+                        }
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.IOResult", out var templateEnum));
+            Assert.NotNull(templateEnum);
+            Assert.True(templateEnum.IsGeneric);
+            Assert.Equal(new[] { "T" }, templateEnum.GenericParams);
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.IOResult<i32>", out var concreteEnum));
+            Assert.NotNull(concreteEnum);
+            Assert.Equal(DeclarationKind.Enum, concreteEnum.Kind);
+            Assert.Equal("i32", Assert.Single(concreteEnum.Variants.Single(static variant => variant.Name == "Ok").Fields).Type.DisplayName);
+            Assert.Equal("i32", Assert.Single(concreteEnum.Variants.Single(static variant => variant.Name == "Err").Fields).Type.DisplayName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void LiteralTypingAndBodyCheckingProduceTypedArtifacts()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -2055,6 +2144,145 @@ public sealed class CompilerPipelineTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.AbiModel, out AbiModel? abiModel));
         Assert.NotNull(abiModel);
         Assert.Equal("Math.Numbers.Add", abiModel.Functions["Numbers.Add"].SymbolName);
+    }
+
+    [Fact]
+    public void OverloadedMethodsResolveThroughSemanticValidationAndMirLowering()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Demo
+
+            struct Buffer {
+                i32 Value;
+
+                fn i32 Scale(borrow Buffer self, i32 factor) {
+                    return self.Value * factor;
+                }
+
+                fn i32 Scale(borrow Buffer self, bool doubleIt) {
+                    if (doubleIt) {
+                        return self.Value * 2;
+                    }
+
+                    return self.Value;
+                }
+            }
+
+            fn i32 Run() {
+                stack Buffer buffer = new Buffer() { Value = 3 };
+                return buffer.Scale(4) + buffer.Scale(true);
+            }
+            """));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? semanticValidation));
+        Assert.NotNull(semanticValidation);
+
+        var calledOverloads = semanticValidation.Functions["Run"].CalledFunctions
+            .Where(static name => name.StartsWith("Buffer.Scale#(", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(2, calledOverloads.Length);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.Equal(
+            2,
+            mir.Functions.Count(static function => function.Name.StartsWith("Buffer.Scale#(", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void ManifestBackedOverloadedFunctionsResolveWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-overload-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public finite law i32 Parse(i32 value) {
+                    return value;
+                }
+
+                public finite law i32 Parse(bool value) {
+                    if (value) {
+                        return 1;
+                    }
+
+                    return 0;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var parseOverloads = facadeModule.Functions
+                .Where(static function => function.Name == "Parse")
+                .ToArray();
+
+            Assert.Equal(2, parseOverloads.Length);
+            Assert.All(parseOverloads, static function => Assert.Equal("Facade.Parse", function.QualifiedName));
+            Assert.Equal(
+                2,
+                parseOverloads.Select(static function => function.SymbolName).Distinct(StringComparer.Ordinal).Count());
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run() {
+                        return Facade.Parse(4) + Facade.Parse(true);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+            Assert.True(typeCheckModel.Overloads.TryGetValue("Facade.Parse", out var overloads));
+            Assert.Equal(2, overloads.Count);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? semanticValidation));
+            Assert.NotNull(semanticValidation);
+
+            var calledOverloads = semanticValidation.Functions["Run"].CalledFunctions
+                .Where(static name => name.StartsWith("Facade.Parse#(", StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.Equal(2, calledOverloads.Length);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]

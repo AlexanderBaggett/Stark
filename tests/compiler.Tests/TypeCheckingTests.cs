@@ -293,6 +293,243 @@ public sealed class TypeCheckingTests
         Assert.NotNull(typeCheckModel);
     }
 
+    // ---- Generic type instantiation ----
+
+    [Fact]
+    public void GenericEnumInstantiationTypeChecks()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Option<T> {
+                None,
+                Some(T),
+            }
+
+            finite law bool HasValue(Option<i32> opt) {
+                switch (opt) {
+                    case Option<i32>.None:
+                        return false;
+                    case Option<i32>.Some(var value):
+                        return value > 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Option"), "generic template should be registered");
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Option<i32>"), "monomorphized type should be registered");
+        var monomorphized = typeCheckModel.NamedTypes["Option<i32>"];
+        Assert.Equal(DeclarationKind.Enum, monomorphized.Kind);
+        Assert.Equal(2, monomorphized.Variants.Count);
+        Assert.True(typeCheckModel.NamedTypes["Option"].IsGeneric, "template should be marked generic");
+    }
+
+    [Fact]
+    public void GenericRecordInstantiationTypeChecks()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair<A, B>(A First, B Second) { }
+
+            finite law i32 Sum(Pair<i32, i32> pair) {
+                return pair.First + pair.Second;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Pair<i32,i32>"), "monomorphized pair should be registered");
+        var concrete = typeCheckModel.NamedTypes["Pair<i32,i32>"];
+        Assert.Equal(2, concrete.OrderedFields.Count);
+        Assert.Equal(StarkTypeKind.Integer, concrete.OrderedFields[0].Type.Kind);
+        Assert.Equal(StarkTypeKind.Integer, concrete.OrderedFields[1].Type.Kind);
+    }
+
+    [Fact]
+    public void GenericRecordPrimaryConstructorInstantiationTypeChecks()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair<A, B>(A First, B Second) { }
+
+            finite law i32 Sum() {
+                stack Pair<i32, i32> pair = new Pair<i32, i32>(3, 4);
+                return pair.First + pair.Second;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+    }
+
+    [Fact]
+    public void GenericTypeWithWrongArgCountIsAnError()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Option<T> {
+                None,
+                Some(T),
+            }
+
+            finite law void Bad(Option<i32, bool> opt) {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static d => d.Code == "STK3019");
+    }
+
+    [Fact]
+    public void GenericEnumVariantFieldTypeIsSubstituted()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Result<T, E> {
+                Ok(T),
+                Err(E),
+            }
+
+            finite law i32 Unwrap(Result<i32, bool> res) {
+                switch (res) {
+                    case Result<i32, bool>.Ok(var value):
+                        return value;
+                    case Result<i32, bool>.Err(var err):
+                        if (err) {
+                            return -1;
+                        }
+                        return -1;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Result<i32,bool>"));
+        var concrete = typeCheckModel.NamedTypes["Result<i32,bool>"];
+        var okVariant = concrete.Variants.Single(static v => v.Name == "Ok");
+        Assert.Equal(StarkTypeKind.Integer, okVariant.Fields[0].Type.Kind);
+        var errVariant = concrete.Variants.Single(static v => v.Name == "Err");
+        Assert.Equal(StarkTypeKind.Bool, errVariant.Fields[0].Type.Kind);
+    }
+
+    [Fact]
+    public void NonGenericTypeWithTypeArgumentsIsAnError()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Point(i32 X, i32 Y) { }
+
+            finite law void Bad(Point<i32> p) {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static d => d.Code == "STK3019");
+    }
+
+    [Fact]
+    public void TopLevelOverloadGroupsRegisterDistinctFunctionsAndResolveCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Parse(i32 value) {
+                return value;
+            }
+
+            fn bool Parse(bool value) {
+                return value;
+            }
+
+            fn i32 Run() {
+                return Parse(42);
+            }
+
+            fn bool RunBool() {
+                return Parse(true);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.Overloads.TryGetValue("Parse", out var overloads));
+        Assert.Equal(2, overloads.Count);
+        Assert.Equal(
+            2,
+            typeCheckModel.Functions.Keys.Count(static name => name.StartsWith("Parse#(", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void MethodOverloadGroupsRegisterDistinctFunctionsAndResolveCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Counter {
+                i32 Value;
+
+                fn i32 Scale(borrow Counter self, i32 factor) {
+                    return self.Value * factor;
+                }
+
+                fn i32 Scale(borrow Counter self, bool doubleIt) {
+                    if (doubleIt) {
+                        return self.Value * 2;
+                    }
+
+                    return self.Value;
+                }
+            }
+
+            fn i32 Run() {
+                stack Counter counter = new Counter() { Value = 3 };
+                return counter.Scale(4);
+            }
+
+            fn i32 RunBool() {
+                stack Counter counter = new Counter() { Value = 3 };
+                return counter.Scale(true);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.Overloads.TryGetValue("Counter.Scale", out var overloads));
+        Assert.Equal(2, overloads.Count);
+        Assert.Equal(
+            2,
+            typeCheckModel.Functions.Keys.Count(static name => name.StartsWith("Counter.Scale#(", StringComparison.Ordinal)));
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

@@ -492,7 +492,6 @@ public sealed class MultiFileIntegrationTests
 
     private static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Contains("pipeline:pass-started", text, StringComparison.Ordinal);
-        Assert.Contains("pipeline:pass-completed", text, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, text);
     }
 }

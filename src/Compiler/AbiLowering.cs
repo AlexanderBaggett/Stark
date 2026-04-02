@@ -45,7 +45,8 @@ internal sealed class AbiLowerer
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
         var returnsIndirect = !isFfi && RequiresIndirectReturnAbi(function.ReturnType);
-        var symbolName = ComputeSymbolName(function.Name, moduleName, sourceName, visibility, isFfi);
+        var isOverloaded = !string.Equals(function.Name, function.DisplaySourceName, StringComparison.Ordinal);
+        var symbolName = ComputeSymbolName(function.Name, moduleName, sourceName, visibility, isFfi, isOverloaded);
 
         if (returnsIndirect)
         {
@@ -81,7 +82,8 @@ internal sealed class AbiLowerer
             function.ReturnType,
             returnsIndirect ? StarkTypeSymbols.Void : LowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
             parameters,
-            isFfi);
+            isFfi,
+            SourceName: function.SourceName);
     }
 
     private static StarkTypeSymbol LowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
@@ -121,7 +123,10 @@ internal sealed class AbiLowerer
                     continue;
                 }
 
-                if (!string.Equals(QualifyName(module, declaration.Name), functionName, StringComparison.Ordinal))
+                var resolvedName = FunctionOverloadFacts.QualifyResolvedName(
+                    module,
+                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                if (!string.Equals(resolvedName, functionName, StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -144,11 +149,17 @@ internal sealed class AbiLowerer
         string moduleName,
         string sourceName,
         StarkVisibility visibility,
-        bool isFfi)
+        bool isFfi,
+        bool isOverloaded)
     {
-        if (isFfi)
+        if (isFfi && !isOverloaded)
         {
             return sourceName;
+        }
+
+        if (isOverloaded)
+        {
+            return qualifiedName;
         }
 
         if (visibility == StarkVisibility.Export

@@ -391,9 +391,9 @@ public static class DefaultCompilerPipeline
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
                 {
                     var function = declaration.Function!;
-                    var qualifiedName = isRoot
-                        ? function.Name
-                        : $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                    var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                     effects[qualifiedName] = CreateEffectProfile(qualifiedName, function);
                 }
             }
@@ -552,7 +552,9 @@ public static class DefaultCompilerPipeline
                     StringComparer.Ordinal);
             var rootDeclarations = syntaxModel.Declarations
                 .Where(static declaration => declaration.Function is not null)
-                .ToDictionary(static declaration => declaration.Function!.Name, StringComparer.Ordinal);
+                .ToDictionary(
+                    declaration => FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration),
+                    StringComparer.Ordinal);
             var recursiveLawFunctions = FindRecursiveFunctions(
                 validationModel.Functions,
                 static summary => FunctionKindFacts.IsLaw(summary.EffectiveKind));
@@ -855,7 +857,9 @@ public static class DefaultCompilerPipeline
             {
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
                 {
-                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Function!.Name}";
+                    var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                     declarations[qualifiedName] = new ImportedFunctionDeclaration(module.SyntaxModel.ModuleName, declaration);
                 }
             }
@@ -869,12 +873,19 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
             {
-                var localFunctionNames = module.SyntaxModel.Declarations
+                var localFunctionsBySourceName = module.SyntaxModel.Declarations
                     .Where(static declaration => declaration.Function is not null)
-                    .Select(static declaration => declaration.Function!.Name)
-                    .ToHashSet(StringComparer.Ordinal);
+                    .GroupBy(static declaration => declaration.Function!.Name, StringComparer.Ordinal)
+                    .ToDictionary(
+                        static group => group.Key,
+                        group => group
+                            .Select(declaration => FunctionOverloadFacts.QualifyResolvedName(
+                                module,
+                                FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration)))
+                            .ToArray(),
+                        StringComparer.Ordinal);
 
-                foreach (var function in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+                foreach (var function in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
                     var callees = new HashSet<string>(StringComparer.Ordinal);
@@ -883,9 +894,12 @@ public static class DefaultCompilerPipeline
                     {
                         foreach (var callName in CollectDirectCallNames(body))
                         {
-                            if (localFunctionNames.Contains(callName))
+                            if (localFunctionsBySourceName.TryGetValue(callName, out var resolvedNames))
                             {
-                                callees.Add($"{module.SyntaxModel.ModuleName}.{callName}");
+                                foreach (var resolvedName in resolvedNames)
+                                {
+                                    callees.Add(resolvedName);
+                                }
                             }
                         }
                     }
@@ -1202,9 +1216,9 @@ public static class DefaultCompilerPipeline
                     .Select(declaration =>
                     {
                         var function = declaration.Function!;
-                        var qualifiedName = module.Reference.IsRoot
-                            ? function.Name
-                            : $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                        var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                            module,
+                            FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                         if (!effects.Functions.ContainsKey(qualifiedName)
                             || (!types.Functions.ContainsKey(qualifiedName) && !fallbackSignatures.ContainsKey(qualifiedName)))
                         {
@@ -1252,7 +1266,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
             {
-                foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult))
+                foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
                     var genericParameters = resolver.GetGenericParameterNames(declaration.TypeParameters);
@@ -1264,7 +1278,8 @@ public static class DefaultCompilerPipeline
                     functions[qualifiedName] = new TypedFunctionSignature(
                         qualifiedName,
                         resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
-                        parameters);
+                        parameters,
+                        SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName));
                 }
             }
 
