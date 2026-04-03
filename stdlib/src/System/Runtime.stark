@@ -1,0 +1,3 @@
+import System.Runtime.Buffer
+import System.Runtime.Platform
+module System.Runtime

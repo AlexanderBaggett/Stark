@@ -1,57 +1,361 @@
+import System.Runtime.Buffer
+import System.Text
+import System.Runtime.Platform
 module System.IO.File
 
-ffi fn rawptr<i8> fopen(ascii path, ascii mode);
-ffi fn i32 fclose(rawptr<i8> handle);
-ffi fn i32 fflush(rawptr<i8> handle);
-ffi fn i64 fread(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
-ffi fn i64 fwrite(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
-ffi fn i32 remove(ascii path);
-ffi fn i32 rename(ascii oldPath, ascii newPath);
-ffi fn i32 fputs(ascii text, rawptr<i8> handle);
+public enum FileMode {
+    Read,
+    Write,
+    Append,
+    ReadWrite,
+}
+
+public enum FileBuffering {
+    None,
+    Line,
+    Full,
+}
+
+fn rawptr<i8> OpenHandle(ascii path, FileMode mode) {
+    switch (mode) {
+        case FileMode.Read:
+            return System.Runtime.Platform.OpenFileRead(path);
+        case FileMode.Write:
+            return System.Runtime.Platform.OpenFileWrite(path);
+        case FileMode.Append:
+            return System.Runtime.Platform.OpenFileAppend(path);
+        case FileMode.ReadWrite:
+            return System.Runtime.Platform.OpenFileReadWrite(path);
+    }
+}
+
+fn void WriteAsciiLineHandle(rawptr<i8> handle, ascii text) {
+    stack mut System.Runtime.Buffer.ByteBuffer512 lineBuffer = new System.Runtime.Buffer.ByteBuffer512();
+    stack mut Ascii owned = new Ascii() {
+        Data = lineBuffer.WritePointer(),
+        Length = 0,
+        Capacity = lineBuffer.Writable()
+    };
+    stack i64 textLength = System.Text.AsciiLength(text);
+    stack i64 required = textLength + 1;
+
+    if (owned.Data != null && required <= owned.Capacity) {
+        stack ascii fullText = text[0, textLength];
+        if (System.Text.TryConcatAscii(&owned, fullText, "\n")) {
+            System.Runtime.Platform.WriteAscii(handle, System.Text.AsciiView(owned));
+        }
+
+        return;
+    }
+
+    stack ascii fullText = text[0, textLength];
+    System.Runtime.Platform.WriteAscii(handle, fullText);
+    System.Runtime.Platform.WriteAscii(handle, "\n");
+    return;
+}
+
+fn void WriteUnicodeLineHandle(rawptr<i8> handle, unicode text) {
+    System.Runtime.Platform.WriteUnicode(handle, text);
+    System.Runtime.Platform.WriteUnicode(handle, (unicode)"\n");
+    return;
+}
+
+fn FileBuffering DefaultBufferingForHandle(rawptr<i8> handle) {
+    if (handle != null && System.Runtime.Platform.IsTerminal(handle)) {
+        return FileBuffering.Line;
+    }
+
+    return FileBuffering.Full;
+}
+
+fn File CreateFile(rawptr<i8> handle, System.Text.Encoding encoding, FileBuffering buffering) {
+    stack bool bufferWrites = true;
+    stack bool flushOnLine = false;
+
+    switch (buffering) {
+        case FileBuffering.None:
+            bufferWrites = false;
+            flushOnLine = false;
+        case FileBuffering.Line:
+            bufferWrites = true;
+            flushOnLine = true;
+        case FileBuffering.Full:
+            bufferWrites = true;
+            flushOnLine = false;
+    }
+
+    return new File() {
+        Handle = handle,
+        Closed = handle == null,
+        Encoding = encoding,
+        BufferWrites = bufferWrites,
+        FlushOnLine = flushOnLine,
+        WriteBufferLength = 0
+    };
+}
+
+public struct File {
+    rawptr<i8> Handle;
+    bool Closed;
+    System.Text.Encoding Encoding;
+    bool BufferWrites;
+    bool FlushOnLine;
+    i64 WriteBufferLength;
+    i8[8192] WriteBufferStorage;
+
+    fn bool IsOpen(borrow File self) {
+        return !self.Closed;
+    }
+
+    fn ascii BufferedAscii(mut borrow File self) {
+        stack i64 length = self.WriteBufferLength;
+        if (length <= 0) {
+            return "";
+        }
+
+        stack mut Ascii owned = new Ascii() {
+            Data = &self.WriteBufferStorage[0],
+            Length = length,
+            Capacity = length
+        };
+
+        return System.Text.AsciiView(owned);
+    }
+
+    fn i32 FlushBufferedWrite(mut borrow File self) {
+        if (self.Handle == null || self.WriteBufferLength <= 0) {
+            return 0;
+        }
+
+        stack ascii buffered = self.BufferedAscii();
+        stack i32 status = System.Runtime.Platform.WriteAscii(self.Handle, buffered);
+        if (status == 0) {
+            self.WriteBufferLength = 0;
+        }
+
+        return status;
+    }
+
+    fn bool TryAppendBufferedAscii(mut borrow File self, ascii text) {
+        stack i64 textLength = System.Text.AsciiLength(text);
+        if (textLength <= 0) {
+            return true;
+        }
+
+        stack ascii fullText = text[0, textLength];
+
+        stack i64 existingLength = self.WriteBufferLength;
+        stack i64 capacity = 8192;
+        if (existingLength + textLength > capacity) {
+            return false;
+        }
+
+        stack mut i64 index = 0;
+        while willexit (index < textLength) {
+            stack ascii unit = fullText[index, 1];
+            stack rawptr<i8> data = System.Text.AsciiData(unit);
+            *(&self.WriteBufferStorage[existingLength + index]) = *data;
+            index += 1;
+        }
+
+        self.WriteBufferLength = existingLength + textLength;
+        return true;
+    }
+
+    fn i32 Close(mut borrow File self) {
+        if (self.Closed || self.Handle == null) {
+            self.Handle = null;
+            self.Closed = true;
+            return 0;
+        }
+
+        stack i32 flushStatus = self.Flush();
+        stack i32 closeStatus = System.Runtime.Platform.CloseFile(self.Handle);
+        self.Handle = null;
+        self.Closed = true;
+
+        if (flushStatus != 0) {
+            return flushStatus;
+        }
+
+        return closeStatus;
+    }
+
+    fn i32 Flush(mut borrow File self) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        stack i32 bufferStatus = self.FlushBufferedWrite();
+        if (bufferStatus != 0) {
+            return bufferStatus;
+        }
+
+        return System.Runtime.Platform.FlushFile(self.Handle);
+    }
+
+    fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        if (self.Flush() != 0) {
+            return 0;
+        }
+
+        return System.Runtime.Platform.ReadFile(buffer, size, count, self.Handle);
+    }
+
+    fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        if (self.Flush() != 0) {
+            return 0;
+        }
+
+        return System.Runtime.Platform.WriteFile(buffer, size, count, self.Handle);
+    }
+
+    fn void WriteText(mut borrow File self, ascii text) {
+        if (self.Closed || self.Handle == null) {
+            return;
+        }
+
+        stack i64 textLength = System.Text.AsciiLength(text);
+        if (!self.BufferWrites) {
+            self.Flush();
+            stack ascii directText = text[0, textLength];
+            System.Runtime.Platform.WriteAscii(self.Handle, directText);
+            return;
+        }
+
+        stack i64 bufferedLength = self.WriteBufferLength;
+        stack i64 capacity = 8192;
+        if (bufferedLength + textLength <= capacity) {
+            stack ascii bufferedText = text[0, textLength];
+            self.TryAppendBufferedAscii(bufferedText);
+            return;
+        }
+
+        if (self.Flush() != 0) {
+            return;
+        }
+
+        if (textLength <= capacity) {
+            stack ascii bufferedText = text[0, textLength];
+            self.TryAppendBufferedAscii(bufferedText);
+            return;
+        }
+
+        stack ascii directText = text[0, textLength];
+        System.Runtime.Platform.WriteAscii(self.Handle, directText);
+        return;
+    }
+
+    fn void WriteLine(mut borrow File self, ascii text) {
+        if (self.Closed || self.Handle == null) {
+            return;
+        }
+
+        stack i64 textLength = System.Text.AsciiLength(text);
+
+        if (!self.BufferWrites) {
+            stack ascii lineText = text[0, textLength];
+            WriteAsciiLineHandle(self.Handle, lineText);
+            return;
+        }
+
+        stack ascii lineText = text[0, textLength];
+        self.WriteText(lineText);
+        self.WriteText("\n");
+        if (self.FlushOnLine) {
+            self.Flush();
+        }
+
+        return;
+    }
+
+    mut drop {
+        self.Close();
+    }
+}
+
+public fn File Open(ascii path, FileMode mode) {
+    return Open(path, mode, System.Text.Encoding.Binary);
+}
+
+public fn File Open(ascii path, FileMode mode, FileBuffering buffering) {
+    return Open(path, mode, System.Text.Encoding.Binary, buffering);
+}
+
+public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding) {
+    stack rawptr<i8> handle = OpenHandle(path, mode);
+    return CreateFile(handle, encoding, DefaultBufferingForHandle(handle));
+}
+
+public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering) {
+    stack rawptr<i8> handle = OpenHandle(path, mode);
+    return CreateFile(handle, encoding, buffering);
+}
 
 public fn rawptr<i8> OpenRead(ascii path) {
-    return fopen(path, "rb");
+    return System.Runtime.Platform.OpenFileRead(path);
 }
 
 public fn rawptr<i8> OpenWrite(ascii path) {
-    return fopen(path, "wb");
+    return System.Runtime.Platform.OpenFileWrite(path);
 }
 
 public fn rawptr<i8> OpenAppend(ascii path) {
-    return fopen(path, "ab");
+    return System.Runtime.Platform.OpenFileAppend(path);
 }
 
 public fn i32 Close(rawptr<i8> handle) {
-    return fclose(handle);
+    return System.Runtime.Platform.CloseFile(handle);
 }
 
 public fn i32 Flush(rawptr<i8> handle) {
-    return fflush(handle);
+    return System.Runtime.Platform.FlushFile(handle);
 }
 
 public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
-    return fread(buffer, size, count, handle);
+    return System.Runtime.Platform.ReadFile(buffer, size, count, handle);
 }
 
 public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
-    return fwrite(buffer, size, count, handle);
+    return System.Runtime.Platform.WriteFile(buffer, size, count, handle);
 }
 
 public fn void WriteText(rawptr<i8> handle, ascii text) {
-    fputs(text, handle);
+    System.Runtime.Platform.WriteAscii(handle, text);
+    return;
+}
+
+public fn void WriteText(rawptr<i8> handle, unicode text) {
+    System.Runtime.Platform.WriteUnicode(handle, text);
     return;
 }
 
 public fn void WriteLine(rawptr<i8> handle, ascii text) {
-    WriteText(handle, text);
-    WriteText(handle, "\n");
+    WriteAsciiLineHandle(handle, text);
+    return;
+}
+
+public fn void WriteLine(rawptr<i8> handle, unicode text) {
+    WriteUnicodeLineHandle(handle, text);
     return;
 }
 
 public fn i32 Delete(ascii path) {
-    return remove(path);
+    return System.Runtime.Platform.DeleteFile(path);
 }
 
 public fn i32 Move(ascii oldPath, ascii newPath) {
-    return rename(oldPath, newPath);
+    return System.Runtime.Platform.MoveFile(oldPath, newPath);
+}
+
+public fn bool Exists(ascii path) {
+    return System.Runtime.Platform.FileExists(path);
 }

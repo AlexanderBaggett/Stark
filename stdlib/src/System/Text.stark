@@ -9,6 +9,10 @@ public enum Encoding {
 
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
+public finite law rawptr<i8> AsciiData(ascii source);
+public finite law i64 AsciiLength(ascii source);
+public finite law rawptr<i32> UnicodeData(unicode source);
+public finite law i64 UnicodeLength(unicode source);
 
 public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);

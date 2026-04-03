@@ -455,6 +455,117 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitLibraryModeRebuildReplacesStaleArchiveMembers()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var archiverPath = FindFirstAvailableTool("llvm-ar", "ar");
+        if (archiverPath is null)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-lib-rebuild-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var dependencyPath = Path.Combine(tempDirectory.FullName, "Math.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "libFacade.a");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                dependencyPath,
+                """
+                module Math
+
+                public finite law i32 Add(i32 left, i32 right) {
+                    return left + right;
+                }
+                """);
+
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                export import Math
+                module Facade
+
+                public finite law i32 Double(i32 value) {
+                    return Math.Add(value, value);
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var firstExitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, firstExitCode);
+            Assert.True(File.Exists(outputPath));
+
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32 Double(i32 value) {
+                    return value + value;
+                }
+                """);
+
+            stdout.GetStringBuilder().Clear();
+            stderr.GetStringBuilder().Clear();
+
+            var secondExitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, secondExitCode);
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = archiverPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("t");
+            startInfo.ArgumentList.Add(outputPath);
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            Assert.NotNull(process);
+
+            var members = await process!.StandardOutput.ReadToEndAsync();
+            var errors = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, errors);
+            Assert.DoesNotContain("Math.o", members, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeBuildsImportedAggregateDependencies()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -632,6 +743,140 @@ public sealed class CompilerCliTests
             Assert.NotNull(process);
             process!.WaitForExit();
             Assert.Equal(7, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeLinksManifestBackedOverloadedLibrariesWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-overload-manifest-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var facadePath = Path.Combine(packageDirectory, "Facade.stark");
+        var mathPath = Path.Combine(packageDirectory, "Math.stark");
+        var textPath = Path.Combine(packageDirectory, "Text.stark");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                textPath,
+                """
+                module Text
+
+                public enum Encoding {
+                    Binary,
+                    UTF8,
+                }
+                """);
+
+            await File.WriteAllTextAsync(
+                mathPath,
+                """
+                import Text
+                module Math
+
+                public enum FileMode {
+                    Read,
+                    Write,
+                }
+
+                public finite law i32 Open(ascii path, FileMode mode) {
+                    return 4;
+                }
+
+                public finite law i32 Open(ascii path, FileMode mode, Text.Encoding encoding) {
+                    return 11;
+                }
+                """);
+
+            await File.WriteAllTextAsync(
+                facadePath,
+                """
+                export import Text
+                export import Math
+                module Facade
+
+                public finite law i32 Run() {
+                    return Math.Open("demo.txt", Math.FileMode.Write)
+                        + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
+                }
+                """);
+
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [facadePath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            Assert.Equal(string.Empty, buildStderr.ToString());
+
+            File.Delete(facadePath);
+            File.Delete(mathPath);
+            File.Delete(textPath);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import Facade
+                module App
+
+                export ffi fn i32 main() {
+                    return Math.Open("demo.txt", Math.FileMode.Write)
+                        + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            process!.WaitForExit();
+            Assert.Equal(15, process.ExitCode);
         }
         finally
         {
@@ -1011,5 +1256,28 @@ public sealed class CompilerCliTests
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;
+    }
+
+    private static string? FindFirstAvailableTool(params string[] toolNames)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var toolName in toolNames)
+            {
+                var candidate = Path.Combine(directory, toolName);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
     }
 }

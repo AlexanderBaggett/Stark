@@ -129,6 +129,8 @@ Rules:
 
 The `strictfp` modifier is reserved in the surface syntax, but the current compiler rejects it until strict floating-point lowering is implemented.
 
+The current compiler enforces the modifier exclusivity rules above as declaration errors.
+
 ### 5.3 Declarations and Bodies
 
 Function declarations may appear with either:
@@ -513,6 +515,21 @@ The statement forms are:
 
 This is part of Stark's source-level control-flow contract, especially for `finite` functions.
 
+The current loop behavior rules are:
+
+- `infinite`
+  - must use a statically unconditional condition
+  - `while` must use literal `true`
+  - `for` must omit the condition expression
+  - may not contain a structural exit from the current loop or function such as `break` or `return`
+  - is not accepted inside a declared `finite` function
+- `non-deterministic`
+  - may or may not exit
+  - is not accepted inside a declared `finite` function
+- `willexit`
+  - is the only loop form accepted inside a declared `finite` function
+  - if the loop condition is statically unconditional (`while willexit (true)` or `for willexit (;;)`), the body must contain at least one structural `break` or `return`
+
 ### 10.3 Switch and Patterns
 
 The switch surface includes:
@@ -732,6 +749,7 @@ The current implemented runtime model is:
 - `Ascii.Data` is `rawmutptr<i8>`, `Ascii.Length` counts UTF-8 code units, and `Ascii.Capacity` counts allocated UTF-8 code units
 - `Unicode.Data` is `rawmutptr<i32>`, `Unicode.Length` counts UTF-32 code units, and `Unicode.Capacity` counts allocated UTF-32 code units
 - `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` project those owning containers back to zero-copy immutable `ascii` and `unicode` views
+- `System.Text.AsciiData(ascii)`, `System.Text.AsciiLength(ascii)`, `System.Text.UnicodeData(unicode)`, and `System.Text.UnicodeLength(unicode)` expose the pointer/length parts of immutable text views explicitly for low-level stdlib and FFI work
 - `System.Text.TryConcatAscii` and `System.Text.TryConcatUnicode` implement the current non-hidden-allocation concatenation path by writing into caller-provided owned buffers through explicit `rawmutptr` destinations and returning `bool` success instead of allocating implicitly
 - explicit `ascii` / `unicode` widening and narrowing conversions are currently implemented only for compile-time text constants; general runtime text conversion still awaits explicit allocator-backed construction APIs that bridge immutable text views and those owning text containers
 - `text[start, length]` is implemented for both `ascii` and `unicode` and returns another zero-copy text view of the same text kind

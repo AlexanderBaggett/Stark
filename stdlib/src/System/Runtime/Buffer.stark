@@ -1,0 +1,688 @@
+module System.Runtime.Buffer
+
+internal struct ByteBuffer512 {
+    i8[512] Storage;
+    i64 ReadPos;
+    i64 WritePos;
+
+    fn i64 Capacity(borrow ByteBuffer512 self) {
+        return 512;
+    }
+
+    fn bool IsEmpty(borrow ByteBuffer512 self) {
+        return self.ReadPos == self.WritePos;
+    }
+
+    fn bool IsFull(borrow ByteBuffer512 self) {
+        return self.WritePos >= 512;
+    }
+
+    fn i64 Readable(borrow ByteBuffer512 self) {
+        return self.WritePos - self.ReadPos;
+    }
+
+    fn i64 Writable(borrow ByteBuffer512 self) {
+        return 512 - self.WritePos;
+    }
+
+    fn rawptr<i8> ReadPointer(borrow ByteBuffer512 self) {
+        if (self.Readable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.ReadPos];
+    }
+
+    fn rawmutptr<i8> ReadWritePointer(mut borrow ByteBuffer512 self) {
+        if (self.Readable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.ReadPos];
+    }
+
+    fn rawmutptr<i8> WritePointer(mut borrow ByteBuffer512 self) {
+        if (self.Writable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.WritePos];
+    }
+
+    fn void AdvanceRead(mut borrow ByteBuffer512 self, i64 count) {
+        if (count <= 0) {
+            return;
+        }
+
+        if (count >= self.Readable()) {
+            self.Clear();
+            return;
+        }
+
+        self.ReadPos += count;
+    }
+
+    fn void AdvanceWrite(mut borrow ByteBuffer512 self, i64 count) {
+        if (count <= 0) {
+            return;
+        }
+
+        if (count >= self.Writable()) {
+            self.WritePos = 512;
+            return;
+        }
+
+        self.WritePos += count;
+    }
+
+    fn void Clear(mut borrow ByteBuffer512 self) {
+        self.ReadPos = 0;
+        self.WritePos = 0;
+    }
+}
+
+internal struct ByteBuffer4096 {
+    i8[4096] Storage;
+    i64 ReadPos;
+    i64 WritePos;
+
+    fn i64 Capacity(borrow ByteBuffer4096 self) {
+        return 4096;
+    }
+
+    fn bool IsEmpty(borrow ByteBuffer4096 self) {
+        return self.ReadPos == self.WritePos;
+    }
+
+    fn bool IsFull(borrow ByteBuffer4096 self) {
+        return self.WritePos >= 4096;
+    }
+
+    fn i64 Readable(borrow ByteBuffer4096 self) {
+        return self.WritePos - self.ReadPos;
+    }
+
+    fn i64 Writable(borrow ByteBuffer4096 self) {
+        return 4096 - self.WritePos;
+    }
+
+    fn rawptr<i8> ReadPointer(borrow ByteBuffer4096 self) {
+        if (self.Readable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.ReadPos];
+    }
+
+    fn rawmutptr<i8> ReadWritePointer(mut borrow ByteBuffer4096 self) {
+        if (self.Readable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.ReadPos];
+    }
+
+    fn rawmutptr<i8> WritePointer(mut borrow ByteBuffer4096 self) {
+        if (self.Writable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.WritePos];
+    }
+
+    fn void AdvanceRead(mut borrow ByteBuffer4096 self, i64 count) {
+        if (count <= 0) {
+            return;
+        }
+
+        if (count >= self.Readable()) {
+            self.Clear();
+            return;
+        }
+
+        self.ReadPos += count;
+    }
+
+    fn void AdvanceWrite(mut borrow ByteBuffer4096 self, i64 count) {
+        if (count <= 0) {
+            return;
+        }
+
+        if (count >= self.Writable()) {
+            self.WritePos = 4096;
+            return;
+        }
+
+        self.WritePos += count;
+    }
+
+    fn void Clear(mut borrow ByteBuffer4096 self) {
+        self.ReadPos = 0;
+        self.WritePos = 0;
+    }
+}
+
+internal struct ByteBuffer8192 {
+    i8[8192] Storage;
+    i64 ReadPos;
+    i64 WritePos;
+
+    fn i64 Capacity(borrow ByteBuffer8192 self) {
+        return 8192;
+    }
+
+    fn bool IsEmpty(borrow ByteBuffer8192 self) {
+        return self.ReadPos == self.WritePos;
+    }
+
+    fn bool IsFull(borrow ByteBuffer8192 self) {
+        return self.WritePos >= 8192;
+    }
+
+    fn i64 Readable(borrow ByteBuffer8192 self) {
+        return self.WritePos - self.ReadPos;
+    }
+
+    fn i64 Writable(borrow ByteBuffer8192 self) {
+        return 8192 - self.WritePos;
+    }
+
+    fn rawptr<i8> ReadPointer(borrow ByteBuffer8192 self) {
+        if (self.Readable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.ReadPos];
+    }
+
+    fn rawmutptr<i8> ReadWritePointer(mut borrow ByteBuffer8192 self) {
+        if (self.Readable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.ReadPos];
+    }
+
+    fn rawmutptr<i8> WritePointer(mut borrow ByteBuffer8192 self) {
+        if (self.Writable() <= 0) {
+            return null;
+        }
+
+        return &self.Storage[self.WritePos];
+    }
+
+    fn void AdvanceRead(mut borrow ByteBuffer8192 self, i64 count) {
+        if (count <= 0) {
+            return;
+        }
+
+        if (count >= self.Readable()) {
+            self.Clear();
+            return;
+        }
+
+        self.ReadPos += count;
+    }
+
+    fn void AdvanceWrite(mut borrow ByteBuffer8192 self, i64 count) {
+        if (count <= 0) {
+            return;
+        }
+
+        if (count >= self.Writable()) {
+            self.WritePos = 8192;
+            return;
+        }
+
+        self.WritePos += count;
+    }
+
+    fn void Clear(mut borrow ByteBuffer8192 self) {
+        self.ReadPos = 0;
+        self.WritePos = 0;
+    }
+}
+
+internal struct RingBuffer512 {
+    i8[512] Storage;
+    i64 Head;
+    i64 Tail;
+    bool Full;
+
+    fn i64 Capacity(borrow RingBuffer512 self) {
+        return 512;
+    }
+
+    fn bool IsEmpty(borrow RingBuffer512 self) {
+        return !self.Full && self.Head == self.Tail;
+    }
+
+    fn bool IsFull(borrow RingBuffer512 self) {
+        return self.Full;
+    }
+
+    fn i64 Readable(borrow RingBuffer512 self) {
+        if (self.Full) {
+            return 512;
+        }
+
+        if (self.Tail >= self.Head) {
+            return self.Tail - self.Head;
+        }
+
+        return 512 - self.Head + self.Tail;
+    }
+
+    fn i64 Writable(borrow RingBuffer512 self) {
+        return 512 - self.Readable();
+    }
+
+    fn rawptr<i8> ReadPointer(borrow RingBuffer512 self) {
+        if (self.IsEmpty()) {
+            return null;
+        }
+
+        return &self.Storage[self.Head];
+    }
+
+    fn i64 ReadContiguous(borrow RingBuffer512 self) {
+        if (self.IsEmpty()) {
+            return 0;
+        }
+
+        if (self.Full || self.Tail < self.Head) {
+            return 512 - self.Head;
+        }
+
+        return self.Tail - self.Head;
+    }
+
+    fn rawmutptr<i8> WritePointer(mut borrow RingBuffer512 self) {
+        if (self.Full) {
+            return null;
+        }
+
+        return &self.Storage[self.Tail];
+    }
+
+    fn i64 WriteContiguous(borrow RingBuffer512 self) {
+        if (self.Full) {
+            return 0;
+        }
+
+        if (self.Head > self.Tail) {
+            return self.Head - self.Tail;
+        }
+
+        return 512 - self.Tail;
+    }
+
+    fn void CommitWrite(mut borrow RingBuffer512 self, i64 count) {
+        if (count <= 0 || self.Full) {
+            return;
+        }
+
+        stack i64 writable = self.Writable();
+        if (count >= writable) {
+            if (writable <= 0) {
+                return;
+            }
+
+            self.Tail += writable;
+            if (self.Tail >= 512) {
+                self.Tail -= 512;
+            }
+            self.Full = true;
+            return;
+        }
+
+        self.Tail += count;
+        if (self.Tail >= 512) {
+            self.Tail -= 512;
+        }
+
+        if (self.Tail == self.Head) {
+            self.Full = true;
+        }
+    }
+
+    fn void ConsumeRead(mut borrow RingBuffer512 self, i64 count) {
+        if (count <= 0 || self.IsEmpty()) {
+            return;
+        }
+
+        stack i64 readable = self.Readable();
+        if (count >= readable) {
+            self.Clear();
+            return;
+        }
+
+        self.Full = false;
+        self.Head += count;
+        if (self.Head >= 512) {
+            self.Head -= 512;
+        }
+    }
+
+    fn bool TryPushByte(mut borrow RingBuffer512 self, i8 value) {
+        if (self.Full) {
+            return false;
+        }
+
+        *(&self.Storage[self.Tail]) = value;
+        self.CommitWrite(1);
+        return true;
+    }
+
+    fn bool TryPopByte(mut borrow RingBuffer512 self, rawmutptr<i8> destination) {
+        if (destination == null || self.IsEmpty()) {
+            return false;
+        }
+
+        *destination = *(&self.Storage[self.Head]);
+        self.ConsumeRead(1);
+        return true;
+    }
+
+    fn void Clear(mut borrow RingBuffer512 self) {
+        self.Head = 0;
+        self.Tail = 0;
+        self.Full = false;
+    }
+}
+
+internal struct RingBuffer4096 {
+    i8[4096] Storage;
+    i64 Head;
+    i64 Tail;
+    bool Full;
+
+    fn i64 Capacity(borrow RingBuffer4096 self) {
+        return 4096;
+    }
+
+    fn bool IsEmpty(borrow RingBuffer4096 self) {
+        return !self.Full && self.Head == self.Tail;
+    }
+
+    fn bool IsFull(borrow RingBuffer4096 self) {
+        return self.Full;
+    }
+
+    fn i64 Readable(borrow RingBuffer4096 self) {
+        if (self.Full) {
+            return 4096;
+        }
+
+        if (self.Tail >= self.Head) {
+            return self.Tail - self.Head;
+        }
+
+        return 4096 - self.Head + self.Tail;
+    }
+
+    fn i64 Writable(borrow RingBuffer4096 self) {
+        return 4096 - self.Readable();
+    }
+
+    fn rawptr<i8> ReadPointer(borrow RingBuffer4096 self) {
+        if (self.IsEmpty()) {
+            return null;
+        }
+
+        return &self.Storage[self.Head];
+    }
+
+    fn i64 ReadContiguous(borrow RingBuffer4096 self) {
+        if (self.IsEmpty()) {
+            return 0;
+        }
+
+        if (self.Full || self.Tail < self.Head) {
+            return 4096 - self.Head;
+        }
+
+        return self.Tail - self.Head;
+    }
+
+    fn rawmutptr<i8> WritePointer(mut borrow RingBuffer4096 self) {
+        if (self.Full) {
+            return null;
+        }
+
+        return &self.Storage[self.Tail];
+    }
+
+    fn i64 WriteContiguous(borrow RingBuffer4096 self) {
+        if (self.Full) {
+            return 0;
+        }
+
+        if (self.Head > self.Tail) {
+            return self.Head - self.Tail;
+        }
+
+        return 4096 - self.Tail;
+    }
+
+    fn void CommitWrite(mut borrow RingBuffer4096 self, i64 count) {
+        if (count <= 0 || self.Full) {
+            return;
+        }
+
+        stack i64 writable = self.Writable();
+        if (count >= writable) {
+            if (writable <= 0) {
+                return;
+            }
+
+            self.Tail += writable;
+            if (self.Tail >= 4096) {
+                self.Tail -= 4096;
+            }
+            self.Full = true;
+            return;
+        }
+
+        self.Tail += count;
+        if (self.Tail >= 4096) {
+            self.Tail -= 4096;
+        }
+
+        if (self.Tail == self.Head) {
+            self.Full = true;
+        }
+    }
+
+    fn void ConsumeRead(mut borrow RingBuffer4096 self, i64 count) {
+        if (count <= 0 || self.IsEmpty()) {
+            return;
+        }
+
+        stack i64 readable = self.Readable();
+        if (count >= readable) {
+            self.Clear();
+            return;
+        }
+
+        self.Full = false;
+        self.Head += count;
+        if (self.Head >= 4096) {
+            self.Head -= 4096;
+        }
+    }
+
+    fn bool TryPushByte(mut borrow RingBuffer4096 self, i8 value) {
+        if (self.Full) {
+            return false;
+        }
+
+        *(&self.Storage[self.Tail]) = value;
+        self.CommitWrite(1);
+        return true;
+    }
+
+    fn bool TryPopByte(mut borrow RingBuffer4096 self, rawmutptr<i8> destination) {
+        if (destination == null || self.IsEmpty()) {
+            return false;
+        }
+
+        *destination = *(&self.Storage[self.Head]);
+        self.ConsumeRead(1);
+        return true;
+    }
+
+    fn void Clear(mut borrow RingBuffer4096 self) {
+        self.Head = 0;
+        self.Tail = 0;
+        self.Full = false;
+    }
+}
+
+internal struct RingBuffer8192 {
+    i8[8192] Storage;
+    i64 Head;
+    i64 Tail;
+    bool Full;
+
+    fn i64 Capacity(borrow RingBuffer8192 self) {
+        return 8192;
+    }
+
+    fn bool IsEmpty(borrow RingBuffer8192 self) {
+        return !self.Full && self.Head == self.Tail;
+    }
+
+    fn bool IsFull(borrow RingBuffer8192 self) {
+        return self.Full;
+    }
+
+    fn i64 Readable(borrow RingBuffer8192 self) {
+        if (self.Full) {
+            return 8192;
+        }
+
+        if (self.Tail >= self.Head) {
+            return self.Tail - self.Head;
+        }
+
+        return 8192 - self.Head + self.Tail;
+    }
+
+    fn i64 Writable(borrow RingBuffer8192 self) {
+        return 8192 - self.Readable();
+    }
+
+    fn rawptr<i8> ReadPointer(borrow RingBuffer8192 self) {
+        if (self.IsEmpty()) {
+            return null;
+        }
+
+        return &self.Storage[self.Head];
+    }
+
+    fn i64 ReadContiguous(borrow RingBuffer8192 self) {
+        if (self.IsEmpty()) {
+            return 0;
+        }
+
+        if (self.Full || self.Tail < self.Head) {
+            return 8192 - self.Head;
+        }
+
+        return self.Tail - self.Head;
+    }
+
+    fn rawmutptr<i8> WritePointer(mut borrow RingBuffer8192 self) {
+        if (self.Full) {
+            return null;
+        }
+
+        return &self.Storage[self.Tail];
+    }
+
+    fn i64 WriteContiguous(borrow RingBuffer8192 self) {
+        if (self.Full) {
+            return 0;
+        }
+
+        if (self.Head > self.Tail) {
+            return self.Head - self.Tail;
+        }
+
+        return 8192 - self.Tail;
+    }
+
+    fn void CommitWrite(mut borrow RingBuffer8192 self, i64 count) {
+        if (count <= 0 || self.Full) {
+            return;
+        }
+
+        stack i64 writable = self.Writable();
+        if (count >= writable) {
+            if (writable <= 0) {
+                return;
+            }
+
+            self.Tail += writable;
+            if (self.Tail >= 8192) {
+                self.Tail -= 8192;
+            }
+            self.Full = true;
+            return;
+        }
+
+        self.Tail += count;
+        if (self.Tail >= 8192) {
+            self.Tail -= 8192;
+        }
+
+        if (self.Tail == self.Head) {
+            self.Full = true;
+        }
+    }
+
+    fn void ConsumeRead(mut borrow RingBuffer8192 self, i64 count) {
+        if (count <= 0 || self.IsEmpty()) {
+            return;
+        }
+
+        stack i64 readable = self.Readable();
+        if (count >= readable) {
+            self.Clear();
+            return;
+        }
+
+        self.Full = false;
+        self.Head += count;
+        if (self.Head >= 8192) {
+            self.Head -= 8192;
+        }
+    }
+
+    fn bool TryPushByte(mut borrow RingBuffer8192 self, i8 value) {
+        if (self.Full) {
+            return false;
+        }
+
+        *(&self.Storage[self.Tail]) = value;
+        self.CommitWrite(1);
+        return true;
+    }
+
+    fn bool TryPopByte(mut borrow RingBuffer8192 self, rawmutptr<i8> destination) {
+        if (destination == null || self.IsEmpty()) {
+            return false;
+        }
+
+        *destination = *(&self.Storage[self.Head]);
+        self.ConsumeRead(1);
+        return true;
+    }
+
+    fn void Clear(mut borrow RingBuffer8192 self) {
+        self.Head = 0;
+        self.Tail = 0;
+        self.Full = false;
+    }
+}

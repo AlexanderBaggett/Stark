@@ -1,0 +1,79 @@
+import System.Runtime.Platform.Linux
+import System.Runtime.Platform.Windows
+module System.Runtime.Platform
+
+internal fn i32 WriteStdoutAscii(ascii text) {
+    return System.Runtime.Platform.Linux.WriteStdoutAscii(text);
+}
+
+internal fn i32 WriteStdoutUnicode(unicode text) {
+    return System.Runtime.Platform.Linux.WriteStdoutUnicode(text);
+}
+
+internal fn i32 WriteStderrAscii(ascii text) {
+    return System.Runtime.Platform.Linux.WriteStderrAscii(text);
+}
+
+internal fn i32 WriteStderrUnicode(unicode text) {
+    return System.Runtime.Platform.Linux.WriteStderrUnicode(text);
+}
+
+internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
+    return System.Runtime.Platform.Linux.WriteAscii(handle, text);
+}
+
+internal fn bool IsTerminal(rawptr<i8> handle) {
+    return System.Runtime.Platform.Linux.IsTerminal(handle);
+}
+
+internal fn i32 WriteUnicode(rawptr<i8> handle, unicode text) {
+    return System.Runtime.Platform.Linux.WriteUnicode(handle, text);
+}
+
+internal fn rawptr<i8> OpenFileRead(ascii path) {
+    return System.Runtime.Platform.Linux.OpenFileRead(path);
+}
+
+internal fn rawptr<i8> OpenFileWrite(ascii path) {
+    return System.Runtime.Platform.Linux.OpenFileWrite(path);
+}
+
+internal fn rawptr<i8> OpenFileAppend(ascii path) {
+    return System.Runtime.Platform.Linux.OpenFileAppend(path);
+}
+
+internal fn rawptr<i8> OpenFileReadWrite(ascii path) {
+    return System.Runtime.Platform.Linux.OpenFileReadWrite(path);
+}
+
+internal fn i32 CloseFile(rawptr<i8> handle) {
+    return System.Runtime.Platform.Linux.CloseFile(handle);
+}
+
+internal fn i32 FlushFile(rawptr<i8> handle) {
+    return System.Runtime.Platform.Linux.FlushFile(handle);
+}
+
+internal fn i64 ReadFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+    return System.Runtime.Platform.Linux.ReadFile(buffer, size, count, handle);
+}
+
+internal fn i64 WriteFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+    return System.Runtime.Platform.Linux.WriteFile(buffer, size, count, handle);
+}
+
+internal fn i32 DeleteFile(ascii path) {
+    return System.Runtime.Platform.Linux.DeleteFile(path);
+}
+
+internal fn i32 MoveFile(ascii oldPath, ascii newPath) {
+    return System.Runtime.Platform.Linux.MoveFile(oldPath, newPath);
+}
+
+internal fn bool FileExists(ascii path) {
+    return System.Runtime.Platform.Linux.FileExists(path);
+}
+
+internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
+    return System.Runtime.Platform.Linux.TryCurrentDirectory(destination);
+}

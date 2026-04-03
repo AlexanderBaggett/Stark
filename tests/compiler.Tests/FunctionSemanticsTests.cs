@@ -41,6 +41,34 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKinds()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Count() {
+                stack mut i32 value = 0;
+
+                while willexit (value < 3) {
+                    value += 1;
+                }
+
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var count = validation.Functions["Count"];
+        Assert.Equal(StarkFunctionKind.Fn, count.DeclaredKind);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, count.EffectiveKind);
+        Assert.True(count.CanStrengthenKind);
+    }
+
+    [Fact]
     public void SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCaptures()
     {
         var result = Compile(

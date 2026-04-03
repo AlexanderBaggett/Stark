@@ -9,10 +9,10 @@
           "ModuleName": "System.Console"
         },
         {
-          "ModuleName": "System.IO.Stderr"
+          "ModuleName": "System.IO"
         },
         {
-          "ModuleName": "System.IO.Stdout"
+          "ModuleName": "System.Text"
         }
       ],
       "Functions": [],
@@ -27,9 +27,41 @@
           "Name": "Write",
           "QualifiedName": "System.Console.Write",
           "Visibility": "public",
-          "SymbolName": "System.Console.Write",
+          "SymbolName": "System.Console.Write#(ascii)",
           "Kind": "fn",
-          "ReturnType": "void",
+          "ReturnType": "System.IO.IOStatus",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Write",
+          "QualifiedName": "System.Console.Write",
+          "Visibility": "public",
+          "SymbolName": "System.Console.Write#(unicode)",
+          "Kind": "fn",
+          "ReturnType": "System.IO.IOStatus",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteError",
+          "QualifiedName": "System.Console.WriteError",
+          "Visibility": "public",
+          "SymbolName": "System.Console.WriteError#(ascii)",
+          "Kind": "fn",
+          "ReturnType": "System.IO.IOStatus",
           "Parameters": [
             {
               "Name": "text",
@@ -43,9 +75,25 @@
           "Name": "WriteError",
           "QualifiedName": "System.Console.WriteError",
           "Visibility": "public",
-          "SymbolName": "System.Console.WriteError",
+          "SymbolName": "System.Console.WriteError#(unicode)",
           "Kind": "fn",
-          "ReturnType": "void",
+          "ReturnType": "System.IO.IOStatus",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteErrorLine",
+          "QualifiedName": "System.Console.WriteErrorLine",
+          "Visibility": "public",
+          "SymbolName": "System.Console.WriteErrorLine#(ascii)",
+          "Kind": "fn",
+          "ReturnType": "System.IO.IOStatus",
           "Parameters": [
             {
               "Name": "text",
@@ -59,9 +107,25 @@
           "Name": "WriteErrorLine",
           "QualifiedName": "System.Console.WriteErrorLine",
           "Visibility": "public",
-          "SymbolName": "System.Console.WriteErrorLine",
+          "SymbolName": "System.Console.WriteErrorLine#(unicode)",
           "Kind": "fn",
-          "ReturnType": "void",
+          "ReturnType": "System.IO.IOStatus",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteLine",
+          "QualifiedName": "System.Console.WriteLine",
+          "Visibility": "public",
+          "SymbolName": "System.Console.WriteLine#(ascii)",
+          "Kind": "fn",
+          "ReturnType": "System.IO.IOStatus",
           "Parameters": [
             {
               "Name": "text",
@@ -75,12 +139,926 @@
           "Name": "WriteLine",
           "QualifiedName": "System.Console.WriteLine",
           "Visibility": "public",
-          "SymbolName": "System.Console.WriteLine",
+          "SymbolName": "System.Console.WriteLine#(unicode)",
+          "Kind": "fn",
+          "ReturnType": "System.IO.IOStatus",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        }
+      ],
+      "Types": [],
+      "Globals": []
+    },
+    {
+      "ModuleName": "System.IO",
+      "ReExports": [
+        {
+          "ModuleName": "System.IO.File"
+        },
+        {
+          "ModuleName": "System.IO.Path"
+        }
+      ],
+      "Functions": [],
+      "Types": [
+        {
+          "Name": "IOError",
+          "QualifiedName": "System.IO.IOError",
+          "Visibility": "public",
+          "Kind": "enum",
+          "Fields": [],
+          "Variants": [
+            {
+              "Name": "NotFound",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "PermissionDenied",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "AlreadyExists",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "InvalidPath",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "BrokenPipe",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "DiskFull",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "Unknown",
+              "UsesNamedFields": false,
+              "Fields": [
+                {
+                  "Name": "Item0",
+                  "Type": "i32"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "IOResult",
+          "QualifiedName": "System.IO.IOResult",
+          "Visibility": "public",
+          "Kind": "enum",
+          "Fields": [],
+          "GenericParameters": [
+            "T"
+          ],
+          "Variants": [
+            {
+              "Name": "Ok",
+              "UsesNamedFields": false,
+              "Fields": [
+                {
+                  "Name": "Item0",
+                  "Type": "T"
+                }
+              ]
+            },
+            {
+              "Name": "Err",
+              "UsesNamedFields": false,
+              "Fields": [
+                {
+                  "Name": "Item0",
+                  "Type": "IOError"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "IOStatus",
+          "QualifiedName": "System.IO.IOStatus",
+          "Visibility": "public",
+          "Kind": "enum",
+          "Fields": [],
+          "Variants": [
+            {
+              "Name": "Ok",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "Err",
+              "UsesNamedFields": false,
+              "Fields": [
+                {
+                  "Name": "Item0",
+                  "Type": "IOError"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "Globals": []
+    },
+    {
+      "ModuleName": "System.IO.File",
+      "ReExports": [],
+      "Functions": [
+        {
+          "Name": "Close",
+          "QualifiedName": "System.IO.File.Close",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Close",
+          "Kind": "fn",
+          "ReturnType": "i32",
+          "Parameters": [
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Delete",
+          "QualifiedName": "System.IO.File.Delete",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Delete",
+          "Kind": "fn",
+          "ReturnType": "i32",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Exists",
+          "QualifiedName": "System.IO.File.Exists",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Exists",
+          "Kind": "fn",
+          "ReturnType": "bool",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Flush",
+          "QualifiedName": "System.IO.File.Flush",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Flush",
+          "Kind": "fn",
+          "ReturnType": "i32",
+          "Parameters": [
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Move",
+          "QualifiedName": "System.IO.File.Move",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Move",
+          "Kind": "fn",
+          "ReturnType": "i32",
+          "Parameters": [
+            {
+              "Name": "oldPath",
+              "Type": "ascii"
+            },
+            {
+              "Name": "newPath",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Open",
+          "QualifiedName": "System.IO.File.Open",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Open#(ascii,FileMode)",
+          "Kind": "fn",
+          "ReturnType": "File",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            },
+            {
+              "Name": "mode",
+              "Type": "FileMode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Open",
+          "QualifiedName": "System.IO.File.Open",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Open#(ascii,FileMode,FileBuffering)",
+          "Kind": "fn",
+          "ReturnType": "File",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            },
+            {
+              "Name": "mode",
+              "Type": "FileMode"
+            },
+            {
+              "Name": "buffering",
+              "Type": "FileBuffering"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Open",
+          "QualifiedName": "System.IO.File.Open",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Open#(ascii,FileMode,System.Text.Encoding)",
+          "Kind": "fn",
+          "ReturnType": "File",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            },
+            {
+              "Name": "mode",
+              "Type": "FileMode"
+            },
+            {
+              "Name": "encoding",
+              "Type": "System.Text.Encoding"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Open",
+          "QualifiedName": "System.IO.File.Open",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.Open#(ascii,FileMode,System.Text.Encoding,FileBuffering)",
+          "Kind": "fn",
+          "ReturnType": "File",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            },
+            {
+              "Name": "mode",
+              "Type": "FileMode"
+            },
+            {
+              "Name": "encoding",
+              "Type": "System.Text.Encoding"
+            },
+            {
+              "Name": "buffering",
+              "Type": "FileBuffering"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "OpenAppend",
+          "QualifiedName": "System.IO.File.OpenAppend",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.OpenAppend",
+          "Kind": "fn",
+          "ReturnType": "rawptr\u003Ci8\u003E",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "OpenRead",
+          "QualifiedName": "System.IO.File.OpenRead",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.OpenRead",
+          "Kind": "fn",
+          "ReturnType": "rawptr\u003Ci8\u003E",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "OpenWrite",
+          "QualifiedName": "System.IO.File.OpenWrite",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.OpenWrite",
+          "Kind": "fn",
+          "ReturnType": "rawptr\u003Ci8\u003E",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "ReadBytes",
+          "QualifiedName": "System.IO.File.ReadBytes",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.ReadBytes",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "buffer",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
+              "Name": "size",
+              "Type": "i64"
+            },
+            {
+              "Name": "count",
+              "Type": "i64"
+            },
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteBytes",
+          "QualifiedName": "System.IO.File.WriteBytes",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.WriteBytes",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "buffer",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
+              "Name": "size",
+              "Type": "i64"
+            },
+            {
+              "Name": "count",
+              "Type": "i64"
+            },
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteLine",
+          "QualifiedName": "System.IO.File.WriteLine",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.WriteLine#(rawptr\u003Ci8\u003E,ascii)",
           "Kind": "fn",
           "ReturnType": "void",
           "Parameters": [
             {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
               "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteLine",
+          "QualifiedName": "System.IO.File.WriteLine",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.WriteLine#(rawptr\u003Ci8\u003E,unicode)",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
+              "Name": "text",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteText",
+          "QualifiedName": "System.IO.File.WriteText",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.WriteText#(rawptr\u003Ci8\u003E,ascii)",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
+              "Name": "text",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "WriteText",
+          "QualifiedName": "System.IO.File.WriteText",
+          "Visibility": "public",
+          "SymbolName": "System.IO.File.WriteText#(rawptr\u003Ci8\u003E,unicode)",
+          "Kind": "fn",
+          "ReturnType": "void",
+          "Parameters": [
+            {
+              "Name": "handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
+              "Name": "text",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        }
+      ],
+      "Types": [
+        {
+          "Name": "File",
+          "QualifiedName": "System.IO.File.File",
+          "Visibility": "public",
+          "Kind": "struct",
+          "Fields": [
+            {
+              "Name": "Handle",
+              "Type": "rawptr\u003Ci8\u003E"
+            },
+            {
+              "Name": "Closed",
+              "Type": "bool"
+            },
+            {
+              "Name": "Encoding",
+              "Type": "System.Text.Encoding"
+            },
+            {
+              "Name": "BufferWrites",
+              "Type": "bool"
+            },
+            {
+              "Name": "FlushOnLine",
+              "Type": "bool"
+            },
+            {
+              "Name": "WriteBufferLength",
+              "Type": "i64"
+            },
+            {
+              "Name": "WriteBufferStorage",
+              "Type": "i8[8192]"
+            }
+          ],
+          "Methods": [
+            {
+              "Name": "BufferedAscii",
+              "QualifiedName": "System.IO.File.File.BufferedAscii",
+              "SymbolName": "System.IO.File.File.BufferedAscii",
+              "Kind": "fn",
+              "ReturnType": "ascii",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "Close",
+              "QualifiedName": "System.IO.File.File.Close",
+              "SymbolName": "System.IO.File.File.Close",
+              "Kind": "fn",
+              "ReturnType": "i32",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "Flush",
+              "QualifiedName": "System.IO.File.File.Flush",
+              "SymbolName": "System.IO.File.File.Flush",
+              "Kind": "fn",
+              "ReturnType": "i32",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "FlushBufferedWrite",
+              "QualifiedName": "System.IO.File.File.FlushBufferedWrite",
+              "SymbolName": "System.IO.File.File.FlushBufferedWrite",
+              "Kind": "fn",
+              "ReturnType": "i32",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "IsOpen",
+              "QualifiedName": "System.IO.File.File.IsOpen",
+              "SymbolName": "System.IO.File.File.IsOpen",
+              "Kind": "fn",
+              "ReturnType": "bool",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow File"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "ReadBytes",
+              "QualifiedName": "System.IO.File.File.ReadBytes",
+              "SymbolName": "System.IO.File.File.ReadBytes",
+              "Kind": "fn",
+              "ReturnType": "i64",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                },
+                {
+                  "Name": "buffer",
+                  "Type": "rawptr\u003Ci8\u003E"
+                },
+                {
+                  "Name": "size",
+                  "Type": "i64"
+                },
+                {
+                  "Name": "count",
+                  "Type": "i64"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "TryAppendBufferedAscii",
+              "QualifiedName": "System.IO.File.File.TryAppendBufferedAscii",
+              "SymbolName": "System.IO.File.File.TryAppendBufferedAscii",
+              "Kind": "fn",
+              "ReturnType": "bool",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                },
+                {
+                  "Name": "text",
+                  "Type": "ascii"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "WriteBytes",
+              "QualifiedName": "System.IO.File.File.WriteBytes",
+              "SymbolName": "System.IO.File.File.WriteBytes",
+              "Kind": "fn",
+              "ReturnType": "i64",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                },
+                {
+                  "Name": "buffer",
+                  "Type": "rawptr\u003Ci8\u003E"
+                },
+                {
+                  "Name": "size",
+                  "Type": "i64"
+                },
+                {
+                  "Name": "count",
+                  "Type": "i64"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "WriteLine",
+              "QualifiedName": "System.IO.File.File.WriteLine",
+              "SymbolName": "System.IO.File.File.WriteLine",
+              "Kind": "fn",
+              "ReturnType": "void",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                },
+                {
+                  "Name": "text",
+                  "Type": "ascii"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            },
+            {
+              "Name": "WriteText",
+              "QualifiedName": "System.IO.File.File.WriteText",
+              "SymbolName": "System.IO.File.File.WriteText",
+              "Kind": "fn",
+              "ReturnType": "void",
+              "Parameters": [
+                {
+                  "Name": "self",
+                  "Type": "borrow mut File"
+                },
+                {
+                  "Name": "text",
+                  "Type": "ascii"
+                }
+              ],
+              "IsFfi": false,
+              "UseFastCallingConvention": true
+            }
+          ],
+          "Destructor": {
+            "IsMutable": true,
+            "BodyText": "{self.Close();}"
+          }
+        },
+        {
+          "Name": "FileBuffering",
+          "QualifiedName": "System.IO.File.FileBuffering",
+          "Visibility": "public",
+          "Kind": "enum",
+          "Fields": [],
+          "Variants": [
+            {
+              "Name": "None",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "Line",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "Full",
+              "UsesNamedFields": false,
+              "Fields": []
+            }
+          ]
+        },
+        {
+          "Name": "FileMode",
+          "QualifiedName": "System.IO.File.FileMode",
+          "Visibility": "public",
+          "Kind": "enum",
+          "Fields": [],
+          "Variants": [
+            {
+              "Name": "Read",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "Write",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "Append",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "ReadWrite",
+              "UsesNamedFields": false,
+              "Fields": []
+            }
+          ]
+        }
+      ],
+      "Globals": []
+    },
+    {
+      "ModuleName": "System.IO.Path",
+      "ReExports": [],
+      "Functions": [
+        {
+          "Name": "AlternateDirectorySeparator",
+          "QualifiedName": "System.IO.Path.AlternateDirectorySeparator",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.AlternateDirectorySeparator",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "BaseName",
+          "QualifiedName": "System.IO.Path.BaseName",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.BaseName",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "CurrentDirectory",
+          "QualifiedName": "System.IO.Path.CurrentDirectory",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.CurrentDirectory",
+          "Kind": "fn",
+          "ReturnType": "bool",
+          "Parameters": [
+            {
+              "Name": "destination",
+              "Type": "rawmutptr\u003CAscii\u003E"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "DirectoryName",
+          "QualifiedName": "System.IO.Path.DirectoryName",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.DirectoryName",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "DirectorySeparator",
+          "QualifiedName": "System.IO.Path.DirectorySeparator",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.DirectorySeparator",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "Extension",
+          "QualifiedName": "System.IO.Path.Extension",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.Extension",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "ParentDirectory",
+          "QualifiedName": "System.IO.Path.ParentDirectory",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.ParentDirectory",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "PathSeparator",
+          "QualifiedName": "System.IO.Path.PathSeparator",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.PathSeparator",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "TryJoin",
+          "QualifiedName": "System.IO.Path.TryJoin",
+          "Visibility": "public",
+          "SymbolName": "System.IO.Path.TryJoin",
+          "Kind": "fn",
+          "ReturnType": "bool",
+          "Parameters": [
+            {
+              "Name": "destination",
+              "Type": "rawmutptr\u003CAscii\u003E"
+            },
+            {
+              "Name": "left",
+              "Type": "ascii"
+            },
+            {
+              "Name": "right",
               "Type": "ascii"
             }
           ],
@@ -92,59 +1070,454 @@
       "Globals": []
     },
     {
-      "ModuleName": "System.IO.Stderr",
+      "ModuleName": "System.Syscall",
       "ReExports": [],
       "Functions": [
         {
-          "Name": "Write",
-          "QualifiedName": "System.IO.Stderr.Write",
+          "Name": "Syscall0",
+          "QualifiedName": "System.Syscall.Syscall0",
           "Visibility": "public",
-          "SymbolName": "System.IO.Stderr.Write",
+          "SymbolName": "Syscall0",
           "Kind": "fn",
-          "ReturnType": "void",
+          "ReturnType": "i64",
           "Parameters": [
             {
-              "Name": "text",
-              "Type": "ascii"
+              "Name": "number",
+              "Type": "i64"
             }
           ],
-          "IsFfi": false,
-          "UseFastCallingConvention": true
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
         },
         {
-          "Name": "WriteLine",
-          "QualifiedName": "System.IO.Stderr.WriteLine",
+          "Name": "Syscall1",
+          "QualifiedName": "System.Syscall.Syscall1",
           "Visibility": "public",
-          "SymbolName": "System.IO.Stderr.WriteLine",
+          "SymbolName": "Syscall1",
           "Kind": "fn",
-          "ReturnType": "void",
+          "ReturnType": "i64",
           "Parameters": [
             {
-              "Name": "text",
-              "Type": "ascii"
+              "Name": "number",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg1",
+              "Type": "i64"
             }
           ],
-          "IsFfi": false,
-          "UseFastCallingConvention": true
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              },
+              {
+                "RegisterName": "rdi",
+                "ValueName": "arg1"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
+        },
+        {
+          "Name": "Syscall2",
+          "QualifiedName": "System.Syscall.Syscall2",
+          "Visibility": "public",
+          "SymbolName": "Syscall2",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "number",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg1",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg2",
+              "Type": "i64"
+            }
+          ],
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              },
+              {
+                "RegisterName": "rdi",
+                "ValueName": "arg1"
+              },
+              {
+                "RegisterName": "rsi",
+                "ValueName": "arg2"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
+        },
+        {
+          "Name": "Syscall3",
+          "QualifiedName": "System.Syscall.Syscall3",
+          "Visibility": "public",
+          "SymbolName": "Syscall3",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "number",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg1",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg2",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg3",
+              "Type": "i64"
+            }
+          ],
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              },
+              {
+                "RegisterName": "rdi",
+                "ValueName": "arg1"
+              },
+              {
+                "RegisterName": "rsi",
+                "ValueName": "arg2"
+              },
+              {
+                "RegisterName": "rdx",
+                "ValueName": "arg3"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
+        },
+        {
+          "Name": "Syscall4",
+          "QualifiedName": "System.Syscall.Syscall4",
+          "Visibility": "public",
+          "SymbolName": "Syscall4",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "number",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg1",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg2",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg3",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg4",
+              "Type": "i64"
+            }
+          ],
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              },
+              {
+                "RegisterName": "rdi",
+                "ValueName": "arg1"
+              },
+              {
+                "RegisterName": "rsi",
+                "ValueName": "arg2"
+              },
+              {
+                "RegisterName": "rdx",
+                "ValueName": "arg3"
+              },
+              {
+                "RegisterName": "r10",
+                "ValueName": "arg4"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
+        },
+        {
+          "Name": "Syscall5",
+          "QualifiedName": "System.Syscall.Syscall5",
+          "Visibility": "public",
+          "SymbolName": "Syscall5",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "number",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg1",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg2",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg3",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg4",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg5",
+              "Type": "i64"
+            }
+          ],
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              },
+              {
+                "RegisterName": "rdi",
+                "ValueName": "arg1"
+              },
+              {
+                "RegisterName": "rsi",
+                "ValueName": "arg2"
+              },
+              {
+                "RegisterName": "rdx",
+                "ValueName": "arg3"
+              },
+              {
+                "RegisterName": "r10",
+                "ValueName": "arg4"
+              },
+              {
+                "RegisterName": "r8",
+                "ValueName": "arg5"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
+        },
+        {
+          "Name": "Syscall6",
+          "QualifiedName": "System.Syscall.Syscall6",
+          "Visibility": "public",
+          "SymbolName": "Syscall6",
+          "Kind": "fn",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "number",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg1",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg2",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg3",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg4",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg5",
+              "Type": "i64"
+            },
+            {
+              "Name": "arg6",
+              "Type": "i64"
+            }
+          ],
+          "IsFfi": true,
+          "UseFastCallingConvention": false,
+          "Asm": {
+            "ArchitectureText": "x86_64",
+            "TemplateText": "syscall",
+            "Inputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "number"
+              },
+              {
+                "RegisterName": "rdi",
+                "ValueName": "arg1"
+              },
+              {
+                "RegisterName": "rsi",
+                "ValueName": "arg2"
+              },
+              {
+                "RegisterName": "rdx",
+                "ValueName": "arg3"
+              },
+              {
+                "RegisterName": "r10",
+                "ValueName": "arg4"
+              },
+              {
+                "RegisterName": "r8",
+                "ValueName": "arg5"
+              },
+              {
+                "RegisterName": "r9",
+                "ValueName": "arg6"
+              }
+            ],
+            "Outputs": [
+              {
+                "RegisterName": "rax",
+                "ValueName": "return",
+                "BindsReturnValue": true
+              }
+            ],
+            "Clobbers": [
+              "rcx",
+              "r11"
+            ]
+          }
         }
       ],
       "Types": [],
       "Globals": []
     },
     {
-      "ModuleName": "System.IO.Stdout",
+      "ModuleName": "System.Text",
       "ReExports": [],
       "Functions": [
         {
-          "Name": "Write",
-          "QualifiedName": "System.IO.Stdout.Write",
+          "Name": "AsciiData",
+          "QualifiedName": "System.Text.AsciiData",
           "Visibility": "public",
-          "SymbolName": "System.IO.Stdout.Write",
-          "Kind": "fn",
-          "ReturnType": "void",
+          "SymbolName": "System.Text.AsciiData",
+          "Kind": "finitelaw",
+          "ReturnType": "rawptr\u003Ci8\u003E",
           "Parameters": [
             {
-              "Name": "text",
+              "Name": "source",
               "Type": "ascii"
             }
           ],
@@ -152,23 +1525,165 @@
           "UseFastCallingConvention": true
         },
         {
-          "Name": "WriteLine",
-          "QualifiedName": "System.IO.Stdout.WriteLine",
+          "Name": "AsciiLength",
+          "QualifiedName": "System.Text.AsciiLength",
           "Visibility": "public",
-          "SymbolName": "System.IO.Stdout.WriteLine",
-          "Kind": "fn",
-          "ReturnType": "void",
+          "SymbolName": "System.Text.AsciiLength",
+          "Kind": "finitelaw",
+          "ReturnType": "i64",
           "Parameters": [
             {
-              "Name": "text",
+              "Name": "source",
               "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "AsciiView",
+          "QualifiedName": "System.Text.AsciiView",
+          "Visibility": "public",
+          "SymbolName": "System.Text.AsciiView",
+          "Kind": "finitelaw",
+          "ReturnType": "ascii",
+          "Parameters": [
+            {
+              "Name": "source",
+              "Type": "Ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "TryConcatAscii",
+          "QualifiedName": "System.Text.TryConcatAscii",
+          "Visibility": "public",
+          "SymbolName": "System.Text.TryConcatAscii",
+          "Kind": "fn",
+          "ReturnType": "bool",
+          "Parameters": [
+            {
+              "Name": "destination",
+              "Type": "rawmutptr\u003CAscii\u003E"
+            },
+            {
+              "Name": "left",
+              "Type": "ascii"
+            },
+            {
+              "Name": "right",
+              "Type": "ascii"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "TryConcatUnicode",
+          "QualifiedName": "System.Text.TryConcatUnicode",
+          "Visibility": "public",
+          "SymbolName": "System.Text.TryConcatUnicode",
+          "Kind": "fn",
+          "ReturnType": "bool",
+          "Parameters": [
+            {
+              "Name": "destination",
+              "Type": "rawmutptr\u003CUnicode\u003E"
+            },
+            {
+              "Name": "left",
+              "Type": "unicode"
+            },
+            {
+              "Name": "right",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "UnicodeData",
+          "QualifiedName": "System.Text.UnicodeData",
+          "Visibility": "public",
+          "SymbolName": "System.Text.UnicodeData",
+          "Kind": "finitelaw",
+          "ReturnType": "rawptr\u003Ci32\u003E",
+          "Parameters": [
+            {
+              "Name": "source",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "UnicodeLength",
+          "QualifiedName": "System.Text.UnicodeLength",
+          "Visibility": "public",
+          "SymbolName": "System.Text.UnicodeLength",
+          "Kind": "finitelaw",
+          "ReturnType": "i64",
+          "Parameters": [
+            {
+              "Name": "source",
+              "Type": "unicode"
+            }
+          ],
+          "IsFfi": false,
+          "UseFastCallingConvention": true
+        },
+        {
+          "Name": "UnicodeView",
+          "QualifiedName": "System.Text.UnicodeView",
+          "Visibility": "public",
+          "SymbolName": "System.Text.UnicodeView",
+          "Kind": "finitelaw",
+          "ReturnType": "unicode",
+          "Parameters": [
+            {
+              "Name": "source",
+              "Type": "Unicode"
             }
           ],
           "IsFfi": false,
           "UseFastCallingConvention": true
         }
       ],
-      "Types": [],
+      "Types": [
+        {
+          "Name": "Encoding",
+          "QualifiedName": "System.Text.Encoding",
+          "Visibility": "public",
+          "Kind": "enum",
+          "Fields": [],
+          "Variants": [
+            {
+              "Name": "Binary",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "UTF8",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "UTF16",
+              "UsesNamedFields": false,
+              "Fields": []
+            },
+            {
+              "Name": "UTF32",
+              "UsesNamedFields": false,
+              "Fields": []
+            }
+          ]
+        }
+      ],
       "Globals": []
     }
   ]

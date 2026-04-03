@@ -130,4 +130,39 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
         Assert.Contains("call i1 @TryConcatAscii(", llvm);
         Assert.Contains("call %stark_ascii @AsciiView(", llvm);
     }
+
+    [Fact]
+    public void TextViewPointerAndLengthBuiltinsEmitConcreteDefinitions()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module System.Text
+
+            public finite law rawptr<i8> AsciiData(ascii source);
+            public finite law i64 AsciiLength(ascii source);
+            public finite law rawptr<i32> UnicodeData(unicode source);
+            public finite law i64 UnicodeLength(unicode source);
+
+            public fn i64 Run() {
+                if (AsciiData("text") == null) {
+                    return -1;
+                }
+
+                if (UnicodeData((unicode)"text") == null) {
+                    return -2;
+                }
+
+                return AsciiLength("text") + UnicodeLength((unicode)"text");
+            }
+            """);
+
+        Assert.Contains("define fastcc ptr @AsciiData(", llvm);
+        Assert.Contains("define fastcc i64 @AsciiLength(", llvm);
+        Assert.Contains("define fastcc ptr @UnicodeData(", llvm);
+        Assert.Contains("define fastcc i64 @UnicodeLength(", llvm);
+        Assert.Contains("call ptr @AsciiData(", llvm);
+        Assert.Contains("call ptr @UnicodeData(", llvm);
+        Assert.Contains("call i64 @AsciiLength(", llvm);
+        Assert.Contains("call i64 @UnicodeLength(", llvm);
+    }
 }

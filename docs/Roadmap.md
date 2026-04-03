@@ -564,11 +564,10 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] method overload groups
   - [x] ambiguity and no-match diagnostics
   - [x] symbol, manifest, and package behavior for overload sets
-- [ ] Destructor syntax and implementation
+- [x] Destructor syntax and implementation
   - [x] source-level destructor declaration surface
   - [x] ownership integration for scope-exit cleanup
   - [x] MIR/SSA/LLVM lowering for destructor calls
-  - [ ] stdlib regression tests for owned-resource cleanup
 - [x] Implement ASM Functions
   - [x] Freeze the v1 surface as `ffi asm(arch) fn` only, keeping v1 focused on syscall-oriented stdlib shims and deferring methods, generics, and trait/doctrine integration.
   - [x] Extend grammar and parsing for `asm(arch)` plus `in(...)`, `out(...)`, and `clobber(...)` clauses.
@@ -614,42 +613,52 @@ Goal: unlock the language surface the standard library wants before the stdlib i
 
 Goal: replace the current libc-backed stdlib slice with a cross-platform `System` package that hides platform boundaries behind Stark APIs.
 - Remember to reference StandardLibrary.md
-- [ ] Define the public `System` module layout
-  - [ ] `System`
-  - [ ] `System.Console`
-  - [ ] `System.IO`
-  - [ ] `System.IO.File`
-  - [ ] `System.IO.Path`
-  - [ ] `System.Text`
-- [ ] Define the internal runtime/platform module layout
-  - [ ] `System.Runtime`
-  - [ ] `System.Runtime.Platform`
-  - [ ] `System.Runtime.Platform.Linux`
-  - [ ] `System.Runtime.Platform.Windows`
-- [ ] Implement the shared stdlib surface
-  - [ ] `System.Console` output API
-  - [ ] `System.IO` error and result model
-  - [ ] `System.IO.File` owned handle type and destructor-based close behavior
-  - [ ] `System.IO.Path` helpers
-  - [ ] `System.Text` encoding enum and shared conversion helpers for the core owned text types
+- [x] Define the public `System` module layout
+  - [x] `System`
+  - [x] `System.Console`
+  - [x] `System.IO`
+  - [x] `System.IO.File`
+  - [x] `System.IO.Path`
+  - [x] `System.Text`
+- [x] Define the internal runtime/platform module layout
+  - [x] `System.Runtime`
+  - [x] `System.Runtime.Buffer`
+  - [x] `System.Runtime.Platform`
+  - [x] `System.Runtime.Platform.Linux`
+  - [x] `System.Runtime.Platform.Windows`
+- [x] Implement the shared stdlib surface
+  - [x] `System.Console` output API
+  - [x] `System.IO` error and result model
+  - [x] `System.IO.File` owned handle type and destructor-based close behavior
+  - [x] `System.IO.Path` helpers
+    - [x] caller-buffer `CurrentDirectory(rawmutptr<Ascii>) -> bool` foundation
+  - [x] `System.Text` encoding enum and shared conversion helpers for the core owned text types
+    - [x] immutable text view pointer/length builtins for low-level stdlib boundaries
 - [ ] Implement userspace file buffering and encoding-aware text IO
-  - [ ] buffering modes
-  - [ ] newline policy
-  - [ ] byte IO
+  - [x] fixed-size linear and ring buffer foundations
+  - [x] buffering modes
+  - [x] newline policy
+  - [x] byte IO
   - [ ] ascii/unicode text IO
-- [ ] Linux platform implementation without libc/glibc
-  - [ ] syscall-backed write/read/open/close/delete/rename/stat/getcwd/ioctl boundary
-  - [ ] terminal detection and buffering-policy support
-  - [ ] packaged integration tests proving no libc/glibc dependency
+- [x] Linux platform implementation without libc/glibc
+  - [x] syscall-backed write/read/open/close/delete/rename/stat/getcwd/ioctl boundary
+    - [x] stdout/stderr `ascii` console write
+    - [x] file open/read/write/close/delete/move/exists
+    - [x] `getcwd`
+    - [x] `ioctl` terminal detection
+  - [x] terminal detection and buffering-policy support
+  - [x] packaged integration tests proving no libc/glibc dependency
 - [ ] Windows platform implementation without CRT dependency
   - [ ] kernel32-backed console and file APIs
   - [ ] UTF-16 path conversion boundary
   - [ ] terminal detection and buffering-policy support
   - [ ] packaged integration tests proving no CRT dependency
 - [ ] Packaging and documentation
-  - [ ] package manifest coverage for the new module graph
-  - [ ] package consumption tests without stdlib source imports
-  - [ ] reference docs for each public stdlib module family
+  - [x] package manifest coverage for the new module graph
+  - [x] package consumption tests without stdlib source imports
+  - [x] reference docs for each public stdlib module family
+- [ ] Destructor syntax and implementation
+  - [x] stdlib regression tests for owned-resource cleanup
 
 
 ## Milestone 8: Optimization and Backend Quality

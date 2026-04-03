@@ -2919,6 +2919,13 @@ internal sealed class TypeChecker
                 continue;
             }
 
+            if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
+            {
+                currentIsAssignable &= currentType.IsMutablePointer;
+                currentType = currentType.ElementType;
+                continue;
+            }
+
             ReportError("STK3010", $"{DescribeExpressionTarget(target)} is not indexable.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }

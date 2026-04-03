@@ -1,0 +1,832 @@
+import System.Runtime.Buffer
+import System.Text
+module System.Runtime.Platform.Linux
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall1Handle(i64 number, rawptr<i8> arg1)
+    in("rax") number,
+    in("rdi") arg1,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall2PathBuffer(i64 number, rawmutptr<i8> arg1, i64 arg2)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall3HandleBuffer(i64 number, rawptr<i8> arg1, rawptr<i8> arg2, i64 arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall3HandleRequestPointer(i64 number, rawptr<i8> arg1, i64 arg2, rawptr<i8> arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall3AtPath(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall4OpenAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, i64 arg4)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall4RenameAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, rawptr<i8> arg4)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64 LinuxSyscall4StatAt(i64 number, i64 arg1, rawptr<i8> arg2, rawptr<i8> arg3, i64 arg4)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall1Handle(i64 number, rawptr<i8> arg1)
+    in("x8") number,
+    in("x0") arg1,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall2PathBuffer(i64 number, rawmutptr<i8> arg1, i64 arg2)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall3HandleBuffer(i64 number, rawptr<i8> arg1, rawptr<i8> arg2, i64 arg3)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall3HandleRequestPointer(i64 number, rawptr<i8> arg1, i64 arg2, rawptr<i8> arg3)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall3AtPath(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall4OpenAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, i64 arg4)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall4RenameAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, rawptr<i8> arg4)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64 LinuxSyscall4StatAt(i64 number, i64 arg1, rawptr<i8> arg2, rawptr<i8> arg3, i64 arg4)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall1Handle(i64 number, rawptr<i8> arg1)
+    in("a7") number,
+    in("a0") arg1,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall2PathBuffer(i64 number, rawmutptr<i8> arg1, i64 arg2)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall3HandleBuffer(i64 number, rawptr<i8> arg1, rawptr<i8> arg2, i64 arg3)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall3HandleRequestPointer(i64 number, rawptr<i8> arg1, i64 arg2, rawptr<i8> arg3)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall3AtPath(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall4OpenAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, i64 arg4)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall4RenameAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, rawptr<i8> arg4)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64 LinuxSyscall4StatAt(i64 number, i64 arg1, rawptr<i8> arg2, rawptr<i8> arg3, i64 arg4)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall1Handle(i64 number, rawptr<i8> arg1)
+    in("eax") number,
+    in("ebx") arg1,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall2PathBuffer(i64 number, rawmutptr<i8> arg1, i64 arg2)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall3HandleBuffer(i64 number, rawptr<i8> arg1, rawptr<i8> arg2, i64 arg3)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall3HandleRequestPointer(i64 number, rawptr<i8> arg1, i64 arg2, rawptr<i8> arg3)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall3AtPath(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall4OpenAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, i64 arg4)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall4RenameAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, rawptr<i8> arg4)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64 LinuxSyscall4StatAt(i64 number, i64 arg1, rawptr<i8> arg2, rawptr<i8> arg3, i64 arg4)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall1Handle(i64 number, rawptr<i8> arg1)
+    in("r7") number,
+    in("r0") arg1,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall2PathBuffer(i64 number, rawmutptr<i8> arg1, i64 arg2)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall3HandleBuffer(i64 number, rawptr<i8> arg1, rawptr<i8> arg2, i64 arg3)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall3HandleRequestPointer(i64 number, rawptr<i8> arg1, i64 arg2, rawptr<i8> arg3)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall3AtPath(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall4OpenAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, i64 arg4)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall4RenameAt(i64 number, i64 arg1, rawptr<i8> arg2, i64 arg3, rawptr<i8> arg4)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64 LinuxSyscall4StatAt(i64 number, i64 arg1, rawptr<i8> arg2, rawptr<i8> arg3, i64 arg4)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    out("r0") return
+{
+    "svc #0"
+}
+
+const i64 LinuxGetcwdSyscallNumber = 79;
+const i64 LinuxIoctlSyscallNumber = 16;
+const i64 LinuxReadSyscallNumber = 0;
+const i64 LinuxWriteSyscallNumber = 1;
+const i64 LinuxCloseSyscallNumber = 3;
+const i64 LinuxStatAtSyscallNumber = 262;
+const i64 LinuxOpenAtSyscallNumber = 257;
+const i64 LinuxRenameAtSyscallNumber = 264;
+const i64 LinuxUnlinkAtSyscallNumber = 263;
+const i64 LinuxAtFdcwd = -100;
+const i64 LinuxPathBufferCapacity = 4096;
+const i64 LinuxOpenReadOnlyFlag = 0;
+const i64 LinuxOpenWriteOnlyFlag = 1;
+const i64 LinuxOpenReadWriteFlag = 2;
+const i64 LinuxOpenCreateFlag = 64;
+const i64 LinuxOpenTruncateFlag = 512;
+const i64 LinuxOpenAppendFlag = 1024;
+const i64 LinuxDefaultCreateMode = 420;
+const i64 LinuxTcGetsRequest = 21505;
+
+internal fn bool TryBuildLinuxPath(rawmutptr<Ascii> destination, ascii path) {
+    return System.Text.TryConcatAscii(destination, path, "\0");
+}
+
+internal fn rawptr<i8> OpenFileWithFlags(ascii path, i64 flags, i64 mode) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii() {
+        Data = pathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = pathBuffer.Writable()
+    };
+
+    if (!TryBuildLinuxPath(&preparedPath, path)) {
+        return null;
+    }
+
+    stack i64 syscallResult = LinuxSyscall4OpenAt(
+        LinuxOpenAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        flags,
+        mode);
+
+    if (syscallResult < 0) {
+        return null;
+    }
+
+    return (rawptr<i8>)syscallResult;
+}
+
+internal fn i32 FlushEncodedWriteBuffer(
+    rawptr<i8> handle,
+    rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer)
+{
+    while willexit (true) {
+        stack i64 readPos = *(&(*buffer).ReadPos);
+        stack i64 writePos = *(&(*buffer).WritePos);
+        if (readPos >= writePos) {
+            *(&(*buffer).ReadPos) = 0;
+            *(&(*buffer).WritePos) = 0;
+            return 0;
+        }
+
+        stack rawptr<i8> data = &(*buffer).Storage[readPos];
+        stack i64 readable = writePos - readPos;
+        stack i64 syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, readable);
+        if (syscallResult < 0) {
+            return (i32)syscallResult;
+        }
+
+        if (syscallResult == 0) {
+            return -1;
+        }
+
+        readPos += syscallResult;
+        if (readPos >= writePos) {
+            *(&(*buffer).ReadPos) = 0;
+            *(&(*buffer).WritePos) = 0;
+            continue;
+        }
+
+        *(&(*buffer).ReadPos) = readPos;
+    }
+}
+
+internal fn i32 WriteAsciiToHandle(rawptr<i8> handle, ascii text) {
+    stack i64 remaining = System.Text.AsciiLength(text);
+    stack i64 written = 0;
+
+    while willexit (remaining > 0) {
+        stack ascii chunk = text[written, remaining];
+        stack rawptr<i8> data = System.Text.AsciiData(chunk);
+        stack i64 syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, remaining);
+        if (syscallResult < 0) {
+            return (i32)syscallResult;
+        }
+
+        if (syscallResult == 0) {
+            return -1;
+        }
+
+        written += syscallResult;
+        remaining -= syscallResult;
+    }
+
+    return 0;
+}
+
+internal fn i32 NormalizeUnicodeCodePoint(i32 codePoint) {
+    if (codePoint < 0) {
+        return 65533;
+    }
+
+    if (55296 <= codePoint && codePoint <= 57343) {
+        return 65533;
+    }
+
+    if (codePoint > 1114111) {
+        return 65533;
+    }
+
+    return codePoint;
+}
+
+internal fn i64 Utf8EncodedLength(i32 codePoint) {
+    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+
+    if (scalar <= 127) {
+        return 1;
+    }
+
+    if (scalar <= 2047) {
+        return 2;
+    }
+
+    if (scalar <= 65535) {
+        return 3;
+    }
+
+    return 4;
+}
+
+internal fn void AppendUtf8CodePoint(
+    rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer,
+    i32 codePoint)
+{
+    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64 writePos = *(&(*buffer).WritePos);
+
+    if (scalar <= 127) {
+        *(&(*buffer).Storage[writePos]) = (i8)scalar;
+        *(&(*buffer).WritePos) = writePos + 1;
+        return;
+    }
+
+    if (scalar <= 2047) {
+        *(&(*buffer).Storage[writePos]) = (i8)((scalar >> 6) | 192);
+        *(&(*buffer).Storage[writePos + 1]) = (i8)((scalar & 63) | 128);
+        *(&(*buffer).WritePos) = writePos + 2;
+        return;
+    }
+
+    if (scalar <= 65535) {
+        *(&(*buffer).Storage[writePos]) = (i8)((scalar >> 12) | 224);
+        *(&(*buffer).Storage[writePos + 1]) = (i8)(((scalar >> 6) & 63) | 128);
+        *(&(*buffer).Storage[writePos + 2]) = (i8)((scalar & 63) | 128);
+        *(&(*buffer).WritePos) = writePos + 3;
+        return;
+    }
+
+    *(&(*buffer).Storage[writePos]) = (i8)((scalar >> 18) | 240);
+    *(&(*buffer).Storage[writePos + 1]) = (i8)(((scalar >> 12) & 63) | 128);
+    *(&(*buffer).Storage[writePos + 2]) = (i8)(((scalar >> 6) & 63) | 128);
+    *(&(*buffer).Storage[writePos + 3]) = (i8)((scalar & 63) | 128);
+    *(&(*buffer).WritePos) = writePos + 4;
+}
+
+internal fn i32 WriteUnicodeToHandle(rawptr<i8> handle, unicode text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack i64 length = System.Text.UnicodeLength(text);
+    if (length <= 0) {
+        return 0;
+    }
+
+    stack mut System.Runtime.Buffer.ByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut i64 index = 0;
+
+    while willexit (index < length) {
+        stack unicode unit = text[index, 1];
+        stack rawptr<i32> data = System.Text.UnicodeData(unit);
+        stack i32 codePoint = *data;
+        stack i64 required = Utf8EncodedLength(codePoint);
+
+        if (utf8Buffer.Writable() < required) {
+            stack i32 flushStatus = FlushEncodedWriteBuffer(handle, &utf8Buffer);
+            if (flushStatus != 0) {
+                return flushStatus;
+            }
+        }
+
+        AppendUtf8CodePoint(&utf8Buffer, codePoint);
+        index += 1;
+    }
+
+    return FlushEncodedWriteBuffer(handle, &utf8Buffer);
+}
+
+internal fn i32 WriteStdoutAscii(ascii text) {
+    return WriteAsciiToHandle((rawptr<i8>)1, text);
+}
+
+internal fn i32 WriteStdoutUnicode(unicode text) {
+    return WriteUnicodeToHandle((rawptr<i8>)1, text);
+}
+
+internal fn i32 WriteStderrAscii(ascii text) {
+    return WriteAsciiToHandle((rawptr<i8>)2, text);
+}
+
+internal fn i32 WriteStderrUnicode(unicode text) {
+    return WriteUnicodeToHandle((rawptr<i8>)2, text);
+}
+
+internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteAsciiToHandle(handle, text);
+}
+
+internal fn bool IsTerminal(rawptr<i8> handle) {
+    if (handle == null) {
+        return false;
+    }
+
+    stack mut System.Runtime.Buffer.ByteBuffer512 stateBuffer = new System.Runtime.Buffer.ByteBuffer512();
+    stack rawmutptr<i8> state = stateBuffer.WritePointer();
+    if (state == null) {
+        return false;
+    }
+
+    return LinuxSyscall3HandleRequestPointer(
+        LinuxIoctlSyscallNumber,
+        handle,
+        LinuxTcGetsRequest,
+        state) >= 0;
+}
+
+internal fn i32 WriteUnicode(rawptr<i8> handle, unicode text) {
+    return WriteUnicodeToHandle(handle, text);
+}
+
+internal fn rawptr<i8> OpenFileRead(ascii path) {
+    return OpenFileWithFlags(path, LinuxOpenReadOnlyFlag, 0);
+}
+
+internal fn rawptr<i8> OpenFileWrite(ascii path) {
+    return OpenFileWithFlags(
+        path,
+        LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenTruncateFlag,
+        LinuxDefaultCreateMode);
+}
+
+internal fn rawptr<i8> OpenFileAppend(ascii path) {
+    return OpenFileWithFlags(
+        path,
+        LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenAppendFlag,
+        LinuxDefaultCreateMode);
+}
+
+internal fn rawptr<i8> OpenFileReadWrite(ascii path) {
+    return OpenFileWithFlags(path, LinuxOpenReadWriteFlag, 0);
+}
+
+internal fn i32 CloseFile(rawptr<i8> handle) {
+    if (handle == null) {
+        return 0;
+    }
+
+    return (i32)LinuxSyscall1Handle(LinuxCloseSyscallNumber, handle);
+}
+
+internal fn i32 FlushFile(rawptr<i8> handle) {
+    return 0;
+}
+
+internal fn i64 ReadFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+    if (handle == null || buffer == null || size <= 0 || count <= 0) {
+        return 0;
+    }
+
+    stack i64 bytesRequested = size * count;
+    stack i64 syscallResult = LinuxSyscall3HandleBuffer(LinuxReadSyscallNumber, handle, buffer, bytesRequested);
+    if (syscallResult <= 0) {
+        return 0;
+    }
+
+    return syscallResult / size;
+}
+
+internal fn i64 WriteFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+    if (handle == null || buffer == null || size <= 0 || count <= 0) {
+        return 0;
+    }
+
+    stack i64 bytesRequested = size * count;
+    stack i64 syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, buffer, bytesRequested);
+    if (syscallResult <= 0) {
+        return 0;
+    }
+
+    return syscallResult / size;
+}
+
+internal fn i32 DeleteFile(ascii path) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii() {
+        Data = pathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = pathBuffer.Writable()
+    };
+
+    if (!TryBuildLinuxPath(&preparedPath, path)) {
+        return -1;
+    }
+
+    return (i32)LinuxSyscall3AtPath(
+        LinuxUnlinkAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        0);
+}
+
+internal fn i32 MoveFile(ascii oldPath, ascii newPath) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 oldPathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut System.Runtime.Buffer.ByteBuffer4096 newPathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut Ascii preparedOldPath = new Ascii() {
+        Data = oldPathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = oldPathBuffer.Writable()
+    };
+    stack mut Ascii preparedNewPath = new Ascii() {
+        Data = newPathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = newPathBuffer.Writable()
+    };
+
+    if (!TryBuildLinuxPath(&preparedOldPath, oldPath)
+        || !TryBuildLinuxPath(&preparedNewPath, newPath)) {
+        return -1;
+    }
+
+    return (i32)LinuxSyscall4RenameAt(
+        LinuxRenameAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedOldPath.Data,
+        LinuxAtFdcwd,
+        preparedNewPath.Data);
+}
+
+internal fn bool FileExists(ascii path) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut System.Runtime.Buffer.ByteBuffer512 statBuffer = new System.Runtime.Buffer.ByteBuffer512();
+    stack mut Ascii preparedPath = new Ascii() {
+        Data = pathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = pathBuffer.Writable()
+    };
+
+    if (!TryBuildLinuxPath(&preparedPath, path)) {
+        return false;
+    }
+
+    stack rawmutptr<i8> statData = statBuffer.WritePointer();
+    if (statData == null) {
+        return false;
+    }
+
+    return LinuxSyscall4StatAt(
+        LinuxStatAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        statData,
+        0) == 0;
+}
+
+internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
+    stack rawmutptr<i8> data = (*destination).Data;
+    stack i64 capacity = (*destination).Capacity;
+
+    if (data == null || capacity <= 0) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack i64 syscallResult = LinuxSyscall2PathBuffer(LinuxGetcwdSyscallNumber, data, capacity);
+    if (syscallResult <= 0) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    *destination = new Ascii() {
+        Data = data,
+        Length = syscallResult - 1,
+        Capacity = capacity
+    };
+    return true;
+}

@@ -18,9 +18,7 @@ This design assumes the language work tracked in Milestone 6.5:
 - overloads for `ascii` and `unicode` APIs with the same user-facing name
 - destructor syntax and implementation for owned-resource cleanup
 
-This design does not require Stark-level syscall intrinsics or inline assembly in `v1.x`.
-
-On Linux, the stdlib targets the Linux syscall ABI through a tiny target-specific boundary shim supplied by the runtime/toolchain layer. The stdlib itself stays in Stark source and normal FFI declarations. Direct Stark-level syscall intrinsics remain a post-`v2.0` topic.
+On Linux, the stdlib targets the Linux syscall ABI through tiny internal `ffi asm` shims in the platform layer. User code still stays on the `System.*` surface and does not touch syscall register details directly.
 
 ## Goals
 
@@ -33,6 +31,17 @@ The standard library provides:
 - a platform abstraction layer that talks directly to the OS without libc
 
 User code calls `System.Console` or `System.IO.*` and never touches platform syscalls or Win32 APIs directly. The platform boundary is an internal implementation detail hidden behind the library surface.
+
+## Reference Docs
+
+The current public module references live here:
+
+- [System](stdlib/System.md)
+- [System.Console](stdlib/System.Console.md)
+- [System.IO](stdlib/System.IO.md)
+- [System.IO.File](stdlib/System.IO.File.md)
+- [System.IO.Path](stdlib/System.IO.Path.md)
+- [System.Text](stdlib/System.Text.md)
 
 ## Module Layout
 
@@ -47,6 +56,7 @@ Repository source layout:
 - `stdlib/src/System/IO/Path.stark`
 - `stdlib/src/System/Text.stark`
 - `stdlib/src/System/Runtime.stark`
+- `stdlib/src/System/Runtime/Buffer.stark`
 - `stdlib/src/System/Runtime/Platform.stark`
 - `stdlib/src/System/Runtime/Platform/Linux.stark`
 - `stdlib/src/System/Runtime/Platform/Windows.stark`
@@ -63,6 +73,7 @@ Public module surface:
 Internal modules:
 
 - `System.Runtime`
+- `System.Runtime.Buffer`
 - `System.Runtime.Platform`
 - `System.Runtime.Platform.Linux`
 - `System.Runtime.Platform.Windows`
@@ -120,6 +131,10 @@ public enum Encoding {
 
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
+public finite law rawptr<i8> AsciiData(ascii source);
+public finite law i64 AsciiLength(ascii source);
+public finite law rawptr<i32> UnicodeData(unicode source);
+public finite law i64 UnicodeLength(unicode source);
 public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 ```
@@ -150,6 +165,7 @@ The semantics are:
 The currently implemented bridge APIs are:
 
 - `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` for zero-copy immutable view projection
+- `System.Text.AsciiData(ascii)`, `System.Text.AsciiLength(ascii)`, `System.Text.UnicodeData(unicode)`, and `System.Text.UnicodeLength(unicode)` for explicit pointer/length access when stdlib code needs exact view boundaries at low-level OS or FFI edges
 - `System.Text.TryConcatAscii(rawmutptr<Ascii>, ascii, ascii)` and `System.Text.TryConcatUnicode(rawmutptr<Unicode>, unicode, unicode)` for explicit concatenation into caller-provided storage
 
 These APIs make allocation visible in user code: the caller owns the backing buffer, fills `Data` and `Capacity`, and concat returns `false` instead of allocating when the destination is too small.
@@ -173,9 +189,9 @@ public fn IOStatus WriteErrorLine(borrow unicode text);
 
 Internal implementation:
 
-- On Linux, `Write` and `WriteLine` call the internal platform write boundary on fd `1`. `WriteError` and `WriteErrorLine` call it on fd `2`.
+- On Linux, the current `ascii` output path uses internal syscall-backed write shims on fd `1` and fd `2`.
 - On Windows, `Write` and `WriteLine` call `WriteFile` on the handle from `GetStdHandle(STD_OUTPUT_HANDLE)`. `WriteError` and `WriteErrorLine` use `GetStdHandle(STD_ERROR_HANDLE)`.
-- `unicode` overloads convert UTF-32 to UTF-8 before writing.
+- On Linux, `unicode` overloads currently convert UTF-32 to UTF-8 in the stdlib and then write through the syscall-backed fd boundary.
 - `WriteLine` always appends `\n` on both Linux and Windows. The library does not perform CRLF translation.
 - Console output is unbuffered by default. The write goes directly to the OS.
 
@@ -194,25 +210,35 @@ import System.IO
 module System.IO.File
 
 public struct File {
-    fn IOStatus Close(mut borrow File self);
-    fn IOStatus Flush(mut borrow File self);
-
-    fn IOResult<i64> ReadBytes(mut borrow File self, mut i8[] buffer);
-    fn IOResult<ascii> ReadText(mut borrow File self);
-    fn IOResult<unicode> ReadTextUnicode(mut borrow File self);
-
-    fn IOResult<i64> WriteBytes(mut borrow File self, borrow i8[] data);
-    fn IOResult<i64> WriteText(mut borrow File self, borrow ascii text);
-    fn IOResult<i64> WriteText(mut borrow File self, borrow unicode text);
-    fn IOStatus WriteLine(mut borrow File self, borrow ascii text);
-    fn IOStatus WriteLine(mut borrow File self, borrow unicode text);
+    fn bool IsOpen(borrow File self);
+    fn i32 Close(mut borrow File self);
+    fn i32 Flush(mut borrow File self);
+    fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
+    fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
+    fn void WriteText(mut borrow File self, ascii text);
+    fn void WriteLine(mut borrow File self, ascii text);
 }
 
-public fn IOResult<File> Open(borrow ascii path, FileMode mode);
-public fn IOResult<File> Open(borrow ascii path, FileMode mode, System.Text.Encoding encoding);
-public fn IOStatus Delete(borrow ascii path);
-public fn IOStatus Move(borrow ascii oldPath, borrow ascii newPath);
-public fn IOResult<bool> Exists(borrow ascii path);
+public fn File Open(ascii path, FileMode mode);
+public fn File Open(ascii path, FileMode mode, FileBuffering buffering);
+public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding);
+public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
+
+public fn rawptr<i8> OpenRead(ascii path);
+public fn rawptr<i8> OpenWrite(ascii path);
+public fn rawptr<i8> OpenAppend(ascii path);
+
+public fn i32 Close(rawptr<i8> handle);
+public fn i32 Flush(rawptr<i8> handle);
+public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
+public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
+public fn void WriteText(rawptr<i8> handle, ascii text);
+public fn void WriteText(rawptr<i8> handle, unicode text);
+public fn void WriteLine(rawptr<i8> handle, ascii text);
+public fn void WriteLine(rawptr<i8> handle, unicode text);
+public fn i32 Delete(ascii path);
+public fn i32 Move(ascii oldPath, ascii newPath);
+public fn bool Exists(ascii path);
 ```
 
 Methods on a `public struct` are accessible wherever the struct is visible. Visibility modifiers do not apply to individual methods or fields inside a type body per the Stark module system rules.
@@ -238,7 +264,7 @@ public enum FileBuffering {
 }
 ```
 
-Files default to `Full` buffering with an 8192-byte internal buffer. Terminal-connected handles default to `Line` buffering. `None` means every write goes directly to the OS.
+Files default to `Full` buffering with an 8192-byte internal buffer. On Linux, the default `Open(...)` overload now checks the opened handle with `ioctl(TCGETS)` and switches to `Line` buffering for terminal-connected handles. `None` means every write goes directly to the OS.
 
 ### File Ownership and Drop
 
@@ -250,24 +276,18 @@ The destructor is constrained by Stark's destructor rules:
 - it does not synchronize
 - it does not allocate
 
-Explicit `Close` is available for code that wants to handle close errors or control close ordering. After an explicit `Close`, the destructor is a no-op.
+Explicit `Close` is available for code that wants to handle close ordering. After an explicit `Close`, the destructor is a no-op.
 
 Because destructors cannot surface rich failure values, implicit destructor cleanup is best-effort. Code that needs flush or close error handling must call `Flush` and `Close` explicitly before scope exit.
 
 ### File Encoding Behavior
 
-The `encoding` field on `File` controls what happens during `WriteText`, `ReadText`, and `ReadTextUnicode`:
+The `encoding` field and `System.Text.Encoding` enum are in place, but the current Milestone 7 slice is still narrower than the eventual text-IO design:
 
-| String type | File encoding | Write behavior |
-|---|---|---|
-| `ascii` | `Binary` | passthrough raw bytes |
-| `ascii` | `UTF8` | passthrough (ascii is UTF-8) |
-| `ascii` | `UTF16` | convert UTF-8 to UTF-16LE |
-| `ascii` | `UTF32` | convert UTF-8 to UTF-32 |
-| `unicode` | `Binary` | passthrough raw backing bytes |
-| `unicode` | `UTF8` | convert UTF-32 to UTF-8 |
-| `unicode` | `UTF16` | convert UTF-32 to UTF-16LE |
-| `unicode` | `UTF32` | passthrough (unicode is UTF-32) |
+- owned `File` text writes are currently `ascii` only
+- raw-handle helpers already support both `ascii` and `unicode`
+- on Linux, the current `unicode` write path converts UTF-32 to UTF-8 before issuing the write syscall
+- broader per-encoding file conversions and text-reading APIs remain part of the remaining shared text-IO work
 
 `ReadBytes` and `WriteBytes` always ignore encoding and operate on raw bytes regardless.
 
@@ -290,19 +310,21 @@ module System.IO.Path
 public finite law ascii DirectorySeparator();
 public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
-public finite law ascii Join(borrow ascii left, borrow ascii right);
+public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right);
 public finite law ascii Extension(borrow ascii path);
 public finite law ascii BaseName(borrow ascii path);
 public finite law ascii DirectoryName(borrow ascii path);
 
-public fn IOResult<ascii> CurrentDirectory();
+public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
 ```
 
 `DirectorySeparator` returns `"/"` on Linux and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux. `PathSeparator` returns `":"` on Linux and `";"` on Windows.
 
-`Join`, `Extension`, `BaseName`, and `DirectoryName` are `finite law` because they are pure, have no side effects, and always return.
+`Extension`, `BaseName`, and `DirectoryName` are `finite law` because they are pure, have no side effects, and always return.
 
-`CurrentDirectory` is `fn` because it issues an OS call.
+`TryJoin` uses a caller-provided `Ascii` destination rather than allocating hidden storage. It returns `false` if the destination buffer is too small.
+
+`CurrentDirectory` is `fn` because it issues an OS call. In the current Milestone 7 slice it uses a caller-provided `Ascii` buffer rather than performing hidden allocation, and it returns `bool` success instead of a richer result type. On the current Linux-backed implementation, the destination buffer must have room for the path text plus one trailing zero byte reserved for the raw `getcwd` syscall. Allocation-backed convenience path APIs are deferred to `v2.0`.
 
 ## Platform Abstraction Layer
 
@@ -312,13 +334,13 @@ The platform layer is internal to the standard library. User code never imports 
 
 The platform layer defines a minimal set of operations that the rest of the stdlib builds on. Each operation has a Linux implementation and a Windows implementation. The build selects the correct implementation based on the target triple.
 
-In `v1.x`, this selection is done through the package build and runtime/toolchain boundary. It is not dependent on Stark-level inline assembly or syscall intrinsics.
+In `v1.x`, this selection is done through the package build and target-specific internal modules. The current Linux implementation uses Stark-level `ffi asm` shims internally, but user-facing code still stays on the `System.*` surface.
 
 ### Linux Implementation
 
 `System.Runtime.Platform.Linux` targets the Linux syscall ABI without depending on libc or glibc.
 
-In `v1.x`, the actual syscall instruction is issued beneath the stdlib by a tiny target-specific boundary shim linked as part of the runtime/toolchain layer. The stdlib calls that boundary through normal Stark declarations.
+In the current Milestone 7 slice, the actual syscall instruction is issued through tiny internal `ffi asm` shims inside the Linux platform module.
 
 The syscall ABI on x86_64 Linux is:
 
@@ -344,6 +366,14 @@ The required syscalls are:
 | ioctl | `ioctl` | 16 |
 
 `ioctl` is needed to detect whether a file descriptor is a terminal for buffering strategy selection.
+
+The current implementation status is:
+
+- `getcwd` is syscall-backed on Linux
+- `ascii` and `unicode` console output are syscall-backed on Linux
+- file open/read/write/close/delete/move/exists are syscall-backed on Linux
+- terminal detection uses `ioctl(TCGETS)` on Linux and feeds the default file-buffering policy
+- packaged Linux stdlib builds are regression-tested to avoid libc/glibc symbol dependencies
 
 stdout and stderr are fd `1` and fd `2`. They exist at process start with no setup required.
 
@@ -389,7 +419,7 @@ internal fn IOStatus PlatformFlush(i64 handle);
 internal fn IOStatus PlatformDelete(borrow ascii path);
 internal fn IOStatus PlatformRename(borrow ascii oldPath, borrow ascii newPath);
 internal fn IOResult<bool> PlatformExists(borrow ascii path);
-internal fn IOResult<ascii> PlatformGetCwd();
+internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination);
 internal fn bool PlatformIsTerminal(i64 handle);
 internal fn i64 PlatformGetStdout();
 internal fn i64 PlatformGetStderr();
@@ -425,13 +455,12 @@ The platform layer translates OS error codes into `IOError` values at the bounda
 
 ## Runtime Strategy
 
-The standard library has zero dependency on libc, glibc, musl, or the Windows CRT.
+The target design is zero dependency on libc, glibc, musl, or the Windows CRT for stdlib IO paths.
 
-- On Linux, IO is performed through a syscall-backed internal boundary beneath the stdlib. The stdlib does not depend on libc or glibc.
-- On Windows, IO is performed through Win32 API calls from `kernel32.dll`. The only system-library dependency is the normal Windows API surface.
-- Userspace buffering is implemented entirely in Stark inside the `File` type.
-
-The previous libc-backed implementation is fully replaced.
+- On Linux, the current Milestone 7 slice uses syscall-backed boundaries for `getcwd`, console output, and file-descriptor-based file operations.
+- Owned-file unicode buffering and broader text-conversion APIs are still part of the remaining shared text-IO work, but the Linux platform layer itself no longer depends on libc/glibc for the implemented paths.
+- On Windows, the target remains Win32 API calls from `kernel32.dll`.
+- `System.Runtime.Buffer` now provides the internal fixed-size linear and ring buffer primitives used by stdlib IO. `File` uses those foundations for `None` / `Line` / `Full` write-buffering policy, and the default Linux path now switches between `Full` and `Line` based on `ioctl` terminal detection. `Console` still writes directly to the OS today.
 
 ## Building the Package
 

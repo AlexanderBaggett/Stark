@@ -303,6 +303,7 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
+        ValidateFunctionModifiers(functionDeclaration, summary);
         ValidateTypeUsage(signature.ReturnType, TypeUsage.Return, functionDeclaration.ReturnType, declaration.Modifiers.IsFfi);
 
         if (signature.ReturnType.BorrowKind == StarkBorrowKind.Borrow)
@@ -344,6 +345,40 @@ internal sealed class SemanticValidator
                         parameterContext.type_());
                 }
             }
+        }
+    }
+
+    private void ValidateFunctionModifiers(DeclaredFunctionSyntax functionDeclaration, FunctionValidationBuilder summary)
+    {
+        var inlineModifiers = functionDeclaration.Modifiers
+            .Where(static modifier =>
+            {
+                var text = modifier.GetText();
+                return text is "inline" or "noinline" or "inlinehint";
+            })
+            .Select(static modifier => modifier.GetText())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (inlineModifiers.Length > 1)
+        {
+            EffectError(
+                summary,
+                "STK4109",
+                $"Function '{functionDeclaration.DisplaySourceName}' may use at most one of 'inline', 'noinline', or 'inlinehint'. Found: {string.Join(", ", inlineModifiers.Select(static modifier => $"'{modifier}'"))}.",
+                functionDeclaration.DeclarationContext);
+        }
+
+        var hasHot = functionDeclaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "hot", StringComparison.Ordinal));
+        var hasCold = functionDeclaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "cold", StringComparison.Ordinal));
+
+        if (hasHot && hasCold)
+        {
+            EffectError(
+                summary,
+                "STK4110",
+                $"Function '{functionDeclaration.DisplaySourceName}' may not combine 'hot' and 'cold'.",
+                functionDeclaration.DeclarationContext);
         }
     }
 
@@ -476,6 +511,8 @@ internal sealed class SemanticValidator
 
         if (statement.whileStatement() is { } whileStatement)
         {
+            ValidateLoopContract(function.Name, whileStatement.loopBehavior().GetText(), whileStatement.expression(), whileStatement.statement(), whileStatement.loopBehavior(), summary);
+
             if (whileStatement.loopBehavior().GetText() != "willexit")
             {
                 summary.DisqualifyFinite();
@@ -493,6 +530,8 @@ internal sealed class SemanticValidator
 
         if (statement.forStatement() is { } forStatement)
         {
+            ValidateLoopContract(function.Name, forStatement.loopBehavior().GetText(), forStatement.forCondition()?.expression(), forStatement.statement(), forStatement.loopBehavior(), summary);
+
             if (forStatement.loopBehavior().GetText() != "willexit")
             {
                 summary.DisqualifyFinite();
@@ -2914,6 +2953,141 @@ internal sealed class SemanticValidator
         _context.Diagnostics.Error(code, message, "semantic-validate", Location(token));
     }
 
+    private void ValidateLoopContract(
+        string functionName,
+        string loopBehavior,
+        StarkParser.ExpressionContext? condition,
+        StarkParser.StatementContext body,
+        ParserRuleContext loopBehaviorContext,
+        FunctionValidationBuilder summary)
+    {
+        switch (loopBehavior)
+        {
+            case "infinite":
+                if (!IsStaticallyUnconditionalLoopCondition(condition))
+                {
+                    EffectError(
+                        summary,
+                        "STK4111",
+                        $"Loop in function '{functionName}' is marked 'infinite' and must use a statically unconditional condition ('true' for 'while' or an omitted condition for 'for').",
+                        loopBehaviorContext);
+                }
+
+                if (ContainsForbiddenInfiniteLoopExit(body))
+                {
+                    EffectError(
+                        summary,
+                        "STK4111",
+                        $"Loop in function '{functionName}' is marked 'infinite' and may not contain a structural exit from the current loop or function.",
+                        loopBehaviorContext);
+                }
+
+                break;
+
+            case "willexit":
+                if (IsStaticallyUnconditionalLoopCondition(condition)
+                    && !ContainsStructuralLoopExit(body))
+                {
+                    EffectError(
+                        summary,
+                        "STK4112",
+                        $"Loop in function '{functionName}' is marked 'willexit' with an unconditional condition and must contain at least one structural 'break' or 'return' in its body.",
+                        loopBehaviorContext);
+                }
+
+                break;
+        }
+    }
+
+    private static bool IsStaticallyUnconditionalLoopCondition(StarkParser.ExpressionContext? condition)
+    {
+        return condition is null || string.Equals(condition.GetText(), "true", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsStructuralLoopExit(StarkParser.StatementContext statement, int nestedLoopDepth = 0)
+    {
+        if (statement.returnStatement() is not null)
+        {
+            return true;
+        }
+
+        if (nestedLoopDepth == 0 && statement.breakStatement() is not null)
+        {
+            return true;
+        }
+
+        if (statement.block() is { } block)
+        {
+            return block.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth));
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            return ifStatement.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth));
+        }
+
+        if (statement.switchStatement() is { } switchStatement)
+        {
+            return switchStatement.switchSection()
+                .SelectMany(static section => section.statement())
+                .Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth));
+        }
+
+        if (statement.whileStatement() is { } nestedWhile)
+        {
+            return ContainsStructuralLoopExit(nestedWhile.statement(), nestedLoopDepth + 1);
+        }
+
+        if (statement.forStatement() is { } nestedFor)
+        {
+            return ContainsStructuralLoopExit(nestedFor.statement(), nestedLoopDepth + 1);
+        }
+
+        return false;
+    }
+
+    private static bool ContainsForbiddenInfiniteLoopExit(StarkParser.StatementContext statement, int nestedLoopDepth = 0)
+    {
+        if (statement.returnStatement() is not null)
+        {
+            return true;
+        }
+
+        if (nestedLoopDepth == 0 && statement.breakStatement() is not null)
+        {
+            return true;
+        }
+
+        if (statement.block() is { } block)
+        {
+            return block.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth));
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            return ifStatement.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth));
+        }
+
+        if (statement.switchStatement() is { } switchStatement)
+        {
+            return switchStatement.switchSection()
+                .SelectMany(static section => section.statement())
+                .Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth));
+        }
+
+        if (statement.whileStatement() is { } nestedWhile)
+        {
+            return ContainsForbiddenInfiniteLoopExit(nestedWhile.statement(), nestedLoopDepth + 1);
+        }
+
+        if (statement.forStatement() is { } nestedFor)
+        {
+            return ContainsForbiddenInfiniteLoopExit(nestedFor.statement(), nestedLoopDepth + 1);
+        }
+
+        return false;
+    }
+
     private SourceLocation Location(IToken token) => new(_context.Input.FilePath, token.Line, token.Column + 1);
 
     private static LocalStorageClass ParseStorageClass(StarkParser.StorageClassContext context)
@@ -3095,7 +3269,9 @@ internal sealed class SemanticValidator
         public ArgumentEffects GetEffectiveEffects(bool hasBody)
         {
             var reads = Reads || (!hasBody && IsMemoryBacked && !GuaranteedWriteOnly);
-            var writes = Writes || (!hasBody && GuaranteedWriteOnly);
+            var writes = Writes
+                || (!hasBody && GuaranteedWriteOnly)
+                || (!hasBody && IsMemoryBacked && !GuaranteedReadOnly);
             var captureKind = CaptureKind;
 
             if (!hasBody && captureKind == ParameterCaptureKind.None)

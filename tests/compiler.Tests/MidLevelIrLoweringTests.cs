@@ -413,6 +413,41 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void EnumSwitchExpressionCallIsLoweredOnceInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Status {
+                Ok,
+                Err(i32),
+            }
+
+            fn Status Next() {
+                return Status.Ok;
+            }
+
+            fn i32 Run() {
+                switch (Next()) {
+                    case Status.Ok:
+                        return 1;
+                    case Status.Err(var error):
+                        return error;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Equal(
+            1,
+            statements.Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Next" }));
+    }
+
+    [Fact]
     public void ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
     {
         var result = Compile(
@@ -1439,6 +1474,35 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[16] Storage;
+                i64 WritePos;
+            }
+
+            fn i32 Touch(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+                *(&(*buffer).Storage[index]) = value;
+                return (i32)*(&(*buffer).Storage[index]);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrFieldAddressRValue);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue);
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+    }
+
+    [Fact]
     public void ImmutableGlobalAddressesLowerToReadonlyMirAddresses()
     {
         var result = Compile(
@@ -1742,6 +1806,186 @@ public sealed class MidLevelIrLoweringTests
             """);
 
         Assert.Equal(1, exitCode);
+    }
+
+    [Fact]
+    public async Task MutableBorrowReceiverCallsObserveSharedStateAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Counter {
+                i32 Value;
+
+                fn void Reset(borrow mut Counter self) {
+                    self.Value = 0;
+                    return;
+                }
+
+                fn void ResetThenAdd(borrow mut Counter self, i32 value) {
+                    self.Reset();
+                    self.Value += value;
+                    return;
+                }
+
+                fn i32 Current(borrow Counter self) {
+                    return self.Value;
+                }
+            }
+
+            export ffi fn i32 main() {
+                stack mut Counter counter = new Counter() { Value = 9 };
+                counter.ResetThenAdd(7);
+                return counter.Current();
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task SwitchExpressionCallOnEnumIsEvaluatedOnceAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            enum Status {
+                Ok,
+                Err(i32),
+            }
+
+            fn Status Next() {
+                Counter += 1;
+                return Status.Ok;
+            }
+
+            export ffi fn i32 main() {
+                switch (Next()) {
+                    case Status.Ok:
+                        return Counter;
+                    case Status.Err(var error):
+                        return error;
+                }
+            }
+            """);
+
+        Assert.Equal(1, exitCode);
+    }
+
+    [Fact]
+    public async Task RawPointerIndexedFieldAddressesObserveSharedStateAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[16] Storage;
+                i64 WritePos;
+            }
+
+            fn void Put(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+                *(&(*buffer).Storage[index]) = value;
+                return;
+            }
+
+            fn i32 Read(rawmutptr<Buffer> buffer, i64 index) {
+                return (i32)*(&(*buffer).Storage[index]);
+            }
+
+            export ffi fn i32 main() {
+                stack mut Buffer buffer = new Buffer();
+                Put(&buffer, 3, (i8)90);
+                return Read(&buffer, 3);
+            }
+            """);
+
+        Assert.Equal(90, exitCode);
+    }
+
+    [Fact]
+    public async Task RawPointerIndexedElementsObserveSharedStateAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            fn void Put(rawmutptr<i8> data, i64 index, i8 value) {
+                *(&data[index]) = value;
+                return;
+            }
+
+            fn i32 Read(rawmutptr<i8> data, i64 index) {
+                return (i32)*(&data[index]);
+            }
+
+            export ffi fn i32 main() {
+                stack mut i8[16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                Put(&buffer[0], 4, (i8)77);
+                return Read(&buffer[0], 4);
+            }
+            """);
+
+        Assert.Equal(77, exitCode);
+    }
+
+    [Fact]
+    public async Task BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[16] Storage;
+
+                fn void Put(borrow mut Buffer self, i64 index, i8 value) {
+                    *(&self.Storage[index]) = value;
+                    return;
+                }
+
+                fn i32 Read(borrow Buffer self, i64 index) {
+                    return (i32)*(&self.Storage[index]);
+                }
+            }
+
+            export ffi fn i32 main() {
+                stack mut Buffer buffer = new Buffer();
+                buffer.Put(5, (i8)65);
+                return buffer.Read(5);
+            }
+            """);
+
+        Assert.Equal(65, exitCode);
     }
 
     private CompilationResult Compile(string source, CompilerOptions? options = null)

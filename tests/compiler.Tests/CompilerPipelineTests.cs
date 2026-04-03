@@ -58,6 +58,7 @@ public sealed class CompilerPipelineTests
 
             public finite law i32 Add(i32 left, i32 right);
             export ffi cold fn void Accept(rawptr<i8> value);
+            internal hot fn i32 Warm(i32 value);
             """));
 
         Assert.True(result.Succeeded);
@@ -79,6 +80,10 @@ public sealed class CompilerPipelineTests
         Assert.False(accept.NoUnwind);
         Assert.True(accept.IsFfi);
         Assert.True(accept.IsCold);
+
+        var warm = effectModel.Functions["Warm"];
+        Assert.True(warm.IsHot);
+        Assert.False(warm.IsCold);
     }
 
     [Fact]
@@ -2363,6 +2368,82 @@ public sealed class CompilerPipelineTests
         public void Execute(CompilerPassContext context)
         {
             throw new InvalidOperationException("boom");
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedTypeDestructorsRoundTripWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-destructor-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Counter {
+                    i32 Value;
+
+                    mut drop {
+                        self.Value = 0;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var counterType = Assert.Single(facadeModule.Types, static type => type.Name == "Counter");
+            Assert.NotNull(counterType.Destructor);
+            Assert.True(counterType.Destructor!.IsMutable);
+            Assert.Equal("{self.Value=0;}", counterType.Destructor.BodyText);
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run() {
+                        stack mut Facade.Counter value = new Facade.Counter() { Value = 1 };
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+
+            var importedCounter = Assert.Single(importedModule.SyntaxModel.Declarations, static declaration => declaration.Name == "Counter");
+            Assert.NotNull(importedCounter.Destructor);
+            Assert.True(importedCounter.Destructor!.IsMutable);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
         }
     }
 }

@@ -373,6 +373,11 @@ internal sealed class SsaLowerer
                     addressOfLocal.PointeeType,
                     addressOfLocal.Type,
                     addressOfLocal.Text)),
+                MidLevelIrAddressOfParameterRValue addressOfParameter => EmitValue(block, new SsaAddressOfParameterRValue(
+                    addressOfParameter.ParameterName,
+                    addressOfParameter.PointeeType,
+                    addressOfParameter.Type,
+                    addressOfParameter.Text)),
                 MidLevelIrFieldAddressRValue fieldAddress => EmitValue(block, new SsaFieldAddressRValue(
                     LowerOperand(blockId, block, fieldAddress.Address),
                     fieldAddress.AggregateType,
@@ -431,6 +436,8 @@ internal sealed class SsaLowerer
                 MidLevelIrLocalOperand local when _addressableLocals.Contains(local.Name)
                     => EmitValue(block, new SsaLoadLocalRValue(local.Name, local.Type)),
                 MidLevelIrLocalOperand local => ReadVariable(blockId, local.Name, local.Type),
+                MidLevelIrParameterOperand parameter when parameter.Type.BorrowKind != StarkBorrowKind.None
+                    => LoadBorrowedParameter(block, parameter),
                 MidLevelIrParameterOperand parameter => ReadVariable(blockId, parameter.Name, parameter.Type),
                 MidLevelIrGlobalOperand global => EmitValue(block, new SsaLoadGlobalRValue(global.Name, global.Type)),
                 MidLevelIrGlobalAddressOperand globalAddress => new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type),
@@ -476,6 +483,17 @@ internal sealed class SsaLowerer
             }
 
             return result;
+        }
+
+        private SsaValue LoadBorrowedParameter(SsaBlockBuilder block, MidLevelIrParameterOperand parameter)
+        {
+            var address = EmitValue(block, new SsaAddressOfParameterRValue(
+                parameter.Name,
+                parameter.Type,
+                StarkTypeSymbols.RawPointer(parameter.Type, isMutable: parameter.Type.AccessKind != StarkAccessKind.Frozen),
+                $"&{parameter.Name}"));
+
+            return EmitValue(block, new SsaLoadIndirectRValue(address, parameter.Type, $"{parameter.Name}:load"));
         }
 
         private bool TryLowerAggregateCopy(
@@ -1064,6 +1082,9 @@ internal sealed class SsaLowerer
                 case SsaAddressOfLocalRValue addressOfLocal:
                     key = $"address-of-local|{addressOfLocal.LocalName}|{TypeKey(addressOfLocal.PointeeType)}|{TypeKey(addressOfLocal.Type)}";
                     return true;
+                case SsaAddressOfParameterRValue addressOfParameter:
+                    key = $"address-of-parameter|{addressOfParameter.ParameterName}|{TypeKey(addressOfParameter.PointeeType)}|{TypeKey(addressOfParameter.Type)}";
+                    return true;
                 case SsaFieldAddressRValue fieldAddress:
                     key = $"field-address|{ValueKey(fieldAddress.Address)}|{TypeKey(fieldAddress.AggregateType)}|{fieldAddress.FieldName}|{fieldAddress.FieldIndex}|{TypeKey(fieldAddress.Type)}";
                     return true;
@@ -1336,6 +1357,7 @@ internal sealed class SsaLowerer
                     textSlice.Type,
                     textSlice.Text),
                 SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
+                SsaAddressOfParameterRValue addressOfParameter => addressOfParameter,
                 SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
                     RewriteValue(fieldAddress.Address, replacements),
                     fieldAddress.AggregateType,

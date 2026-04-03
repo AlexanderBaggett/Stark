@@ -245,11 +245,9 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
-        var emittedImportedAsmDefinitions = EmitImportedAsmDefinitions(builder);
-
         foreach (var abiFunction in _abiModel.Functions.Values
                      .Where(function => !rootFunctionNames.Contains(function.Name)
-                                        && !emittedImportedAsmDefinitions.Contains(function.Name))
+                                        )
                      .OrderBy(static function => function.Name, StringComparer.Ordinal))
         {
             if (!_typeModel.Functions.TryGetValue(abiFunction.Name, out var signature)
@@ -278,63 +276,6 @@ internal sealed class LlvmIrEmitter
         }
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd());
-    }
-
-    private HashSet<string> EmitImportedAsmDefinitions(StringBuilder builder)
-    {
-        var emitted = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var module in _loadedModules.ImportedModules
-                     .Where(static module => !module.Reference.IsExternal && string.IsNullOrWhiteSpace(module.Reference.ManifestPath))
-                     .OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
-        {
-            foreach (var declaration in module.SyntaxModel.Declarations
-                         .Where(static declaration => declaration.Function?.Asm is not null)
-                         .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
-            {
-                var functionName = FunctionOverloadFacts.QualifyResolvedName(
-                    module,
-                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                if (!_typeModel.Functions.TryGetValue(functionName, out var signature)
-                    || !_abiModel.Functions.TryGetValue(functionName, out var abiSignature)
-                    || !_effectModel.Functions.TryGetValue(functionName, out var effects))
-                {
-                    continue;
-                }
-
-                builder.AppendLine($"; imported asm definition: {functionName}");
-                builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
-
-                if (TryEmitAsmFunctionDefinition(
-                        builder,
-                        internalize: ShouldInternalize(declaration.Visibility),
-                        signature,
-                        abiSignature,
-                        effects,
-                        declaration.Function!.Asm!,
-                        parameterEffects: null,
-                        out var asmFailureReason))
-                {
-                    builder.AppendLine();
-                    emitted.Add(functionName);
-                    continue;
-                }
-
-                builder.AppendLine($"; LLVM asm body emission fallback for {functionName}: {asmFailureReason}");
-                LogLlvmFallback(
-                    "llvm-asm-fallback",
-                    functionName,
-                    asmFailureReason,
-                    FunctionBodyLoweringKind.AsmBypass,
-                    supportsDirectCodeGeneration: false,
-                    operation: "EmitImportedAsmDefinitions");
-                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects: null));
-                builder.AppendLine();
-                emitted.Add(functionName);
-            }
-        }
-
-        return emitted;
     }
 
     private void LogLlvmFallback(
@@ -1364,6 +1305,14 @@ internal sealed class LlvmIrEmitter
             case SystemTextBuiltinKind.UnicodeView:
                 EmitOwnedTextViewBuiltin(builder, abiFunction, StarkTypeSymbols.Unicode);
                 break;
+            case SystemTextBuiltinKind.AsciiData:
+            case SystemTextBuiltinKind.UnicodeData:
+                EmitTextViewDataBuiltin(builder, abiFunction);
+                break;
+            case SystemTextBuiltinKind.AsciiLength:
+            case SystemTextBuiltinKind.UnicodeLength:
+                EmitTextViewLengthBuiltin(builder, abiFunction);
+                break;
             case SystemTextBuiltinKind.TryConcatAscii:
                 EmitOwnedTextConcatBuiltin(builder, abiFunction, StarkTypeSymbols.Integer(8), StarkTypeSymbols.Ascii);
                 break;
@@ -1399,6 +1348,44 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine($"  %view_with_ptr = insertvalue {resultType} zeroinitializer, ptr %view_data, 0");
         builder.AppendLine($"  %view_result = insertvalue {resultType} %view_with_ptr, i64 %view_length, 1");
         builder.AppendLine($"  ret {resultType} %view_result");
+    }
+
+    private void EmitTextViewDataBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Text data builtin '{abiFunction.Name}' expects exactly one user parameter.");
+        }
+
+        var sourceParameter = abiFunction.UserParameters[0];
+        var aggregateType = MapType(sourceParameter.SourceType);
+        var resultType = MapType(abiFunction.LlvmReturnType);
+        var sourceValue = $"%{EscapeIdentifier(sourceParameter.LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %view_data = extractvalue {aggregateType} {sourceValue}, 0");
+        builder.AppendLine($"  ret {resultType} %view_data");
+    }
+
+    private void EmitTextViewLengthBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Text length builtin '{abiFunction.Name}' expects exactly one user parameter.");
+        }
+
+        var sourceParameter = abiFunction.UserParameters[0];
+        var aggregateType = MapType(sourceParameter.SourceType);
+        var resultType = MapType(abiFunction.LlvmReturnType);
+        var sourceValue = $"%{EscapeIdentifier(sourceParameter.LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %view_length = extractvalue {aggregateType} {sourceValue}, 1");
+        builder.AppendLine($"  ret {resultType} %view_length");
     }
 
     private void EmitOwnedTextConcatBuiltin(
@@ -1445,19 +1432,37 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine("  ret i1 false");
         builder.AppendLine("concat_copy_left_check:");
         builder.AppendLine("  %concat_left_nonempty = icmp ne i64 %concat_left_length, 0");
-        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left, label %concat_after_left");
-        builder.AppendLine("concat_copy_left:");
-        builder.AppendLine($"  %concat_left_bytes = {RenderTextMemcpyLength(unitType, "%concat_left_length")}");
-        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly %concat_data, ptr nocapture readonly %concat_left_data, i64 %concat_left_bytes, i1 false)");
-        builder.AppendLine("  br label %concat_after_left");
+        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left_prepare, label %concat_after_left");
+        builder.AppendLine("concat_copy_left_prepare:");
+        builder.AppendLine("  br label %concat_copy_left_loop");
+        builder.AppendLine("concat_copy_left_loop:");
+        builder.AppendLine("  %concat_left_index = phi i64 [ 0, %concat_copy_left_prepare ], [ %concat_left_index_next, %concat_copy_left_body ]");
+        builder.AppendLine("  %concat_left_continue = icmp ult i64 %concat_left_index, %concat_left_length");
+        builder.AppendLine("  br i1 %concat_left_continue, label %concat_copy_left_body, label %concat_after_left");
+        builder.AppendLine("concat_copy_left_body:");
+        builder.AppendLine($"  %concat_left_src = getelementptr inbounds {unitLlvmType}, ptr %concat_left_data, i64 %concat_left_index");
+        builder.AppendLine($"  %concat_left_value = load {unitLlvmType}, ptr %concat_left_src");
+        builder.AppendLine($"  %concat_left_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_index");
+        builder.AppendLine($"  store {unitLlvmType} %concat_left_value, ptr %concat_left_dst");
+        builder.AppendLine("  %concat_left_index_next = add i64 %concat_left_index, 1");
+        builder.AppendLine("  br label %concat_copy_left_loop");
         builder.AppendLine("concat_after_left:");
         builder.AppendLine("  %concat_right_nonempty = icmp ne i64 %concat_right_length, 0");
-        builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right, label %concat_finish");
-        builder.AppendLine("concat_copy_right:");
+        builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right_prepare, label %concat_finish");
+        builder.AppendLine("concat_copy_right_prepare:");
+        builder.AppendLine("  br label %concat_copy_right_loop");
+        builder.AppendLine("concat_copy_right_loop:");
+        builder.AppendLine("  %concat_right_index = phi i64 [ 0, %concat_copy_right_prepare ], [ %concat_right_index_next, %concat_copy_right_body ]");
+        builder.AppendLine("  %concat_right_continue = icmp ult i64 %concat_right_index, %concat_right_length");
+        builder.AppendLine("  br i1 %concat_right_continue, label %concat_copy_right_body, label %concat_finish");
+        builder.AppendLine("concat_copy_right_body:");
+        builder.AppendLine($"  %concat_right_src = getelementptr inbounds {unitLlvmType}, ptr %concat_right_data, i64 %concat_right_index");
+        builder.AppendLine($"  %concat_right_value = load {unitLlvmType}, ptr %concat_right_src");
         builder.AppendLine($"  %concat_right_dest = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
-        builder.AppendLine($"  %concat_right_bytes = {RenderTextMemcpyLength(unitType, "%concat_right_length")}");
-        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly %concat_right_dest, ptr nocapture readonly %concat_right_data, i64 %concat_right_bytes, i1 false)");
-        builder.AppendLine("  br label %concat_finish");
+        builder.AppendLine($"  %concat_right_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_right_dest, i64 %concat_right_index");
+        builder.AppendLine($"  store {unitLlvmType} %concat_right_value, ptr %concat_right_dst");
+        builder.AppendLine("  %concat_right_index_next = add i64 %concat_right_index, 1");
+        builder.AppendLine("  br label %concat_copy_right_loop");
         builder.AppendLine("concat_finish:");
         builder.AppendLine("  store i64 %concat_required, ptr %concat_length_addr");
         builder.AppendLine("  ret i1 true");
@@ -1483,6 +1488,8 @@ internal sealed class LlvmIrEmitter
         return builtinKind switch
         {
             SystemTextBuiltinKind.AsciiView or SystemTextBuiltinKind.UnicodeView
+                or SystemTextBuiltinKind.AsciiData or SystemTextBuiltinKind.UnicodeData
+                or SystemTextBuiltinKind.AsciiLength or SystemTextBuiltinKind.UnicodeLength
                 => function.Parameters.ToDictionary(
                     static parameter => parameter.Name,
                     static parameter => new ParameterMemoryEffectSummary(
@@ -1552,12 +1559,20 @@ internal sealed class LlvmIrEmitter
         {
             "AsciiView" => SystemTextBuiltinKind.AsciiView,
             "UnicodeView" => SystemTextBuiltinKind.UnicodeView,
+            "AsciiData" => SystemTextBuiltinKind.AsciiData,
+            "UnicodeData" => SystemTextBuiltinKind.UnicodeData,
+            "AsciiLength" => SystemTextBuiltinKind.AsciiLength,
+            "UnicodeLength" => SystemTextBuiltinKind.UnicodeLength,
             "TryConcatAscii" => SystemTextBuiltinKind.TryConcatAscii,
             "TryConcatUnicode" => SystemTextBuiltinKind.TryConcatUnicode,
             _ => default
         };
 
-        return sourceName is "AsciiView" or "UnicodeView" or "TryConcatAscii" or "TryConcatUnicode";
+        return sourceName is
+            "AsciiView" or "UnicodeView"
+            or "AsciiData" or "UnicodeData"
+            or "AsciiLength" or "UnicodeLength"
+            or "TryConcatAscii" or "TryConcatUnicode";
     }
 
     private string RenderAbiParameter(
@@ -1694,8 +1709,7 @@ internal sealed class LlvmIrEmitter
 
         if (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
             || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && !parameter.SourceType.IsMutablePointer)
-            || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && !parameter.SourceType.IsMutableView)
-            || parameter.Kind == AbiParameterKind.IndirectIn)
+            || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && !parameter.SourceType.IsMutableView))
         {
             attributes.Add("readonly");
         }
@@ -2786,6 +2800,9 @@ internal sealed class LlvmIrEmitter
                 case SsaAddressOfLocalRValue addressOfLocal:
                     EmitAddressOfLocal(result, addressOfLocal);
                     return;
+                case SsaAddressOfParameterRValue addressOfParameter:
+                    EmitAddressOfParameter(result, addressOfParameter);
+                    return;
                 case SsaFieldAddressRValue fieldAddress:
                     EmitFieldAddress(result, fieldAddress);
                     return;
@@ -3119,6 +3136,23 @@ internal sealed class LlvmIrEmitter
                     : null;
                 if (!string.IsNullOrWhiteSpace(promotedLocal))
                 {
+                    var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
+                        candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
+                    if (promotedParameter is not null)
+                    {
+                        if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
+                        {
+                            arguments.Add($"ptr %{EscapeIdentifier(promotedParameter.LlvmName)}");
+                        }
+                        else
+                        {
+                            EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
+                            arguments.Add($"ptr %{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}");
+                        }
+
+                        continue;
+                    }
+
                     EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
                     arguments.Add($"ptr %{EscapeIdentifier($"slot_{promotedLocal}")}");
                     continue;
@@ -3257,6 +3291,27 @@ internal sealed class LlvmIrEmitter
         {
             EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
             AppendLine($"  {result} = getelementptr inbounds {MapType(addressOfLocal.PointeeType)}, ptr %{EscapeIdentifier($"slot_{addressOfLocal.LocalName}")}, i32 0");
+        }
+
+        private void EmitAddressOfParameter(string result, SsaAddressOfParameterRValue addressOfParameter)
+        {
+            var parameter = _abiFunction.UserParameters.FirstOrDefault(
+                candidate => string.Equals(candidate.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal));
+            if (parameter is null)
+            {
+                throw new UnsupportedBodyEmissionException($"Unknown SSA parameter '{addressOfParameter.ParameterName}' for address emission.");
+            }
+
+            if (parameter.Kind == AbiParameterKind.IndirectIn)
+            {
+                AppendLine(
+                    $"  {result} = getelementptr inbounds {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
+                return;
+            }
+
+            EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
+            AppendLine(
+                $"  {result} = getelementptr inbounds {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
         }
 
         private void EmitFieldAddress(string result, SsaFieldAddressRValue fieldAddress)
@@ -3460,6 +3515,20 @@ internal sealed class LlvmIrEmitter
             }
         }
 
+        private void EnsureParameterSlotExists(AbiParameterSymbol parameter, StarkTypeSymbol parameterType)
+        {
+            var slotName = EscapeIdentifier($"slot_param_{parameter.SourceName}");
+            if (_allocatedLocalSlots.Add(slotName))
+            {
+                AppendLine($"  %{slotName} = alloca {MapType(parameterType)}");
+
+                var incomingValue = _materializedParameters.TryGetValue(parameter.LlvmName, out var materialized)
+                    ? materialized
+                    : $"%{EscapeIdentifier(parameter.LlvmName)}";
+                AppendLine($"  store {MapType(parameterType)} {incomingValue}, ptr %{slotName}");
+            }
+        }
+
         private void EmitEntryParameterMaterialization()
         {
             foreach (var parameter in _abiFunction.UserParameters)
@@ -3533,6 +3602,10 @@ internal sealed class LlvmIrEmitter
     {
         AsciiView,
         UnicodeView,
+        AsciiData,
+        UnicodeData,
+        AsciiLength,
+        UnicodeLength,
         TryConcatAscii,
         TryConcatUnicode
     }

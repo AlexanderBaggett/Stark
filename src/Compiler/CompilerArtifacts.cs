@@ -1234,6 +1234,13 @@ public sealed record MidLevelIrAddressOfLocalRValue(
     string Text)
     : MidLevelIrRValue(Type, Text);
 
+public sealed record MidLevelIrAddressOfParameterRValue(
+    string ParameterName,
+    StarkTypeSymbol PointeeType,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
 public sealed record MidLevelIrFieldAddressRValue(
     MidLevelIrOperand Address,
     StarkTypeSymbol AggregateType,
@@ -1466,6 +1473,13 @@ public sealed record SsaTextSliceRValue(
 
 public sealed record SsaAddressOfLocalRValue(
     string LocalName,
+    StarkTypeSymbol PointeeType,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
+public sealed record SsaAddressOfParameterRValue(
+    string ParameterName,
     StarkTypeSymbol PointeeType,
     StarkTypeSymbol Type,
     string Text)

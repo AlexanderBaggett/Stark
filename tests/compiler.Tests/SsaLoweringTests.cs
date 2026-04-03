@@ -712,6 +712,34 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void IndexedFieldAddressBehindRawPointerLowersToParameterBackedSsaAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[16] Storage;
+                i64 WritePos;
+            }
+
+            fn i32 Touch(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+                *(&(*buffer).Storage[index]) = value;
+                return (i32)*(&(*buffer).Storage[index]);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaFieldAddressRValue });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaElementAddressRValue });
+        Assert.Contains(instructions, static instruction => instruction is SsaStoreIndirectInstruction);
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaLoadIndirectRValue });
+    }
+
+    [Fact]
     public void ImmutableGlobalAddressesLowerToReadonlySsaAddresses()
     {
         var result = Compile(

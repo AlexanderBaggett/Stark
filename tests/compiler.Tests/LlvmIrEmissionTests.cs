@@ -601,6 +601,38 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void EnumSwitchExpressionCallEmitsSingleEvaluation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Status {
+                Ok,
+                Err(i32),
+            }
+
+            fn Status Next() {
+                return Status.Ok;
+            }
+
+            fn i32 Run() {
+                switch (Next()) {
+                    case Status.Ok:
+                        return 1;
+                    case Status.Err(var error):
+                        return error;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, llvm.Split("call %Status @Next()", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public void CaptureSwitchPatternEmitsConcreteBody()
     {
         var result = Compile(
@@ -1632,6 +1664,85 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void IndexedFieldAddressBehindRawPointerEmitsDirectParameterGeps()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[16] Storage;
+                i64 WritePos;
+            }
+
+            fn i32 Touch(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+                *(&(*buffer).Storage[index]) = value;
+                return (i32)*(&(*buffer).Storage[index]);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Touch(ptr nocapture %arg_buffer, i64 %arg_index, i8 %arg_value)", llvm);
+        Assert.Contains("getelementptr inbounds %Buffer, ptr %arg_buffer, i32 0, i32 0", llvm);
+        Assert.Contains("getelementptr inbounds [16 x i8], ptr", llvm);
+        Assert.DoesNotContain("alloca %Buffer", llvm);
+    }
+
+    [Fact]
+    public void IndexedRawPointerElementsEmitDirectParameterGeps()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Touch(rawmutptr<i8> data, i64 index, i8 value) {
+                *(&data[index]) = value;
+                return (i32)*(&data[index]);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Touch(ptr nocapture %arg_data, i64 %arg_index, i8 %arg_value)", llvm);
+        Assert.Contains("getelementptr inbounds i8, ptr %arg_data, i64 %arg_index", llvm);
+        Assert.DoesNotContain("alloca ptr", llvm);
+    }
+
+    [Fact]
+    public void BorrowReceiverIndexedFieldAddressesEmitDirectReceiverGeps()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[16] Storage;
+
+                fn void Put(borrow mut Buffer self, i64 index, i8 value) {
+                    *(&self.Storage[index]) = value;
+                    return;
+                }
+
+                fn i32 Read(borrow Buffer self, i64 index) {
+                    return (i32)*(&self.Storage[index]);
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Buffer_Put(ptr nonnull noalias nocapture dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)", llvm);
+        Assert.Contains("define fastcc i32 @Buffer_Read(ptr nonnull noalias readonly nocapture dereferenceable(16) %arg_self, i64 %arg_index)", llvm);
+        Assert.Contains("getelementptr inbounds %Buffer, ptr %arg_self, i32 0", llvm);
+        Assert.Contains("getelementptr inbounds %Buffer, ptr %v0, i32 0, i32 0", llvm);
+        Assert.DoesNotContain("alloca %Buffer", llvm);
+    }
+
+    [Fact]
     public void MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFacts()
     {
         var result = Compile(
@@ -1920,7 +2031,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ImportedSourceAsmFunctionsEmitInlineAsmDefinitionsInsteadOfExternalDeclarations()
+    public void ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls()
     {
         var result = Compile(
             """
@@ -1956,10 +2067,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("; imported asm definition: Syscall.Syscall2", llvm);
-        Assert.Contains("define i64 @Syscall2(i64 %arg_number, ptr readonly %arg_path) inlinehint", llvm);
+        Assert.Contains("declare i64 @Syscall2", llvm);
         Assert.Contains("call i64 @Syscall2(i64 2, ptr %arg_path)", llvm);
-        Assert.DoesNotContain("declare i64 @Syscall2", llvm);
+        Assert.DoesNotContain("; imported asm definition: Syscall.Syscall2", llvm);
+        Assert.DoesNotContain("define i64 @Syscall2", llvm);
     }
 
     [Fact]
@@ -2310,6 +2421,24 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void HotFunctionsEmitHotAttribute()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            hot fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) hot inlinehint", llvm);
+    }
+
+    [Fact]
     public void LibraryBuildQualifiesPublicRootSymbols()
     {
         var result = Compile(
@@ -2407,6 +2536,113 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%slot_alias = alloca %Box", llvm);
         Assert.Contains("call void @Touch(ptr %slot_alias)", llvm);
         Assert.DoesNotContain("callarg_box", llvm);
+    }
+
+    [Fact]
+    public void MutableBorrowReceiverForwardingReusesOriginalParameterPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Counter {
+                i32 Value;
+
+                fn void Reset(borrow mut Counter self) {
+                    self.Value = 0;
+                    return;
+                }
+
+                fn void ResetThenAdd(borrow mut Counter self, i32 value) {
+                    self.Reset();
+                    self.Value += value;
+                    return;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Counter_Reset(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self)", llvm);
+        Assert.Contains("define fastcc void @Counter_ResetThenAdd(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self, i32 %arg_value)", llvm);
+        Assert.Contains("call void @Counter_Reset(ptr %arg_self)", llvm);
+        Assert.DoesNotContain("callarg_self", llvm);
+    }
+
+    [Fact]
+    public void ManifestBackedMutableBorrowMethodsStayWritableAtImportedDeclarations()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-borrow-llvm-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Counter {
+                    i32 Value;
+
+                    fn void Reset(borrow mut Counter self) {
+                        self.Value = 0;
+                        return;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run() {
+                        stack mut Facade.Counter counter = new Facade.Counter() { Value = 1 };
+                        counter.Reset();
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+
+            Assert.Contains(
+                "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias dereferenceable(4) align 4)",
+                llvm);
+            Assert.DoesNotContain(
+                "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias readonly",
+                llvm,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]

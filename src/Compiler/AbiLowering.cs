@@ -159,7 +159,14 @@ internal sealed class AbiLowerer
 
         if (isOverloaded)
         {
-            return qualifiedName;
+            var modulePrefix = string.IsNullOrEmpty(moduleName)
+                ? string.Empty
+                : $"{moduleName}.";
+            return _options.QualifyModuleSymbols
+                   && !string.IsNullOrEmpty(modulePrefix)
+                   && !qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                ? $"{modulePrefix}{qualifiedName}"
+                : qualifiedName;
         }
 
         if (visibility == StarkVisibility.Export

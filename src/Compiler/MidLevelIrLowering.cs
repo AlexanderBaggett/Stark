@@ -353,6 +353,7 @@ internal sealed class MidLevelIrLowerer(
             Field,
             ConstantArrayIndex,
             DynamicArrayIndex,
+            RawPointerIndex,
             SliceIndex
         }
 
@@ -365,7 +366,8 @@ internal sealed class MidLevelIrLowerer(
             StarkTypeSymbol SegmentType);
 
         private sealed record PlaceTarget(
-            string RootName,
+            string? RootName,
+            MidLevelIrOperand? RootAddress,
             StarkTypeSymbol RootType,
             StarkTypeSymbol Type,
             IReadOnlyList<PlacePathSegment> Path,
@@ -963,9 +965,25 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerSwitch(StarkParser.SwitchStatementContext switchStatement)
         {
-            if (TryLowerNativeSwitch(switchStatement)
-                || TryLowerPartitionedTextSwitch(switchStatement)
-                || TryLowerGuardedSwitch(switchStatement))
+            var switchValue = LowerExpressionToOperand(switchStatement.expression());
+            if (switchValue is null)
+            {
+                MarkUnsupported(switchStatement, "Switch expression could not be lowered.");
+                return;
+            }
+
+            var lowered = switchValue.Type.Kind switch
+            {
+                StarkTypeKind.Integer or StarkTypeKind.Bool =>
+                    TryLowerNativeSwitch(switchStatement, switchValue)
+                    || TryLowerGuardedSwitch(switchStatement, switchValue),
+                StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
+                    TryLowerPartitionedTextSwitch(switchStatement, switchValue)
+                    || TryLowerGuardedSwitch(switchStatement, switchValue),
+                _ => TryLowerGuardedSwitch(switchStatement, switchValue)
+            };
+
+            if (lowered)
             {
                 return;
             }
@@ -1007,15 +1025,16 @@ internal sealed class MidLevelIrLowerer(
             CurrentBlock = exitBlock;
         }
 
-        private bool TryLowerNativeSwitch(StarkParser.SwitchStatementContext switchStatement)
+        private bool TryLowerNativeSwitch(
+            StarkParser.SwitchStatementContext switchStatement,
+            MidLevelIrOperand switchValue)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, out var parsedSections, out var defaultSectionCount))
             {
                 return false;
             }
 
-            var switchValue = LowerExpressionToOperand(switchStatement.expression());
-            if (switchValue is null || !CanUseNativeSwitchType(switchValue.Type) || defaultSectionCount > 1)
+            if (!CanUseNativeSwitchType(switchValue.Type) || defaultSectionCount > 1)
             {
                 return false;
             }
@@ -1106,16 +1125,16 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
-        private bool TryLowerPartitionedTextSwitch(StarkParser.SwitchStatementContext switchStatement)
+        private bool TryLowerPartitionedTextSwitch(
+            StarkParser.SwitchStatementContext switchStatement,
+            MidLevelIrOperand switchValue)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, out var parsedSections, out var defaultSectionCount))
             {
                 return false;
             }
 
-            var switchValue = LowerExpressionToOperand(switchStatement.expression());
-            if (switchValue is null
-                || !CanUsePartitionedTextSwitchType(switchValue.Type)
+            if (!CanUsePartitionedTextSwitchType(switchValue.Type)
                 || defaultSectionCount > 1)
             {
                 return false;
@@ -1230,15 +1249,16 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
-        private bool TryLowerGuardedSwitch(StarkParser.SwitchStatementContext switchStatement)
+        private bool TryLowerGuardedSwitch(
+            StarkParser.SwitchStatementContext switchStatement,
+            MidLevelIrOperand switchValue)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, out var parsedSections, out var defaultSectionCount))
             {
                 return false;
             }
 
-            var switchValue = LowerExpressionToOperand(switchStatement.expression());
-            if (switchValue is null || !CanLowerSwitchType(switchValue.Type) || defaultSectionCount > 1)
+            if (!CanLowerSwitchType(switchValue.Type) || defaultSectionCount > 1)
             {
                 return false;
             }
@@ -2524,13 +2544,19 @@ internal sealed class MidLevelIrLowerer(
                 return expectedType is null ? converted : CoerceOperand(converted, expectedType);
             }
 
+            var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
+            if (op == "&")
+            {
+                var address = LowerAddressOfUnary(expression.unaryExpression());
+                return expectedType is null ? address : CoerceOperand(address, expectedType);
+            }
+
             var operand = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
             if (operand is null)
             {
                 return null;
             }
 
-            var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
             var result = op switch
             {
                 "+" => operand,
@@ -2551,7 +2577,6 @@ internal sealed class MidLevelIrLowerer(
                 "~" => EmitTemporary(
                     new MidLevelIrUnaryRValue(MidLevelIrUnaryOperator.BitwiseNot, operand, operand.Type, expression.GetText()),
                     "bitnot"),
-                "&" => LowerAddressOfUnary(expression.unaryExpression(), operand),
                 "*" => LowerDereferenceUnary(expression, operand),
                 _ => UnsupportedOperand()
             };
@@ -2559,13 +2584,13 @@ internal sealed class MidLevelIrLowerer(
             return expectedType is null ? result : CoerceOperand(result, expectedType);
         }
 
-        private MidLevelIrOperand? LowerAddressOfUnary(StarkParser.UnaryExpressionContext operandExpression, MidLevelIrOperand operand)
+        private MidLevelIrOperand? LowerAddressOfUnary(StarkParser.UnaryExpressionContext operandExpression)
         {
             if (operandExpression.conversionType() is null
                 && operandExpression.powerExpression() is null
                 && string.Equals(operandExpression.unaryOperator()?.GetText(), "*", StringComparison.Ordinal))
             {
-                return operand;
+                return LowerUnaryExpression(operandExpression.unaryExpression(), expectedType: null);
             }
 
             if (!TryResolveAssignmentTarget(operandExpression, out var target))
@@ -3408,7 +3433,46 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                MarkUnsupported(indexes, "Indexing is only supported for fixed arrays, slices, ascii, and unicode values.");
+                if (current.Type.Kind == StarkTypeKind.RawPointer && current.Type.ElementType is not null)
+                {
+                    var elementType = current.Type.ElementType;
+                    var index = LowerExpressionToOperand(indexExpression);
+                    if (index is null || index.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        MarkUnsupported(indexExpression, "Raw pointer indexing requires an integer index operand.");
+                        return null;
+                    }
+
+                    var elementAddress = EmitTemporary(
+                        new MidLevelIrElementAddressRValue(
+                            current,
+                            elementType,
+                            index,
+                            ConstantIndex: null,
+                            AddressType(elementType, current.Type.IsMutablePointer && CanMutateThroughType(elementType)),
+                            $"{current.Text}[{indexExpression.GetText()}]"),
+                        "addr");
+                    if (elementAddress is null)
+                    {
+                        return null;
+                    }
+
+                    var loaded = EmitTemporary(
+                        new MidLevelIrLoadIndirectRValue(
+                            elementAddress,
+                            elementType,
+                            $"{current.Text}[{indexExpression.GetText()}]"),
+                        "load");
+                    if (loaded is null)
+                    {
+                        return null;
+                    }
+
+                    current = loaded;
+                    continue;
+                }
+
+                MarkUnsupported(indexes, "Indexing is only supported for fixed arrays, raw pointers, slices, ascii, and unicode values.");
                 return null;
             }
 
@@ -4031,6 +4095,11 @@ internal sealed class MidLevelIrLowerer(
             if (postfixExpression.primaryExpression().expression() is { } groupedExpression
                 && TryExtractSimpleUnaryExpression(groupedExpression, out var groupedUnary))
             {
+                if (TryResolvePointerBackedAssignmentTarget(postfixExpression, groupedUnary, out target))
+                {
+                    return true;
+                }
+
                 return TryResolveAssignmentTarget(groupedUnary, out target);
             }
 
@@ -4041,7 +4110,7 @@ internal sealed class MidLevelIrLowerer(
 
             var path = new List<PlacePathSegment>();
             var currentType = root?.Type;
-            var supportsAddressModel = root is MidLevelIrLocalOperand;
+            var supportsAddressModel = SupportsAddressModel(root);
             var usesAddressModel = false;
 
             foreach (var postfixPart in postfixExpression.postfixPart())
@@ -4069,7 +4138,7 @@ internal sealed class MidLevelIrLowerer(
 
                     currentName = null;
                     currentType = root.Type;
-                    supportsAddressModel = root is MidLevelIrLocalOperand;
+                    supportsAddressModel = SupportsAddressModel(root);
                     continue;
                 }
 
@@ -4094,12 +4163,11 @@ internal sealed class MidLevelIrLowerer(
 
                         if (currentType.Kind == StarkTypeKind.FixedArray && supportsAddressModel)
                         {
-                            if (root is not MidLevelIrLocalOperand localRoot || currentType.ElementType is null)
+                            if (currentType.ElementType is null)
                             {
                                 return false;
                             }
 
-                            EnsureAddressableLocal(localRoot.Name);
                             var indexOperand = LowerExpressionToOperand(indexExpression);
                             if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
                             {
@@ -4137,6 +4205,27 @@ internal sealed class MidLevelIrLowerer(
                                 ParentType: currentType,
                                 SegmentType: sliceElementType));
                             currentType = sliceElementType;
+                            usesAddressModel = true;
+                            supportsAddressModel = true;
+                            continue;
+                        }
+
+                        if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.RawPointerIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: currentType.ElementType));
+                            currentType = currentType.ElementType;
                             usesAddressModel = true;
                             supportsAddressModel = true;
                             continue;
@@ -4181,8 +4270,148 @@ internal sealed class MidLevelIrLowerer(
                 currentType = root.Type;
             }
 
+            if (IsBorrowParameterRoot(root))
+            {
+                usesAddressModel = true;
+            }
+
             var targetType = currentType ?? root.Type;
-            target = new PlaceTarget(root.Text, root.Type, targetType, path, usesAddressModel, GetAddressMutability(root));
+            target = new PlaceTarget(root.Text, RootAddress: null, root.Type, targetType, path, usesAddressModel, GetAddressMutability(root));
+            return true;
+        }
+
+        private bool TryResolvePointerBackedAssignmentTarget(
+            StarkParser.PostfixExpressionContext postfixExpression,
+            StarkParser.UnaryExpressionContext groupedUnary,
+            out PlaceTarget target)
+        {
+            target = default!;
+
+            if (!TryInitializePointerPlaceRoot(groupedUnary, out var rootAddress, out var rootType, out var rootAddressIsMutable))
+            {
+                return false;
+            }
+
+            var path = new List<PlacePathSegment>();
+            var currentType = rootType;
+
+            foreach (var postfixPart in postfixExpression.postfixPart())
+            {
+                if (postfixPart.argumentList() is not null)
+                {
+                    return false;
+                }
+
+                if (postfixPart.expressionList() is { } expressionList)
+                {
+                    foreach (var indexExpression in expressionList.expression())
+                    {
+                        if (currentType.Kind == StarkTypeKind.FixedArray
+                            && TryResolveConstantArrayIndex(currentType, indexExpression, out var constantIndex, out var elementType))
+                        {
+                            elementType = ProjectFrozenView(currentType, elementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.ConstantArrayIndex,
+                                FieldName: null,
+                                ConstantIndex: constantIndex,
+                                IndexOperand: null,
+                                ParentType: currentType,
+                                SegmentType: elementType));
+                            currentType = elementType;
+                            continue;
+                        }
+
+                        if (currentType.Kind == StarkTypeKind.FixedArray && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            var dynamicElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.DynamicArrayIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: dynamicElementType));
+                            currentType = dynamicElementType;
+                            continue;
+                        }
+
+                        if (currentType.Kind == StarkTypeKind.Slice && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            var sliceElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.SliceIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: sliceElementType));
+                            currentType = sliceElementType;
+                            continue;
+                        }
+
+                        if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.RawPointerIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: currentType.ElementType));
+                            currentType = currentType.ElementType;
+                            continue;
+                        }
+
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                var memberName = postfixPart.Identifier()?.GetText();
+                if (memberName is null
+                    || !TryResolveField(currentType, memberName, out var field, out var fieldIndex))
+                {
+                    return false;
+                }
+
+                var projectedType = ProjectFrozenView(currentType, field.Type);
+                path.Add(new PlacePathSegment(
+                    PlacePathKind.Field,
+                    memberName,
+                    fieldIndex,
+                    IndexOperand: null,
+                    ParentType: currentType,
+                    SegmentType: projectedType));
+                currentType = projectedType;
+            }
+
+            target = new PlaceTarget(
+                RootName: null,
+                RootAddress: rootAddress,
+                RootType: rootType,
+                Type: currentType,
+                Path: path,
+                UsesAddressModel: true,
+                IsAddressMutable: rootAddressIsMutable);
             return true;
         }
 
@@ -4302,13 +4531,21 @@ internal sealed class MidLevelIrLowerer(
                 if (address is null)
                 {
                     MarkUnsupported();
-                    return ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
+                    return target.RootName is not null
+                        ? ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType)
+                        : new MidLevelIrZeroInitializerOperand(target.Type);
                 }
 
                 return EmitTemporary(
                            new MidLevelIrLoadIndirectRValue(address, target.Type, $"{target.RootName}:load"),
                            "load")
                        ?? address;
+            }
+
+            if (target.RootName is null)
+            {
+                MarkUnsupported();
+                return new MidLevelIrZeroInitializerOperand(target.Type);
             }
 
             var current = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
@@ -4347,6 +4584,19 @@ internal sealed class MidLevelIrLowerer(
 
             if (target.Path.Count == 0)
             {
+                if (target.RootName is null)
+                {
+                    MarkUnsupported();
+                    return new LoweredAssignment(
+                        text,
+                        TargetName: null,
+                        target.RootType,
+                        DirectValue: null,
+                        ResultValue: assignedValue,
+                        Address: null,
+                        ReplacesWholeValue: false);
+                }
+
                 return new LoweredAssignment(
                     text,
                     target.RootName,
@@ -4355,6 +4605,19 @@ internal sealed class MidLevelIrLowerer(
                     assignedValue,
                     Address: null,
                     ReplacesWholeValue: true);
+            }
+
+            if (target.RootName is null)
+            {
+                MarkUnsupported();
+                return new LoweredAssignment(
+                    text,
+                    TargetName: null,
+                    target.RootType,
+                    DirectValue: null,
+                    ResultValue: assignedValue,
+                    Address: null,
+                    ReplacesWholeValue: false);
             }
 
             var root = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
@@ -4441,14 +4704,16 @@ internal sealed class MidLevelIrLowerer(
 
         private MidLevelIrOperand? BuildAddress(PlaceTarget target)
         {
-            MidLevelIrOperand? currentValue = ResolveNamedOperand(target.RootName);
+            MidLevelIrOperand? currentValue = target.RootName is null ? null : ResolveNamedOperand(target.RootName);
             var currentAddressIsMutable = target.IsAddressMutable;
-            MidLevelIrOperand? currentAddress = currentValue switch
-            {
-                MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, local.Type),
-                MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, global.Type),
-                _ => null
-            };
+            MidLevelIrOperand? currentAddress = target.RootAddress
+                ?? currentValue switch
+                {
+                    MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, local.Type),
+                    MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, parameter.Type),
+                    MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, global.Type),
+                    _ => null
+                };
             var currentType = target.RootType;
 
             foreach (var segment in target.Path)
@@ -4494,6 +4759,36 @@ internal sealed class MidLevelIrLowerer(
                             "addr");
                         currentType = segment.SegmentType;
                         currentAddressIsMutable = elementAddressIsMutable;
+                        currentValue = null;
+                        break;
+                    case PlacePathKind.RawPointerIndex:
+                        var pointerValue = currentValue;
+                        if (pointerValue is null && currentAddress is not null)
+                        {
+                            pointerValue = EmitTemporary(
+                                new MidLevelIrLoadIndirectRValue(currentAddress, currentType, $"{currentAddress.Text}:load"),
+                                "load");
+                        }
+
+                        if (pointerValue is null
+                            || pointerValue.Type.Kind != StarkTypeKind.RawPointer
+                            || pointerValue.Type.ElementType is null
+                            || segment.IndexOperand is null)
+                        {
+                            return null;
+                        }
+
+                        currentAddressIsMutable = pointerValue.Type.IsMutablePointer && CanMutateThroughType(segment.SegmentType);
+                        currentAddress = EmitTemporary(
+                            new MidLevelIrElementAddressRValue(
+                                pointerValue,
+                                segment.SegmentType,
+                                segment.IndexOperand,
+                                ConstantIndex: null,
+                                AddressType(segment.SegmentType, currentAddressIsMutable),
+                                $"{pointerValue.Text}[{segment.IndexOperand.Text}]"),
+                            "addr");
+                        currentType = segment.SegmentType;
                         currentValue = null;
                         break;
                     case PlacePathKind.SliceIndex:
@@ -5482,6 +5777,11 @@ internal sealed class MidLevelIrLowerer(
 
         private bool RequiresRuntimeDrop(StarkTypeSymbol type, HashSet<string> visiting)
         {
+            if (type.BorrowKind != StarkBorrowKind.None)
+            {
+                return false;
+            }
+
             if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
             {
                 return false;
@@ -5801,14 +6101,21 @@ internal sealed class MidLevelIrLowerer(
 
         private string? ResolveIndirectArgumentLocal(StarkTypeSymbol parameterType, MidLevelIrOperand argument)
         {
-            if (!RequiresIndirectArgument(parameterType)
-                || argument is not MidLevelIrLocalOperand localOperand)
+            if (!RequiresIndirectArgument(parameterType))
             {
                 return null;
             }
 
-            EnsureAddressableLocal(localOperand.Name);
-            return localOperand.Name;
+            switch (argument)
+            {
+                case MidLevelIrLocalOperand localOperand:
+                    EnsureAddressableLocal(localOperand.Name);
+                    return localOperand.Name;
+                case MidLevelIrParameterOperand parameterOperand when RequiresIndirectArgument(parameterOperand.Type):
+                    return parameterOperand.Name;
+                default:
+                    return null;
+            }
         }
 
         private static bool RequiresIndirectArgument(StarkTypeSymbol type)
@@ -6129,6 +6436,49 @@ internal sealed class MidLevelIrLowerer(
             return _localsByName.TryGetValue(name, out var local) && local.IsAddressable;
         }
 
+        private static bool SupportsAddressModel(MidLevelIrOperand? operand)
+        {
+            return operand is MidLevelIrLocalOperand or MidLevelIrParameterOperand or MidLevelIrGlobalOperand or MidLevelIrGlobalAddressOperand;
+        }
+
+        private bool IsBorrowParameterRoot(MidLevelIrOperand? operand)
+        {
+            return operand is MidLevelIrParameterOperand parameter
+                && _parametersByName.TryGetValue(parameter.Name, out var parameterBinding)
+                && parameterBinding.Type.BorrowKind != StarkBorrowKind.None;
+        }
+
+        private bool TryInitializePointerPlaceRoot(
+            StarkParser.UnaryExpressionContext expression,
+            out MidLevelIrOperand address,
+            out StarkTypeSymbol rootType,
+            out bool isAddressMutable)
+        {
+            address = default!;
+            rootType = StarkTypeSymbols.Error;
+            isAddressMutable = false;
+
+            if (expression.conversionType() is not null
+                || expression.powerExpression() is not null
+                || !string.Equals(expression.unaryOperator()?.GetText(), "*", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var loweredPointer = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
+            if (loweredPointer is null
+                || loweredPointer.Type.Kind != StarkTypeKind.RawPointer
+                || loweredPointer.Type.ElementType is null)
+            {
+                return false;
+            }
+
+            address = loweredPointer;
+            rootType = loweredPointer.Type.ElementType;
+            isAddressMutable = loweredPointer.Type.IsMutablePointer && CanMutateThroughType(rootType);
+            return true;
+        }
+
         private void EnsureAddressableLocal(string name)
         {
             if (!_localsByName.TryGetValue(name, out var local) || local.IsAddressable)
@@ -6157,6 +6507,16 @@ internal sealed class MidLevelIrLowerer(
                 : true;
             return EmitTemporary(
                 new MidLevelIrAddressOfLocalRValue(name, type, AddressType(type, isMutable), $"&{name}"),
+                "addr");
+        }
+
+        private MidLevelIrOperand? CreateAddressOfParameter(string name, StarkTypeSymbol type)
+        {
+            var isMutable = _parametersByName.TryGetValue(name, out var parameter)
+                ? CanMutateThroughType(parameter.Type)
+                : true;
+            return EmitTemporary(
+                new MidLevelIrAddressOfParameterRValue(name, type, AddressType(type, isMutable), $"&{name}"),
                 "addr");
         }
 

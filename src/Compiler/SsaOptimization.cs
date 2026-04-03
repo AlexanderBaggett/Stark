@@ -232,6 +232,9 @@ internal sealed class SsaCleanupOptimizer
             case SsaAddressOfLocalRValue addressOfLocal:
                 key = $"address-of-local|{addressOfLocal.LocalName}|{TypeKey(addressOfLocal.PointeeType)}|{TypeKey(addressOfLocal.Type)}";
                 return true;
+            case SsaAddressOfParameterRValue addressOfParameter:
+                key = $"address-of-parameter|{addressOfParameter.ParameterName}|{TypeKey(addressOfParameter.PointeeType)}|{TypeKey(addressOfParameter.Type)}";
+                return true;
             case SsaFieldAddressRValue fieldAddress:
                 key = $"field-address|{ValueKey(fieldAddress.Address)}|{TypeKey(fieldAddress.AggregateType)}|{fieldAddress.FieldName}|{fieldAddress.FieldIndex}|{TypeKey(fieldAddress.Type)}";
                 return true;
@@ -891,6 +894,7 @@ internal sealed class SsaCleanupOptimizer
                 textSlice.Type,
                 textSlice.Text),
             SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
+            SsaAddressOfParameterRValue addressOfParameter => addressOfParameter,
             SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
                 RewriteValue(fieldAddress.Address, replacements),
                 fieldAddress.AggregateType,
@@ -1902,6 +1906,7 @@ internal sealed class SsaConstantPropagator
                 textSlice.Type,
                 textSlice.Text),
             SsaAddressOfLocalRValue addressOfLocal => addressOfLocal,
+            SsaAddressOfParameterRValue addressOfParameter => addressOfParameter,
             SsaFieldAddressRValue fieldAddress => new SsaFieldAddressRValue(
                 RewriteValue(fieldAddress.Address, replacements),
                 fieldAddress.AggregateType,

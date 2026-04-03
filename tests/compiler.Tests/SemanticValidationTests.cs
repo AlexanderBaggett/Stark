@@ -254,6 +254,129 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void InfiniteLoopsMustUseStaticallyUnconditionalConditions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Loop(bool flag) {
+                while infinite (flag) {
+                    ;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4111");
+    }
+
+    [Fact]
+    public void InfiniteLoopsRejectStructuralExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Loop() {
+                while infinite (true) {
+                    break;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4111");
+    }
+
+    [Fact]
+    public void WillexitWhileLoopsWithUnconditionalConditionsRequireStructuralExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Loop() {
+                while willexit (true) {
+                    ;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4112");
+    }
+
+    [Fact]
+    public void WillexitForLoopsWithOmittedConditionsRequireStructuralExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Loop() {
+                for willexit (;; ) {
+                    ;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4112");
+    }
+
+    [Fact]
+    public void WillexitLoopsAcceptStructuralExitForUnconditionalConditions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Loop() {
+                for willexit (;; ) {
+                    break;
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void FunctionModifiersRejectConflictingInlinePreferences()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline noinline fn void Run() {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4109");
+    }
+
+    [Fact]
+    public void FunctionModifiersRejectHotAndColdTogether()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            hot cold fn void Run() {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4110");
+    }
+
+    [Fact]
     public void FiniteFunctionsCannotCallNonFiniteFunctions()
     {
         var result = Compile(

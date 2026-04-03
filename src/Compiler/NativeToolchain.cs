@@ -121,19 +121,58 @@ internal static class NativeToolchain
 
     public static NativeToolchainResult CreateStaticLibrary(IEnumerable<string> objectPaths, string outputPath, string? archiverTool = null)
     {
-        var arguments = BuildStaticLibraryArguments(objectPaths, outputPath);
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
 
-        if (!string.IsNullOrWhiteSpace(archiverTool))
+        var tempOutputPath = Path.Combine(
+            Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory,
+            $".{Guid.NewGuid():N}.{Path.GetFileName(fullOutputPath)}");
+
+        try
         {
-            return RunTool(archiverTool, arguments, outputPath);
-        }
+            var arguments = BuildStaticLibraryArguments(objectPaths, tempOutputPath);
+            NativeToolchainResult result;
 
-        if (OperatingSystem.IsWindows())
+            if (!string.IsNullOrWhiteSpace(archiverTool))
+            {
+                result = RunTool(archiverTool, arguments, tempOutputPath);
+            }
+            else if (OperatingSystem.IsWindows())
+            {
+                result = RunFirstAvailableTool(["llvm-lib", "lib"], arguments, tempOutputPath);
+            }
+            else
+            {
+                result = RunFirstAvailableTool(["llvm-ar", "ar"], arguments, tempOutputPath);
+            }
+
+            if (!result.Succeeded)
+            {
+                return result with { OutputPath = fullOutputPath };
+            }
+
+            if (File.Exists(fullOutputPath))
+            {
+                File.Delete(fullOutputPath);
+            }
+
+            File.Move(tempOutputPath, fullOutputPath);
+            return result with { OutputPath = fullOutputPath };
+        }
+        finally
         {
-            return RunFirstAvailableTool(["llvm-lib", "lib"], arguments, outputPath);
+            try
+            {
+                if (File.Exists(tempOutputPath))
+                {
+                    File.Delete(tempOutputPath);
+                }
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
         }
-
-        return RunFirstAvailableTool(["llvm-ar", "ar"], arguments, outputPath);
     }
 
     private static NativeToolchainResult CompileLlvmIr(string llvmIr, string outputPath, bool compileOnly, string? preservedLlvmOutputPath)

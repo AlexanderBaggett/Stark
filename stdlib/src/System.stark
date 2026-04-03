@@ -1,3 +1,4 @@
+import System.Runtime
 import System.Syscall
 export import System.Console
 export import System.IO

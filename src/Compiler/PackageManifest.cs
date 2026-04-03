@@ -75,6 +75,10 @@ internal sealed record StarkPackageMethodManifest(
     bool IsFfi,
     bool UseFastCallingConvention);
 
+internal sealed record StarkPackageDestructorManifest(
+    bool IsMutable,
+    string BodyText);
+
 internal sealed record StarkPackageTypeManifest(
     string Name,
     string QualifiedName,
@@ -83,7 +87,8 @@ internal sealed record StarkPackageTypeManifest(
     IReadOnlyList<StarkPackageFieldManifest> Fields,
     IReadOnlyList<string>? GenericParameters = null,
     IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null,
-    IReadOnlyList<StarkPackageMethodManifest>? Methods = null);
+    IReadOnlyList<StarkPackageMethodManifest>? Methods = null,
+    StarkPackageDestructorManifest? Destructor = null);
 
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,
@@ -171,10 +176,15 @@ internal static class PackageManifestBuilder
                                 qualifiedName,
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
-                                namedType.OrderedFields.Select(static field => new StarkPackageFieldManifest(field.Name, field.Type.DisplayName)).ToArray(),
+                                namedType.OrderedFields
+                                    .Select(field => new StarkPackageFieldManifest(
+                                        field.Name,
+                                        RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName)))
+                                    .ToArray(),
                                 GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
                                 Variants: null,
-                                Methods: BuildTypeMethodManifests(module, declaration.Name, typeModel, abiModel, effectModel)));
+                                Methods: BuildTypeMethodManifests(module, declaration.Name, typeModel, abiModel, effectModel),
+                                Destructor: BuildTypeDestructorManifest(module, declaration.Name)));
                         }
 
                         break;
@@ -190,13 +200,13 @@ internal static class PackageManifestBuilder
                                 [],
                                 GenericParameters: enumType.GenericParams.Count == 0 ? null : enumType.GenericParams.ToArray(),
                                 enumType.Variants
-                                    .Select(static variant => new StarkPackageEnumVariantManifest(
+                                    .Select(variant => new StarkPackageEnumVariantManifest(
                                         variant.Name,
                                         variant.UsesNamedFields,
                                         variant.Fields
-                                            .Select(static field => new StarkPackageFieldManifest(
+                                            .Select(field => new StarkPackageFieldManifest(
                                                 field.Name ?? $"Item{field.Position}",
-                                                field.Type.DisplayName))
+                                                RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName)))
                                             .ToArray()))
                                     .ToArray()));
                         }
@@ -212,7 +222,7 @@ internal static class PackageManifestBuilder
                                 qualifiedName,
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
-                                globalType.Type.DisplayName,
+                                RenderManifestTypeText(globalType.Type, module.SyntaxModel.ModuleName),
                                 globalType.IsMutable));
                         }
 
@@ -273,8 +283,12 @@ internal static class PackageManifestBuilder
             visibility,
             abiFunction.SymbolName,
             declarationFunction.Kind.ToString().ToLowerInvariant(),
-            function.ReturnType.DisplayName,
-            function.Parameters.Select(static parameter => new StarkPackageParameterManifest(parameter.Name, parameter.Type.DisplayName)).ToArray(),
+            RenderManifestTypeText(function.ReturnType, ModuleNameFromQualifiedName(qualifiedName)),
+            function.Parameters
+                .Select(parameter => new StarkPackageParameterManifest(
+                    parameter.Name,
+                    RenderManifestTypeText(parameter.Type, ModuleNameFromQualifiedName(qualifiedName))))
+                .ToArray(),
             effects.IsFfi,
             effects.UseFastCallingConvention,
             BuildAsmManifest(declarationFunction.Asm));
@@ -329,8 +343,12 @@ internal static class PackageManifestBuilder
                     $"{module.SyntaxModel.ModuleName}.{declaration.Name}",
                     abiFunction.SymbolName,
                     declaration.Function!.Kind.ToString().ToLowerInvariant(),
-                    function.ReturnType.DisplayName,
-                    function.Parameters.Select(static parameter => new StarkPackageParameterManifest(parameter.Name, parameter.Type.DisplayName)).ToArray(),
+                    RenderManifestTypeText(function.ReturnType, module.SyntaxModel.ModuleName),
+                    function.Parameters
+                        .Select(parameter => new StarkPackageParameterManifest(
+                            parameter.Name,
+                            RenderManifestTypeText(parameter.Type, module.SyntaxModel.ModuleName)))
+                        .ToArray(),
                     effects.IsFfi,
                     effects.UseFastCallingConvention);
             })
@@ -339,6 +357,38 @@ internal static class PackageManifestBuilder
             .ToArray();
 
         return methods.Length == 0 ? null : methods;
+    }
+
+    private static StarkPackageDestructorManifest? BuildTypeDestructorManifest(
+        LoadedModuleDocument module,
+        string containingTypeName)
+    {
+        var destructor = DeclaredDestructorSyntaxCollector.Collect(module)
+            .FirstOrDefault(candidate => string.Equals(candidate.LocalTypeName, containingTypeName, StringComparison.Ordinal));
+        if (destructor is null)
+        {
+            return null;
+        }
+
+        return new StarkPackageDestructorManifest(
+            destructor.IsMutable,
+            destructor.Body.GetText());
+    }
+
+    private static string RenderManifestTypeText(StarkTypeSymbol type, string moduleName)
+    {
+        if (string.IsNullOrEmpty(moduleName))
+        {
+            return type.DisplayName;
+        }
+
+        return type.DisplayName.Replace($"{moduleName}.", string.Empty, StringComparison.Ordinal);
+    }
+
+    private static string ModuleNameFromQualifiedName(string qualifiedName)
+    {
+        var separator = qualifiedName.LastIndexOf('.');
+        return separator < 0 ? string.Empty : qualifiedName[..separator];
     }
 }
 
@@ -443,6 +493,20 @@ internal static class PackageManifestLoader
                     builder.Append(' ');
                     builder.Append(field.Name);
                     builder.AppendLine(";");
+                }
+
+                if (type.Destructor is not null)
+                {
+                    builder.Append("    ");
+                    if (type.Destructor.IsMutable)
+                    {
+                        builder.Append("mut ");
+                    }
+
+                    builder.Append("drop ");
+                    builder.Append(type.Destructor.BodyText);
+                    builder.AppendLine();
+                    builder.AppendLine();
                 }
 
                 foreach (var method in (type.Methods ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))

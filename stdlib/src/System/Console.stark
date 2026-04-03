@@ -1,27 +1,107 @@
+import System.IO
+import System.Runtime.Buffer
+import System.Runtime.Platform
+import System.Text
 module System.Console
 
-ffi fn i32 fputs(ascii text, rawptr<i8> stream);
-const rawptr<i8> stdout = null;
-const rawptr<i8> stderr = null;
+fn System.IO.IOStatus StatusFromWriteResult(i32 result) {
+    if (result < 0) {
+        return System.IO.IOStatus.Err(System.IO.IOError.Unknown(result));
+    }
 
-public fn void Write(ascii text) {
-    fputs(text, stdout);
-    return;
+    return System.IO.IOStatus.Ok;
 }
 
-public fn void WriteLine(ascii text) {
-    Write(text);
-    Write("\n");
-    return;
+public fn System.IO.IOStatus Write(ascii text) {
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAscii(text));
 }
 
-public fn void WriteError(ascii text) {
-    fputs(text, stderr);
-    return;
+public fn System.IO.IOStatus Write(unicode text) {
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutUnicode(text));
 }
 
-public fn void WriteErrorLine(ascii text) {
-    WriteError(text);
-    WriteError("\n");
-    return;
+public fn System.IO.IOStatus WriteLine(ascii text) {
+    stack mut System.Runtime.Buffer.ByteBuffer512 lineBuffer = new System.Runtime.Buffer.ByteBuffer512();
+    stack mut Ascii owned = new Ascii() {
+        Data = lineBuffer.WritePointer(),
+        Length = 0,
+        Capacity = lineBuffer.Writable()
+    };
+    stack i64 textLength = System.Text.AsciiLength(text);
+    stack i64 required = textLength + 1;
+
+    if (owned.Data != null && required <= owned.Capacity) {
+        stack ascii fullText = text[0, textLength];
+        if (System.Text.TryConcatAscii(&owned, fullText, "\n")) {
+            return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAscii(System.Text.AsciiView(owned)));
+        }
+
+        return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+    }
+
+    stack ascii fullText = text[0, textLength];
+    stack System.IO.IOStatus status = StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAscii(fullText));
+    switch (status) {
+        case System.IO.IOStatus.Err(var error):
+            return System.IO.IOStatus.Err(error);
+        case System.IO.IOStatus.Ok:
+            return Write("\n");
+    }
+}
+
+public fn System.IO.IOStatus WriteLine(unicode text) {
+    stack System.IO.IOStatus status = Write(text);
+    switch (status) {
+        case System.IO.IOStatus.Err(var error):
+            return System.IO.IOStatus.Err(error);
+        case System.IO.IOStatus.Ok:
+            return Write((unicode)"\n");
+    }
+}
+
+public fn System.IO.IOStatus WriteError(ascii text) {
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStderrAscii(text));
+}
+
+public fn System.IO.IOStatus WriteError(unicode text) {
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStderrUnicode(text));
+}
+
+public fn System.IO.IOStatus WriteErrorLine(ascii text) {
+    stack mut System.Runtime.Buffer.ByteBuffer512 lineBuffer = new System.Runtime.Buffer.ByteBuffer512();
+    stack mut Ascii owned = new Ascii() {
+        Data = lineBuffer.WritePointer(),
+        Length = 0,
+        Capacity = lineBuffer.Writable()
+    };
+    stack i64 textLength = System.Text.AsciiLength(text);
+    stack i64 required = textLength + 1;
+
+    if (owned.Data != null && required <= owned.Capacity) {
+        stack ascii fullText = text[0, textLength];
+        if (System.Text.TryConcatAscii(&owned, fullText, "\n")) {
+            return StatusFromWriteResult(System.Runtime.Platform.WriteStderrAscii(System.Text.AsciiView(owned)));
+        }
+
+        return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+    }
+
+    stack ascii fullText = text[0, textLength];
+    stack System.IO.IOStatus status = StatusFromWriteResult(System.Runtime.Platform.WriteStderrAscii(fullText));
+    switch (status) {
+        case System.IO.IOStatus.Err(var error):
+            return System.IO.IOStatus.Err(error);
+        case System.IO.IOStatus.Ok:
+            return WriteError("\n");
+    }
+}
+
+public fn System.IO.IOStatus WriteErrorLine(unicode text) {
+    stack System.IO.IOStatus status = WriteError(text);
+    switch (status) {
+        case System.IO.IOStatus.Err(var error):
+            return System.IO.IOStatus.Err(error);
+        case System.IO.IOStatus.Ok:
+            return WriteError((unicode)"\n");
+    }
 }
