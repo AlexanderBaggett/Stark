@@ -55,6 +55,7 @@ Repository source layout:
 - `stdlib/src/System/IO/File.stark`
 - `stdlib/src/System/IO/Path.stark`
 - `stdlib/src/System/Text.stark`
+- `stdlib/src/System/Math.stark`
 - `stdlib/src/System/Runtime.stark`
 - `stdlib/src/System/Runtime/Buffer.stark`
 - `stdlib/src/System/Runtime/Platform.stark`
@@ -69,6 +70,7 @@ Public module surface:
 - `System.IO.File`
 - `System.IO.Path`
 - `System.Text`
+- `System.Math`
 
 Internal modules:
 
@@ -578,3 +580,47 @@ The next implementation pass should focus on:
 7. Implement the Windows platform boundary without CRT dependency
 8. Extend `System.IO.Path` with join, extension, base-name, and directory-name helpers
 9. Add platform-specific integration tests proving the package works without libc/glibc on Linux and without CRT dependency on Windows
+
+
+## System.Math
+
+### Use ASM/Compiler Intrinsics for these functions
+
+| Function | x86/x64 Instruction | ARM64 Instruction | Notes |
+|---|---|---|---|
+| `Math.Sqrt` | `vsqrtsd` / `vsqrtss` | `fsqrt` | AVX; falls to `sqrtsd` on SSE2 |
+| `Math.FusedMultiplyAdd` | `vfmadd213sd/ss` | `fmadd` | Requires FMA3; also emits `vfnmadd`, `vfmsub` variants |
+| `Math.ReciprocalSqrtEstimate` | `rsqrtss` | `frsqrte` | Approximate; ~12-bit precision |
+| `Math.ReciprocalEstimate` | `rcpss` | `frecpe` | Approximate 1/x |
+| `Math.Ceiling` | `vroundsd` (mode 2) | `frintp` | Requires SSE4.1 |
+| `Math.Floor` | `vroundsd` (mode 1) | `frintm` | Requires SSE4.1 |
+| `Math.Truncate` | `vroundsd` (mode 3) | `frintz` | Promoted to HW intrinsic in .NET 7 |
+| `Math.Round` (ToEven) | `vroundsd` (mode 0) | `frintn` | Banker's rounding; SSE4.1 |
+| `Math.Min` (float/double) | `vminsd` / `vminss` | `fminnm` | IEEE NaN semantics |
+| `Math.Max` (float/double) | `vmaxsd` / `vmaxss` | `fmaxnm` | IEEE NaN semantics |
+| `BitOperations.LeadingZeroCount` | `lzcnt` | `clz` | Requires LZCNT (ABM) |
+| `BitOperations.TrailingZeroCount` | `tzcnt` | `rbit` + `clz` | Requires BMI1 |
+| `BitOperations.PopCount` | `popcnt` | `cnt` (NEON) | Requires POPCNT |
+| `BitOperations.RotateLeft/Right` | `rol` / `ror` | `ror` / `rorv` | Native rotation instructions |
+
+
+### Use LLVM BuiltIns for these:
+- @sin, @cos, @tan, @exp, @exp2, @log, @log2, @log10
+- LLVM recently added in 2024 llvm.asin.*, llvm.acos.*, llvm.atan.*, llvm.atan2.*, llvm.pow.*, llvm.sinh.*, llvm.cosh.*, llvm.tanh.* and llvm.sincos.*
+  - So We will use those too.
+- These will map to
+  - Math.Sin
+  - Math.Cos
+  - Math.Tan
+  - Math.Exp
+  - Math.Exp2
+  - Math.Log
+  - Math.Log10
+  - Math.Asin
+  - Math.Atan
+  - Math.Atan2
+  - Math.Pow
+  - Math.Sinh
+  - Math.Cosh
+  - Math.Tanh
+  - Math.SinCos

@@ -177,6 +177,12 @@ internal sealed class SemanticValidator
             return true;
         }
 
+        if (context is StarkParser.PostfixExpressionContext postfix
+            && IsSelfRootedMutatingCall(postfix))
+        {
+            return true;
+        }
+
         for (var index = 0; index < context.ChildCount; index++)
         {
             if (context.GetChild(index) is ParserRuleContext child && ContainsSelfMutation(child))
@@ -217,6 +223,21 @@ internal sealed class SemanticValidator
         var primary = postfix.primaryExpression();
         return primary?.Identifier() is { } identifier
             && string.Equals(identifier.GetText(), "self", StringComparison.Ordinal);
+    }
+
+    private static bool IsSelfRootedMutatingCall(StarkParser.PostfixExpressionContext expression)
+    {
+        var primary = expression.primaryExpression();
+        if (primary?.Identifier() is not { } identifier
+            || !string.Equals(identifier.GetText(), "self", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // This warning is heuristic-only. Treat self-rooted calls as mutation-capable so
+        // mutating helpers like `self.Close()` do not trigger a false "use drop instead"
+        // warning in otherwise valid destructors.
+        return expression.postfixPart().Any(static part => part.argumentList() is not null);
     }
 
     private void ValidateConstGlobal(

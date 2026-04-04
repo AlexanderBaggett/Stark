@@ -563,6 +563,33 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void MutDropCallingSelfMethodDoesNotProduceFalseWarning()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i32 Value;
+
+                fn void Reset(mut borrow Buffer self) {
+                    self.Value = 0;
+                    return;
+                }
+
+                mut drop {
+                    self.Reset();
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4010");
+    }
+
+    [Fact]
     public void DestructorBlocksCannotReturn()
     {
         var result = Compile(

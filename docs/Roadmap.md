@@ -661,6 +661,47 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
   - [x] stdlib regression tests for owned-resource cleanup
 
 
+## Milestone 7.5 Standard Library: System.Math
+
+
+### Hardware Intrinsics (ASM/Compiler)
+
+- [ ] `Math.Sqrt` → x86: `vsqrtsd`/`vsqrtss` (AVX, fallback `sqrtsd` SSE2) | ARM64: `fsqrt`
+- [ ] `Math.FusedMultiplyAdd` → x86: `vfmadd213sd/ss` (FMA3, incl. `vfnmadd`/`vfmsub` variants) | ARM64: `fmadd`
+- [ ] `Math.ReciprocalSqrtEstimate` → x86: `rsqrtss` | ARM64: `frsqrte` (~12-bit precision)
+- [ ] `Math.ReciprocalEstimate` → x86: `rcpss` | ARM64: `frecpe`
+- [ ] `Math.Ceiling` → x86: `vroundsd` mode 2 (SSE4.1) | ARM64: `frintp`
+- [ ] `Math.Floor` → x86: `vroundsd` mode 1 (SSE4.1) | ARM64: `frintm`
+- [ ] `Math.Truncate` → x86: `vroundsd` mode 3 (SSE4.1) | ARM64: `frintz`
+- [ ] `Math.Round` (ToEven) → x86: `vroundsd` mode 0 (SSE4.1) | ARM64: `frintn`
+- [ ] `Math.Min` (float/double) → x86: `vminsd`/`vminss` | ARM64: `fminnm` (IEEE NaN semantics)
+- [ ] `Math.Max` (float/double) → x86: `vmaxsd`/`vmaxss` | ARM64: `fmaxnm` (IEEE NaN semantics)
+- [ ] `BitOperations.LeadingZeroCount` → x86: `lzcnt` (ABM) | ARM64: `clz`
+- [ ] `BitOperations.TrailingZeroCount` → x86: `tzcnt` (BMI1) | ARM64: `rbit` + `clz`
+- [ ] `BitOperations.PopCount` → x86: `popcnt` (POPCNT) | ARM64: `cnt` (NEON)
+- [ ] `BitOperations.RotateLeft/Right` → x86: `rol`/`ror` | ARM64: `ror`/`rorv`
+
+
+### LLVM BuiltIn Mappings
+
+- [ ] `Math.Sin` → `@llvm.sin.*`
+- [ ] `Math.Cos` → `@llvm.cos.*`
+- [ ] `Math.Tan` → `@llvm.tan.*`
+- [ ] `Math.Exp` → `@llvm.exp.*`
+- [ ] `Math.Exp2` → `@llvm.exp2.*`
+- [ ] `Math.Log` → `@llvm.log.*`
+- [ ] `Math.Log2` → `@llvm.log2.*`
+- [ ] `Math.Log10` → `@llvm.log10.*`
+- [ ] `Math.Asin` → `@llvm.asin.*`
+- [ ] `Math.Acos` → `@llvm.acos.*`
+- [ ] `Math.Atan` → `@llvm.atan.*`
+- [ ] `Math.Atan2` → `@llvm.atan2.*`
+- [ ] `Math.Pow` → `@llvm.pow.*`
+- [ ] `Math.Sinh` → `@llvm.sinh.*`
+- [ ] `Math.Cosh` → `@llvm.cosh.*`
+- [ ] `Math.Tanh` → `@llvm.tanh.*`
+- [ ] `Math.SinCos` → `@llvm.sincos.*`
+
 ## Milestone 8: Optimization and Backend Quality
 
 Goal: emitted LLVM becomes richer, more correct, and more competitive.
