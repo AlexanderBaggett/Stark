@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Stark.Compiler;
 
-namespace compiler.Tests;
+namespace compiler.IntegrationTests;
 
 public sealed class MultiFileIntegrationTests
 {
@@ -279,7 +279,7 @@ public sealed class MultiFileIntegrationTests
         var mathPath = Path.Combine(packageDirectory, "Math.stark");
         var facadePath = Path.Combine(packageDirectory, "Facade.stark");
         var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
-        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryPath) + ".starkpkg.json");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
 
@@ -398,7 +398,7 @@ public sealed class MultiFileIntegrationTests
 
         var globalsPath = Path.Combine(packageDirectory, "Globals.stark");
         var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Globals.lib" : "libGlobals.a");
-        var manifestPath = Path.Combine(packageDirectory, "libGlobals.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryPath) + ".starkpkg.json");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
 

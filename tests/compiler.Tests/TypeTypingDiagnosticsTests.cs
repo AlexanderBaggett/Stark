@@ -691,20 +691,21 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
-    public void NonAsciiUnicodeLiteralsCannotBeNarrowedToAscii()
+    public void RuntimeUnicodeToAsciiCastsStillRequireCompileTimeTextConstants()
     {
         var result = Compile(
             """
             module Demo
 
             fn ascii Run() {
-                return (ascii)"\u03B1";
+                stack unicode text = (unicode)"\u03B1";
+                return (ascii)text;
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "contains non-ASCII data");
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "compile-time text constant");
     }
 
     [Fact]

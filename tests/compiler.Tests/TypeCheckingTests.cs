@@ -110,7 +110,7 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
-    public void TextEscapeLiteralsInferAsciiAndUnicodeByDecodedValue()
+    public void TextEscapeLiteralsPreferUtf8BackedAsciiUnlessExplicitlyConverted()
     {
         var result = Compile(
             """
@@ -125,11 +125,11 @@ public sealed class TypeCheckingTests
             }
 
             finite law unicode UnicodeString() {
-                return "\xC9";
+                return (unicode)"\xC9";
             }
 
             finite law unicode UnicodeChar() {
-                return '\u03B1';
+                return (unicode)'\u03B1';
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -148,6 +148,24 @@ public sealed class TypeCheckingTests
 
             finite law unicode Widen() {
                 return (unicode)"Hello";
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void ExplicitNonAsciiLiteralToAsciiConversionTypeChecks()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law ascii Run() {
+                return (ascii)"\u03B1";
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));

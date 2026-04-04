@@ -1,6 +1,6 @@
 using Stark.Compiler;
 
-namespace compiler.Tests;
+namespace compiler.IntegrationTests;
 
 public sealed class CompilerCliTests
 {
@@ -44,7 +44,7 @@ public sealed class CompilerCliTests
         Assert.Contains("Compiler Logs:", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
-        Assert.Contains("--log-level <info|warning|error>", text);
+        Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
         Assert.Contains("--log-verbosity <normal|verbose>", text);
         Assert.Contains("--log-category <name>", text);
         Assert.Contains("--log-stage <pass-id>", text);
@@ -109,13 +109,37 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task VerboseLogVerbosityPrintsPipelineLifecycleEvents()
+    public async Task VerboseLogVerbosityRequiresExplicitInfoLogLevelForPipelineLifecycleEvents()
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
         var exitCode = await CompilerCli.RunAsync(
             ["--check", "--log-verbosity", "verbose", "--log-kind", "pipeline"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32 Run() {
+                    return 7;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Check succeeded.", stdout.ToString());
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public async Task ExplicitInfoLogLevelPrintsPipelineLifecycleEvents()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--log-level", "info", "--log-verbosity", "verbose", "--log-kind", "pipeline"],
             new StringReader(
                 """
                 module Demo

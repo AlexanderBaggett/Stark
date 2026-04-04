@@ -3854,7 +3854,7 @@ internal sealed class MidLevelIrLowerer(
 
         private static StarkTypeSymbol InferTextLiteralType(string text, TextLiteralKind kind)
         {
-            return TextLiteralDecoder.IsAsciiLiteral(text, kind)
+            return TextLiteralDecoder.CanUseUtf8Storage(text, kind)
                 ? StarkTypeSymbols.Ascii
                 : StarkTypeSymbols.Unicode;
         }
@@ -3909,13 +3909,13 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
         {
-            if (_typeModel.Overloads.TryGetValue(sourceName, out overloads!))
+            if (!sourceName.Contains('.', StringComparison.Ordinal)
+                && _typeModel.Overloads.TryGetValue($"{CurrentModuleName}.{sourceName}", out overloads!))
             {
                 return true;
             }
 
-            if (!sourceName.Contains('.', StringComparison.Ordinal)
-                && _typeModel.Overloads.TryGetValue($"{CurrentModuleName}.{sourceName}", out overloads!))
+            if (_typeModel.Overloads.TryGetValue(sourceName, out overloads!))
             {
                 return true;
             }
@@ -3926,6 +3926,12 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryResolveFunctionSignature(string name, out TypedFunctionSignature signature)
         {
+            if (!name.Contains('.', StringComparison.Ordinal)
+                && _typeModel.Functions.TryGetValue($"{CurrentModuleName}.{name}", out signature!))
+            {
+                return true;
+            }
+
             if (_typeModel.Functions.TryGetValue(name, out signature!))
             {
                 return true;
@@ -3948,6 +3954,12 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryResolveGlobal(string name, out TypedGlobalSymbol global)
         {
+            if (!name.Contains('.', StringComparison.Ordinal)
+                && _typeModel.Globals.TryGetValue($"{CurrentModuleName}.{name}", out global!))
+            {
+                return true;
+            }
+
             if (_typeModel.Globals.TryGetValue(name, out global!))
             {
                 return true;
@@ -4066,6 +4078,12 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
         {
+            if (!typeName.Contains('.', StringComparison.Ordinal)
+                && _typeModel.NamedTypes.TryGetValue($"{CurrentModuleName}.{typeName}", out namedType!))
+            {
+                return true;
+            }
+
             if (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!))
             {
                 return true;
@@ -5691,7 +5709,7 @@ internal sealed class MidLevelIrLowerer(
             var operand = LowerExpressionToOperand(expression, targetType);
             if (operand is null)
             {
-                MarkUnsupported();
+                MarkUnsupported(expression, $"Variable initializer '{text}' could not be lowered to a MIR operand.");
                 Emit(MidLevelIrStatementKind.Assign, $"{targetName} = {text}", targetName, targetType);
                 return;
             }
@@ -6622,7 +6640,7 @@ internal sealed class MidLevelIrLowerer(
 
             if (targetType.Kind == StarkTypeKind.Ascii
                 && operand.Type.Kind == StarkTypeKind.Unicode
-                && TextLiteralDecoder.IsAsciiLiteral(
+                && TextLiteralDecoder.CanUseUtf8Storage(
                     textConstant.LiteralText,
                     textConstant.LiteralText.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String))
             {

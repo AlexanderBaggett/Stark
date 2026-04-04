@@ -1,0 +1,21 @@
+﻿Hi there, This is the Stark Language Repo. 
+It's a language focused on peformance. Ideally performance matching or beating C and Rust via not allowing unperformant constructs, and through constraints which allow for guarantees that we can make to the LLVM backend.
+
+
+The language is syntactically semilar to C#, but more restrictive than Rust. 
+
+
+Read the the documents in the docs folder, and the tests,
+
+
+Try not to read all of the Compiler C# files in the repo, there's too much and you have only so much context.  Focus on high-level stuff.  You can read the file list to get the general picture of what is going on, that paired with the tests should give you a pretty good idea.
+
+
+Avoid over-engineering
+Avoid scope expansion
+Keep it simple
+If you happen discover incomplete, incorrect, or unperformant implementations in the compiler or standard library while working, let me know.
+
+
+If you ever are unsure about how something should be done, provide options with examples in stark code, and explain the tradeoffs
+Anyway, when you are done with that and ready to work on roadmap tasks, let me know.

@@ -634,12 +634,12 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
     - [x] caller-buffer `CurrentDirectory(rawmutptr<Ascii>) -> bool` foundation
   - [x] `System.Text` encoding enum and shared conversion helpers for the core owned text types
     - [x] immutable text view pointer/length builtins for low-level stdlib boundaries
-- [ ] Implement userspace file buffering and encoding-aware text IO
+- [x] Implement userspace file buffering and encoding-aware text IO
   - [x] fixed-size linear and ring buffer foundations
   - [x] buffering modes
   - [x] newline policy
   - [x] byte IO
-  - [ ] ascii/unicode text IO
+  - [x] ascii/unicode text IO
 - [x] Linux platform implementation without libc/glibc
   - [x] syscall-backed write/read/open/close/delete/rename/stat/getcwd/ioctl boundary
     - [x] stdout/stderr `ascii` console write
@@ -648,12 +648,12 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
     - [x] `ioctl` terminal detection
   - [x] terminal detection and buffering-policy support
   - [x] packaged integration tests proving no libc/glibc dependency
-- [ ] Windows platform implementation without CRT dependency
-  - [ ] kernel32-backed console and file APIs
-  - [ ] UTF-16 path conversion boundary
-  - [ ] terminal detection and buffering-policy support
-  - [ ] packaged integration tests proving no CRT dependency
-- [ ] Packaging and documentation
+- [x] Windows platform implementation without CRT dependency
+  - [x] kernel32-backed console and file APIs
+  - [x] UTF-16 path conversion boundary
+  - [x] terminal detection and buffering-policy support
+  - [x] packaged integration tests proving no CRT dependency
+- [x] Packaging and documentation
   - [x] package manifest coverage for the new module graph
   - [x] package consumption tests without stdlib source imports
   - [x] reference docs for each public stdlib module family

@@ -1,6 +1,6 @@
 using Stark.Compiler;
 
-namespace compiler.Tests;
+namespace compiler.IntegrationTests;
 
 public sealed class ExamplesCompileRunTests
 {

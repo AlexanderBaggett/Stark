@@ -727,8 +727,8 @@ The core owned text container forms are:
 
 String literals infer to:
 
-- `ascii` when the literal contents are ASCII
-- `unicode` otherwise
+- `ascii` by default when the decoded literal can be stored as UTF-8
+- `unicode` when explicitly requested with a compile-time text conversion such as `(unicode)"..."`
 
 Supported escapes in string and character literals are:
 

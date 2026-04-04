@@ -47,6 +47,8 @@ internal readonly record struct DecodedTextLiteral(string Value)
 
 internal static class TextLiteralDecoder
 {
+    private static readonly UTF8Encoding StrictUtf8Encoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     public static bool TryDecode(
         string literalText,
         TextLiteralKind kind,
@@ -167,6 +169,24 @@ internal static class TextLiteralDecoder
     public static bool IsAsciiLiteral(string literalText, TextLiteralKind kind)
     {
         return TryDecode(literalText, kind, out var decoded, out _) && decoded.IsAscii;
+    }
+
+    public static bool CanUseUtf8Storage(string literalText, TextLiteralKind kind)
+    {
+        if (!TryDecode(literalText, kind, out var decoded, out _))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = StrictUtf8Encoding.GetBytes(decoded.Value);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
     }
 
     public static byte[] DecodeUtf8BytesOrFallback(string literalText, TextLiteralKind kind)

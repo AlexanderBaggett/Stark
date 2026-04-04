@@ -3,7 +3,7 @@ import System.Text
 module System.IO.Path
 
 internal finite law bool IsDirectorySeparator(ascii value) {
-    return *System.Text.AsciiData(value) == (i8)47;
+    return System.Runtime.Platform.IsDirectorySeparator(value);
 }
 
 internal fn void ResetDestination(rawmutptr<Ascii> destination) {
@@ -22,15 +22,15 @@ internal fn void ResetDestination(rawmutptr<Ascii> destination) {
 }
 
 public finite law ascii DirectorySeparator() {
-    return "/";
+    return System.Runtime.Platform.DirectorySeparator();
 }
 
 public finite law ascii AlternateDirectorySeparator() {
-    return "";
+    return System.Runtime.Platform.AlternateDirectorySeparator();
 }
 
 public finite law ascii PathSeparator() {
-    return ":";
+    return System.Runtime.Platform.PathSeparator();
 }
 
 public fn bool CurrentDirectory(rawmutptr<Ascii> destination) {
@@ -84,7 +84,7 @@ public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right) {
                         separatedWriteIndex += 1;
                     }
 
-                    *(&data[separatedWriteIndex]) = *System.Text.AsciiData("/");
+                    *(&data[separatedWriteIndex]) = *System.Text.AsciiData(DirectorySeparator());
                     separatedWriteIndex += 1;
 
                     stack mut i64 separatedRightIndex = 0;

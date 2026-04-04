@@ -1003,7 +1003,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             finite law unicode UnicodeChar() {
-                return '\u03B1';
+                return (unicode)'\u03B1';
             }
             """);
 
@@ -1029,11 +1029,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             finite law unicode Greek() {
-                return "\u03B1";
+                return (unicode)"\u03B1";
             }
 
             finite law unicode Accented() {
-                return "\xC9";
+                return (unicode)"\xC9";
             }
             """);
 
@@ -1090,7 +1090,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             finite law unicode Wide() {
-                return "\xC9";
+                return (unicode)"\xC9";
             }
             """);
 

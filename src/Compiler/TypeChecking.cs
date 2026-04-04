@@ -1684,8 +1684,9 @@ internal sealed class TypeChecker
     {
         if (pattern.literal() is { } literal)
         {
-            var literalType = EvaluateLiteral(literal).Type;
-            if (!CanAssign(switchType, literalType))
+            var literalBinding = EvaluateLiteral(literal);
+            var literalType = literalBinding.Type;
+            if (!CanAssignPatternLiteral(switchType, literalBinding))
             {
                 ReportError(
                     "STK3002",
@@ -1997,7 +1998,10 @@ internal sealed class TypeChecker
             }
 
             var literalType = EvaluateLiteral(literal).Type;
-            if (!CanAssign(field.Type, literalType))
+            if (!CanAssignPatternLiteral(field.Type, new ExpressionBinding(
+                    literalType,
+                    TextLiteral: literal.GetText(),
+                    TextLiteralKind: literal.StringLiteral() is not null ? TextLiteralKind.String : TextLiteralKind.Character)))
             {
                 ReportError(
                     "STK3002",
@@ -2076,7 +2080,10 @@ internal sealed class TypeChecker
             }
 
             var literalType = EvaluateLiteral(literal).Type;
-            if (!CanAssign(field.Type, literalType))
+            if (!CanAssignPatternLiteral(field.Type, new ExpressionBinding(
+                    literalType,
+                    TextLiteral: literal.GetText(),
+                    TextLiteralKind: literal.StringLiteral() is not null ? TextLiteralKind.String : TextLiteralKind.Character)))
             {
                 ReportError(
                     "STK3002",
@@ -4350,7 +4357,7 @@ internal sealed class TypeChecker
 
         return target.Kind == StarkTypeKind.Ascii
             && source.Type.Kind == StarkTypeKind.Unicode
-            && TextLiteralDecoder.IsAsciiLiteral(source.TextLiteral, source.TextLiteralKind.Value);
+            && TextLiteralDecoder.CanUseUtf8Storage(source.TextLiteral, source.TextLiteralKind.Value);
     }
 
     private static bool TryDescribeTextExplicitConversionFailure(
@@ -4371,16 +4378,21 @@ internal sealed class TypeChecker
             return true;
         }
 
-        if (targetType.Kind == StarkTypeKind.Ascii
-            && source.Type.Kind == StarkTypeKind.Unicode
-            && !TextLiteralDecoder.IsAsciiLiteral(source.TextLiteral, source.TextLiteralKind.Value))
+        return false;
+    }
+
+    private bool CanAssignPatternLiteral(StarkTypeSymbol target, ExpressionBinding source)
+    {
+        if (CanAssign(target, source.Type))
         {
-            message =
-                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported because the source text literal contains non-ASCII data.";
             return true;
         }
 
-        return false;
+        return target.Kind == StarkTypeKind.Unicode
+            && source.Type.Kind == StarkTypeKind.Ascii
+            && source.TextLiteral is not null
+            && source.TextLiteralKind is not null
+            && TextLiteralDecoder.CanUseUtf8Storage(source.TextLiteral, source.TextLiteralKind.Value);
     }
 
     private static bool IsTextType(StarkTypeSymbol type)
@@ -4612,14 +4624,14 @@ internal sealed class TypeChecker
 
     private static StarkTypeSymbol InferStringLiteralType(string text)
     {
-        return TextLiteralDecoder.IsAsciiLiteral(text, TextLiteralKind.String)
+        return TextLiteralDecoder.CanUseUtf8Storage(text, TextLiteralKind.String)
             ? StarkTypeSymbols.Ascii
             : StarkTypeSymbols.Unicode;
     }
 
     private static StarkTypeSymbol InferCharacterLiteralType(string text)
     {
-        return TextLiteralDecoder.IsAsciiLiteral(text, TextLiteralKind.Character)
+        return TextLiteralDecoder.CanUseUtf8Storage(text, TextLiteralKind.Character)
             ? StarkTypeSymbols.Ascii
             : StarkTypeSymbols.Unicode;
     }

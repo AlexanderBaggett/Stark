@@ -17,7 +17,7 @@ internal static class CompilerCli
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
-        var logLevel = DiagnosticSeverity.Info;
+        var logLevel = DiagnosticSeverity.Warning;
         var logVerbosity = CompilerLogVerbosity.Normal;
         var logCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var logStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -206,12 +206,6 @@ internal static class CompilerCli
             return 0;
         }
 
-        var source = inputPath is not null
-            ? await File.ReadAllTextAsync(inputPath)
-            : await stdin.ReadToEndAsync();
-
-        var moduleResolver = ResolveModuleResolver(inputPath, searchDirectories);
-        var pipeline = DefaultCompilerPipeline.Create();
         var requiresTargetInfo = mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable;
         var targetInfo = requiresTargetInfo
             ? CreateTargetInfo(targetTriple, targetDataLayout)
@@ -219,6 +213,12 @@ internal static class CompilerCli
                     ? detectedTargetInfo
                     : null)
                 : null;
+        var source = inputPath is not null
+            ? await File.ReadAllTextAsync(inputPath)
+            : await stdin.ReadToEndAsync();
+
+        var moduleResolver = ResolveModuleResolver(inputPath, searchDirectories, targetInfo);
+        var pipeline = DefaultCompilerPipeline.Create();
         var compilerOptions = new CompilerOptions(
             EmitLlvmIr: mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
             TargetInfo: targetInfo,
@@ -528,7 +528,7 @@ internal static class CompilerCli
         return 0;
     }
 
-    private static IModuleResolver? ResolveModuleResolver(string? inputPath, IReadOnlyList<string> searchDirectories)
+    private static IModuleResolver? ResolveModuleResolver(string? inputPath, IReadOnlyList<string> searchDirectories, LlvmTargetInfo? targetInfo)
     {
         var resolvedDirectories = new List<string>();
 
@@ -553,9 +553,18 @@ internal static class CompilerCli
             }
         }
 
-        return resolvedDirectories.Count == 0
-            ? null
-            : new FileSystemModuleResolver(resolvedDirectories);
+        if (resolvedDirectories.Count == 0)
+        {
+            return null;
+        }
+
+        IModuleSourceResolver resolver = new FileSystemModuleResolver(resolvedDirectories);
+        if (targetInfo is not null)
+        {
+            resolver = new TargetAwareStdLibModuleResolver(resolver, resolvedDirectories, targetInfo);
+        }
+
+        return resolver;
     }
 
     private static async Task WriteToolchainFailureAsync(TextWriter stdout, TextWriter stderr, NativeToolchainResult toolchainResult)
@@ -577,11 +586,23 @@ internal static class CompilerCli
         string intermediateDirectory,
         bool preserveTemps)
     {
+        if (rootOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
+            || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
+        {
+            if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
+            {
+                return new DependencyCompileResult(false, null, [], null, null);
+            }
+
+            sourceText = File.ReadAllText(module.Reference.FilePath);
+            sourceFilePath = module.Reference.FilePath;
+        }
+
         var dependencyPipeline = DefaultCompilerPipeline.Create();
         var dependencyResult = dependencyPipeline.Run(
             new CompilationInput(
-                module.Reference.FilePath is not null ? File.ReadAllText(module.Reference.FilePath) : string.Empty,
-                module.Reference.FilePath),
+                sourceText,
+                sourceFilePath ?? module.Reference.FilePath),
             rootOptions with
             {
                 EmitLlvmIr = true,
@@ -655,7 +676,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --save-temps <dir>             Preserve intermediate LLVM and object files in <dir>");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Compiler Logs:");
-        await stdout.WriteLineAsync("  --log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr");
+        await stdout.WriteLineAsync("  --log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)");
         await stdout.WriteLineAsync("  --log-verbosity <normal|verbose>     Choose low-noise normal output or richer verbose output");
         await stdout.WriteLineAsync("  --log-category <name>                Print only matching compiler log categories (repeatable)");
         await stdout.WriteLineAsync("  --log-stage <pass-id>                Print only matching compiler pass stages (repeatable)");

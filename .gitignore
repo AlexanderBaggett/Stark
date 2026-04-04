@@ -46,3 +46,8 @@ Thumbs.db
 
 
 BasicAgentCommand.txt
+.tmp-dotnet-home/.dotnet/10.0.201.toolpath.sentinel
+.tmp-dotnet-home/.dotnet/10.0.201.dotnetFirstUseSentinel
+.tmp-dotnet-home/.dotnet/10.0.201.aspNetCertificateSentinel
+.tmp-mir.txt
+.tmp-check.csx

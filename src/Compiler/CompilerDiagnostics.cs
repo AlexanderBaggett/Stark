@@ -528,7 +528,7 @@ internal static class CompilerLogOutput
     {
         var scope = CurrentScope.Value;
         var writer = scope?.Writer ?? Console.Error;
-        var minimumSeverity = scope?.MinimumSeverity ?? DiagnosticSeverity.Info;
+        var minimumSeverity = scope?.MinimumSeverity ?? DiagnosticSeverity.Warning;
         var maximumVerbosity = scope?.MaximumVerbosity ?? CompilerLogVerbosity.Normal;
 
         if ((int)log.Severity < (int)minimumSeverity)

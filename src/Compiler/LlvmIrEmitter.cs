@@ -1001,7 +1001,25 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .OfType<SsaCopyMemoryInstruction>()
-            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout && layout.SizeBytes > AggregateMemcpyThresholdBytes);
+            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout && layout.SizeBytes > AggregateMemcpyThresholdBytes)
+            || UsesBuiltinMemcpyIntrinsic();
+    }
+
+    private bool UsesBuiltinMemcpyIntrinsic()
+    {
+        if (string.Equals(_syntaxModel.ModuleName, "System.Text", StringComparison.Ordinal)
+            && _syntaxModel.Declarations
+                .Where(static declaration => declaration.Function is { HasBody: false })
+                .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration))
+                .Any(name => TryGetSystemTextBuiltin(_syntaxModel.ModuleName, name, out var builtinKind)
+                    && builtinKind is SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode))
+        {
+            return true;
+        }
+
+        return _allAbiFunctions.Keys.Any(name =>
+            TryGetSystemTextBuiltin(moduleName: string.Empty, name, out var builtinKind)
+            && builtinKind is SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode);
     }
 
     private static void EmitBuiltinTypeDefinitions(StringBuilder builder)
@@ -1434,35 +1452,17 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine("  %concat_left_nonempty = icmp ne i64 %concat_left_length, 0");
         builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left_prepare, label %concat_after_left");
         builder.AppendLine("concat_copy_left_prepare:");
-        builder.AppendLine("  br label %concat_copy_left_loop");
-        builder.AppendLine("concat_copy_left_loop:");
-        builder.AppendLine("  %concat_left_index = phi i64 [ 0, %concat_copy_left_prepare ], [ %concat_left_index_next, %concat_copy_left_body ]");
-        builder.AppendLine("  %concat_left_continue = icmp ult i64 %concat_left_index, %concat_left_length");
-        builder.AppendLine("  br i1 %concat_left_continue, label %concat_copy_left_body, label %concat_after_left");
-        builder.AppendLine("concat_copy_left_body:");
-        builder.AppendLine($"  %concat_left_src = getelementptr inbounds {unitLlvmType}, ptr %concat_left_data, i64 %concat_left_index");
-        builder.AppendLine($"  %concat_left_value = load {unitLlvmType}, ptr %concat_left_src");
-        builder.AppendLine($"  %concat_left_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_index");
-        builder.AppendLine($"  store {unitLlvmType} %concat_left_value, ptr %concat_left_dst");
-        builder.AppendLine("  %concat_left_index_next = add i64 %concat_left_index, 1");
-        builder.AppendLine("  br label %concat_copy_left_loop");
+        builder.AppendLine($"  %concat_left_bytes = {RenderTextMemcpyLength(unitType, "%concat_left_length")}");
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)");
+        builder.AppendLine("  br label %concat_after_left");
         builder.AppendLine("concat_after_left:");
         builder.AppendLine("  %concat_right_nonempty = icmp ne i64 %concat_right_length, 0");
         builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right_prepare, label %concat_finish");
         builder.AppendLine("concat_copy_right_prepare:");
-        builder.AppendLine("  br label %concat_copy_right_loop");
-        builder.AppendLine("concat_copy_right_loop:");
-        builder.AppendLine("  %concat_right_index = phi i64 [ 0, %concat_copy_right_prepare ], [ %concat_right_index_next, %concat_copy_right_body ]");
-        builder.AppendLine("  %concat_right_continue = icmp ult i64 %concat_right_index, %concat_right_length");
-        builder.AppendLine("  br i1 %concat_right_continue, label %concat_copy_right_body, label %concat_finish");
-        builder.AppendLine("concat_copy_right_body:");
-        builder.AppendLine($"  %concat_right_src = getelementptr inbounds {unitLlvmType}, ptr %concat_right_data, i64 %concat_right_index");
-        builder.AppendLine($"  %concat_right_value = load {unitLlvmType}, ptr %concat_right_src");
         builder.AppendLine($"  %concat_right_dest = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
-        builder.AppendLine($"  %concat_right_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_right_dest, i64 %concat_right_index");
-        builder.AppendLine($"  store {unitLlvmType} %concat_right_value, ptr %concat_right_dst");
-        builder.AppendLine("  %concat_right_index_next = add i64 %concat_right_index, 1");
-        builder.AppendLine("  br label %concat_copy_right_loop");
+        builder.AppendLine($"  %concat_right_bytes = {RenderTextMemcpyLength(unitType, "%concat_right_length")}");
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)");
+        builder.AppendLine("  br label %concat_finish");
         builder.AppendLine("concat_finish:");
         builder.AppendLine("  store i64 %concat_required, ptr %concat_length_addr");
         builder.AppendLine("  ret i1 true");
@@ -2537,7 +2537,7 @@ internal sealed class LlvmIrEmitter
     private static void AddStringLiteral(string literalText, Dictionary<StringConstantKey, EmittedStringConstant> constants, ref int index)
     {
         var kind = GetTextLiteralKind(literalText);
-        if (TextLiteralDecoder.IsAsciiLiteral(literalText, kind))
+        if (TextLiteralDecoder.CanUseUtf8Storage(literalText, kind))
         {
             AddStringLiteral(literalText, StarkTypeSymbols.Ascii, constants, ref index);
         }

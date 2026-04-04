@@ -22,6 +22,22 @@ internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
     return System.Runtime.Platform.Linux.WriteAscii(handle, text);
 }
 
+internal finite law ascii DirectorySeparator() {
+    return System.Runtime.Platform.Linux.DirectorySeparator();
+}
+
+internal finite law ascii AlternateDirectorySeparator() {
+    return System.Runtime.Platform.Linux.AlternateDirectorySeparator();
+}
+
+internal finite law ascii PathSeparator() {
+    return System.Runtime.Platform.Linux.PathSeparator();
+}
+
+internal finite law bool IsDirectorySeparator(ascii value) {
+    return System.Runtime.Platform.Linux.IsDirectorySeparator(value);
+}
+
 internal fn bool IsTerminal(rawptr<i8> handle) {
     return System.Runtime.Platform.Linux.IsTerminal(handle);
 }

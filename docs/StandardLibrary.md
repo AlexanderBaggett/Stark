@@ -216,7 +216,9 @@ public struct File {
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn void WriteText(mut borrow File self, ascii text);
+    fn void WriteText(mut borrow File self, unicode text);
     fn void WriteLine(mut borrow File self, ascii text);
+    fn void WriteLine(mut borrow File self, unicode text);
 }
 
 public fn File Open(ascii path, FileMode mode);
@@ -284,9 +286,10 @@ Because destructors cannot surface rich failure values, implicit destructor clea
 
 The `encoding` field and `System.Text.Encoding` enum are in place, but the current Milestone 7 slice is still narrower than the eventual text-IO design:
 
-- owned `File` text writes are currently `ascii` only
+- owned `File` text writes support both `ascii` and `unicode`
 - raw-handle helpers already support both `ascii` and `unicode`
 - on Linux, the current `unicode` write path converts UTF-32 to UTF-8 before issuing the write syscall
+- owned-file unicode writes flush any pending buffered ascii data and then use the platform unicode path directly
 - broader per-encoding file conversions and text-reading APIs remain part of the remaining shared text-IO work
 
 `ReadBytes` and `WriteBytes` always ignore encoding and operate on raw bytes regardless.
@@ -297,7 +300,7 @@ Internal implementation:
 
 - On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `ReadBytes` calls the internal read boundary backed by `read(2)`. `WriteBytes` calls the internal write boundary backed by `write(2)`. `Flush` drains the userspace buffer via repeated writes. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
 - On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `ReadBytes` calls `ReadFile`. `WriteBytes` calls `WriteFile`. `Flush` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
-- Path strings are converted at the platform boundary. On Linux, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs.
+- Path strings are converted at the platform boundary. On Linux, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
 
 ## Path API
 

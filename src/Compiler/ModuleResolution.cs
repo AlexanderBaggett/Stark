@@ -184,3 +184,113 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver
         }
     }
 }
+
+public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
+{
+    private const string PlatformModuleName = "System.Runtime.Platform";
+    private const string WindowsDispatchTemplateRelativePath = "templates/System.Runtime.Platform.WindowsDispatch.stark";
+
+    private readonly IModuleSourceResolver _inner;
+    private readonly string? _windowsDispatchTemplatePath;
+    private readonly bool _useWindowsDispatch;
+
+    public TargetAwareStdLibModuleResolver(
+        IModuleSourceResolver inner,
+        IEnumerable<string> searchDirectories,
+        LlvmTargetInfo? targetInfo)
+    {
+        _inner = inner;
+        _useWindowsDispatch = IsWindowsTarget(targetInfo);
+        _windowsDispatchTemplatePath = _useWindowsDispatch
+            ? FindWindowsDispatchTemplate(searchDirectories)
+            : null;
+    }
+
+    public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
+    {
+        if (ShouldOverridePlatformModule(moduleName))
+        {
+            module = new ResolvedModuleReference(moduleName, _windowsDispatchTemplatePath, IsExternal: false);
+            return true;
+        }
+
+        return _inner.TryResolveModule(moduleName, out module);
+    }
+
+    public bool TryLoadModuleSource(ResolvedModuleReference module, out string sourceText, out string? filePath)
+    {
+        if (ShouldOverridePlatformModule(module.ModuleName))
+        {
+            filePath = _windowsDispatchTemplatePath;
+            if (filePath is null || !File.Exists(filePath))
+            {
+                sourceText = string.Empty;
+                filePath = null;
+                return false;
+            }
+
+            sourceText = File.ReadAllText(filePath);
+            return true;
+        }
+
+        return _inner.TryLoadModuleSource(module, out sourceText, out filePath);
+    }
+
+    private bool ShouldOverridePlatformModule(string moduleName)
+    {
+        return _useWindowsDispatch
+            && !string.IsNullOrWhiteSpace(_windowsDispatchTemplatePath)
+            && string.Equals(moduleName, PlatformModuleName, StringComparison.Ordinal);
+    }
+
+    private static bool IsWindowsTarget(LlvmTargetInfo? targetInfo)
+    {
+        return targetInfo?.Triple.Contains("-windows-", StringComparison.OrdinalIgnoreCase) == true
+            || targetInfo?.Triple.EndsWith("-windows", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static string? FindWindowsDispatchTemplate(IEnumerable<string> searchDirectories)
+    {
+        foreach (var searchDirectory in searchDirectories)
+        {
+            var resolvedSearchDirectory = Path.GetFullPath(searchDirectory);
+            if (!Directory.Exists(resolvedSearchDirectory))
+            {
+                continue;
+            }
+
+            var standardLibraryRoot = TryFindStdLibRoot(resolvedSearchDirectory);
+            if (standardLibraryRoot is null)
+            {
+                continue;
+            }
+
+            var templatePath = Path.Combine(standardLibraryRoot, WindowsDispatchTemplateRelativePath);
+            if (File.Exists(templatePath))
+            {
+                return templatePath;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryFindStdLibRoot(string searchDirectory)
+    {
+        var directory = new DirectoryInfo(searchDirectory);
+
+        while (directory is not null)
+        {
+            if (string.Equals(directory.Name, "src", StringComparison.OrdinalIgnoreCase)
+                && directory.Parent is not null
+                && string.Equals(directory.Parent.Name, "stdlib", StringComparison.OrdinalIgnoreCase))
+            {
+                return directory.Parent.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return null;
+    }
+}

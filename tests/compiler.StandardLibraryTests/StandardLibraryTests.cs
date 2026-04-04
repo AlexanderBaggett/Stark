@@ -1,6 +1,6 @@
 using Stark.Compiler;
 
-namespace compiler.Tests;
+namespace compiler.StandardLibraryTests;
 
 public sealed class StandardLibraryTests
 {
@@ -169,6 +169,35 @@ public sealed class StandardLibraryTests
                     System.IO.File.WriteLine(handle, "line");
                     System.IO.File.WriteLine(handle, (unicode)"line");
                     System.IO.File.Close(handle);
+                    return;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StdLibSourceOwnedFileHandlesSupportAsciiAndUnicodeWriteOverloads()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibOwnedFileUnicodeSurface.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System
+                module Demo
+
+                fn void Use() {
+                    stack mut System.IO.File.File file = System.IO.File.Open("demo.txt", System.IO.File.FileMode.Write);
+                    file.WriteText("ascii");
+                    file.WriteText((unicode)"ascii");
+                    file.WriteLine("line");
+                    file.WriteLine((unicode)"line");
+                    file.Close();
                     return;
                 }
                 """,
@@ -426,11 +455,10 @@ public sealed class StandardLibraryTests
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define i64 @LinuxSyscall4StatAt(", llvm, StringComparison.Ordinal);
 
-        var functionStart = llvm.IndexOf("define fastcc i1 @FileExists(", StringComparison.Ordinal);
-        Assert.True(functionStart >= 0, "Expected FileExists definition in emitted LLVM.");
-        var functionEnd = llvm.IndexOf("\n}\n", functionStart, StringComparison.Ordinal);
-        Assert.True(functionEnd > functionStart, "Expected to capture the FileExists function body.");
-        var functionBody = llvm.Substring(functionStart, functionEnd - functionStart);
+        var functionBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc i1 @FileExists(",
+            "Expected FileExists definition in emitted LLVM.");
 
         Assert.Contains("call i64 @LinuxSyscall4StatAt(", functionBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@OpenFileRead(", functionBody, StringComparison.Ordinal);
@@ -462,6 +490,184 @@ public sealed class StandardLibraryTests
         Assert.DoesNotContain("@isatty(", llvm, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void StdLibSourceWindowsConsoleAndFileOperationsUseWin32Apis()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var windowsPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Windows.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(windowsPath),
+                windowsPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("declare ptr @GetStdHandle(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @CreateFileW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @DeleteFileW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @MoveFileExW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetConsoleMode(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @WriteFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @ReadFile(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Windows_WriteFile__", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Windows_ReadFile__", llvm, StringComparison.Ordinal);
+
+        Assert.Contains("define fastcc i32 @WriteStdoutAscii(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc ptr @OpenFileRead(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc i32 @DeleteFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc i1 @FileExists(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @GetStdHandle(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @CreateFileW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetConsoleMode(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @DeleteFileW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @MoveFileExW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@fopen(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@fclose(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@fread(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@fwrite(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StagedWindowsStdLibBuildRoutesPlatformCallsThroughWindowsModule()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-stage-");
+
+        try
+        {
+            var stagedSourceRoot = CreateWindowsStagedStdLibSourceRoot(repositoryRoot, tempDirectory.FullName);
+            var systemPath = Path.Combine(stagedSourceRoot, "System.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    File.ReadAllText(systemPath),
+                    systemPath),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
+                    ModuleResolver: new FileSystemModuleResolver(stagedSourceRoot)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ModuleGraph, out ModuleGraph? moduleGraph));
+            Assert.NotNull(moduleGraph);
+            Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
+            Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
+            Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+            Assert.Contains("@GetStdHandle(", llvm, StringComparison.Ordinal);
+            Assert.Contains("@CreateFileW(", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void RootWindowsStdLibCompileKeepsWriteBufferToHandleOnDirectMirPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(systemPath),
+                systemPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                QualifyModuleSymbols: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+
+        var function = Assert.Single(
+            mir.Functions,
+            static candidate => candidate.Name == "System.Runtime.Platform.Windows.WriteBufferToHandle");
+        Assert.True(function.SupportsDirectCodeGeneration);
+
+        Assert.DoesNotContain(
+            result.Logs,
+            log => log.Kind == CompilerLogKind.Gap
+                && string.Equals(log.SymbolName, "System.Runtime.Platform.Windows.WriteBufferToHandle", StringComparison.Ordinal)
+                && string.Equals(log.Operation, "EmitAssignmentFromExpression", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizationRules()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-path-");
+
+        try
+        {
+            var stagedSourceRoot = CreateWindowsStagedStdLibSourceRoot(repositoryRoot, tempDirectory.FullName);
+            var pathModulePath = Path.Combine(stagedSourceRoot, "System", "IO", "Path.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    File.ReadAllText(pathModulePath),
+                    pathModulePath),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
+                    ModuleResolver: new FileSystemModuleResolver(stagedSourceRoot)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("c\"\\5C\\00\"", llvm, StringComparison.Ordinal);
+            Assert.Contains("c\"/\\00\"", llvm, StringComparison.Ordinal);
+            Assert.Contains("c\";\\00\"", llvm, StringComparison.Ordinal);
+
+            var isDirectorySeparatorBody = ExtractDefinedFunctionText(
+                llvm,
+                "define internal fastcc i1 @__stark_law_clone_System_Runtime_Platform_Windows_IsDirectorySeparator(",
+                "Expected staged Windows path build to emit the Windows separator law clone.");
+            Assert.Contains("icmp eq i8", isDirectorySeparatorBody, StringComparison.Ordinal);
+            Assert.Contains(", 47", isDirectorySeparatorBody, StringComparison.Ordinal);
+            Assert.Contains(", 92", isDirectorySeparatorBody, StringComparison.Ordinal);
+
+            var tryJoinBody = ExtractDefinedFunctionText(
+                llvm,
+                "define fastcc i1 @TryJoin(",
+                "Expected TryJoin definition in staged Windows path module.");
+            Assert.Contains("call %stark_ascii @DirectorySeparator()", tryJoinBody, StringComparison.Ordinal);
+            Assert.Contains("call i1 @IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     [Theory]
     [MemberData(nameof(SystemSyscallArchitectureCases))]
     public void SystemSyscallModuleSelectsExpectedLinuxShimPerArchitecture(string targetTriple, string expectedInlineAsm)
@@ -488,8 +694,7 @@ public sealed class StandardLibraryTests
     [Fact]
     public async Task PackagedStdLibCanBeConsumedWithoutSource()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows())
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
             return;
         }
@@ -502,16 +707,16 @@ public sealed class StandardLibraryTests
         Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
 
         try
         {
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -581,7 +786,7 @@ public sealed class StandardLibraryTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -607,7 +812,7 @@ public sealed class StandardLibraryTests
             await process.WaitForExitAsync();
 
             Assert.Equal(0, process.ExitCode);
-            Assert.Equal("Stark IO\n/\n", processStdout);
+            Assert.Equal($"Stark IO\n{(OperatingSystem.IsWindows() ? "\\" : "/")}\n", processStdout);
             Assert.Equal(string.Empty, processStderr);
             Assert.Equal("Stark IO\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "io-test.txt")));
         }
@@ -946,6 +1151,213 @@ public sealed class StandardLibraryTests
             Assert.Equal(string.Empty, processStdout);
             Assert.Equal(string.Empty, processStderr);
             Assert.Equal("Owned\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "owned-test.txt")));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-unicode-path-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        var workingDirectory = Path.Combine(appDirectory, "unicode-\u03B1-\u65E5");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(workingDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, "System.lib");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, "app.exe");
+        var currentDirectoryZeros = string.Join(", ", Enumerable.Repeat("0", 512));
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(
+                appPath,
+                $$"""
+                import System
+                module App
+
+                export ffi fn i32 main() {
+                    stack mut i8[512] cwdStorage = { {{currentDirectoryZeros}} };
+                    stack mut Ascii cwd = new Ascii() {
+                        Data = &cwdStorage[0],
+                        Length = 0,
+                        Capacity = 512
+                    };
+                    stack mut i8[12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
+                    stack mut Ascii ownedName = new Ascii() {
+                        Data = &ownedNameBytes[0],
+                        Length = 12,
+                        Capacity = 12
+                    };
+                    stack mut i8[14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
+                    stack mut Ascii renamedName = new Ascii() {
+                        Data = &renamedNameBytes[0],
+                        Length = 14,
+                        Capacity = 14
+                    };
+                    stack mut i8[13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
+                    stack mut Ascii deleteName = new Ascii() {
+                        Data = &deleteNameBytes[0],
+                        Length = 13,
+                        Capacity = 13
+                    };
+
+                    if (!System.IO.Path.CurrentDirectory(&cwd)) {
+                        return 1;
+                    }
+
+                    stack rawptr<i8> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
+                    if (cwdHandle == null) {
+                        return 2;
+                    }
+
+                    System.IO.File.WriteLine(cwdHandle, System.Text.AsciiView(cwd));
+                    if (System.IO.File.Close(cwdHandle) != 0) {
+                        return 3;
+                    }
+
+                    stack mut System.IO.File.File file = System.IO.File.Open(System.Text.AsciiView(ownedName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line);
+                    file.WriteLine((unicode)"Owned");
+                    if (file.Close() != 0) {
+                        return 4;
+                    }
+
+                    ownedName = new Ascii() {
+                        Data = &ownedNameBytes[0],
+                        Length = 12,
+                        Capacity = 12
+                    };
+                    if (!System.IO.File.Exists(System.Text.AsciiView(ownedName))) {
+                        return 5;
+                    }
+
+                    ownedName = new Ascii() {
+                        Data = &ownedNameBytes[0],
+                        Length = 12,
+                        Capacity = 12
+                    };
+                    renamedName = new Ascii() {
+                        Data = &renamedNameBytes[0],
+                        Length = 14,
+                        Capacity = 14
+                    };
+                    if (System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName)) != 0) {
+                        return 6;
+                    }
+
+                    renamedName = new Ascii() {
+                        Data = &renamedNameBytes[0],
+                        Length = 14,
+                        Capacity = 14
+                    };
+                    if (!System.IO.File.Exists(System.Text.AsciiView(renamedName))) {
+                        return 7;
+                    }
+
+                    stack rawptr<i8> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
+                    if (deleteHandle == null) {
+                        return 8;
+                    }
+
+                    System.IO.File.WriteLine(deleteHandle, "Delete");
+                    if (System.IO.File.Close(deleteHandle) != 0) {
+                        return 9;
+                    }
+
+                    deleteName = new Ascii() {
+                        Data = &deleteNameBytes[0],
+                        Length = 13,
+                        Capacity = 13
+                    };
+                    if (System.IO.File.Delete(System.Text.AsciiView(deleteName)) != 0) {
+                        return 10;
+                    }
+
+                    deleteName = new Ascii() {
+                        Data = &deleteNameBytes[0],
+                        Length = 13,
+                        Capacity = 13
+                    };
+                    if (System.IO.File.Exists(System.Text.AsciiView(deleteName))) {
+                        return 11;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+            Assert.Equal(
+                workingDirectory + "\n",
+                await File.ReadAllTextAsync(Path.Combine(workingDirectory, "cwd.txt"), System.Text.Encoding.UTF8));
+            Assert.Equal(
+                "Owned\n",
+                await File.ReadAllTextAsync(Path.Combine(workingDirectory, "renamed-\u03B2.txt"), System.Text.Encoding.UTF8));
+            Assert.False(File.Exists(Path.Combine(workingDirectory, "owned-\u03B1.txt")));
+            Assert.False(File.Exists(Path.Combine(workingDirectory, "delete-\u03B3.txt")));
         }
         finally
         {
@@ -1716,6 +2128,99 @@ public sealed class StandardLibraryTests
     }
 
     [Fact]
+    public async Task PackagedStdLibWindowsArchiveHasNoCrtSymbolReferences()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var nmPath = FindFirstAvailableTool("llvm-nm", "nm");
+        if (nmPath is null)
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-nm-");
+        var libraryPath = Path.Combine(tempDirectory.FullName, "System.lib");
+
+        try
+        {
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(libraryPath));
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = nmPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-u");
+            startInfo.ArgumentList.Add("-A");
+            startInfo.ArgumentList.Add(libraryPath);
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            Assert.NotNull(process);
+
+            var nmStdout = await process!.StandardOutput.ReadToEndAsync();
+            var nmStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, nmStderr);
+
+            var undefinedSymbols = ExtractUndefinedSymbols(nmStdout);
+            Assert.Contains("CreateFileW", undefinedSymbols);
+            Assert.Contains("ReadFile", undefinedSymbols);
+            Assert.Contains("WriteFile", undefinedSymbols);
+            Assert.Contains("DeleteFileW", undefinedSymbols);
+            Assert.Contains("MoveFileExW", undefinedSymbols);
+            Assert.Contains("GetCurrentDirectoryW", undefinedSymbols);
+            Assert.Contains("GetConsoleMode", undefinedSymbols);
+
+            Assert.DoesNotContain("fopen", undefinedSymbols);
+            Assert.DoesNotContain("fclose", undefinedSymbols);
+            Assert.DoesNotContain("fflush", undefinedSymbols);
+            Assert.DoesNotContain("fread", undefinedSymbols);
+            Assert.DoesNotContain("fwrite", undefinedSymbols);
+            Assert.DoesNotContain("fputs", undefinedSymbols);
+            Assert.DoesNotContain("fputws", undefinedSymbols);
+            Assert.DoesNotContain("_wfopen", undefinedSymbols);
+            Assert.DoesNotContain("_wrename", undefinedSymbols);
+            Assert.DoesNotContain("_wremove", undefinedSymbols);
+            Assert.DoesNotContain("_wgetcwd", undefinedSymbols);
+            Assert.DoesNotContain("_getcwd", undefinedSymbols);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task PackagedStdLibSyscallModuleCanBeConsumedWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -1959,25 +2464,145 @@ public sealed class StandardLibraryTests
 
     private static string? FindFirstAvailableTool(params string[] toolNames)
     {
+        var directories = new List<string>();
         var path = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(path))
+        if (!string.IsNullOrWhiteSpace(path))
         {
-            return null;
+            directories.AddRange(path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
 
-        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        if (OperatingSystem.IsWindows())
         {
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            if (!string.IsNullOrWhiteSpace(programFiles))
+            {
+                directories.Add(Path.Combine(programFiles, "LLVM", "bin"));
+            }
+
+            var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            if (!string.IsNullOrWhiteSpace(programFilesX86))
+            {
+                directories.Add(Path.Combine(programFilesX86, "LLVM", "bin"));
+            }
+        }
+
+        var seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in directories)
+        {
+            if (!seenDirectories.Add(directory))
+            {
+                continue;
+            }
+
             foreach (var toolName in toolNames)
             {
-                var candidate = Path.Combine(directory, toolName);
-                if (File.Exists(candidate))
+                foreach (var candidateName in GetToolCandidateNames(toolName))
                 {
-                    return candidate;
+                    var candidate = Path.Combine(directory, candidateName);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
                 }
             }
         }
 
         return null;
+    }
+
+    private static IEnumerable<string> GetToolCandidateNames(string toolName)
+    {
+        yield return toolName;
+
+        if (OperatingSystem.IsWindows() && !Path.HasExtension(toolName))
+        {
+            yield return toolName + ".exe";
+        }
+    }
+
+    private static HashSet<string> ExtractUndefinedSymbols(string nmOutput)
+    {
+        var symbols = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var line in nmOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var marker = line.LastIndexOf(" U ", StringComparison.Ordinal);
+            if (marker < 0 || marker + 3 >= line.Length)
+            {
+                continue;
+            }
+
+            var symbol = line[(marker + 3)..].Trim();
+            if (symbol.StartsWith("__imp_", StringComparison.Ordinal))
+            {
+                symbol = symbol["__imp_".Length..];
+            }
+
+            if (!string.IsNullOrWhiteSpace(symbol))
+            {
+                symbols.Add(symbol);
+            }
+        }
+
+        return symbols;
+    }
+
+    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
+    {
+        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
+        Assert.True(functionStart >= 0, missingMessage);
+
+        var bodyStart = llvm.IndexOf('{', functionStart);
+        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+
+        var depth = 0;
+        for (var index = bodyStart; index < llvm.Length; index++)
+        {
+            var current = llvm[index];
+            if (current == '{')
+            {
+                depth++;
+            }
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return llvm.Substring(functionStart, index - functionStart + 1);
+                }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
+    }
+
+    private static string CreateWindowsStagedStdLibSourceRoot(string repositoryRoot, string stagingDirectory)
+    {
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var stagedSourceRoot = Path.Combine(stagingDirectory, "src");
+        CopyDirectory(sourceRoot, stagedSourceRoot);
+
+        var dispatchTemplatePath = Path.Combine(repositoryRoot, "stdlib", "templates", "System.Runtime.Platform.WindowsDispatch.stark");
+        var stagedPlatformPath = Path.Combine(stagedSourceRoot, "System", "Runtime", "Platform.stark");
+        File.Copy(dispatchTemplatePath, stagedPlatformPath, overwrite: true);
+        return stagedSourceRoot;
+    }
+
+    private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
+    {
+        Directory.CreateDirectory(destinationDirectory);
+
+        foreach (var filePath in Directory.GetFiles(sourceDirectory))
+        {
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(filePath));
+            File.Copy(filePath, destinationPath, overwrite: true);
+        }
+
+        foreach (var childDirectory in Directory.GetDirectories(sourceDirectory))
+        {
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(childDirectory));
+            CopyDirectory(childDirectory, destinationPath);
+        }
     }
 
     private static void AssertCompilerLogsEmitted(string text)

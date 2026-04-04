@@ -19,7 +19,9 @@ public struct File {
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn void WriteText(mut borrow File self, ascii text);
+    fn void WriteText(mut borrow File self, unicode text);
     fn void WriteLine(mut borrow File self, ascii text);
+    fn void WriteLine(mut borrow File self, unicode text);
 }
 ```
 
@@ -69,4 +71,5 @@ fn void WriteOwned() {
 - `Exists` now uses the Linux `stat` boundary instead of probing with open/close.
 - Raw-handle text helpers support both `ascii` and `unicode`.
 - Owned file writes now support `None`, `Line`, and `Full` userspace buffering with an internal fixed-size buffer.
-- The owned public file surface is still ascii-only for text writes. Broader owned-file unicode and conversion-oriented text APIs remain future shared text-IO work.
+- The owned public file surface now supports both `ascii` and `unicode` text writes.
+- Broader per-encoding file conversions and text-reading APIs remain future shared text-IO work.

@@ -2727,14 +2727,14 @@ internal sealed class SemanticValidator
 
         if (literal.StringLiteral() is { } stringLiteral)
         {
-            return TextLiteralDecoder.IsAsciiLiteral(stringLiteral.GetText(), TextLiteralKind.String)
+            return TextLiteralDecoder.CanUseUtf8Storage(stringLiteral.GetText(), TextLiteralKind.String)
                 ? StarkTypeSymbols.Ascii
                 : StarkTypeSymbols.Unicode;
         }
 
         if (literal.CharacterLiteral() is { } characterLiteral)
         {
-            return TextLiteralDecoder.IsAsciiLiteral(characterLiteral.GetText(), TextLiteralKind.Character)
+            return TextLiteralDecoder.CanUseUtf8Storage(characterLiteral.GetText(), TextLiteralKind.Character)
                 ? StarkTypeSymbols.Ascii
                 : StarkTypeSymbols.Unicode;
         }

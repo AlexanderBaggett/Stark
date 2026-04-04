@@ -152,7 +152,9 @@ internal sealed class AbiLowerer
         bool isFfi,
         bool isOverloaded)
     {
-        if (isFfi && !isOverloaded)
+        // FFI declarations must keep the external import name even when Stark
+        // also declares local overloads with the same source name.
+        if (isFfi)
         {
             return sourceName;
         }

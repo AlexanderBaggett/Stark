@@ -254,6 +254,19 @@ public struct File {
         return;
     }
 
+    fn void WriteText(mut borrow File self, unicode text) {
+        if (self.Closed || self.Handle == null) {
+            return;
+        }
+
+        if (self.FlushBufferedWrite() != 0) {
+            return;
+        }
+
+        System.Runtime.Platform.WriteUnicode(self.Handle, text);
+        return;
+    }
+
     fn void WriteLine(mut borrow File self, ascii text) {
         if (self.Closed || self.Handle == null) {
             return;
@@ -274,6 +287,19 @@ public struct File {
             self.Flush();
         }
 
+        return;
+    }
+
+    fn void WriteLine(mut borrow File self, unicode text) {
+        if (self.Closed || self.Handle == null) {
+            return;
+        }
+
+        if (self.FlushBufferedWrite() != 0) {
+            return;
+        }
+
+        WriteUnicodeLineHandle(self.Handle, text);
         return;
     }
 

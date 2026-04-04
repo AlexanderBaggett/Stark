@@ -644,6 +644,22 @@ internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
     return WriteAsciiToHandle(handle, text);
 }
 
+internal finite law ascii DirectorySeparator() {
+    return "/";
+}
+
+internal finite law ascii AlternateDirectorySeparator() {
+    return "";
+}
+
+internal finite law ascii PathSeparator() {
+    return ":";
+}
+
+internal finite law bool IsDirectorySeparator(ascii value) {
+    return *System.Text.AsciiData(value) == (i8)47;
+}
+
 internal fn bool IsTerminal(rawptr<i8> handle) {
     if (handle == null) {
         return false;

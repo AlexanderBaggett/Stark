@@ -377,12 +377,94 @@ internal static class PackageManifestBuilder
 
     private static string RenderManifestTypeText(StarkTypeSymbol type, string moduleName)
     {
-        if (string.IsNullOrEmpty(moduleName))
+        var displayName = string.IsNullOrEmpty(moduleName)
+            ? type.DisplayName
+            : type.DisplayName.Replace($"{moduleName}.", string.Empty, StringComparison.Ordinal);
+
+        return CanonicalizeManifestTypeText(displayName);
+    }
+
+    private static string CanonicalizeManifestTypeText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
         {
-            return type.DisplayName;
+            return text;
         }
 
-        return type.DisplayName.Replace($"{moduleName}.", string.Empty, StringComparison.Ordinal);
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return text;
+        }
+
+        var qualifiers = new HashSet<string>(StringComparer.Ordinal);
+        var qualifierCount = 0;
+        while (qualifierCount < parts.Length && IsManifestTypeQualifier(parts[qualifierCount]))
+        {
+            qualifiers.Add(parts[qualifierCount]);
+            qualifierCount++;
+        }
+
+        if (qualifierCount == 0)
+        {
+            return text;
+        }
+
+        var builder = new List<string>(8);
+        if (qualifiers.Contains("mut"))
+        {
+            builder.Add("mut");
+        }
+
+        if (qualifiers.Contains("borrow"))
+        {
+            builder.Add("borrow");
+        }
+
+        if (qualifiers.Contains("retborrow"))
+        {
+            builder.Add("retborrow");
+        }
+
+        if (qualifiers.Contains("storeborrow"))
+        {
+            builder.Add("storeborrow");
+        }
+
+        if (qualifiers.Contains("shared"))
+        {
+            builder.Add("shared");
+        }
+
+        if (qualifiers.Contains("frozen"))
+        {
+            builder.Add("frozen");
+        }
+
+        if (qualifiers.Contains("out"))
+        {
+            builder.Add("out");
+        }
+
+        if (qualifiers.Contains("init"))
+        {
+            builder.Add("init");
+        }
+
+        builder.Add(string.Join(" ", parts.Skip(qualifierCount)));
+        return string.Join(" ", builder);
+    }
+
+    private static bool IsManifestTypeQualifier(string text)
+    {
+        return text is "mut"
+            or "borrow"
+            or "retborrow"
+            or "storeborrow"
+            or "shared"
+            or "frozen"
+            or "out"
+            or "init";
     }
 
     private static string ModuleNameFromQualifiedName(string qualifiedName)
