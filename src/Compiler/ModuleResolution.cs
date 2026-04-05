@@ -188,11 +188,11 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver
 public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
 {
     private const string PlatformModuleName = "System.Runtime.Platform";
+    private const string LinuxDispatchTemplateRelativePath = "templates/System.Runtime.Platform.LinuxDispatch.stark";
     private const string WindowsDispatchTemplateRelativePath = "templates/System.Runtime.Platform.WindowsDispatch.stark";
 
     private readonly IModuleSourceResolver _inner;
-    private readonly string? _windowsDispatchTemplatePath;
-    private readonly bool _useWindowsDispatch;
+    private readonly string? _dispatchTemplatePath;
 
     public TargetAwareStdLibModuleResolver(
         IModuleSourceResolver inner,
@@ -200,17 +200,14 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
         LlvmTargetInfo? targetInfo)
     {
         _inner = inner;
-        _useWindowsDispatch = IsWindowsTarget(targetInfo);
-        _windowsDispatchTemplatePath = _useWindowsDispatch
-            ? FindWindowsDispatchTemplate(searchDirectories)
-            : null;
+        _dispatchTemplatePath = FindDispatchTemplate(searchDirectories, targetInfo);
     }
 
     public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
     {
         if (ShouldOverridePlatformModule(moduleName))
         {
-            module = new ResolvedModuleReference(moduleName, _windowsDispatchTemplatePath, IsExternal: false);
+            module = new ResolvedModuleReference(moduleName, _dispatchTemplatePath, IsExternal: false);
             return true;
         }
 
@@ -221,7 +218,7 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
     {
         if (ShouldOverridePlatformModule(module.ModuleName))
         {
-            filePath = _windowsDispatchTemplatePath;
+            filePath = _dispatchTemplatePath;
             if (filePath is null || !File.Exists(filePath))
             {
                 sourceText = string.Empty;
@@ -238,8 +235,7 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
 
     private bool ShouldOverridePlatformModule(string moduleName)
     {
-        return _useWindowsDispatch
-            && !string.IsNullOrWhiteSpace(_windowsDispatchTemplatePath)
+        return !string.IsNullOrWhiteSpace(_dispatchTemplatePath)
             && string.Equals(moduleName, PlatformModuleName, StringComparison.Ordinal);
     }
 
@@ -249,8 +245,12 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
             || targetInfo?.Triple.EndsWith("-windows", StringComparison.OrdinalIgnoreCase) == true;
     }
 
-    private static string? FindWindowsDispatchTemplate(IEnumerable<string> searchDirectories)
+    private static string? FindDispatchTemplate(IEnumerable<string> searchDirectories, LlvmTargetInfo? targetInfo)
     {
+        var templateRelativePath = IsWindowsTarget(targetInfo)
+            ? WindowsDispatchTemplateRelativePath
+            : LinuxDispatchTemplateRelativePath;
+
         foreach (var searchDirectory in searchDirectories)
         {
             var resolvedSearchDirectory = Path.GetFullPath(searchDirectory);
@@ -265,7 +265,7 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
                 continue;
             }
 
-            var templatePath = Path.Combine(standardLibraryRoot, WindowsDispatchTemplateRelativePath);
+            var templatePath = Path.Combine(standardLibraryRoot, templateRelativePath);
             if (File.Exists(templatePath))
             {
                 return templatePath;

@@ -249,6 +249,40 @@ public sealed class MidLevelIrRuntimeTests
         Assert.Equal(65, exitCode);
     }
 
+    [Fact]
+    public async Task LargeAggregateByValueCallsAndReturnsWorkAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Big {
+                i64 A;
+                i64 B;
+                i64 C;
+            }
+
+            fn Big Make(i64 seed) {
+                return new Big() { A = seed, B = seed + 1, C = seed + 2 };
+            }
+
+            fn i32 Read(Big value) {
+                return (i32)(value.A + value.C);
+            }
+
+            export ffi fn i32 main() {
+                return Read(Make(20));
+            }
+            """);
+
+        Assert.Equal(42, exitCode);
+    }
+
     private static async Task<int> CompileAndRunExitCodeAsync(string source)
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-mir-enum-drop-");

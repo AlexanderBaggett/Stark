@@ -4,13 +4,22 @@ namespace Stark.Compiler;
 
 public sealed record CompilationInput(string SourceText, string? FilePath = null);
 
+public enum CompilerOptimizationLevel
+{
+    O0,
+    O1,
+    O2,
+    O3
+}
+
 public sealed record CompilerOptions(
     bool EmitLlvmIr = false,
     bool ContinueAfterErrors = false,
     IModuleResolver? ModuleResolver = null,
     string? StopAfterPassId = null,
     LlvmTargetInfo? TargetInfo = null,
-    bool QualifyModuleSymbols = false);
+    bool QualifyModuleSymbols = false,
+    CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3);
 
 public readonly record struct ArtifactKey<T>(string Name);
 

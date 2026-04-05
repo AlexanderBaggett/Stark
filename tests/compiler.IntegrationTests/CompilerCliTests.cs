@@ -45,6 +45,10 @@ public sealed class CompilerCliTests
         Assert.Contains("Compiler Logs:", text);
         Assert.Contains("--target-cpu <cpu>", text);
         Assert.Contains("--target-feature <feature>", text);
+        Assert.Contains("--relocation-model <default|static|pic|pie>", text);
+        Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
+        Assert.Contains("-O0|-O1|-O2|-O3", text);
+        Assert.Contains("--optimize <0|1|2|3>", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
@@ -396,6 +400,138 @@ public sealed class CompilerCliTests
             Assert.Contains("-target-feature", clangLog, StringComparison.Ordinal);
             Assert.Contains("+sse4.1", clangLog, StringComparison.Ordinal);
             Assert.Contains("-avx", clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitObjectModeForwardsRelocationModelAndCodeModelToClang()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-target-models-");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "--emit-obj",
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
+                    "--relocation-model", "pie",
+                    "--code-model", "large"
+                ],
+                new StringReader(
+                    """
+                    module Demo
+
+                    fn i32 Run() {
+                        return 7;
+                    }
+                    """),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted object file:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-fPIE", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-mcmodel=large", clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitObjectModeForwardsOptimizationLevelToClang()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-opt-level-");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "--emit-obj",
+                    "-o", outputPath,
+                    "-O0"
+                ],
+                new StringReader(
+                    """
+                    module Demo
+
+                    fn i32 Run(bool flag) {
+                        stack mut i32 value = 0;
+                        if (flag) {
+                            value = 1;
+                        } else {
+                            value = 2;
+                        }
+
+                        return value;
+                    }
+                    """),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted object file:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-O0", clangLog, StringComparison.Ordinal);
         }
         finally
         {
@@ -1171,6 +1307,71 @@ public sealed class CompilerCliTests
             Assert.Contains("-L", linkerLog);
             Assert.Contains(Path.GetFullPath(librarySearchPath), linkerLog);
             Assert.Contains("-Wl,--gc-sections", linkerLog);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeForwardsRelocationModelToLinker()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-linker-reloc-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "App");
+        var linkerLogPath = Path.Combine(tempDirectory.FullName, "linker.log");
+        var linkerPath = await CreateUnixCaptureLinkerAsync(tempDirectory.FullName, linkerLogPath);
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                fn i32 Run() {
+                    return 7;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
+                    "--relocation-model", "pie",
+                    "--linker", linkerPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var linkerLog = await File.ReadAllTextAsync(linkerLogPath);
+            Assert.Contains("-target", linkerLog, StringComparison.Ordinal);
+            Assert.Contains("x86_64-unknown-linux-gnu", linkerLog, StringComparison.Ordinal);
+            Assert.Contains("-pie", linkerLog, StringComparison.Ordinal);
         }
         finally
         {

@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--linker tool] [--archiver tool] [--save-temps dir] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -16,6 +16,9 @@ internal static class CompilerCli
         string? targetDataLayout = null;
         string? targetCpu = null;
         var targetFeatures = new List<string>();
+        var relocationModel = LlvmRelocationModel.Default;
+        LlvmCodeModel? codeModel = null;
+        var optimizationLevel = CompilerOptimizationLevel.O3;
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
@@ -84,6 +87,49 @@ internal static class CompilerCli
                 }
 
                 targetFeatures.Add(targetFeatureValue.Trim());
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--relocation-model", args, ref index, out var relocationModelValue))
+            {
+                if (!TryParseRelocationModel(relocationModelValue, out relocationModel))
+                {
+                    await stderr.WriteLineAsync($"Unknown relocation model '{relocationModelValue}'. Expected default, static, pic, or pie.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--code-model", args, ref index, out var codeModelValue))
+            {
+                if (!TryParseCodeModel(codeModelValue, out codeModel))
+                {
+                    await stderr.WriteLineAsync($"Unknown code model '{codeModelValue}'. Expected tiny, small, kernel, medium, or large.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (TryParseOptimizationLevelArgument(argument, out var shortOptimizationLevel))
+            {
+                optimizationLevel = shortOptimizationLevel;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--optimize", args, ref index, out var optimizeValue)
+                || TryReadOptionValue(argument, "-O", args, ref index, out optimizeValue))
+            {
+                if (!TryParseOptimizationLevel(optimizeValue, out optimizationLevel))
+                {
+                    await stderr.WriteLineAsync($"Unknown optimization level '{optimizeValue}'. Expected 0, 1, 2, or 3.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
                 continue;
             }
 
@@ -240,7 +286,9 @@ internal static class CompilerCli
             targetTriple,
             targetDataLayout,
             targetCpu,
-            targetFeatures);
+            targetFeatures,
+            relocationModel,
+            codeModel);
         var source = inputPath is not null
             ? await File.ReadAllTextAsync(inputPath)
             : await stdin.ReadToEndAsync();
@@ -252,7 +300,8 @@ internal static class CompilerCli
             TargetInfo: targetInfo,
             StopAfterPassId: ResolveStopAfterPassId(mode),
             ModuleResolver: moduleResolver,
-            QualifyModuleSymbols: mode == CliMode.EmitLibrary);
+            QualifyModuleSymbols: mode == CliMode.EmitLibrary,
+            OptimizationLevel: optimizationLevel);
         var toolchainOptions = new ToolchainCliOptions(
             linkerTool,
             archiverTool,
@@ -286,7 +335,7 @@ internal static class CompilerCli
             case CliMode.EmitLlvmIr:
                 return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.LlvmIrModule, static module => module.Text);
             case CliMode.EmitObject:
-                return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, targetInfo, toolchainOptions);
+                return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitLibrary:
                 return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitExecutable:
@@ -326,7 +375,8 @@ internal static class CompilerCli
                 llvmModule.Text,
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
-                targetInfo: compilerOptions.TargetInfo);
+                targetInfo: compilerOptions.TargetInfo,
+                optimizationLevel: compilerOptions.OptimizationLevel);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -384,7 +434,8 @@ internal static class CompilerCli
                 resolvedOutputPath,
                 toolchainOptions.LinkerTool,
                 toolchainOptions.LibrarySearchDirectories,
-                linkArguments);
+                linkArguments,
+                compilerOptions.TargetInfo);
             if (!toolchainResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, toolchainResult);
@@ -444,7 +495,8 @@ internal static class CompilerCli
                 llvmModule.Text,
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
-                targetInfo: compilerOptions.TargetInfo);
+                targetInfo: compilerOptions.TargetInfo,
+                optimizationLevel: compilerOptions.OptimizationLevel);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -525,7 +577,7 @@ internal static class CompilerCli
         TextWriter stdout,
         TextWriter stderr,
         CompilationResult result,
-        LlvmTargetInfo? targetInfo,
+        CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
@@ -544,7 +596,8 @@ internal static class CompilerCli
             llvmModule.Text,
             resolvedOutputPath,
             preservedLlvmOutputPath: preservedLlvmPath,
-            targetInfo: targetInfo);
+            targetInfo: compilerOptions.TargetInfo,
+            optimizationLevel: compilerOptions.OptimizationLevel);
         if (!toolchainResult.Succeeded)
         {
             if (!string.IsNullOrWhiteSpace(toolchainResult.StandardOutput))
@@ -736,7 +789,8 @@ internal static class CompilerCli
             llvmModule.Text,
             objectPath,
             preservedLlvmOutputPath: llvmPath,
-            targetInfo: rootOptions.TargetInfo);
+            targetInfo: rootOptions.TargetInfo,
+            optimizationLevel: rootOptions.OptimizationLevel);
         return toolchainResult.Succeeded
             ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, requiresMathLibrary)
             : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult, RequiresMathLibrary: false);
@@ -782,6 +836,10 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --target-data-layout <layout>  Override the LLVM target data layout");
         await stdout.WriteLineAsync("  --target-cpu <cpu>             Forward an explicit target CPU to native codegen (for example: znver4)");
         await stdout.WriteLineAsync("  --target-feature <feature>     Forward a target feature string; repeatable (for example: +sse4.1)");
+        await stdout.WriteLineAsync("  --relocation-model <default|static|pic|pie>  Choose the native relocation/PIC model");
+        await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
+        await stdout.WriteLineAsync("  -O0|-O1|-O2|-O3                Select the optimization level for frontend/codegen behavior (default: -O3)");
+        await stdout.WriteLineAsync("  --optimize <0|1|2|3>           Long-form optimization level control");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
@@ -871,14 +929,16 @@ internal static class CompilerCli
         string? targetTriple,
         string? targetDataLayout,
         string? targetCpu,
-        IReadOnlyList<string> targetFeatures)
+        IReadOnlyList<string> targetFeatures,
+        LlvmRelocationModel relocationModel,
+        LlvmCodeModel? codeModel)
     {
         if (!requiresTargetInfo)
         {
             return null;
         }
 
-        var explicitTargetInfo = CreateTargetInfo(targetTriple, targetDataLayout, targetCpu, targetFeatures);
+        var explicitTargetInfo = CreateTargetInfo(targetTriple, targetDataLayout, targetCpu, targetFeatures, relocationModel, codeModel);
         if (explicitTargetInfo is not null)
         {
             return explicitTargetInfo;
@@ -893,7 +953,9 @@ internal static class CompilerCli
         {
             DataLayout = string.IsNullOrWhiteSpace(targetDataLayout) ? detectedTargetInfo.DataLayout : targetDataLayout,
             Cpu = string.IsNullOrWhiteSpace(targetCpu) ? detectedTargetInfo.Cpu : targetCpu,
-            Features = targetFeatures.Count == 0 ? detectedTargetInfo.Features : targetFeatures.ToArray()
+            Features = targetFeatures.Count == 0 ? detectedTargetInfo.Features : targetFeatures.ToArray(),
+            RelocationModel = relocationModel,
+            CodeModel = codeModel
         };
     }
 
@@ -901,7 +963,9 @@ internal static class CompilerCli
         string? targetTriple,
         string? targetDataLayout,
         string? targetCpu,
-        IReadOnlyList<string> targetFeatures)
+        IReadOnlyList<string> targetFeatures,
+        LlvmRelocationModel relocationModel,
+        LlvmCodeModel? codeModel)
     {
         if (string.IsNullOrWhiteSpace(targetTriple))
         {
@@ -912,7 +976,9 @@ internal static class CompilerCli
             targetTriple,
             string.IsNullOrWhiteSpace(targetDataLayout) ? null : targetDataLayout,
             string.IsNullOrWhiteSpace(targetCpu) ? null : targetCpu,
-            targetFeatures.Count == 0 ? null : targetFeatures.ToArray());
+            targetFeatures.Count == 0 ? null : targetFeatures.ToArray(),
+            relocationModel,
+            codeModel);
     }
 
     private static string? ResolveStopAfterPassId(CliMode mode)
@@ -1045,6 +1111,91 @@ internal static class CompilerCli
         return string.Equals(text, "info", StringComparison.OrdinalIgnoreCase)
             || string.Equals(text, "warning", StringComparison.OrdinalIgnoreCase)
             || string.Equals(text, "error", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseOptimizationLevelArgument(string argument, out CompilerOptimizationLevel optimizationLevel)
+    {
+        optimizationLevel = CompilerOptimizationLevel.O3;
+
+        if (argument.Length != 3 || !argument.StartsWith("-O", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return TryParseOptimizationLevel(argument[2..], out optimizationLevel);
+    }
+
+    private static bool TryParseOptimizationLevel(string value, out CompilerOptimizationLevel optimizationLevel)
+    {
+        switch (value.Trim().ToUpperInvariant())
+        {
+            case "0":
+            case "O0":
+                optimizationLevel = CompilerOptimizationLevel.O0;
+                return true;
+            case "1":
+            case "O1":
+                optimizationLevel = CompilerOptimizationLevel.O1;
+                return true;
+            case "2":
+            case "O2":
+                optimizationLevel = CompilerOptimizationLevel.O2;
+                return true;
+            case "3":
+            case "O3":
+                optimizationLevel = CompilerOptimizationLevel.O3;
+                return true;
+            default:
+                optimizationLevel = CompilerOptimizationLevel.O3;
+                return false;
+        }
+    }
+
+    private static bool TryParseRelocationModel(string value, out LlvmRelocationModel relocationModel)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "default":
+                relocationModel = LlvmRelocationModel.Default;
+                return true;
+            case "static":
+                relocationModel = LlvmRelocationModel.Static;
+                return true;
+            case "pic":
+                relocationModel = LlvmRelocationModel.Pic;
+                return true;
+            case "pie":
+                relocationModel = LlvmRelocationModel.Pie;
+                return true;
+            default:
+                relocationModel = LlvmRelocationModel.Default;
+                return false;
+        }
+    }
+
+    private static bool TryParseCodeModel(string value, out LlvmCodeModel? codeModel)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "tiny":
+                codeModel = LlvmCodeModel.Tiny;
+                return true;
+            case "small":
+                codeModel = LlvmCodeModel.Small;
+                return true;
+            case "kernel":
+                codeModel = LlvmCodeModel.Kernel;
+                return true;
+            case "medium":
+                codeModel = LlvmCodeModel.Medium;
+                return true;
+            case "large":
+                codeModel = LlvmCodeModel.Large;
+                return true;
+            default:
+                codeModel = null;
+                return false;
+        }
     }
 
     private enum CliMode

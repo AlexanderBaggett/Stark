@@ -757,36 +757,36 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
 ### Targeting and Code Generation Quality
 
 - [x] native LLVM `switch` for simple integer/bool cases
-- [ ] better aggregate lowering quality
+- [x] better aggregate lowering quality
   - [x] small aggregate scalarization heuristics
   - [x] memcpy vs field-store heuristics
-  - [ ] sret/byval tuning
-  - [ ] aggregate call/return regression benchmarks
-- [ ] better global data lowering quality
-  - [ ] merge identical constants where legal
-  - [ ] improve `unnamed_addr`, section, and alignment choices
-  - [ ] reduce redundant helper globals
-  - [ ] tests for cleaner emitted LLVM global sections
-- [ ] target-aware code generation options
-  - [ ] CLI target triple override
-  - [ ] CPU and feature-string forwarding
-  - [ ] relocation/PIC/code-model controls if exposed
-  - [ ] tests for target option plumbing
-- [ ] object emission and separate link steps
-  - [ ] keep intermediate object files
-  - [ ] compile-only vs link-only CLI modes
-  - [ ] explicit linker and archiver selection
-  - [ ] multi-object link orchestration tests
-- [ ] optimization level controls
-  - [ ] CLI optimization-level surface
-  - [ ] pipeline behavior per optimization level
-  - [ ] native toolchain flag forwarding
-  - [ ] tests that optimization settings change tool invocation/output
-- [ ] debug info emission
-  - [ ] carry source spans through MIR and SSA
-  - [ ] emit line-table debug info
-  - [ ] emit local variable debug info where feasible
-  - [ ] tests that debug metadata is present in LLVM output
+  - [x] sret/byval tuning
+  - [x] aggregate call/return regression benchmarks
+- [x] better global data lowering quality
+  - [x] merge identical constants where legal
+  - [x] improve `unnamed_addr`, section, and alignment choices
+  - [x] reduce redundant helper globals
+  - [x] tests for cleaner emitted LLVM global sections
+- [x] target-aware code generation options
+  - [x] CLI target triple override
+  - [x] CPU and feature-string forwarding
+  - [x] relocation/PIC/code-model controls if exposed
+  - [x] tests for target option plumbing
+- [x] object emission and separate link steps
+  - [x] keep intermediate object files
+  - [x] compile-only vs link-only CLI modes
+  - [x] explicit linker and archiver selection
+  - [x] multi-object link orchestration tests
+- [x] optimization level controls
+  - [x] CLI optimization-level surface
+  - [x] pipeline behavior per optimization level
+  - [x] native toolchain flag forwarding
+  - [x] tests that optimization settings change tool invocation/output
+- [x] debug info emission
+  - [x] carry source spans through MIR and SSA
+  - [x] emit line-table debug info
+  - [x] emit local variable debug info where feasible
+  - [x] tests that debug metadata is present in LLVM output
 
 ## Milestone 9: Tooling, Diagnostics, and Developer Experience
 

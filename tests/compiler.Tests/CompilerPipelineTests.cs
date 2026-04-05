@@ -129,6 +129,98 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void PipelineCarriesSourceLocationsThroughMirAndSsaArtifacts()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Demo
+
+            fn i32 Run(i32 input) {
+                stack mut i32 value = input;
+                value = value + 1;
+                return value;
+            }
+            """,
+            "/virtual/Demo.stark"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var mirFunction = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        Assert.NotNull(mirFunction.Location);
+        Assert.Equal("/virtual/Demo.stark", mirFunction.Location!.FilePath);
+        Assert.Equal(3, mirFunction.Location.Line);
+        Assert.Contains(
+            mirFunction.Blocks.SelectMany(static block => block.Statements),
+            statement => statement.Location is { FilePath: "/virtual/Demo.stark", Line: 4 });
+        Assert.NotNull(mirFunction.Blocks[0].Terminator.Location);
+        Assert.Equal("/virtual/Demo.stark", mirFunction.Blocks[0].Terminator.Location!.FilePath);
+
+        var ssaFunction = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.NotNull(ssaFunction.Location);
+        Assert.Equal("/virtual/Demo.stark", ssaFunction.Location!.FilePath);
+        Assert.Equal(3, ssaFunction.Location.Line);
+        Assert.Contains(
+            ssaFunction.Blocks.SelectMany(static block => block.Instructions),
+            instruction => instruction switch
+            {
+                SsaValueInstruction { Location: { FilePath: "/virtual/Demo.stark", Line: 4 or 5 } } => true,
+                SsaAllocateLocalInstruction { Location: { FilePath: "/virtual/Demo.stark", Line: 4 } } => true,
+                SsaStoreLocalInstruction { Location: { FilePath: "/virtual/Demo.stark", Line: 4 or 5 } } => true,
+                _ => false
+            });
+        Assert.NotNull(ssaFunction.Blocks[0].Terminator.Location);
+
+        var mirText = ArtifactTextRenderer.Render(mir);
+        var ssaText = ArtifactTextRenderer.Render(ssa);
+        Assert.Contains("location: /virtual/Demo.stark:3:", mirText);
+        Assert.Contains("@ /virtual/Demo.stark:4:", mirText);
+        Assert.Contains("location: /virtual/Demo.stark:3:", ssaText);
+        Assert.Contains("@ /virtual/Demo.stark:", ssaText);
+    }
+
+    [Fact]
+    public void OptimizationLevelZeroPreservesRawSsaBeforeLlvmEmission()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32 Run(bool flag) {
+                    stack mut i32 value = 0;
+                    if (flag) {
+                        value = 1;
+                    } else {
+                        value = 2;
+                    }
+
+                    return value;
+                }
+                """),
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        Assert.Equal(ArtifactTextRenderer.Render(ssa), ArtifactTextRenderer.Render(optimizedSsa));
+
+        var function = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        Assert.Contains(function.Blocks, static block => block.Phis.Count != 0);
+        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
+    }
+
+    [Fact]
     public void PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -567,6 +659,46 @@ public sealed class CompilerPipelineTests
                 && !function.SupportsDirectCodeGeneration
                 && function.Blocks.Count == 0
                 && function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass);
+    }
+
+    [Fact]
+    public void LargeAggregateAbiUsesIndirectByValueParametersAndSRetReturns()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Demo
+
+            struct Big {
+                i64 A;
+                i64 B;
+                i64 C;
+            }
+
+            fn Big Make() {
+                return new Big() { A = 1, B = 2, C = 3 };
+            }
+
+            fn i64 Read(Big value) {
+                return value.A + value.C;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.AbiModel, out AbiModel? abiModel));
+        Assert.NotNull(abiModel);
+
+        var make = abiModel.Functions["Make"];
+        Assert.True(make.ReturnsIndirect);
+        Assert.Equal(StarkTypeKind.Void, make.LlvmReturnType.Kind);
+        Assert.Equal(AbiParameterKind.SRet, Assert.Single(make.Parameters).Kind);
+
+        var read = abiModel.Functions["Read"];
+        Assert.False(read.ReturnsIndirect);
+        var valueParameter = Assert.Single(read.UserParameters);
+        Assert.Equal(AbiParameterKind.IndirectIn, valueParameter.Kind);
+        Assert.Equal(StarkTypeKind.RawPointer, valueParameter.LlvmType.Kind);
     }
 
     [Fact]

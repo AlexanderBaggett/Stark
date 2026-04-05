@@ -162,7 +162,8 @@ internal sealed class MidLevelIrLowerer(
             builder.EntryBlockId,
             builder.Locals,
             builder.Blocks,
-            function.BodyLoweringKind);
+            function.BodyLoweringKind,
+            functionLocation);
     }
 
     private static string BuildSignature(TypedFunctionSignature function)
@@ -525,6 +526,7 @@ internal sealed class MidLevelIrLowerer(
         private readonly Stack<BreakTargets> _breakTargets = [];
         private readonly Stack<ScopeFrame> _scopes = [];
         private string? _moduleNameOverride;
+        private SourceLocation? _currentStatementLocation;
         private int _nextBlockId;
         private int _nextTempId;
 
@@ -597,8 +599,8 @@ internal sealed class MidLevelIrLowerer(
             if (!CurrentBlock.HasTerminator)
             {
                 CurrentBlock.Terminator = _function.Signature.ReturnType.Kind == StarkTypeKind.Void
-                    ? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, Targets: [])
-                    : new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: []);
+                    ? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, Targets: [], Location: _functionLocation)
+                    : new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: [], Location: _functionLocation);
             }
         }
 
@@ -622,6 +624,11 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerStatement(StarkParser.StatementContext statement)
         {
+            var previousStatementLocation = _currentStatementLocation;
+            _currentStatementLocation = CreateSourceLocation(statement.Start) ?? _functionLocation;
+
+            try
+            {
             if (CurrentBlock.HasTerminator)
             {
                 CurrentBlock = CreateBlock("dead");
@@ -706,6 +713,11 @@ internal sealed class MidLevelIrLowerer(
             if (statement.expressionStatement() is { } expressionStatement)
             {
                 LowerExpressionStatement(expressionStatement.expression());
+            }
+            }
+            finally
+            {
+                _currentStatementLocation = previousStatementLocation;
             }
         }
 
@@ -6308,7 +6320,14 @@ internal sealed class MidLevelIrLowerer(
                 return;
             }
 
-            var local = new MidLevelIrLocal(name, type, storageClass, isMutable, isConstant, IsAddressable: ShouldAddressLocal(type, storageClass));
+            var local = new MidLevelIrLocal(
+                name,
+                type,
+                storageClass,
+                isMutable,
+                isConstant,
+                IsAddressable: ShouldAddressLocal(type, storageClass),
+                Location: _currentStatementLocation ?? _functionLocation);
             _locals.Add(local);
             _localsByName[name] = local;
         }
@@ -6762,7 +6781,14 @@ internal sealed class MidLevelIrLowerer(
             MidLevelIrRValue? value = null,
             MidLevelIrOperand? address = null)
         {
-            CurrentBlock.Statements.Add(new MidLevelIrStatement(kind, text, targetName, targetType, address, value));
+            CurrentBlock.Statements.Add(new MidLevelIrStatement(
+                kind,
+                text,
+                targetName,
+                targetType,
+                address,
+                value,
+                _currentStatementLocation ?? _functionLocation));
         }
 
         private void EnsureGoto(int targetBlockId)
@@ -6782,7 +6808,10 @@ internal sealed class MidLevelIrLowerer(
 
         private BasicBlockBuilder CreateBlock(string label)
         {
-            var block = new BasicBlockBuilder(_nextBlockId, $"bb{_nextBlockId}_{label}");
+            var block = new BasicBlockBuilder(
+                _nextBlockId,
+                $"bb{_nextBlockId}_{label}",
+                () => _currentStatementLocation ?? _functionLocation);
             _nextBlockId++;
             _blocks.Add(block);
             return block;
@@ -7285,10 +7314,14 @@ internal sealed class MidLevelIrLowerer(
 
         private sealed class BasicBlockBuilder
         {
-            public BasicBlockBuilder(int id, string label)
+            private readonly Func<SourceLocation?> _locationProvider;
+            private MidLevelIrTerminator? _terminator;
+
+            public BasicBlockBuilder(int id, string label, Func<SourceLocation?> locationProvider)
             {
                 Id = id;
                 Label = label;
+                _locationProvider = locationProvider;
             }
 
             public int Id { get; }
@@ -7297,7 +7330,13 @@ internal sealed class MidLevelIrLowerer(
 
             public List<MidLevelIrStatement> Statements { get; } = [];
 
-            public MidLevelIrTerminator? Terminator { get; set; }
+            public MidLevelIrTerminator? Terminator
+            {
+                get => _terminator;
+                set => _terminator = value is null || value.Location is not null
+                    ? value
+                    : value with { Location = _locationProvider() };
+            }
 
             public bool HasTerminator => Terminator is not null;
 
@@ -7307,7 +7346,10 @@ internal sealed class MidLevelIrLowerer(
                     Id,
                     Label,
                     Statements.ToArray(),
-                    Terminator ?? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: []));
+                    Terminator ?? new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Unreachable,
+                        Targets: [],
+                        Location: _locationProvider()));
             }
         }
 

@@ -29,6 +29,51 @@ fn rawptr<i8> OpenHandle(ascii path, FileMode mode) {
     }
 }
 
+internal ffi asm(x86_64) fn void CopyAsciiBytes(rawmutptr<i8> destination, rawptr<i8> source, i32 length)
+    in("r8") destination,
+    in("r9") source,
+    in("r10") length,
+    clobber("rdi", "rsi", "rcx")
+{
+    "cld\nmovq %r8, %rdi\nmovq %r9, %rsi\nmovl %r10d, %ecx\nrep movsb"
+}
+
+internal ffi asm(aarch64) fn void CopyAsciiBytes(rawmutptr<i8> destination, rawptr<i8> source, i32 length)
+    in("x0") destination,
+    in("x1") source,
+    in("w2") length,
+    clobber("w9", "w10", "w11")
+{
+    "cbz w2, 2f\nmov w9, wzr\n1:\nldrb w10, [x1, w9, uxtw]\nstrb w10, [x0, w9, uxtw]\nadd w9, w9, #1\nsub w11, w2, w9\ncbnz w11, 1b\n2:"
+}
+
+internal ffi asm(riscv64) fn void CopyAsciiBytes(rawmutptr<i8> destination, rawptr<i8> source, i32 length)
+    in("a0") destination,
+    in("a1") source,
+    in("a2") length,
+    clobber("t0", "t1", "t2", "t3", "t4")
+{
+    "beq a2, zero, 2f\nli t0, 0\n1:\nadd t1, a1, t0\nlbu t2, 0(t1)\nadd t3, a0, t0\nsb t2, 0(t3)\naddi t0, t0, 1\nsub t4, a2, t0\nbne t4, zero, 1b\n2:"
+}
+
+internal ffi asm(x86) fn void CopyAsciiBytes(rawmutptr<i8> destination, rawptr<i8> source, i32 length)
+    in("eax") destination,
+    in("edx") source,
+    in("ebx") length,
+    clobber("edi", "esi", "ecx")
+{
+    "cld\nmovl %eax, %edi\nmovl %edx, %esi\nmovl %ebx, %ecx\nrep movsb"
+}
+
+internal ffi asm(arm) fn void CopyAsciiBytes(rawmutptr<i8> destination, rawptr<i8> source, i32 length)
+    in("r0") destination,
+    in("r1") source,
+    in("r2") length,
+    clobber("r3", "r12")
+{
+    "cmp r2, #0\nbeq 2f\nmov r3, #0\n1:\nldrb r12, [r1, r3]\nstrb r12, [r0, r3]\nadd r3, r3, #1\nsub r12, r2, r3\ncmp r12, #0\nbne 1b\n2:"
+}
+
 fn void WriteAsciiLineHandle(rawptr<i8> handle, ascii text) {
     stack mut System.Runtime.Buffer.ByteBuffer512 lineBuffer = new System.Runtime.Buffer.ByteBuffer512();
     stack mut Ascii owned = new Ascii() {
@@ -150,14 +195,12 @@ public struct File {
             return false;
         }
 
-        stack mut i64 index = 0;
-        while willexit (index < textLength) {
-            stack ascii unit = fullText[index, 1];
-            stack rawptr<i8> data = System.Text.AsciiData(unit);
-            *(&self.WriteBufferStorage[existingLength + index]) = *data;
-            index += 1;
+        stack rawptr<i8> textData = System.Text.AsciiData(fullText);
+        if (textData == null) {
+            return false;
         }
 
+        CopyAsciiBytes(&self.WriteBufferStorage[existingLength], textData, (i32)textLength);
         self.WriteBufferLength = existingLength + textLength;
         return true;
     }

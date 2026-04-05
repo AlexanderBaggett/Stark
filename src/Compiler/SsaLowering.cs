@@ -41,7 +41,8 @@ internal sealed class SsaLowerer
                 SupportsDirectCodeGeneration: false,
                 function.EntryBlockId,
                 [],
-                function.BodyLoweringKind);
+                function.BodyLoweringKind,
+                function.Location);
         }
 
         var builder = new FunctionSsaBuilder(function, _signatures, _globals);
@@ -69,6 +70,7 @@ internal sealed class SsaLowerer
         private readonly Dictionary<string, SsaValueReference> _parameterValues;
         private readonly Dictionary<string, SsaValue> _sharedValueNumbers = new(StringComparer.Ordinal);
         private Dictionary<string, SsaValue>? _currentValueNumbers;
+        private SourceLocation? _currentSourceLocation;
         private int _nextValueId;
 
         public FunctionSsaBuilder(
@@ -150,7 +152,8 @@ internal sealed class SsaLowerer
                         blockId => ResolveCollapsedTarget(blockId, trampolineRedirects, targetCache),
                         blockId => ResolveCollapsedPredecessor(blockId, trampolineRedirects, predecessorCache)))
                     .ToArray(),
-                _function.BodyLoweringKind);
+                _function.BodyLoweringKind,
+                _function.Location);
         }
 
         private void LowerBlock(int blockId)
@@ -177,6 +180,11 @@ internal sealed class SsaLowerer
 
         private void LowerStatement(int blockId, SsaBlockBuilder block, MidLevelIrStatement statement)
         {
+            var previousSourceLocation = _currentSourceLocation;
+            _currentSourceLocation = statement.Location ?? _function.Location;
+
+            try
+            {
             switch (statement.Kind)
             {
                 case MidLevelIrStatementKind.StorageLive:
@@ -185,10 +193,10 @@ internal sealed class SsaLowerer
                         && _addressableLocals.Contains(statement.TargetName))
                     {
                         var storageClass = GetLocalStorageClass(statement.TargetName);
-                        block.Instructions.Add(new SsaAllocateLocalInstruction(statement.TargetName, statement.TargetType, storageClass));
+                        block.Instructions.Add(new SsaAllocateLocalInstruction(statement.TargetName, statement.TargetType, storageClass, statement.Location ?? _function.Location));
                         if (UsesStackLifetime(storageClass))
                         {
-                            block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType));
+                            block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType, statement.Location ?? _function.Location));
                         }
                     }
 
@@ -200,7 +208,7 @@ internal sealed class SsaLowerer
                     {
                         if (UsesStackLifetime(GetLocalStorageClass(statement.TargetName)))
                         {
-                            block.Instructions.Add(new SsaLifetimeEndInstruction(statement.TargetName, statement.TargetType));
+                            block.Instructions.Add(new SsaLifetimeEndInstruction(statement.TargetName, statement.TargetType, statement.Location ?? _function.Location));
                         }
                     }
 
@@ -229,7 +237,7 @@ internal sealed class SsaLowerer
                     var assignedValue = LowerRValue(blockId, block, statement.Value);
                     if (_addressableLocals.Contains(statement.TargetName))
                     {
-                        block.Instructions.Add(new SsaStoreLocalInstruction(statement.TargetName, statement.TargetType, assignedValue));
+                        block.Instructions.Add(new SsaStoreLocalInstruction(statement.TargetName, statement.TargetType, assignedValue, statement.Location ?? _function.Location));
                     }
                     else if (_variableTypes.ContainsKey(statement.TargetName))
                     {
@@ -237,7 +245,7 @@ internal sealed class SsaLowerer
                     }
                     else
                     {
-                        block.Instructions.Add(new SsaStoreGlobalInstruction(statement.TargetName, statement.TargetType, assignedValue));
+                        block.Instructions.Add(new SsaStoreGlobalInstruction(statement.TargetName, statement.TargetType, assignedValue, statement.Location ?? _function.Location));
                     }
 
                     InvalidateConsumedAggregateValue(blockId, block, statement.TargetType, statement.Value, statement.TargetName);
@@ -265,7 +273,8 @@ internal sealed class SsaLowerer
                     block.Instructions.Add(new SsaStoreIndirectInstruction(
                         LowerOperand(blockId, block, statement.Address),
                         statement.TargetType,
-                        LowerRValue(blockId, block, statement.Value)));
+                        LowerRValue(blockId, block, statement.Value),
+                        statement.Location ?? _function.Location));
                     InvalidateConsumedAggregateValue(blockId, block, statement.TargetType, statement.Value);
                     return;
                 case MidLevelIrStatementKind.Evaluate:
@@ -278,22 +287,29 @@ internal sealed class SsaLowerer
                 default:
                     throw new InvalidOperationException($"Unsupported MIR statement kind '{statement.Kind}'.");
             }
+            }
+            finally
+            {
+                _currentSourceLocation = previousSourceLocation;
+            }
         }
 
         private SsaTerminator LowerTerminator(int blockId, SsaBlockBuilder block, MidLevelIrTerminator terminator)
         {
             return terminator.Kind switch
             {
-                MidLevelIrTerminatorKind.Goto => new SsaTerminator(SsaTerminatorKind.Goto, terminator.Targets),
+                MidLevelIrTerminatorKind.Goto => new SsaTerminator(SsaTerminatorKind.Goto, terminator.Targets, Location: terminator.Location ?? _function.Location),
                 MidLevelIrTerminatorKind.Branch => new SsaTerminator(
                     SsaTerminatorKind.Branch,
                     terminator.Targets,
-                    Condition: terminator.Condition is null ? null : LowerOperand(blockId, block, terminator.Condition)),
+                    Condition: terminator.Condition is null ? null : LowerOperand(blockId, block, terminator.Condition),
+                    Location: terminator.Location ?? _function.Location),
                 MidLevelIrTerminatorKind.Return => new SsaTerminator(
                     SsaTerminatorKind.Return,
                     terminator.Targets,
-                    Value: terminator.Value is null ? null : LowerOperand(blockId, block, terminator.Value)),
-                MidLevelIrTerminatorKind.Unreachable => new SsaTerminator(SsaTerminatorKind.Unreachable, terminator.Targets),
+                    Value: terminator.Value is null ? null : LowerOperand(blockId, block, terminator.Value),
+                    Location: terminator.Location ?? _function.Location),
+                MidLevelIrTerminatorKind.Unreachable => new SsaTerminator(SsaTerminatorKind.Unreachable, terminator.Targets, Location: terminator.Location ?? _function.Location),
                 MidLevelIrTerminatorKind.Switch => new SsaTerminator(
                     SsaTerminatorKind.Switch,
                     terminator.Targets,
@@ -305,7 +321,8 @@ internal sealed class SsaLowerer
                             switchCase.TargetBlockId,
                             LowerOperand(blockId, block, switchCase.MatchValue!)))
                         .ToArray(),
-                    DefaultTarget: terminator.DefaultTarget),
+                    DefaultTarget: terminator.DefaultTarget,
+                    Location: terminator.Location ?? _function.Location),
                 _ => throw new InvalidOperationException($"Unsupported MIR terminator kind '{terminator.Kind}'.")
             };
         }
@@ -468,7 +485,7 @@ internal sealed class SsaLowerer
 
             var name = $"v{_nextValueId++}";
             var result = new SsaValueReference(name, value.Type);
-            block.Instructions.Add(new SsaValueInstruction(name, value));
+            block.Instructions.Add(new SsaValueInstruction(name, value, _currentSourceLocation ?? _function.Location));
 
             if (_currentValueNumbers is not null
                 && TryGetPureValueNumberingKey(value, out var emittedKey))
@@ -516,7 +533,7 @@ internal sealed class SsaLowerer
             }
 
             var transferKind = DetermineAggregateTransferKind(targetType, use.Operand, out movedSource);
-            aggregateCopy = new SsaCopyMemoryInstruction(destinationAddressFactory(), sourceAddress, targetType, transferKind);
+            aggregateCopy = new SsaCopyMemoryInstruction(destinationAddressFactory(), sourceAddress, targetType, transferKind, _currentSourceLocation ?? _function.Location);
             return true;
         }
 
@@ -780,7 +797,7 @@ internal sealed class SsaLowerer
             }
 
             var result = new SsaValueReference($"v{_nextValueId++}_phi", type);
-            var created = new PhiBuilder(blockId, name, type, result);
+            var created = new PhiBuilder(blockId, name, type, result, _currentSourceLocation ?? _function.Location);
             _phis[key] = created;
             _blocks[blockId].Phis.Add(created);
             return created;
@@ -1190,12 +1207,13 @@ internal sealed class SsaLowerer
 
         private sealed class PhiBuilder
         {
-            public PhiBuilder(int blockId, string variableName, StarkTypeSymbol type, SsaValueReference result)
+            public PhiBuilder(int blockId, string variableName, StarkTypeSymbol type, SsaValueReference result, SourceLocation? location)
             {
                 BlockId = blockId;
                 VariableName = variableName;
                 Type = type;
                 Result = result;
+                Location = location;
             }
 
             public int BlockId { get; }
@@ -1208,6 +1226,8 @@ internal sealed class SsaLowerer
 
             public List<SsaPhiIncoming> Incomings { get; } = [];
 
+            public SourceLocation? Location { get; }
+
             public SsaPhi Build(
                 IReadOnlyDictionary<string, SsaValue> replacements,
                 Func<int, int> resolveTarget,
@@ -1219,7 +1239,8 @@ internal sealed class SsaLowerer
                     Type,
                     Incomings.Select(incoming => new SsaPhiIncoming(
                         resolvePredecessor(incoming.PredecessorBlockId),
-                        RewriteValue(incoming.Value, replacements))).ToArray());
+                        RewriteValue(incoming.Value, replacements))).ToArray(),
+                    Location);
             }
         }
 
@@ -1268,27 +1289,32 @@ internal sealed class SsaLowerer
             {
                 SsaValueInstruction valueInstruction => new SsaValueInstruction(
                     valueInstruction.ResultName,
-                    RewriteRValue(valueInstruction.Value, replacements)),
+                    RewriteRValue(valueInstruction.Value, replacements),
+                    valueInstruction.Location),
                 SsaAllocateLocalInstruction allocateLocal => allocateLocal,
                 SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
                 SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
                 SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                     storeLocal.LocalName,
                     storeLocal.LocalType,
-                    RewriteValue(storeLocal.Value, replacements)),
+                    RewriteValue(storeLocal.Value, replacements),
+                    storeLocal.Location),
                 SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
                     RewriteValue(copyMemory.DestinationAddress, replacements),
                     RewriteValue(copyMemory.SourceAddress, replacements),
                     copyMemory.CopyType,
-                    copyMemory.TransferKind),
+                    copyMemory.TransferKind,
+                    copyMemory.Location),
                 SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                     RewriteValue(storeIndirect.Address, replacements),
                     storeIndirect.ValueType,
-                    RewriteValue(storeIndirect.Value, replacements)),
+                    RewriteValue(storeIndirect.Value, replacements),
+                    storeIndirect.Location),
                 SsaStoreGlobalInstruction storeGlobal => new SsaStoreGlobalInstruction(
                     storeGlobal.GlobalName,
                     storeGlobal.GlobalType,
-                    RewriteValue(storeGlobal.Value, replacements)),
+                    RewriteValue(storeGlobal.Value, replacements),
+                    storeGlobal.Location),
                 _ => instruction
             };
         }
@@ -1403,7 +1429,8 @@ internal sealed class SsaLowerer
                     RewriteValue(switchCase.MatchValue, replacements))).ToArray(),
                 DefaultTarget: terminator.DefaultTarget is null
                     ? null
-                    : resolveTarget(terminator.DefaultTarget.Value));
+                    : resolveTarget(terminator.DefaultTarget.Value),
+                Location: terminator.Location);
         }
     }
 }

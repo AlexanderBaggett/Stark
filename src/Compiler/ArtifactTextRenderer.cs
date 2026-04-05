@@ -13,6 +13,11 @@ internal static class ArtifactTextRenderer
         foreach (var function in mir.Functions)
         {
             builder.AppendLine($"fn {function.Signature}");
+            if (function.Location is not null)
+            {
+                builder.AppendLine($"  location: {function.Location}");
+            }
+
             builder.AppendLine($"  has-body: {function.HasBody.ToString().ToLowerInvariant()}");
             builder.AppendLine($"  body-kind: {function.BodyLoweringKind}");
             builder.AppendLine($"  direct-codegen: {function.SupportsDirectCodeGeneration.ToString().ToLowerInvariant()}");
@@ -75,6 +80,11 @@ internal static class ArtifactTextRenderer
         foreach (var function in ssa.Functions)
         {
             builder.AppendLine($"fn {function.Name}({string.Join(", ", function.Parameters.Select(static parameter => $"{parameter.Type.DisplayName} {parameter.Name}"))}) -> {function.ReturnType.DisplayName}");
+            if (function.Location is not null)
+            {
+                builder.AppendLine($"  location: {function.Location}");
+            }
+
             builder.AppendLine($"  has-body: {function.HasBody.ToString().ToLowerInvariant()}");
             builder.AppendLine($"  body-kind: {function.BodyLoweringKind}");
             builder.AppendLine($"  direct-codegen: {function.SupportsDirectCodeGeneration.ToString().ToLowerInvariant()}");
@@ -89,7 +99,7 @@ internal static class ArtifactTextRenderer
                     foreach (var phi in block.Phis)
                     {
                         var incoming = string.Join(", ", phi.Incomings.Select(entry => $"[{FormatSsaValue(entry.Value)} from bb{entry.PredecessorBlockId}]"));
-                        builder.AppendLine($"      {phi.ResultName} = phi {phi.Type.DisplayName} {incoming}");
+                        builder.AppendLine($"      {phi.ResultName} = phi {phi.Type.DisplayName} {incoming}{FormatLocationSuffix(phi.Location)}");
                     }
 
                     foreach (var instruction in block.Instructions)
@@ -112,7 +122,7 @@ internal static class ArtifactTextRenderer
 
     private static string Render(MidLevelIrStatement statement)
     {
-        return statement.Kind switch
+        var rendered = statement.Kind switch
         {
             MidLevelIrStatementKind.StorageLive => $"storage-live {statement.TargetName}",
             MidLevelIrStatementKind.StorageDead => $"storage-dead {statement.TargetName}",
@@ -121,11 +131,13 @@ internal static class ArtifactTextRenderer
             MidLevelIrStatementKind.Evaluate => $"eval {statement.Text}",
             _ => statement.Text
         };
+
+        return rendered + FormatLocationSuffix(statement.Location);
     }
 
     private static IReadOnlyList<string> Render(MidLevelIrTerminator terminator)
     {
-        return terminator.Kind switch
+        var rendered = terminator.Kind switch
         {
             MidLevelIrTerminatorKind.Goto => [$"goto bb{terminator.Targets[0]}"],
             MidLevelIrTerminatorKind.Branch => [$"branch {terminator.ConditionText ?? terminator.Condition?.Text ?? "<cond>"} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
@@ -134,6 +146,8 @@ internal static class ArtifactTextRenderer
             MidLevelIrTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
+
+        return rendered.Select(line => line + FormatLocationSuffix(terminator.Location)).ToArray();
     }
 
     private static IReadOnlyList<string> RenderMirSwitch(MidLevelIrTerminator terminator)
@@ -156,7 +170,7 @@ internal static class ArtifactTextRenderer
 
     private static string Render(SsaInstruction instruction)
     {
-        return instruction switch
+        var rendered = instruction switch
         {
             SsaValueInstruction valueInstruction => $"{valueInstruction.ResultName} = {valueInstruction.Value.Text}",
             SsaAllocateLocalInstruction allocateLocal => $"alloca[{allocateLocal.StorageClass}] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
@@ -168,11 +182,13 @@ internal static class ArtifactTextRenderer
             SsaStoreGlobalInstruction storeGlobal => $"store {FormatSsaValue(storeGlobal.Value)} -> @{storeGlobal.GlobalName}",
             _ => instruction.ToString() ?? instruction.GetType().Name
         };
+
+        return rendered + FormatLocationSuffix(GetInstructionLocation(instruction));
     }
 
     private static IReadOnlyList<string> Render(SsaTerminator terminator)
     {
-        return terminator.Kind switch
+        var rendered = terminator.Kind switch
         {
             SsaTerminatorKind.Goto => [$"goto bb{terminator.Targets[0]}"],
             SsaTerminatorKind.Branch => [$"branch {FormatSsaValue(terminator.Condition)} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
@@ -181,6 +197,8 @@ internal static class ArtifactTextRenderer
             SsaTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
+
+        return rendered.Select(line => line + FormatLocationSuffix(terminator.Location)).ToArray();
     }
 
     private static IReadOnlyList<string> RenderSsaSwitch(SsaTerminator terminator)
@@ -216,5 +234,26 @@ internal static class ArtifactTextRenderer
             SsaUndefValue => "undef",
             _ => value.Text
         };
+    }
+
+    private static SourceLocation? GetInstructionLocation(SsaInstruction instruction)
+    {
+        return instruction switch
+        {
+            SsaValueInstruction valueInstruction => valueInstruction.Location,
+            SsaAllocateLocalInstruction allocateLocal => allocateLocal.Location,
+            SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
+            SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
+            SsaStoreLocalInstruction storeLocal => storeLocal.Location,
+            SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
+            SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,
+            SsaStoreGlobalInstruction storeGlobal => storeGlobal.Location,
+            _ => null
+        };
+    }
+
+    private static string FormatLocationSuffix(SourceLocation? location)
+    {
+        return location is null ? string.Empty : $" @ {location}";
     }
 }

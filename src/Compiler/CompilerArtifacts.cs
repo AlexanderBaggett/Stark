@@ -754,7 +754,8 @@ public sealed record AbiFunctionSignature(
     StarkTypeSymbol LlvmReturnType,
     IReadOnlyList<AbiParameterSymbol> Parameters,
     bool IsFfi,
-    string? SourceName = null)
+    string? SourceName = null,
+    bool UsesFastCallingConvention = false)
 {
     public string DisplaySourceName => SourceName ?? Name;
 
@@ -1112,7 +1113,8 @@ public sealed record MidLevelIrLocal(
     string StorageClass,
     bool IsMutable,
     bool IsConstant,
-    bool IsAddressable = false);
+    bool IsAddressable = false,
+    SourceLocation? Location = null);
 
 public abstract record MidLevelIrOperand(StarkTypeSymbol Type, string Text);
 
@@ -1285,7 +1287,8 @@ public sealed record MidLevelIrStatement(
     string? TargetName = null,
     StarkTypeSymbol? TargetType = null,
     MidLevelIrOperand? Address = null,
-    MidLevelIrRValue? Value = null);
+    MidLevelIrRValue? Value = null,
+    SourceLocation? Location = null);
 
 public sealed record MidLevelIrSwitchCase(
     string Label,
@@ -1301,7 +1304,8 @@ public sealed record MidLevelIrTerminator(
     MidLevelIrOperand? Condition = null,
     MidLevelIrOperand? Value = null,
     IReadOnlyList<MidLevelIrSwitchCase>? SwitchCases = null,
-    int? DefaultTarget = null);
+    int? DefaultTarget = null,
+    SourceLocation? Location = null);
 
 public sealed record MidLevelIrBasicBlock(
     int Id,
@@ -1319,7 +1323,8 @@ public sealed record MidLevelIrFunction(
     int EntryBlockId,
     IReadOnlyList<MidLevelIrLocal> Locals,
     IReadOnlyList<MidLevelIrBasicBlock> Blocks,
-    FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly);
+    FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
+    SourceLocation? Location = null);
 
 public sealed record MidLevelIrModule(
     string ModuleName,
@@ -1546,39 +1551,46 @@ public sealed record SsaPhi(
     string ResultName,
     string VariableName,
     StarkTypeSymbol Type,
-    IReadOnlyList<SsaPhiIncoming> Incomings);
+    IReadOnlyList<SsaPhiIncoming> Incomings,
+    SourceLocation? Location = null);
 
 public sealed record SsaValueInstruction(
     string ResultName,
-    SsaRValue Value)
+    SsaRValue Value,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaAllocateLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
-    string StorageClass = "stack")
+    string StorageClass = "stack",
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaLifetimeStartInstruction(
     string LocalName,
-    StarkTypeSymbol LocalType)
+    StarkTypeSymbol LocalType,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaLifetimeEndInstruction(
     string LocalName,
-    StarkTypeSymbol LocalType)
+    StarkTypeSymbol LocalType,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaStoreLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
-    SsaValue Value)
+    SsaValue Value,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaStoreIndirectInstruction(
     SsaValue Address,
     StarkTypeSymbol ValueType,
-    SsaValue Value)
+    SsaValue Value,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public enum SsaMemoryTransferKind
@@ -1591,13 +1603,15 @@ public sealed record SsaCopyMemoryInstruction(
     SsaValue DestinationAddress,
     SsaValue SourceAddress,
     StarkTypeSymbol CopyType,
-    SsaMemoryTransferKind TransferKind = SsaMemoryTransferKind.Copy)
+    SsaMemoryTransferKind TransferKind = SsaMemoryTransferKind.Copy,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaStoreGlobalInstruction(
     string GlobalName,
     StarkTypeSymbol GlobalType,
-    SsaValue Value)
+    SsaValue Value,
+    SourceLocation? Location = null)
     : SsaInstruction;
 
 public enum SsaTerminatorKind
@@ -1615,7 +1629,8 @@ public sealed record SsaTerminator(
     SsaValue? Condition = null,
     SsaValue? Value = null,
     IReadOnlyList<SsaSwitchCase>? SwitchCases = null,
-    int? DefaultTarget = null);
+    int? DefaultTarget = null,
+    SourceLocation? Location = null);
 
 public sealed record SsaBasicBlock(
     int Id,
@@ -1632,7 +1647,8 @@ public sealed record SsaFunction(
     bool SupportsDirectCodeGeneration,
     int EntryBlockId,
     IReadOnlyList<SsaBasicBlock> Blocks,
-    FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly);
+    FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
+    SourceLocation? Location = null);
 
 public sealed record SsaIrModule(
     string ModuleName,

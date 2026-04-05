@@ -99,7 +99,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
-    public void OwnedAsciiConcatenationUsesExplicitMemcpyAndViewProjection()
+    public void OwnedAsciiConcatenationUsesExplicitCopyLoopAndViewProjection()
     {
         var llvm = CompileToLlvm(
             """
@@ -126,9 +126,11 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
         Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
         Assert.Contains("define fastcc i1 @TryConcatAscii(", llvm);
         Assert.Contains("define fastcc %stark_ascii @AsciiView(", llvm);
-        Assert.Contains("call void @llvm.memcpy.p0.p0.i64", llvm);
-        Assert.Contains("call i1 @TryConcatAscii(", llvm);
-        Assert.Contains("call %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("%concat_left_index = phi i64", llvm);
+        Assert.Contains("load i8, ptr %concat_left_src", llvm);
+        Assert.DoesNotContain("@llvm.memcpy", llvm);
+        Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
+        Assert.Contains("call fastcc %stark_ascii @AsciiView(", llvm);
     }
 
     [Fact]
@@ -160,9 +162,9 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
         Assert.Contains("define fastcc i64 @AsciiLength(", llvm);
         Assert.Contains("define fastcc ptr @UnicodeData(", llvm);
         Assert.Contains("define fastcc i64 @UnicodeLength(", llvm);
-        Assert.Contains("call ptr @AsciiData(", llvm);
-        Assert.Contains("call ptr @UnicodeData(", llvm);
-        Assert.Contains("call i64 @AsciiLength(", llvm);
-        Assert.Contains("call i64 @UnicodeLength(", llvm);
+        Assert.Contains("call fastcc ptr @AsciiData(", llvm);
+        Assert.Contains("call fastcc ptr @UnicodeData(", llvm);
+        Assert.Contains("call fastcc i64 @AsciiLength(", llvm);
+        Assert.Contains("call fastcc i64 @UnicodeLength(", llvm);
     }
 }

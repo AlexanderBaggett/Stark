@@ -1404,7 +1404,9 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaIr);
-            var optimized = new SsaCleanupOptimizer().Optimize(ssa);
+            var optimized = context.Options.OptimizationLevel == CompilerOptimizationLevel.O0
+                ? ssa
+                : new SsaCleanupOptimizer().Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -1422,7 +1424,9 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var optimized = new SsaConstantPropagator().Optimize(ssa);
+            var optimized = context.Options.OptimizationLevel == CompilerOptimizationLevel.O0
+                ? ssa
+                : new SsaConstantPropagator().Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -1435,15 +1439,16 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "refine-function-effects"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "enum-layout", "refine-function-effects"];
 
         public void Execute(CompilerPassContext context)
         {
             var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
             var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
-            var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, effectModel, context.Options).Lower();
+            var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, enumLayoutModel, effectModel, context.Options).Lower();
             context.Artifacts.Set(CompilerArtifactKeys.AbiModel, abiModel);
         }
     }

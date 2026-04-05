@@ -5,6 +5,7 @@ internal sealed class AbiLowerer
     private readonly SyntaxModel _syntaxModel;
     private readonly LoadedModuleSet _loadedModules;
     private readonly TypeCheckModel _typeModel;
+    private readonly EnumLayoutModel _enumLayoutModel;
     private readonly FunctionEffectModel _effectModel;
     private readonly CompilerOptions _options;
 
@@ -12,12 +13,14 @@ internal sealed class AbiLowerer
         SyntaxModel syntaxModel,
         LoadedModuleSet loadedModules,
         TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel,
         FunctionEffectModel effectModel,
         CompilerOptions options)
     {
         _syntaxModel = syntaxModel;
         _loadedModules = loadedModules;
         _typeModel = typeModel;
+        _enumLayoutModel = enumLayoutModel;
         _effectModel = effectModel;
         _options = options;
     }
@@ -44,7 +47,8 @@ internal sealed class AbiLowerer
         var (moduleName, sourceName, visibility) = ResolveFunctionIdentity(function.Name);
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
-        var returnsIndirect = !isFfi && RequiresIndirectReturnAbi(function.ReturnType);
+        var returnsIndirect = !isFfi
+            && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
         var isOverloaded = !string.Equals(function.Name, function.DisplaySourceName, StringComparison.Ordinal);
         var symbolName = ComputeSymbolName(function.Name, moduleName, sourceName, visibility, isFfi, isOverloaded);
 
@@ -60,7 +64,7 @@ internal sealed class AbiLowerer
 
         foreach (var parameter in function.Parameters)
         {
-            var kind = !isFfi && RequiresIndirectParameterAbi(parameter.Type)
+            var kind = !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, _typeModel.NamedTypes, _enumLayoutModel.Layouts)
                 ? AbiParameterKind.IndirectIn
                 : AbiParameterKind.Direct;
 
@@ -83,7 +87,8 @@ internal sealed class AbiLowerer
             returnsIndirect ? StarkTypeSymbols.Void : LowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
             parameters,
             isFfi,
-            SourceName: function.SourceName);
+            SourceName: function.SourceName,
+            UsesFastCallingConvention: effects.UseFastCallingConvention);
     }
 
     private static StarkTypeSymbol LowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
@@ -99,17 +104,6 @@ internal sealed class AbiLowerer
             StarkTypeKind.Unicode when !forReturnValue => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false),
             _ => type
         };
-    }
-
-    private static bool RequiresIndirectParameterAbi(StarkTypeSymbol type)
-    {
-        return type.BorrowKind != StarkBorrowKind.None
-            || type.InitializationKind != StarkInitializationKind.None;
-    }
-
-    private static bool RequiresIndirectReturnAbi(StarkTypeSymbol type)
-    {
-        return false;
     }
 
     private (string ModuleName, string SourceName, StarkVisibility Visibility) ResolveFunctionIdentity(string functionName)

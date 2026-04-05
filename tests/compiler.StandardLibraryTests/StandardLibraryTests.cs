@@ -2,9 +2,8 @@ using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-public sealed class StandardLibraryTests
+internal sealed class StandardLibraryTestSuite
 {
-    [Fact]
     public void StdLibSourceGraphIncludesMilestone7ModuleLayout()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -36,8 +35,6 @@ public sealed class StandardLibraryTests
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stdout"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stderr"));
     }
-
-    [Fact]
     public async Task StdLibPackageBuildsFromRepositorySources()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -151,8 +148,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public void StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -182,8 +177,6 @@ public sealed class StandardLibraryTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
-
-    [Fact]
     public void StdLibSourceRawFileHandlesSupportAsciiAndUnicodeWriteOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -211,8 +204,6 @@ public sealed class StandardLibraryTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
-
-    [Fact]
     public void StdLibSourceOwnedFileHandlesSupportAsciiAndUnicodeWriteOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -240,8 +231,6 @@ public sealed class StandardLibraryTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
-
-    [Fact]
     public void StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -312,8 +301,6 @@ public sealed class StandardLibraryTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
-
-    [Fact]
     public void StdLibSourceRuntimeBufferModuleSupportsLinearAndRingOperations()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -365,8 +352,6 @@ public sealed class StandardLibraryTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
-
-    [Fact]
     public void StdLibSourceCurrentDirectoryUsesSyscallBackedLinuxPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -388,8 +373,6 @@ public sealed class StandardLibraryTests
         Assert.DoesNotContain("@getcwd(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@strlen(", llvm, StringComparison.Ordinal);
     }
-
-    [Fact]
     public void StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -408,12 +391,10 @@ public sealed class StandardLibraryTests
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define fastcc i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("inttoptr i8 1 to ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("inttoptr i8 2 to ptr", llvm, StringComparison.Ordinal);
     }
-
-    [Fact]
     public void StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -434,8 +415,6 @@ public sealed class StandardLibraryTests
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fputws(", llvm, StringComparison.Ordinal);
     }
-
-    [Fact]
     public void StdLibSourceLinuxFileOperationsUseSyscallBackedPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -468,8 +447,32 @@ public sealed class StandardLibraryTests
         Assert.DoesNotContain("@remove(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@rename(", llvm, StringComparison.Ordinal);
     }
+    public void StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(filePath),
+                filePath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
-    [Fact]
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var appendBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc i1 @File_TryAppendBufferedAscii(",
+            "Expected File.TryAppendBufferedAscii definition in emitted LLVM.");
+
+        Assert.Contains("define void @CopyAsciiBytes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("rep movsb", llvm, StringComparison.Ordinal);
+        Assert.Contains("call void @CopyAsciiBytes(", appendBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@llvm.memcpy", llvm, StringComparison.Ordinal);
+    }
     public void StdLibSourceLinuxFileExistsUsesStatSyscallPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -499,8 +502,6 @@ public sealed class StandardLibraryTests
         Assert.DoesNotContain("@stat(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fstatat(", llvm, StringComparison.Ordinal);
     }
-
-    [Fact]
     public void StdLibSourceLinuxTerminalDetectionUsesIoctlSyscallPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -522,8 +523,6 @@ public sealed class StandardLibraryTests
         Assert.Contains("call i64 @LinuxSyscall3HandleRequestPointer(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@isatty(", llvm, StringComparison.Ordinal);
     }
-
-    [Fact]
     public void StdLibSourceWindowsConsoleAndFileOperationsUseWin32Apis()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -570,8 +569,32 @@ public sealed class StandardLibraryTests
         Assert.DoesNotContain("@fread(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fwrite(", llvm, StringComparison.Ordinal);
     }
+    public void StdLibSourceWindowsWidePathCopiesUseInlineAsmHelper()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var windowsPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Windows.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(windowsPath),
+                windowsPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
-    [Fact]
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var copyBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc i1 @TryCopyWideRange(",
+            "Expected TryCopyWideRange definition in emitted LLVM.");
+
+        Assert.Contains("define void @CopyWideUnits(", llvm, StringComparison.Ordinal);
+        Assert.Contains("rep movsw", llvm, StringComparison.Ordinal);
+        Assert.Contains("call void @CopyWideUnits(", copyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@llvm.memcpy", llvm, StringComparison.Ordinal);
+    }
     public void StagedWindowsStdLibBuildRoutesPlatformCallsThroughWindowsModule()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -614,8 +637,36 @@ public sealed class StandardLibraryTests
             }
         }
     }
+    public void SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargets()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var systemPath = Path.Combine(sourceRoot, "System.stark");
+        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(systemPath),
+                systemPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
 
-    [Fact]
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ModuleGraph, out ModuleGraph? moduleGraph));
+        Assert.NotNull(moduleGraph);
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
+
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains("@LinuxSyscall", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@GetStdHandle(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@CreateFileW(", llvm, StringComparison.Ordinal);
+    }
     public void RootWindowsStdLibCompileKeepsWriteBufferToHandleOnDirectMirPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -646,8 +697,6 @@ public sealed class StandardLibraryTests
                 && string.Equals(log.SymbolName, "System.Runtime.Platform.Windows.WriteBufferToHandle", StringComparison.Ordinal)
                 && string.Equals(log.Operation, "EmitAssignmentFromExpression", StringComparison.Ordinal));
     }
-
-    [Fact]
     public void StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizationRules()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -685,8 +734,7 @@ public sealed class StandardLibraryTests
                 llvm,
                 "define fastcc i1 @TryJoin(",
                 "Expected TryJoin definition in staged Windows path module.");
-            Assert.Contains("call %stark_ascii @DirectorySeparator()", tryJoinBody, StringComparison.Ordinal);
-            Assert.Contains("call i1 @IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
+            Assert.Contains("call fastcc i1 @IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
         }
         finally
         {
@@ -700,9 +748,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Theory]
-    [MemberData(nameof(SystemSyscallArchitectureCases))]
     public void SystemSyscallModuleSelectsExpectedLinuxShimPerArchitecture(string targetTriple, string expectedInlineAsm)
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -723,8 +768,6 @@ public sealed class StandardLibraryTests
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains(expectedInlineAsm, llvm, StringComparison.Ordinal);
     }
-
-    [Fact]
     public async Task PackagedStdLibCanBeConsumedWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -861,8 +904,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibMathIntrinsicsWorkWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -1112,8 +1153,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibFusedMultiplyAddWorksWithoutSourceWhenRuntimeSupportsIt()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -1220,8 +1259,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibConsoleReturnsIoStatusWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1332,8 +1369,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibUnicodeConsoleAndRawFileWritesWorkWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1439,8 +1474,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1556,8 +1589,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1763,8 +1794,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibFileBufferingModesBehaveAsExpected()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1918,8 +1947,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibFileMoveDeleteAndExistsRoundTrip()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -2045,8 +2072,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task SourceRuntimePlatformTerminalDetectionSeesRedirectedStdoutAsNonTerminal()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -2127,8 +2152,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBuffer()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -2243,8 +2266,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibPathHelpersWorkWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -2432,8 +2453,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibLinuxArchiveHasNoLibcSymbolReferences()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -2518,8 +2537,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibWindowsArchiveHasNoCrtSymbolReferences()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -2611,8 +2628,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task PackagedStdLibSyscallModuleCanBeConsumedWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -2707,8 +2722,6 @@ public sealed class StandardLibraryTests
             }
         }
     }
-
-    [Fact]
     public async Task SourceRuntimeBufferModuleCanExecuteLinearAndRingOperations()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

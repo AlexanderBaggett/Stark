@@ -100,14 +100,19 @@ internal static class NativeToolchain
         string llvmIr,
         string outputPath,
         string? preservedLlvmOutputPath = null,
-        LlvmTargetInfo? targetInfo = null)
+        LlvmTargetInfo? targetInfo = null,
+        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo, optimizationLevel);
     }
 
-    public static NativeToolchainResult EmitExecutable(string llvmIr, string outputPath, LlvmTargetInfo? targetInfo = null)
+    public static NativeToolchainResult EmitExecutable(
+        string llvmIr,
+        string outputPath,
+        LlvmTargetInfo? targetInfo = null,
+        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo, optimizationLevel);
     }
 
     public static NativeToolchainResult LinkExecutable(
@@ -115,11 +120,12 @@ internal static class NativeToolchain
         string outputPath,
         string? linkerTool = null,
         IEnumerable<string>? librarySearchPaths = null,
-        IEnumerable<string>? extraArguments = null)
+        IEnumerable<string>? extraArguments = null,
+        LlvmTargetInfo? targetInfo = null)
     {
         return RunTool(
             string.IsNullOrWhiteSpace(linkerTool) ? "clang" : linkerTool,
-            BuildLinkExecutableArguments(objectPaths, outputPath, librarySearchPaths, extraArguments),
+            BuildLinkExecutableArguments(objectPaths, outputPath, librarySearchPaths, extraArguments, targetInfo),
             outputPath);
     }
 
@@ -127,6 +133,12 @@ internal static class NativeToolchain
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
+
+        if (!string.IsNullOrWhiteSpace(archiverTool))
+        {
+            var arguments = BuildStaticLibraryArguments(objectPaths, fullOutputPath);
+            return RunTool(archiverTool, arguments, fullOutputPath);
+        }
 
         var tempOutputPath = Path.Combine(
             Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory,
@@ -137,11 +149,7 @@ internal static class NativeToolchain
             var arguments = BuildStaticLibraryArguments(objectPaths, tempOutputPath);
             NativeToolchainResult result;
 
-            if (!string.IsNullOrWhiteSpace(archiverTool))
-            {
-                result = RunTool(archiverTool, arguments, tempOutputPath);
-            }
-            else if (OperatingSystem.IsWindows())
+            if (OperatingSystem.IsWindows())
             {
                 result = RunFirstAvailableTool(["llvm-lib", "lib"], arguments, tempOutputPath);
             }
@@ -184,7 +192,8 @@ internal static class NativeToolchain
         string outputPath,
         bool compileOnly,
         string? preservedLlvmOutputPath,
-        LlvmTargetInfo? targetInfo)
+        LlvmTargetInfo? targetInfo,
+        CompilerOptimizationLevel optimizationLevel)
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
@@ -213,7 +222,8 @@ internal static class NativeToolchain
                 startInfo.ArgumentList.Add("-c");
             }
 
-            AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo);
+            AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+            AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
             startInfo.ArgumentList.Add(fullOutputPath);
@@ -247,8 +257,15 @@ internal static class NativeToolchain
         IEnumerable<string> objectPaths,
         string outputPath,
         IEnumerable<string>? librarySearchPaths,
-        IEnumerable<string>? extraArguments)
+        IEnumerable<string>? extraArguments,
+        LlvmTargetInfo? targetInfo)
     {
+        if (targetInfo is not null && !string.IsNullOrWhiteSpace(targetInfo.Triple))
+        {
+            yield return "-target";
+            yield return targetInfo.Triple;
+        }
+
         foreach (var objectPath in objectPaths)
         {
             yield return Path.GetFullPath(objectPath);
@@ -269,6 +286,11 @@ internal static class NativeToolchain
             {
                 yield return argument;
             }
+        }
+
+        foreach (var argument in GetRelocationLinkArguments(targetInfo))
+        {
+            yield return argument;
         }
 
         yield return "-o";
@@ -361,7 +383,7 @@ internal static class NativeToolchain
             : null;
     }
 
-    private static void AppendTargetCodegenArguments(ICollection<string> arguments, LlvmTargetInfo? targetInfo)
+    private static void AppendTargetCodegenArguments(ICollection<string> arguments, LlvmTargetInfo? targetInfo, bool compileOnly)
     {
         if (targetInfo is null)
         {
@@ -379,12 +401,7 @@ internal static class NativeToolchain
             arguments.Add($"-mcpu={targetInfo.Cpu}");
         }
 
-        if (targetInfo.Features is null)
-        {
-            return;
-        }
-
-        foreach (var feature in targetInfo.Features)
+        foreach (var feature in targetInfo.Features ?? [])
         {
             if (string.IsNullOrWhiteSpace(feature))
             {
@@ -396,5 +413,81 @@ internal static class NativeToolchain
             arguments.Add("-Xclang");
             arguments.Add(feature);
         }
+
+        AppendCodegenModelArguments(arguments, targetInfo, compileOnly);
+    }
+
+    private static void AppendCodegenModelArguments(ICollection<string> arguments, LlvmTargetInfo targetInfo, bool compileOnly)
+    {
+        switch (targetInfo.RelocationModel)
+        {
+            case LlvmRelocationModel.Static:
+                arguments.Add("-fno-pic");
+                arguments.Add("-fno-pie");
+                if (!compileOnly && !OperatingSystem.IsWindows())
+                {
+                    arguments.Add("-no-pie");
+                }
+
+                break;
+            case LlvmRelocationModel.Pic:
+                arguments.Add("-fPIC");
+                break;
+            case LlvmRelocationModel.Pie:
+                arguments.Add("-fPIE");
+                if (!compileOnly && !OperatingSystem.IsWindows())
+                {
+                    arguments.Add("-pie");
+                }
+
+                break;
+        }
+
+        if (targetInfo.CodeModel is not null)
+        {
+            arguments.Add($"-mcmodel={FormatCodeModel(targetInfo.CodeModel.Value)}");
+        }
+    }
+
+    private static IEnumerable<string> GetRelocationLinkArguments(LlvmTargetInfo? targetInfo)
+    {
+        if (targetInfo is null || OperatingSystem.IsWindows())
+        {
+            yield break;
+        }
+
+        switch (targetInfo.RelocationModel)
+        {
+            case LlvmRelocationModel.Static:
+                yield return "-no-pie";
+                yield break;
+            case LlvmRelocationModel.Pie:
+                yield return "-pie";
+                yield break;
+        }
+    }
+
+    private static string FormatCodeModel(LlvmCodeModel codeModel)
+    {
+        return codeModel switch
+        {
+            LlvmCodeModel.Tiny => "tiny",
+            LlvmCodeModel.Small => "small",
+            LlvmCodeModel.Kernel => "kernel",
+            LlvmCodeModel.Medium => "medium",
+            LlvmCodeModel.Large => "large",
+            _ => throw new InvalidOperationException($"Unsupported code model '{codeModel}'.")
+        };
+    }
+
+    private static void AppendOptimizationArgument(ICollection<string> arguments, CompilerOptimizationLevel optimizationLevel)
+    {
+        arguments.Add(optimizationLevel switch
+        {
+            CompilerOptimizationLevel.O0 => "-O0",
+            CompilerOptimizationLevel.O1 => "-O1",
+            CompilerOptimizationLevel.O2 => "-O2",
+            _ => "-O3"
+        });
     }
 }

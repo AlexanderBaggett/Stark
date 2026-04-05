@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text;
 using System.Globalization;
+using System.IO;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -27,12 +28,15 @@ internal sealed class LlvmIrEmitter
     private readonly LlvmTargetInfo? _targetInfo;
     private readonly bool _internalizeModulePrivate;
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
+    private readonly IReadOnlySet<string> _globalsEligibleForLocalUnnamedAddr;
     private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
     private readonly IReadOnlyDictionary<string, SourceLocation> _functionLocations;
     private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
+    private readonly IReadOnlySet<string> _referencedImportedFunctions;
+    private readonly DebugMetadataEmitter _debugInfo;
     private int _syntheticGlobalInitializerIndex;
 
     public LlvmIrEmitter(
@@ -98,14 +102,19 @@ internal sealed class LlvmIrEmitter
         _targetInfo = targetInfo;
         _internalizeModulePrivate = internalizeModulePrivate;
         _globalSymbols = BuildGlobalSymbolMap();
+        _globalsEligibleForLocalUnnamedAddr = BuildGlobalsEligibleForLocalUnnamedAddr();
         _stringConstants = CollectStringConstants(parseResult, ssa);
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa);
-        _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, effectModel);
+        _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, effectModel, typeModel.NamedTypes, enumLayoutModel.Layouts);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
+        _referencedImportedFunctions = CollectReferencedImportedFunctions(ssa, _closedWorldImportedLawClones.Values);
+        _debugInfo = new DebugMetadataEmitter(
+            input.FilePath ?? $"{syntaxModel.ModuleName}.stark",
+            TryGetConcreteTypeLayout);
     }
 
     public LlvmIrModule Emit()
@@ -264,7 +273,8 @@ internal sealed class LlvmIrEmitter
             }
 
             var parameterEffects = GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
-            if (TryEmitBuiltinFunctionDefinition(
+            if (_referencedImportedFunctions.Contains(abiFunction.Name)
+                && TryEmitBuiltinFunctionDefinition(
                     builder,
                     internalize: true,
                     moduleName: string.Empty,
@@ -283,7 +293,42 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        _debugInfo.EmitModuleMetadata(builder);
+
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd());
+    }
+
+    private static IReadOnlySet<string> CollectReferencedImportedFunctions(
+        SsaIrModule ssa,
+        IEnumerable<ImportedLawClonePlan> importedLawClones)
+    {
+        var referencedFunctions = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var function in ssa.Functions)
+        {
+            CollectReferencedFunctions(function, referencedFunctions);
+        }
+
+        foreach (var clone in importedLawClones)
+        {
+            CollectReferencedFunctions(clone.SsaFunction, referencedFunctions);
+        }
+
+        return referencedFunctions;
+    }
+
+    private static void CollectReferencedFunctions(SsaFunction function, ISet<string> referencedFunctions)
+    {
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
+                {
+                    referencedFunctions.Add(call.FunctionName);
+                }
+            }
+        }
     }
 
     private void LogLlvmFallback(
@@ -380,7 +425,9 @@ internal sealed class LlvmIrEmitter
     private static IReadOnlyDictionary<string, AbiFunctionSignature> BuildAllAbiFunctions(
         IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures,
         AbiModel abiModel,
-        FunctionEffectModel effectModel)
+        FunctionEffectModel effectModel,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
     {
         var functions = abiModel.Functions.ToDictionary(
             static pair => pair.Key,
@@ -395,7 +442,7 @@ internal sealed class LlvmIrEmitter
             }
 
             var isFfi = effectModel.Functions.TryGetValue(function.Name, out var effects) && effects.IsFfi;
-            functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi);
+            functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi, namedTypes, enumLayouts);
         }
 
         return functions;
@@ -448,7 +495,7 @@ internal sealed class LlvmIrEmitter
 
             var signature = _allFunctionSignatures[functionName];
             var effects = BuildLawCloneEffectProfile(functionName);
-            var cloneAbi = BuildSyntheticAbiSignature(signature, GetImportedLawCloneSymbolName(functionName), isFfi: false);
+            var cloneAbi = BuildSyntheticAbiSignature(signature, GetImportedLawCloneSymbolName(functionName), isFfi: false, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
             clones[functionName] = new ImportedLawClonePlan(functionName, signature, cloneAbi, effects, ssaByName[functionName]);
 
             if (!callsByFunction.TryGetValue(functionName, out var importedCallees))
@@ -614,9 +661,11 @@ internal sealed class LlvmIrEmitter
     private static AbiFunctionSignature BuildSyntheticAbiSignature(
         TypedFunctionSignature function,
         string symbolName,
-        bool isFfi)
+        bool isFfi,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
     {
-        var returnsIndirect = !isFfi && SyntheticAbiRequiresIndirectReturn(function.ReturnType);
+        var returnsIndirect = !isFfi && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, namedTypes, enumLayouts);
         var parameters = new List<AbiParameterSymbol>();
 
         if (returnsIndirect)
@@ -631,7 +680,7 @@ internal sealed class LlvmIrEmitter
 
         foreach (var parameter in function.Parameters)
         {
-            var kind = !isFfi && SyntheticAbiRequiresIndirectParameter(parameter.Type)
+            var kind = !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, namedTypes, enumLayouts)
                 ? AbiParameterKind.IndirectIn
                 : AbiParameterKind.Direct;
 
@@ -654,7 +703,8 @@ internal sealed class LlvmIrEmitter
                 : SyntheticLowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
             parameters,
             isFfi,
-            SourceName: function.SourceName);
+            SourceName: function.SourceName,
+            UsesFastCallingConvention: !isFfi);
     }
 
     private static StarkTypeSymbol SyntheticLowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
@@ -670,17 +720,6 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Unicode when !forReturnValue => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false),
             _ => type
         };
-    }
-
-    private static bool SyntheticAbiRequiresIndirectParameter(StarkTypeSymbol type)
-    {
-        return type.BorrowKind != StarkBorrowKind.None
-            || type.InitializationKind != StarkInitializationKind.None;
-    }
-
-    private static bool SyntheticAbiRequiresIndirectReturn(StarkTypeSymbol type)
-    {
-        return false;
     }
 
     private static string GetModuleName(string functionName)
@@ -729,7 +768,7 @@ internal sealed class LlvmIrEmitter
 
                     EmitGlobalInitializerPrelude(builder, initializer);
                     builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
-                    builder.AppendLine(BuildGlobalDefinition(symbolName, visibility, global, initializer.Rendered));
+                    builder.AppendLine(BuildGlobalDefinition(name, symbolName, visibility, global, initializer.Rendered));
                     builder.AppendLine();
                 }
 
@@ -762,7 +801,7 @@ internal sealed class LlvmIrEmitter
 
                 EmitGlobalInitializerPrelude(builder, initializer);
                 builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
-                builder.AppendLine(BuildGlobalDefinition(symbolName, visibility, global, initializer.Rendered));
+                builder.AppendLine(BuildGlobalDefinition(name, symbolName, visibility, global, initializer.Rendered));
                 builder.AppendLine();
             }
         }
@@ -821,7 +860,7 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine();
     }
 
-    private string BuildGlobalDefinition(string symbolName, StarkVisibility visibility, TypedGlobalSymbol global, string initializer)
+    private string BuildGlobalDefinition(string globalName, string symbolName, StarkVisibility visibility, TypedGlobalSymbol global, string initializer)
     {
         var segments = new List<string> { $"@{EscapeIdentifier(symbolName)}", "=" };
 
@@ -830,10 +869,560 @@ internal sealed class LlvmIrEmitter
             segments.Add("internal");
         }
 
+        if (GetGlobalAddressAttribute(globalName, visibility, global) is { } addressAttribute)
+        {
+            segments.Add(addressAttribute);
+        }
+
         segments.Add(global.IsMutable ? "global" : "constant");
         segments.Add(MapType(global.Type));
         segments.Add(initializer);
-        return string.Join(" ", segments);
+        var definition = string.Join(" ", segments);
+        if (TryGetGlobalAlignmentBytes(global.Type) is int alignmentBytes && alignmentBytes > 1)
+        {
+            definition += $", align {alignmentBytes}";
+        }
+
+        return definition;
+    }
+
+    private string? GetGlobalAddressAttribute(string globalName, StarkVisibility visibility, TypedGlobalSymbol global)
+    {
+        if (global.IsMutable
+            || !_globalsEligibleForLocalUnnamedAddr.Contains(globalName))
+        {
+            return null;
+        }
+
+        return ShouldInternalize(visibility)
+            ? "unnamed_addr"
+            : "local_unnamed_addr";
+    }
+
+    private int? TryGetGlobalAlignmentBytes(StarkTypeSymbol type)
+    {
+        return TryGetTargetAwareTypeLayout(type, new HashSet<string>(StringComparer.Ordinal))?.AlignmentBytes
+            ?? TryGetConcreteTypeLayout(type)?.AlignmentBytes;
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareTypeLayout(
+        StarkTypeSymbol type,
+        ISet<string> activeNamedTypes)
+    {
+        var normalizedType = type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.Bool => new ConcreteTypeLayout(1, 1),
+            StarkTypeKind.Integer when normalizedType.BitWidth is int bitWidth
+                => TryGetTargetAwareScalarLayout(bitWidth, isFloat: false),
+            StarkTypeKind.Float when normalizedType.BitWidth is int bitWidth
+                => TryGetTargetAwareScalarLayout(bitWidth, isFloat: true),
+            StarkTypeKind.RawPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(),
+            StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Slice => TryGetTargetAwareViewLayout(),
+            StarkTypeKind.FixedArray when normalizedType.ElementType is not null && normalizedType.FixedLength is int fixedLength
+                => TryGetTargetAwareFixedArrayLayout(normalizedType.ElementType, fixedLength, activeNamedTypes),
+            StarkTypeKind.Named when normalizedType.NamedType is not null
+                                     && _typeModel.NamedTypes.TryGetValue(normalizedType.NamedType, out var namedType)
+                                     && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                => TryGetTargetAwareNamedTypeLayout(namedType, activeNamedTypes),
+            StarkTypeKind.Named when normalizedType.NamedType is not null
+                                     && _typeModel.NamedTypes.TryGetValue(normalizedType.NamedType, out var enumType)
+                                     && enumType.Kind == DeclarationKind.Enum
+                                     && _enumLayoutModel.Layouts.TryGetValue(normalizedType.NamedType, out var enumLayout)
+                => TryGetTargetAwareEnumTypeLayout(enumLayout, activeNamedTypes),
+            StarkTypeKind.Named => TryGetTargetAwarePointerLayout(),
+            _ => null
+        };
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareScalarLayout(int bitWidth, bool isFloat)
+    {
+        if (bitWidth <= 0)
+        {
+            return new ConcreteTypeLayout(0, 1);
+        }
+
+        var sizeBytes = checked((bitWidth + 7) / 8);
+        var alignmentBytes = TryGetTargetAwareScalarAlignmentBytes(bitWidth, isFloat);
+        return alignmentBytes is null
+            ? null
+            : new ConcreteTypeLayout(sizeBytes, alignmentBytes.Value);
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwarePointerLayout()
+    {
+        var pointerSizeBytes = TryGetTargetPointerSizeBytes();
+        var pointerAlignmentBytes = TryGetTargetPointerAlignmentBytes();
+        if (pointerSizeBytes is null || pointerAlignmentBytes is null)
+        {
+            return null;
+        }
+
+        return new ConcreteTypeLayout(pointerSizeBytes.Value, pointerAlignmentBytes.Value);
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareViewLayout()
+    {
+        var pointerLayout = TryGetTargetAwarePointerLayout();
+        var lengthLayout = TryGetTargetAwareScalarLayout(64, isFloat: false);
+        if (pointerLayout is null || lengthLayout is null)
+        {
+            return null;
+        }
+
+        var alignmentBytes = Math.Max(pointerLayout.AlignmentBytes, lengthLayout.AlignmentBytes);
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareFixedArrayLayout(
+        StarkTypeSymbol elementType,
+        int fixedLength,
+        ISet<string> activeNamedTypes)
+    {
+        var elementLayout = TryGetTargetAwareTypeLayout(elementType, activeNamedTypes);
+        if (elementLayout is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return new ConcreteTypeLayout(
+                checked(elementLayout.SizeBytes * fixedLength),
+                fixedLength == 0 ? 1 : elementLayout.AlignmentBytes);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareNamedTypeLayout(
+        NamedTypeSymbol namedType,
+        ISet<string> activeNamedTypes)
+    {
+        if (!activeNamedTypes.Add(namedType.Name))
+        {
+            return null;
+        }
+
+        try
+        {
+            return TryGetTargetAwareAggregateLayout(namedType.OrderedFields.Select(static field => field.Type), activeNamedTypes);
+        }
+        finally
+        {
+            activeNamedTypes.Remove(namedType.Name);
+        }
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareEnumTypeLayout(
+        EnumLayoutSymbol enumLayout,
+        ISet<string> activeNamedTypes)
+    {
+        if (!activeNamedTypes.Add(enumLayout.EnumName))
+        {
+            return null;
+        }
+
+        try
+        {
+            return TryGetTargetAwareAggregateLayout(enumLayout.OrderedFields.Select(static field => field.Type), activeNamedTypes);
+        }
+        finally
+        {
+            activeNamedTypes.Remove(enumLayout.EnumName);
+        }
+    }
+
+    private ConcreteTypeLayout? TryGetTargetAwareAggregateLayout(
+        IEnumerable<StarkTypeSymbol> fieldTypes,
+        ISet<string> activeNamedTypes)
+    {
+        try
+        {
+            var sizeBytes = 0;
+            var alignmentBytes = 1;
+
+            foreach (var fieldType in fieldTypes)
+            {
+                var fieldLayout = TryGetTargetAwareTypeLayout(fieldType, activeNamedTypes);
+                if (fieldLayout is null)
+                {
+                    return null;
+                }
+
+                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
+                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+            }
+
+            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private int? TryGetTargetAwareScalarAlignmentBytes(int bitWidth, bool isFloat)
+    {
+        if (TryGetScalarAlignmentBytesFromDataLayout(bitWidth, isFloat) is { } fromLayout)
+        {
+            return fromLayout;
+        }
+
+        return TryGetTripleArchitecture() switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.AArch64 or StarkAsmArchitecture.RiscV64
+                => bitWidth switch
+                {
+                    <= 8 => 1,
+                    <= 16 => 2,
+                    <= 32 => 4,
+                    <= 64 => 8,
+                    <= 128 => 16,
+                    _ => 1
+                },
+            StarkAsmArchitecture.X86
+                => bitWidth switch
+                {
+                    <= 8 => 1,
+                    <= 16 => 2,
+                    <= 32 => 4,
+                    64 when isFloat => 4,
+                    <= 64 => 4,
+                    <= 128 => 16,
+                    _ => 1
+                },
+            StarkAsmArchitecture.Arm32
+                => bitWidth switch
+                {
+                    <= 8 => 1,
+                    <= 16 => 2,
+                    <= 32 => 4,
+                    <= 64 => 8,
+                    <= 128 => 16,
+                    _ => 1
+                },
+            _ => null
+        };
+    }
+
+    private int? TryGetTargetPointerSizeBytes()
+    {
+        if (TryGetPointerLayoutFromDataLayout(out var sizeBytes, out _))
+        {
+            return sizeBytes;
+        }
+
+        return TryGetTripleArchitecture() switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.AArch64 or StarkAsmArchitecture.RiscV64 => 8,
+            StarkAsmArchitecture.X86 or StarkAsmArchitecture.Arm32 => 4,
+            _ => null
+        };
+    }
+
+    private int? TryGetTargetPointerAlignmentBytes()
+    {
+        if (TryGetPointerLayoutFromDataLayout(out _, out var alignmentBytes))
+        {
+            return alignmentBytes;
+        }
+
+        return TryGetTripleArchitecture() switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.AArch64 or StarkAsmArchitecture.RiscV64 => 8,
+            StarkAsmArchitecture.X86 or StarkAsmArchitecture.Arm32 => 4,
+            _ => null
+        };
+    }
+
+    private bool TryGetPointerLayoutFromDataLayout(out int sizeBytes, out int alignmentBytes)
+    {
+        sizeBytes = 0;
+        alignmentBytes = 0;
+
+        var dataLayout = _targetInfo?.DataLayout;
+        if (string.IsNullOrWhiteSpace(dataLayout))
+        {
+            return false;
+        }
+
+        foreach (var token in dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!token.StartsWith("p:", StringComparison.Ordinal)
+                && !token.StartsWith("p0:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parts = token.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 3
+                || !int.TryParse(parts[1], out var sizeBits)
+                || !int.TryParse(parts[2], out var alignBits))
+            {
+                continue;
+            }
+
+            sizeBytes = BitsToBytes(sizeBits);
+            alignmentBytes = BitsToBytes(alignBits);
+            return sizeBytes > 0 && alignmentBytes > 0;
+        }
+
+        return false;
+    }
+
+    private int? TryGetScalarAlignmentBytesFromDataLayout(int bitWidth, bool isFloat)
+    {
+        var dataLayout = _targetInfo?.DataLayout;
+        if (string.IsNullOrWhiteSpace(dataLayout))
+        {
+            return null;
+        }
+
+        var prefix = $"{(isFloat ? 'f' : 'i')}{bitWidth}:";
+        foreach (var token in dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!token.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parts = token.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 2 || !int.TryParse(parts[1], out var alignBits))
+            {
+                continue;
+            }
+
+            return BitsToBytes(alignBits);
+        }
+
+        return null;
+    }
+
+    private StarkAsmArchitecture TryGetTripleArchitecture()
+    {
+        var triple = _targetInfo?.Triple;
+        if (string.IsNullOrWhiteSpace(triple))
+        {
+            return StarkAsmArchitecture.Unknown;
+        }
+
+        var architecture = triple.Split('-', 2, StringSplitOptions.TrimEntries)[0];
+        if (architecture.StartsWith("x86_64", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("amd64", StringComparison.OrdinalIgnoreCase))
+        {
+            return StarkAsmArchitecture.X86_64;
+        }
+
+        if (architecture.StartsWith("i386", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i486", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i586", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i686", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(architecture, "x86", StringComparison.OrdinalIgnoreCase))
+        {
+            return StarkAsmArchitecture.X86;
+        }
+
+        if (architecture.StartsWith("aarch64", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("arm64", StringComparison.OrdinalIgnoreCase))
+        {
+            return StarkAsmArchitecture.AArch64;
+        }
+
+        if (architecture.StartsWith("riscv64", StringComparison.OrdinalIgnoreCase))
+        {
+            return StarkAsmArchitecture.RiscV64;
+        }
+
+        if (architecture.StartsWith("arm", StringComparison.OrdinalIgnoreCase))
+        {
+            return StarkAsmArchitecture.Arm32;
+        }
+
+        return StarkAsmArchitecture.Unknown;
+    }
+
+    private static int BitsToBytes(int bitCount)
+    {
+        return bitCount <= 0 ? 0 : (bitCount + 7) / 8;
+    }
+
+    private static int AlignTo(int value, int alignment)
+    {
+        if (alignment <= 1)
+        {
+            return value;
+        }
+
+        var remainder = value % alignment;
+        return remainder == 0 ? value : checked(value + alignment - remainder);
+    }
+
+    private IReadOnlySet<string> BuildGlobalsEligibleForLocalUnnamedAddr()
+    {
+        var addressTakenGlobals = CollectExplicitGlobalAddressNames(_ssa);
+        var eligible = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+            {
+                foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                {
+                    var name = declarator.Identifier().GetText();
+                    if (!_typeModel.Globals.TryGetValue(name, out var global)
+                        || global.IsMutable
+                        || addressTakenGlobals.Contains(name)
+                        || ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer()))
+                    {
+                        continue;
+                    }
+
+                    eligible.Add(name);
+                }
+
+                continue;
+            }
+
+            if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+            {
+                continue;
+            }
+
+            foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+            {
+                var name = declarator.Identifier().GetText();
+                if (!_typeModel.Globals.TryGetValue(name, out var global)
+                    || global.IsMutable
+                    || declarator.variableInitializer() is null
+                    || addressTakenGlobals.Contains(name))
+                {
+                    continue;
+                }
+
+                eligible.Add(name);
+            }
+        }
+
+        return eligible;
+    }
+
+    private static IReadOnlySet<string> CollectExplicitGlobalAddressNames(SsaIrModule module)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var function in module.Functions)
+        {
+            foreach (var block in function.Blocks)
+            {
+                foreach (var phi in block.Phis)
+                {
+                    foreach (var incoming in phi.Incomings)
+                    {
+                        CollectExplicitGlobalAddressNames(incoming.Value, names);
+                    }
+                }
+
+                foreach (var instruction in block.Instructions)
+                {
+                    foreach (var value in EnumerateInstructionOperands(instruction))
+                    {
+                        CollectExplicitGlobalAddressNames(value, names);
+                    }
+                }
+
+                foreach (var value in EnumerateTerminatorOperands(block.Terminator))
+                {
+                    CollectExplicitGlobalAddressNames(value, names);
+                }
+            }
+        }
+
+        return names;
+    }
+
+    private static void CollectExplicitGlobalAddressNames(SsaValue value, ISet<string> names)
+    {
+        if (value is SsaGlobalAddressValue globalAddress)
+        {
+            names.Add(globalAddress.GlobalName);
+        }
+    }
+
+    private static IEnumerable<SsaValue> EnumerateInstructionOperands(SsaInstruction instruction)
+    {
+        return instruction switch
+        {
+            SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
+            SsaLifetimeStartInstruction => [],
+            SsaLifetimeEndInstruction => [],
+            SsaStoreLocalInstruction storeLocal => [storeLocal.Value],
+            SsaCopyMemoryInstruction copyMemory => [copyMemory.DestinationAddress, copyMemory.SourceAddress],
+            SsaStoreIndirectInstruction storeIndirect => [storeIndirect.Address, storeIndirect.Value],
+            SsaStoreGlobalInstruction storeGlobal => [storeGlobal.Value],
+            _ => []
+        };
+    }
+
+    private static IEnumerable<SsaValue> EnumerateRValueOperands(SsaRValue value)
+    {
+        return value switch
+        {
+            SsaUseRValue use => [use.Value],
+            SsaUnaryRValue unary => [unary.Operand],
+            SsaBinaryRValue binary => [binary.Left, binary.Right],
+            SsaCallRValue call => call.Arguments,
+            SsaConvertRValue convert => [convert.Operand],
+            SsaExtractFieldRValue extractField => [extractField.Target],
+            SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
+            SsaExtractIndexRValue extractIndex => [extractIndex.Target],
+            SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
+            SsaTextSliceRValue textSlice => [textSlice.TextValue, textSlice.Start, textSlice.Length],
+            SsaFieldAddressRValue fieldAddress => [fieldAddress.Address],
+            SsaElementAddressRValue elementAddress when elementAddress.Index is not null => [elementAddress.Address, elementAddress.Index],
+            SsaElementAddressRValue elementAddress => [elementAddress.Address],
+            SsaSliceElementAddressRValue sliceElementAddress => [sliceElementAddress.Slice, sliceElementAddress.Index],
+            SsaLoadIndirectRValue loadIndirect => [loadIndirect.Address],
+            _ => []
+        };
+    }
+
+    private static IEnumerable<SsaValue> EnumerateTerminatorOperands(SsaTerminator terminator)
+    {
+        if (terminator.Condition is not null)
+        {
+            yield return terminator.Condition;
+        }
+
+        if (terminator.Value is not null)
+        {
+            yield return terminator.Value;
+        }
+
+        if (terminator.SwitchCases is null)
+        {
+            yield break;
+        }
+
+        foreach (var switchCase in terminator.SwitchCases)
+        {
+            yield return switchCase.MatchValue;
+        }
     }
 
     private IReadOnlyDictionary<string, string> BuildGlobalSymbolMap()
@@ -989,9 +1578,20 @@ internal sealed class LlvmIrEmitter
             declarations.Add("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)");
         }
 
-        if (UsesMemcpyIntrinsic())
+        if (UsesMemcpyInlineIntrinsic())
         {
-            declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+            declarations.Add("declare void @llvm.memcpy.inline.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64 immarg, i1 immarg)");
+        }
+
+        if (UsesMemsetInlineIntrinsic())
+        {
+            declarations.Add("declare void @llvm.memset.inline.p0.i64(ptr nocapture writeonly, i8, i64 immarg, i1 immarg)");
+        }
+
+        if (_debugInfo.Enabled)
+        {
+            declarations.Add("declare void @llvm.dbg.declare(metadata, metadata, metadata)");
+            declarations.Add("declare void @llvm.dbg.value(metadata, metadata, metadata)");
         }
 
         foreach (var declaration in declarations)
@@ -1083,31 +1683,56 @@ internal sealed class LlvmIrEmitter
             .Any(static instruction => instruction is SsaLifetimeStartInstruction or SsaLifetimeEndInstruction);
     }
 
-    private bool UsesMemcpyIntrinsic()
+    private bool UsesMemcpyInlineIntrinsic()
     {
         return _ssa.Functions
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .OfType<SsaCopyMemoryInstruction>()
             .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout && layout.SizeBytes > AggregateMemcpyThresholdBytes)
-            || UsesBuiltinMemcpyIntrinsic();
+            || UsesBuiltinMemcpyInlineIntrinsic();
     }
 
-    private bool UsesBuiltinMemcpyIntrinsic()
+    private bool UsesBuiltinMemcpyInlineIntrinsic()
     {
-        if (string.Equals(_syntaxModel.ModuleName, "System.Text", StringComparison.Ordinal)
-            && _syntaxModel.Declarations
-                .Where(static declaration => declaration.Function is { HasBody: false })
-                .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration))
-                .Any(name => TryGetSystemTextBuiltin(_syntaxModel.ModuleName, name, out var builtinKind)
-                    && builtinKind is SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode))
+        return false;
+    }
+
+    private bool UsesMemsetInlineIntrinsic()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(UsesLargeZeroInitializedAggregateStore);
+    }
+
+    private bool UsesLargeZeroInitializedAggregateStore(SsaInstruction instruction)
+    {
+        return instruction switch
         {
-            return true;
+            SsaStoreLocalInstruction { LocalType: var type, Value: SsaZeroInitializerValue } => ShouldUseInlineAggregateZeroFill(type),
+            SsaStoreIndirectInstruction { ValueType: var type, Value: SsaZeroInitializerValue } => ShouldUseInlineAggregateZeroFill(type),
+            _ => false
+        };
+    }
+
+    private bool ShouldUseInlineAggregateZeroFill(StarkTypeSymbol valueType)
+    {
+        var normalizedType = valueType with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+
+        if (TryGetConcreteTypeLayout(normalizedType) is not { } layout
+            || layout.SizeBytes <= AggregateScalarizationThresholdBytes)
+        {
+            return false;
         }
 
-        return _allAbiFunctions.Keys.Any(name =>
-            TryGetSystemTextBuiltin(moduleName: string.Empty, name, out var builtinKind)
-            && builtinKind is SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode);
+        return normalizedType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Named;
     }
 
     private static void EmitBuiltinTypeDefinitions(StringBuilder builder)
@@ -1146,7 +1771,13 @@ internal sealed class LlvmIrEmitter
     {
         foreach (var constant in _stringConstants.Values.OrderBy(static item => item.SymbolName, StringComparer.Ordinal))
         {
-            builder.AppendLine($"@{constant.SymbolName} = private unnamed_addr constant {constant.ArrayType} {constant.Initializer}");
+            builder.Append($"@{constant.SymbolName} = private unnamed_addr constant {constant.ArrayType} {constant.Initializer}");
+            if (constant.AlignmentBytes > 1)
+            {
+                builder.Append($", align {constant.AlignmentBytes}");
+            }
+
+            builder.AppendLine();
         }
 
         if (_stringConstants.Count != 0)
@@ -1167,7 +1798,11 @@ internal sealed class LlvmIrEmitter
         Func<string, string, AbiFunctionSignature?> resolveCallAbi)
     {
         var functionBuilder = new StringBuilder();
-        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects));
+        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
+        var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
+        functionBuilder.AppendLine(AppendFunctionDebugScope(
+            BuildDefinitionSignature(internalize, function, abiFunction, effects, effectiveMemoryEffects, parameterEffects),
+            debugFunction));
         functionBuilder.AppendLine("{");
 
         var bodyEmitter = new FunctionBodyEmitter(
@@ -1180,10 +1815,91 @@ internal sealed class LlvmIrEmitter
             ResolveGlobalSymbolName,
             MapType,
             TryGetConcreteTypeLayout,
-            ResolveNamedTypeSymbol);
+            ResolveNamedTypeSymbol,
+            debugFunction);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);
+    }
+
+    private DebugFunctionContext? TryCreateDebugFunctionContext(
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SsaFunction ssaFunction)
+    {
+        if (!_debugInfo.Enabled || !ssaFunction.HasBody)
+        {
+            return null;
+        }
+
+        var location = ResolveDebugLocation(
+            ssaFunction.Location
+            ?? (_functionLocations.TryGetValue(function.Name, out var functionLocation) ? functionLocation : null));
+        return _debugInfo.CreateFunctionContext(function.DisplaySourceName, abiFunction.SymbolName, location, function);
+    }
+
+    private string AppendFunctionDebugScope(string signature, DebugFunctionContext? debugFunction)
+    {
+        return debugFunction is null
+            ? signature
+            : $"{signature} !dbg {debugFunction.SubprogramRef}";
+    }
+
+    private SourceLocation ResolveDebugLocation(SourceLocation? location)
+    {
+        var filePath = string.IsNullOrWhiteSpace(location?.FilePath)
+            ? _input.FilePath ?? $"{_syntaxModel.ModuleName}.stark"
+            : location!.FilePath!;
+        var line = location is { Line: > 0 } ? location.Line : 1;
+        var column = location is { Column: > 0 } ? location.Column : 1;
+        return new SourceLocation(filePath, line, column);
+    }
+
+    private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForAbiLowering(
+        FunctionMemoryEffectSummary? memoryEffects,
+        SsaFunction ssaFunction,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+    {
+        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi))
+        {
+            return memoryEffects;
+        }
+
+        return (memoryEffects ?? new FunctionMemoryEffectSummary(
+                ReadsArgumentMemory: false,
+                WritesArgumentMemory: false,
+                CapturesArgumentMemory: false))
+            with
+            {
+                ReadsOtherMemory = true,
+                WritesOtherMemory = true
+            };
+    }
+
+    private static bool RequiresSyntheticStackTemporaries(
+        SsaFunction ssaFunction,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+    {
+        foreach (var call in ssaFunction.Blocks
+                     .SelectMany(static block => block.Instructions)
+                     .OfType<SsaValueInstruction>()
+                     .Select(static instruction => instruction.Value)
+                     .OfType<SsaCallRValue>())
+        {
+            var calleeAbi = resolveCallAbi(ssaFunction.Name, call.FunctionName);
+            if (calleeAbi is null)
+            {
+                continue;
+            }
+
+            if (calleeAbi.ReturnsIndirect
+                || calleeAbi.UserParameters.Any(AbiLoweringHeuristics.IsByValueIndirectParameter))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool TryEmitAsmFunctionDefinition(
@@ -1352,7 +2068,7 @@ internal sealed class LlvmIrEmitter
         segments.Add(MapType(abiFunction.LlvmReturnType));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: false, parameterEffects)))})");
 
-        var attributes = BuildFunctionAttributes(effects, memoryEffects);
+        var attributes = BuildFunctionAttributes(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
@@ -1384,7 +2100,7 @@ internal sealed class LlvmIrEmitter
         segments.Add(MapType(abiFunction.LlvmReturnType));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: true, parameterEffects)))})");
 
-        var attributes = BuildFunctionAttributes(effects, memoryEffects);
+        var attributes = BuildFunctionAttributes(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
@@ -1420,6 +2136,12 @@ internal sealed class LlvmIrEmitter
         }
 
         if (!TryGetSystemTextBuiltin(moduleName, function.Name, out var builtinKind))
+        {
+            return false;
+        }
+
+        if (!string.Equals(_syntaxModel.ModuleName, "System.Text", StringComparison.Ordinal)
+            && builtinKind is SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode)
         {
             return false;
         }
@@ -1857,29 +2579,34 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine("  ret i1 false");
         builder.AppendLine("concat_copy_left_check:");
         builder.AppendLine("  %concat_left_nonempty = icmp ne i64 %concat_left_length, 0");
-        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left_prepare, label %concat_after_left");
-        builder.AppendLine("concat_copy_left_prepare:");
-        builder.AppendLine($"  %concat_left_bytes = {RenderTextMemcpyLength(unitType, "%concat_left_length")}");
-        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)");
-        builder.AppendLine("  br label %concat_after_left");
+        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left_loop, label %concat_after_left");
+        builder.AppendLine("concat_copy_left_loop:");
+        builder.AppendLine("  %concat_left_index = phi i64 [ 0, %concat_copy_left_check ], [ %concat_left_next, %concat_copy_left_loop ]");
+        builder.AppendLine($"  %concat_left_src = getelementptr inbounds {unitLlvmType}, ptr %concat_left_data, i64 %concat_left_index");
+        builder.AppendLine($"  %concat_left_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_index");
+        builder.AppendLine($"  %concat_left_unit = load {unitLlvmType}, ptr %concat_left_src");
+        builder.AppendLine($"  store {unitLlvmType} %concat_left_unit, ptr %concat_left_dst");
+        builder.AppendLine("  %concat_left_next = add i64 %concat_left_index, 1");
+        builder.AppendLine("  %concat_left_more = icmp ult i64 %concat_left_next, %concat_left_length");
+        builder.AppendLine("  br i1 %concat_left_more, label %concat_copy_left_loop, label %concat_after_left");
         builder.AppendLine("concat_after_left:");
         builder.AppendLine("  %concat_right_nonempty = icmp ne i64 %concat_right_length, 0");
         builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right_prepare, label %concat_finish");
         builder.AppendLine("concat_copy_right_prepare:");
         builder.AppendLine($"  %concat_right_dest = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
-        builder.AppendLine($"  %concat_right_bytes = {RenderTextMemcpyLength(unitType, "%concat_right_length")}");
-        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)");
-        builder.AppendLine("  br label %concat_finish");
+        builder.AppendLine("  br label %concat_copy_right_loop");
+        builder.AppendLine("concat_copy_right_loop:");
+        builder.AppendLine("  %concat_right_index = phi i64 [ 0, %concat_copy_right_prepare ], [ %concat_right_next, %concat_copy_right_loop ]");
+        builder.AppendLine($"  %concat_right_src = getelementptr inbounds {unitLlvmType}, ptr %concat_right_data, i64 %concat_right_index");
+        builder.AppendLine($"  %concat_right_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_right_dest, i64 %concat_right_index");
+        builder.AppendLine($"  %concat_right_unit = load {unitLlvmType}, ptr %concat_right_src");
+        builder.AppendLine($"  store {unitLlvmType} %concat_right_unit, ptr %concat_right_dst");
+        builder.AppendLine("  %concat_right_next = add i64 %concat_right_index, 1");
+        builder.AppendLine("  %concat_right_more = icmp ult i64 %concat_right_next, %concat_right_length");
+        builder.AppendLine("  br i1 %concat_right_more, label %concat_copy_right_loop, label %concat_finish");
         builder.AppendLine("concat_finish:");
         builder.AppendLine("  store i64 %concat_required, ptr %concat_length_addr");
         builder.AppendLine("  ret i1 true");
-    }
-
-    private static string RenderTextMemcpyLength(StarkTypeSymbol unitType, string lengthValue)
-    {
-        return unitType.Kind == StarkTypeKind.Integer && unitType.BitWidth == 32
-            ? $"shl i64 {lengthValue}, 2"
-            : $"add i64 {lengthValue}, 0";
     }
 
     private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetBuiltinParameterEffects(
@@ -2374,6 +3101,11 @@ internal sealed class LlvmIrEmitter
         if (parameter.Kind == AbiParameterKind.IndirectIn)
         {
             attributes.Add("nonnull");
+            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
+            {
+                attributes.Add($"byval({MapType(parameter.SourceType)})");
+            }
+
             attributes.Add("noalias");
             AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
             AppendCaptureAttribute(attributes, parameterEffects);
@@ -2511,7 +3243,10 @@ internal sealed class LlvmIrEmitter
         });
     }
 
-    private static string BuildFunctionAttributes(FunctionEffectProfile effects, FunctionMemoryEffectSummary? memoryEffects)
+    private static string BuildFunctionAttributes(
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects)
     {
         var attributes = new List<string>();
 
@@ -2540,7 +3275,7 @@ internal sealed class LlvmIrEmitter
             attributes.Add("nofree");
         }
 
-        var memoryAttribute = BuildMemoryAttribute(effects, memoryEffects);
+        var memoryAttribute = BuildMemoryAttribute(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(memoryAttribute))
         {
             attributes.Add(memoryAttribute);
@@ -2566,19 +3301,41 @@ internal sealed class LlvmIrEmitter
         return string.Join(" ", attributes);
     }
 
-    private static string? BuildMemoryAttribute(FunctionEffectProfile effects, FunctionMemoryEffectSummary? memoryEffects)
+    private static string? BuildMemoryAttribute(
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects)
     {
+        var readsArgumentMemory = memoryEffects?.ReadsArgumentMemory ?? effects.ReadsArgumentMemory;
+        var writesArgumentMemory = memoryEffects?.WritesArgumentMemory ?? false;
+        if (abiFunction.ReturnsIndirect)
+        {
+            writesArgumentMemory = true;
+        }
+
+        var readsOtherMemory = memoryEffects?.ReadsOtherMemory ?? false;
+        var writesOtherMemory = memoryEffects?.WritesOtherMemory ?? false;
+
         if (memoryEffects is null)
         {
             return effects.IsPure
-                ? effects.ReadsArgumentMemory
-                    ? "memory(argmem: read)"
-                    : "memory(none)"
-                : null;
+                ? GetMemoryAttribute(readsArgumentMemory, writesArgumentMemory, readsOtherMemory, writesOtherMemory)
+                : readsArgumentMemory || writesArgumentMemory || readsOtherMemory || writesOtherMemory
+                    ? GetMemoryAttribute(readsArgumentMemory, writesArgumentMemory, readsOtherMemory, writesOtherMemory)
+                    : null;
         }
 
-        var defaultAccess = GetMemoryAccessName(memoryEffects.ReadsOtherMemory, memoryEffects.WritesOtherMemory);
-        var argumentAccess = GetMemoryAccessName(memoryEffects.ReadsArgumentMemory, memoryEffects.WritesArgumentMemory);
+        return GetMemoryAttribute(readsArgumentMemory, writesArgumentMemory, readsOtherMemory, writesOtherMemory);
+    }
+
+    private static string? GetMemoryAttribute(
+        bool readsArgumentMemory,
+        bool writesArgumentMemory,
+        bool readsOtherMemory,
+        bool writesOtherMemory)
+    {
+        var defaultAccess = GetMemoryAccessName(readsOtherMemory, writesOtherMemory);
+        var argumentAccess = GetMemoryAccessName(readsArgumentMemory, writesArgumentMemory);
 
         if (defaultAccess == "readwrite" && argumentAccess == "readwrite")
         {
@@ -3434,37 +4191,12 @@ internal sealed class LlvmIrEmitter
             return;
         }
 
-        switch (type.Kind)
-        {
-            case StarkTypeKind.Ascii:
-            {
-                var bytes = DecodeAsciiStringLiteral(literalText);
-                var terminated = new byte[bytes.Length + 1];
-                bytes.CopyTo(terminated, 0);
-
-                constants[key] = new EmittedStringConstant(
-                    SymbolName: $".str.{index++}",
-                    ArrayType: $"[{terminated.Length} x i8]",
-                    Initializer: EncodeLlvmByteString(terminated),
-                    DataLength: bytes.Length);
-                return;
-            }
-            case StarkTypeKind.Unicode:
-            {
-                var codeUnits = DecodeUnicodeStringLiteral(literalText);
-                var terminated = new int[codeUnits.Length + 1];
-                codeUnits.CopyTo(terminated, 0);
-
-                constants[key] = new EmittedStringConstant(
-                    SymbolName: $".str.{index++}",
-                    ArrayType: $"[{terminated.Length} x i32]",
-                    Initializer: EncodeLlvmI32Array(terminated),
-                    DataLength: codeUnits.Length);
-                return;
-            }
-            default:
-                throw new InvalidOperationException($"String constants require an ascii/unicode type, but found '{type.DisplayName}'.");
-        }
+        constants[key] = new EmittedStringConstant(
+            SymbolName: $".str.{index++}",
+            ArrayType: key.ArrayType,
+            Initializer: key.Initializer,
+            DataLength: key.DataLength,
+            AlignmentBytes: key.AlignmentBytes);
     }
 
     private static byte[] DecodeAsciiStringLiteral(string literalText)
@@ -3536,9 +4268,11 @@ internal sealed class LlvmIrEmitter
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
+        private readonly DebugFunctionContext? _debugFunction;
         private readonly HashSet<string> _referencedValueNames;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
+        private SourceLocation? _currentDebugLocation;
         private int _nextAbiTempId;
 
         public FunctionBodyEmitter(
@@ -3551,7 +4285,8 @@ internal sealed class LlvmIrEmitter
             Func<string, string> mapGlobalSymbolName,
             Func<StarkTypeSymbol, string> mapType,
             Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
-            Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedTypeSymbol)
+            Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedTypeSymbol,
+            DebugFunctionContext? debugFunction)
         {
             _builder = builder;
             _function = function;
@@ -3563,6 +4298,7 @@ internal sealed class LlvmIrEmitter
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
             _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
+            _debugFunction = debugFunction;
             _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         }
 
@@ -3570,6 +4306,7 @@ internal sealed class LlvmIrEmitter
         {
             if (_ssaFunction.Blocks.Count == 0)
             {
+                _currentDebugLocation = _ssaFunction.Location;
                 EmitFallbackTerminal();
                 return;
             }
@@ -3580,19 +4317,24 @@ internal sealed class LlvmIrEmitter
 
                 if (block.Id == _ssaFunction.EntryBlockId)
                 {
+                    _currentDebugLocation = _ssaFunction.Location;
                     EmitEntryParameterMaterialization();
+                    EmitEntryParameterDebugInfo();
                 }
 
                 foreach (var phi in block.Phis)
                 {
+                    _currentDebugLocation = phi.Location ?? _ssaFunction.Location;
                     EmitPhi(phi);
                 }
 
                 foreach (var instruction in block.Instructions)
                 {
+                    _currentDebugLocation = GetInstructionLocation(instruction) ?? _ssaFunction.Location;
                     EmitInstruction(instruction);
                 }
 
+                _currentDebugLocation = block.Terminator.Location ?? _ssaFunction.Location;
                 EmitTerminator(block.Terminator);
                 AppendLine(string.Empty);
             }
@@ -3992,7 +4734,7 @@ internal sealed class LlvmIrEmitter
             {
                 indirectReturnSlot = $"%{EscapeIdentifier(CreateAbiTempName("callret_slot"))}";
                 AppendLine($"  {indirectReturnSlot} = alloca {MapType(call.Type)}");
-                arguments.Add($"ptr sret({MapType(call.Type)}) {indirectReturnSlot}");
+                arguments.Add(RenderSRetArgumentPointer(call.Type, indirectReturnSlot));
             }
 
             var userParameters = abiCallee.UserParameters;
@@ -4024,19 +4766,19 @@ internal sealed class LlvmIrEmitter
                     {
                         if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
                         {
-                            arguments.Add($"ptr %{EscapeIdentifier(promotedParameter.LlvmName)}");
+                            arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier(promotedParameter.LlvmName)}"));
                         }
                         else
                         {
                             EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
-                            arguments.Add($"ptr %{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}");
+                            arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}"));
                         }
 
                         continue;
                     }
 
                     EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
-                    arguments.Add($"ptr %{EscapeIdentifier($"slot_{promotedLocal}")}");
+                    arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_{promotedLocal}")}"));
                     continue;
                 }
 
@@ -4047,25 +4789,26 @@ internal sealed class LlvmIrEmitter
                     AppendLine($"  store {MapType(parameter.SourceType)} {FormatValue(argument)}, ptr {tempSlot}");
                 }
 
-                arguments.Add($"ptr {tempSlot}");
+                arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot));
             }
 
             var renderedArguments = string.Join(", ", arguments);
+            var callPrefix = abiCallee.UsesFastCallingConvention ? "call fastcc" : "call";
 
             if (abiCallee.ReturnsIndirect)
             {
-                AppendLine($"  call void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
+                AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
                 AppendLine($"  {result} = load {MapType(call.Type)}, ptr {indirectReturnSlot}");
                 return;
             }
 
             if (call.Type.Kind == StarkTypeKind.Void)
             {
-                AppendLine($"  call void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
+                AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
                 return;
             }
 
-            AppendLine($"  {result} = call {MapType(abiCallee.LlvmReturnType)} @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
+            AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
         }
 
         private void EmitAllocateLocal(SsaAllocateLocalInstruction allocateLocal)
@@ -4080,6 +4823,7 @@ internal sealed class LlvmIrEmitter
             if (_allocatedLocalSlots.Add(slotName))
             {
                 AppendLine($"  %{slotName} = alloca {MapType(allocateLocal.LocalType)}");
+                EmitLocalDebugDeclare($"%{slotName}", allocateLocal.LocalName, allocateLocal.LocalType, allocateLocal.Location);
             }
         }
 
@@ -4108,6 +4852,11 @@ internal sealed class LlvmIrEmitter
         {
             EnsureLocalSlotExists(storeLocal.LocalName, storeLocal.LocalType);
             var slot = $"%{EscapeIdentifier($"slot_{storeLocal.LocalName}")}";
+            if (TryEmitInlineAggregateZeroFill(slot, storeLocal.LocalType, storeLocal.Value))
+            {
+                return;
+            }
+
             if (!TryEmitScalarizedAggregateStore(slot, storeLocal.LocalType, storeLocal.Value))
             {
                 AppendLine($"  store {MapType(storeLocal.LocalType)} {FormatValue(storeLocal.Value)}, ptr {slot}");
@@ -4125,7 +4874,7 @@ internal sealed class LlvmIrEmitter
                 && layout.SizeBytes > AggregateMemcpyThresholdBytes)
             {
                 AppendLine(
-                    $"  call void @llvm.memcpy.p0.p0.i64(ptr {FormatValue(copyMemory.DestinationAddress)}, ptr {FormatValue(copyMemory.SourceAddress)}, i64 {layout.SizeBytes}, i1 false)");
+                    $"  call void @llvm.memcpy.inline.p0.p0.i64(ptr {FormatValue(copyMemory.DestinationAddress)}, ptr {FormatValue(copyMemory.SourceAddress)}, i64 {layout.SizeBytes}, i1 false)");
                 return;
             }
 
@@ -4136,10 +4885,39 @@ internal sealed class LlvmIrEmitter
 
         private void EmitStoreIndirect(SsaStoreIndirectInstruction storeIndirect)
         {
+            if (TryEmitInlineAggregateZeroFill(FormatValue(storeIndirect.Address), storeIndirect.ValueType, storeIndirect.Value))
+            {
+                return;
+            }
+
             if (!TryEmitScalarizedAggregateStore(FormatValue(storeIndirect.Address), storeIndirect.ValueType, storeIndirect.Value))
             {
                 AppendLine($"  store {MapType(storeIndirect.ValueType)} {FormatValue(storeIndirect.Value)}, ptr {FormatValue(storeIndirect.Address)}");
             }
+        }
+
+        private bool TryEmitInlineAggregateZeroFill(string destinationAddress, StarkTypeSymbol valueType, SsaValue value)
+        {
+            if (value is not SsaZeroInitializerValue
+                || !ShouldEmitInlineAggregateZeroFill(valueType)
+                || _tryGetConcreteTypeLayout(valueType) is not { } layout)
+            {
+                return false;
+            }
+
+            AppendLine($"  call void @llvm.memset.inline.p0.i64(ptr {destinationAddress}, i8 0, i64 {layout.SizeBytes}, i1 false)");
+            return true;
+        }
+
+        private bool ShouldEmitInlineAggregateZeroFill(StarkTypeSymbol valueType)
+        {
+            if (_tryGetConcreteTypeLayout(NormalizeAggregateType(valueType)) is not { } layout
+                || layout.SizeBytes <= AggregateScalarizationThresholdBytes)
+            {
+                return false;
+            }
+
+            return valueType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Named;
         }
 
         private bool TryEmitScalarizedAggregateCopy(SsaValue destinationAddress, SsaValue sourceAddress, StarkTypeSymbol copyType)
@@ -4657,6 +5435,35 @@ internal sealed class LlvmIrEmitter
             return $"{MapType(parameter.LlvmType)} {FormatValue(argument)}";
         }
 
+        private string RenderIndirectArgumentPointer(AbiParameterSymbol parameter, string pointerValue)
+        {
+            var segments = new List<string> { "ptr" };
+
+            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
+            {
+                segments.Add($"byval({MapType(parameter.SourceType)})");
+                if (_tryGetConcreteTypeLayout(parameter.SourceType) is { AlignmentBytes: > 1 } layout)
+                {
+                    segments.Add($"align {layout.AlignmentBytes}");
+                }
+            }
+
+            segments.Add(pointerValue);
+            return string.Join(" ", segments);
+        }
+
+        private string RenderSRetArgumentPointer(StarkTypeSymbol returnType, string pointerValue)
+        {
+            var segments = new List<string> { "ptr", $"sret({MapType(returnType)})" };
+            if (_tryGetConcreteTypeLayout(returnType) is { AlignmentBytes: > 1 } layout)
+            {
+                segments.Add($"align {layout.AlignmentBytes}");
+            }
+
+            segments.Add(pointerValue);
+            return string.Join(" ", segments);
+        }
+
         private string FormatStringConstantValue(SsaStringConstant text)
         {
             var pointer = FormatStringDataPointer(text.LiteralText, text.Type);
@@ -4732,6 +5539,40 @@ internal sealed class LlvmIrEmitter
                 AppendLine($"  {materializedName} = load {MapType(parameter.SourceType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}");
                 _materializedParameters[parameter.LlvmName] = materializedName;
             }
+        }
+
+        private void EmitEntryParameterDebugInfo()
+        {
+            if (_debugFunction is null)
+            {
+                return;
+            }
+
+            for (var index = 0; index < _abiFunction.UserParameters.Count; index++)
+            {
+                var parameter = _abiFunction.UserParameters[index];
+                var variableRef = _debugFunction.GetParameterVariableRef(parameter.SourceName, parameter.SourceType, index + 1);
+
+                if (parameter.Kind == AbiParameterKind.IndirectIn)
+                {
+                    AppendLine($"  call void @llvm.dbg.declare(metadata ptr %{EscapeIdentifier(parameter.LlvmName)}, metadata {variableRef}, metadata !DIExpression())");
+                    continue;
+                }
+
+                AppendLine(
+                    $"  call void @llvm.dbg.value(metadata {MapType(parameter.LlvmType)} %{EscapeIdentifier(parameter.LlvmName)}, metadata {variableRef}, metadata !DIExpression())");
+            }
+        }
+
+        private void EmitLocalDebugDeclare(string slotName, string localName, StarkTypeSymbol localType, SourceLocation? location)
+        {
+            if (_debugFunction is null)
+            {
+                return;
+            }
+
+            var variableRef = _debugFunction.GetLocalVariableRef(localName, localType, location ?? _ssaFunction.Location);
+            AppendLine($"  call void @llvm.dbg.declare(metadata ptr {slotName}, metadata {variableRef}, metadata !DIExpression())");
         }
 
         private static HashSet<string> CollectReferencedValueNames(SsaFunction function)
@@ -4875,6 +5716,22 @@ internal sealed class LlvmIrEmitter
 
         private string MapType(StarkTypeSymbol type) => _mapType(type);
 
+        private static SourceLocation? GetInstructionLocation(SsaInstruction instruction)
+        {
+            return instruction switch
+            {
+                SsaValueInstruction valueInstruction => valueInstruction.Location,
+                SsaAllocateLocalInstruction allocateLocal => allocateLocal.Location,
+                SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
+                SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
+                SsaStoreLocalInstruction storeLocal => storeLocal.Location,
+                SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
+                SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,
+                SsaStoreGlobalInstruction storeGlobal => storeGlobal.Location,
+                _ => null
+            };
+        }
+
         private static bool IsStringType(StarkTypeSymbol type)
         {
             return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
@@ -4892,7 +5749,349 @@ internal sealed class LlvmIrEmitter
 
         private sealed record AggregateScalarLeaf(IReadOnlyList<int> Indices, StarkTypeSymbol Type);
 
-        private void AppendLine(string text) => _builder.AppendLine(text);
+        private void AppendLine(string text)
+        {
+            if (_debugFunction is not null
+                && _currentDebugLocation is not null
+                && ShouldAttachDebugLocation(text))
+            {
+                text = $"{text}, !dbg {_debugFunction.GetLocationRef(_currentDebugLocation)}";
+            }
+
+            _builder.AppendLine(text);
+        }
+
+        private static bool ShouldAttachDebugLocation(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)
+                || !text.StartsWith("  ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var trimmed = text.TrimStart();
+            return !trimmed.StartsWith(';')
+                && !trimmed.StartsWith('}');
+        }
+    }
+
+    private sealed class DebugMetadataEmitter
+    {
+        private readonly string _defaultSourcePath;
+        private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
+        private readonly List<string> _definitions = [];
+        private readonly Dictionary<string, string> _fileRefs = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _typeRefs = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _tupleRefs = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _subroutineTypeRefs = new(StringComparer.Ordinal);
+        private readonly string _compileUnitRef;
+        private readonly string _debugInfoVersionRef;
+        private readonly string _dwarfVersionRef;
+        private readonly string _defaultFileRef;
+        private readonly string _emptyTupleRef;
+        private bool _hasFunctions;
+        private int _nextMetadataId;
+
+        public DebugMetadataEmitter(
+            string defaultSourcePath,
+            Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout)
+        {
+            _defaultSourcePath = string.IsNullOrWhiteSpace(defaultSourcePath)
+                ? "module.stark"
+                : defaultSourcePath;
+            _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
+            _defaultFileRef = GetFileRef(_defaultSourcePath);
+            _emptyTupleRef = CreateMetadata("!{}");
+            _compileUnitRef = CreateMetadata(
+                $"distinct !DICompileUnit(language: DW_LANG_C, file: {_defaultFileRef}, producer: \"Stark Compiler\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)");
+            _debugInfoVersionRef = CreateMetadata("!{i32 2, !\"Debug Info Version\", i32 3}");
+            _dwarfVersionRef = CreateMetadata("!{i32 7, !\"Dwarf Version\", i32 5}");
+        }
+
+        public bool Enabled => true;
+
+        public DebugFunctionContext CreateFunctionContext(
+            string sourceName,
+            string linkageName,
+            SourceLocation location,
+            TypedFunctionSignature function)
+        {
+            _hasFunctions = true;
+
+            var normalizedLocation = ResolveLocation(location);
+            var fileRef = GetFileRef(normalizedLocation.FilePath);
+            var subroutineTypeRef = GetSubroutineTypeRef(function);
+            var subprogramRef = CreateMetadata(
+                $"distinct !DISubprogram(name: \"{EscapeMetadataString(sourceName)}\", linkageName: \"{EscapeMetadataString(linkageName)}\", scope: {fileRef}, file: {fileRef}, line: {normalizedLocation.Line}, type: {subroutineTypeRef}, scopeLine: {normalizedLocation.Line}, spFlags: DISPFlagDefinition, unit: {_compileUnitRef}, retainedNodes: {_emptyTupleRef})");
+
+            return new DebugFunctionContext(this, subprogramRef, fileRef, normalizedLocation);
+        }
+
+        public void EmitModuleMetadata(StringBuilder builder)
+        {
+            if (!_hasFunctions)
+            {
+                return;
+            }
+
+            builder.AppendLine($"!llvm.dbg.cu = !{{{_compileUnitRef}}}");
+            builder.AppendLine($"!llvm.module.flags = !{{{_debugInfoVersionRef}, {_dwarfVersionRef}}}");
+            foreach (var definition in _definitions)
+            {
+                builder.AppendLine(definition);
+            }
+        }
+
+        public SourceLocation ResolveLocation(SourceLocation? location)
+        {
+            var filePath = string.IsNullOrWhiteSpace(location?.FilePath)
+                ? _defaultSourcePath
+                : location!.FilePath!;
+            var line = location is { Line: > 0 } ? location.Line : 1;
+            var column = location is { Column: > 0 } ? location.Column : 1;
+            return new SourceLocation(filePath, line, column);
+        }
+
+        public string GetFileRef(string? filePath)
+        {
+            var normalizedPath = string.IsNullOrWhiteSpace(filePath)
+                ? _defaultSourcePath
+                : filePath!;
+            if (_fileRefs.TryGetValue(normalizedPath, out var existing))
+            {
+                return existing;
+            }
+
+            var fileName = Path.GetFileName(normalizedPath);
+            var directory = Path.GetDirectoryName(normalizedPath);
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                fileName = normalizedPath;
+            }
+
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                directory = ".";
+            }
+
+            var fileRef = CreateMetadata(
+                $"!DIFile(filename: \"{EscapeMetadataString(fileName)}\", directory: \"{EscapeMetadataString(directory)}\")");
+            _fileRefs[normalizedPath] = fileRef;
+            return fileRef;
+        }
+
+        public string GetTypeRef(StarkTypeSymbol type)
+        {
+            if (type.Kind == StarkTypeKind.Void)
+            {
+                return "null";
+            }
+
+            var key = type.DisplayName;
+            if (_typeRefs.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var typeRef = type.Kind switch
+            {
+                StarkTypeKind.Bool => CreateMetadata("!DIBasicType(name: \"bool\", size: 1, encoding: DW_ATE_boolean)"),
+                StarkTypeKind.Integer when type.BitWidth is int bitWidth
+                    => CreateMetadata($"!DIBasicType(name: \"{EscapeMetadataString(type.DisplayName)}\", size: {bitWidth}, encoding: DW_ATE_signed)"),
+                StarkTypeKind.Float when type.BitWidth is int bitWidth
+                    => CreateMetadata($"!DIBasicType(name: \"{EscapeMetadataString(type.DisplayName)}\", size: {bitWidth}, encoding: DW_ATE_float)"),
+                StarkTypeKind.RawPointer => CreatePointerTypeRef(type),
+                StarkTypeKind.FixedArray => CreateFixedArrayTypeRef(type),
+                StarkTypeKind.Slice => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
+                StarkTypeKind.Ascii => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
+                StarkTypeKind.Unicode => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
+                StarkTypeKind.Named => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
+                StarkTypeKind.Null => CreatePointerTypeRef(StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false)),
+                _ => CreateOpaqueCompositeTypeRef(type.DisplayName, type)
+            };
+
+            _typeRefs[key] = typeRef;
+            return typeRef;
+        }
+
+        public string CreateLocationRef(SourceLocation location, string scopeRef)
+        {
+            var normalizedLocation = ResolveLocation(location);
+            return CreateMetadata(
+                $"!DILocation(line: {normalizedLocation.Line}, column: {normalizedLocation.Column}, scope: {scopeRef})");
+        }
+
+        public string CreateParameterVariableRef(
+            string name,
+            StarkTypeSymbol type,
+            int argIndex,
+            string scopeRef,
+            string fileRef,
+            int line)
+        {
+            return CreateMetadata(
+                $"!DILocalVariable(name: \"{EscapeMetadataString(name)}\", arg: {argIndex}, scope: {scopeRef}, file: {fileRef}, line: {line}, type: {GetTypeRef(type)})");
+        }
+
+        public string CreateLocalVariableRef(
+            string name,
+            StarkTypeSymbol type,
+            string scopeRef,
+            string fileRef,
+            int line)
+        {
+            return CreateMetadata(
+                $"!DILocalVariable(name: \"{EscapeMetadataString(name)}\", scope: {scopeRef}, file: {fileRef}, line: {line}, type: {GetTypeRef(type)})");
+        }
+
+        private string CreatePointerTypeRef(StarkTypeSymbol pointerType)
+        {
+            var pointeeRef = pointerType.ElementType is null
+                ? "null"
+                : GetTypeRef(pointerType.ElementType);
+            var pointerBits = (_tryGetConcreteTypeLayout(pointerType)?.SizeBytes ?? 8) * 8;
+            return CreateMetadata(
+                $"!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {pointeeRef}, size: {pointerBits})");
+        }
+
+        private string CreateFixedArrayTypeRef(StarkTypeSymbol arrayType)
+        {
+            if (arrayType.ElementType is null || arrayType.FixedLength is not int fixedLength)
+            {
+                return CreateOpaqueCompositeTypeRef(arrayType.DisplayName, arrayType);
+            }
+
+            var subrangeRef = CreateMetadata($"!DISubrange(count: {fixedLength})");
+            var elementsRef = GetTupleRef([subrangeRef]);
+            var sizeBits = (_tryGetConcreteTypeLayout(arrayType)?.SizeBytes ?? 0) * 8;
+            return CreateMetadata(
+                $"!DICompositeType(tag: DW_TAG_array_type, baseType: {GetTypeRef(arrayType.ElementType)}, size: {sizeBits}, elements: {elementsRef})");
+        }
+
+        private string CreateOpaqueCompositeTypeRef(string name, StarkTypeSymbol type)
+        {
+            var sizeBits = (_tryGetConcreteTypeLayout(type)?.SizeBytes ?? 0) * 8;
+            return CreateMetadata(
+                $"!DICompositeType(tag: DW_TAG_structure_type, name: \"{EscapeMetadataString(name)}\", file: {_defaultFileRef}, size: {sizeBits}, elements: {_emptyTupleRef})");
+        }
+
+        private string GetSubroutineTypeRef(TypedFunctionSignature function)
+        {
+            var key = $"{function.ReturnType.DisplayName}({string.Join(",", function.Parameters.Select(static parameter => parameter.Type.DisplayName))})";
+            if (_subroutineTypeRefs.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var typeRefs = new List<string> { GetTypeRef(function.ReturnType) };
+            typeRefs.AddRange(function.Parameters.Select(parameter => GetTypeRef(parameter.Type)));
+            var tupleRef = GetTupleRef(typeRefs);
+            var subroutineRef = CreateMetadata($"!DISubroutineType(types: {tupleRef})");
+            _subroutineTypeRefs[key] = subroutineRef;
+            return subroutineRef;
+        }
+
+        private string GetTupleRef(IReadOnlyList<string> items)
+        {
+            var key = string.Join("|", items);
+            if (_tupleRefs.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var tupleRef = CreateMetadata("!{" + string.Join(", ", items) + "}");
+            _tupleRefs[key] = tupleRef;
+            return tupleRef;
+        }
+
+        private string CreateMetadata(string body)
+        {
+            var reference = "!" + _nextMetadataId++;
+            _definitions.Add(reference + " = " + body);
+            return reference;
+        }
+
+        private static string EscapeMetadataString(string value)
+        {
+            return EscapeFileName(value).Replace("\n", "\\0A", StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class DebugFunctionContext
+    {
+        private readonly DebugMetadataEmitter _owner;
+        private readonly string _fileRef;
+        private readonly Dictionary<(int Line, int Column), string> _locationRefs = [];
+        private readonly Dictionary<(string Name, int ArgIndex), string> _parameterRefs = [];
+        private readonly Dictionary<(string Name, int Line, int Column), string> _localRefs = [];
+
+        public DebugFunctionContext(
+            DebugMetadataEmitter owner,
+            string subprogramRef,
+            string fileRef,
+            SourceLocation functionLocation)
+        {
+            _owner = owner;
+            SubprogramRef = subprogramRef;
+            _fileRef = fileRef;
+            FunctionLocation = functionLocation;
+        }
+
+        public string SubprogramRef { get; }
+
+        public SourceLocation FunctionLocation { get; }
+
+        public string GetLocationRef(SourceLocation? location)
+        {
+            var normalizedLocation = _owner.ResolveLocation(location ?? FunctionLocation);
+            var key = (normalizedLocation.Line, normalizedLocation.Column);
+            if (_locationRefs.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var locationRef = _owner.CreateLocationRef(normalizedLocation, SubprogramRef);
+            _locationRefs[key] = locationRef;
+            return locationRef;
+        }
+
+        public string GetParameterVariableRef(string name, StarkTypeSymbol type, int argIndex)
+        {
+            var key = (name, argIndex);
+            if (_parameterRefs.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var variableRef = _owner.CreateParameterVariableRef(
+                name,
+                type,
+                argIndex,
+                SubprogramRef,
+                _fileRef,
+                FunctionLocation.Line);
+            _parameterRefs[key] = variableRef;
+            return variableRef;
+        }
+
+        public string GetLocalVariableRef(string name, StarkTypeSymbol type, SourceLocation? location)
+        {
+            var normalizedLocation = _owner.ResolveLocation(location ?? FunctionLocation);
+            var key = (name, normalizedLocation.Line, normalizedLocation.Column);
+            if (_localRefs.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var variableRef = _owner.CreateLocalVariableRef(
+                name,
+                type,
+                SubprogramRef,
+                _owner.GetFileRef(normalizedLocation.FilePath),
+                normalizedLocation.Line);
+            _localRefs[key] = variableRef;
+            return variableRef;
+        }
     }
 
     private sealed class UnsupportedBodyEmissionException : Exception
@@ -4984,10 +6183,48 @@ internal sealed class LlvmIrEmitter
             throw new InvalidOperationException($"String constant key requires an ascii/unicode type, but found '{type.DisplayName}'.");
         }
 
-        return new StringConstantKey(literalText, type.Kind);
+        return type.Kind switch
+        {
+            StarkTypeKind.Ascii => CreateAsciiStringConstantKey(literalText),
+            StarkTypeKind.Unicode => CreateUnicodeStringConstantKey(literalText),
+            _ => throw new InvalidOperationException($"String constant key requires an ascii/unicode type, but found '{type.DisplayName}'.")
+        };
     }
 
-    private readonly record struct StringConstantKey(string LiteralText, StarkTypeKind TypeKind);
+    private static StringConstantKey CreateAsciiStringConstantKey(string literalText)
+    {
+        var bytes = DecodeAsciiStringLiteral(literalText);
+        var terminated = new byte[bytes.Length + 1];
+        bytes.CopyTo(terminated, 0);
 
-    private sealed record EmittedStringConstant(string SymbolName, string ArrayType, string Initializer, int DataLength);
+        return new StringConstantKey(
+            StarkTypeKind.Ascii,
+            $"[{terminated.Length} x i8]",
+            EncodeLlvmByteString(terminated),
+            bytes.Length,
+            AlignmentBytes: 1);
+    }
+
+    private static StringConstantKey CreateUnicodeStringConstantKey(string literalText)
+    {
+        var codeUnits = DecodeUnicodeStringLiteral(literalText);
+        var terminated = new int[codeUnits.Length + 1];
+        codeUnits.CopyTo(terminated, 0);
+
+        return new StringConstantKey(
+            StarkTypeKind.Unicode,
+            $"[{terminated.Length} x i32]",
+            EncodeLlvmI32Array(terminated),
+            codeUnits.Length,
+            AlignmentBytes: 4);
+    }
+
+    private readonly record struct StringConstantKey(
+        StarkTypeKind TypeKind,
+        string ArrayType,
+        string Initializer,
+        int DataLength,
+        int AlignmentBytes);
+
+    private sealed record EmittedStringConstant(string SymbolName, string ArrayType, string Initializer, int DataLength, int AlignmentBytes);
 }
