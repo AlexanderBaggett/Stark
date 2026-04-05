@@ -195,7 +195,9 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            const i32 Answer = 1 + 2;
+            fn i32 Source();
+
+            const i32 Answer = Source();
             """);
 
         Assert.False(result.Succeeded);

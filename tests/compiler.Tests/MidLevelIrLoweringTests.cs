@@ -42,6 +42,57 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void PureConstantArithmeticReturnsFoldedMirConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run() {
+                return (1 + 2) * 3;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Empty(block.Statements);
+        var returnValue = Assert.IsType<MidLevelIrIntegerConstantOperand>(block.Terminator.Value);
+        Assert.Equal(new System.Numerics.BigInteger(9), returnValue.Value);
+    }
+
+    [Fact]
+    public void ConstantLawCallsFoldToMirConstants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i32 Adjust(i32 value) {
+                stack mut i32 current = value;
+                if (current < 10) {
+                    current = current + 3;
+                }
+
+                return current;
+            }
+
+            fn i32 Run() {
+                return Adjust(4);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Empty(block.Statements);
+        var returnValue = Assert.IsType<MidLevelIrIntegerConstantOperand>(block.Terminator.Value);
+        Assert.Equal(new System.Numerics.BigInteger(7), returnValue.Value);
+    }
+
+    [Fact]
     public void WhileLoopsLowerToBackedgeControlFlow()
     {
         var result = Compile(
@@ -117,6 +168,51 @@ public sealed class MidLevelIrLoweringTests
         Assert.Contains(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
         Assert.Contains(function.Blocks, block => block.Label.Contains("switch_case_0", StringComparison.Ordinal));
         Assert.Contains(function.Blocks, block => block.Label.Contains("switch_case_1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SwitchSectionsCanAssignAndBreakToSharedExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 value) {
+                stack i32 result = 0;
+                switch (value) {
+                    case 1:
+                        result = 10;
+                        break;
+                    case 2:
+                        result = 20;
+                        break;
+                    default:
+                        result = 30;
+                        break;
+                }
+
+                return result;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        var exitBlock = Assert.Single(function.Blocks, block => block.Label.Contains("switch_exit", StringComparison.Ordinal));
+        var caseBlocks = function.Blocks
+            .Where(block => block.Label.Contains("switch_case_", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.Equal(3, caseBlocks.Length);
+        Assert.All(
+            caseBlocks,
+            block =>
+            {
+                Assert.Equal(MidLevelIrTerminatorKind.Goto, block.Terminator.Kind);
+                Assert.Single(block.Terminator.Targets);
+                Assert.Equal(exitBlock.Id, block.Terminator.Targets[0]);
+            });
     }
 
     [Fact]
@@ -653,7 +749,7 @@ public sealed class MidLevelIrLoweringTests
             statement => statement.Value is MidLevelIrConvertRValue && statement.TargetName == "$tmp0_intcast");
 
         var binary = Assert.Single(entry.Statements, static statement => statement.Value is MidLevelIrBinaryRValue);
-        Assert.Equal("$tmp2_bin", binary.TargetName);
+        Assert.Contains("_bin", binary.TargetName, StringComparison.Ordinal);
         Assert.Equal(MidLevelIrBinaryOperator.Add, ((MidLevelIrBinaryRValue)binary.Value!).Operator);
     }
 
@@ -782,8 +878,8 @@ public sealed class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law f32 Run() {
-                return 2.0 ** 3.0;
+            finite law f32 Run(f32 left, f32 right) {
+                return left ** right;
             }
             """);
 
@@ -1138,6 +1234,28 @@ public sealed class MidLevelIrLoweringTests
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertIndexRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractIndexRValue);
+    }
+
+    [Fact]
+    public void FixedArrayArithmeticIndexStillLowersToAggregateIndexOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run() {
+                stack i32[3] values = { 1, 2, 3 };
+                return values[1 + 1];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = Assert.Single(function.Blocks).Statements;
+
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertIndexRValue);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractIndexRValue { ElementIndex: 2 });
+        Assert.DoesNotContain(statements, static statement => statement.Value is MidLevelIrBinaryRValue);
     }
 
     [Fact]

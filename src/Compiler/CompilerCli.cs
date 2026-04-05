@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--linker tool] [--archiver tool] [--save-temps dir] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--linker tool] [--archiver tool] [--save-temps dir] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -14,6 +14,8 @@ internal static class CompilerCli
         var linkArguments = new List<string>();
         string? targetTriple = null;
         string? targetDataLayout = null;
+        string? targetCpu = null;
+        var targetFeatures = new List<string>();
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
@@ -56,6 +58,32 @@ internal static class CompilerCli
             if (TryReadOptionValue(argument, "--target-data-layout", args, ref index, out var targetDataLayoutValue))
             {
                 targetDataLayout = targetDataLayoutValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--target-cpu", args, ref index, out var targetCpuValue))
+            {
+                if (string.IsNullOrWhiteSpace(targetCpuValue))
+                {
+                    await stderr.WriteLineAsync("Target CPU must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                targetCpu = targetCpuValue.Trim();
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--target-feature", args, ref index, out var targetFeatureValue))
+            {
+                if (string.IsNullOrWhiteSpace(targetFeatureValue))
+                {
+                    await stderr.WriteLineAsync("Target feature must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                targetFeatures.Add(targetFeatureValue.Trim());
                 continue;
             }
 
@@ -207,12 +235,12 @@ internal static class CompilerCli
         }
 
         var requiresTargetInfo = mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable;
-        var targetInfo = requiresTargetInfo
-            ? CreateTargetInfo(targetTriple, targetDataLayout)
-                ?? (NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo)
-                    ? detectedTargetInfo
-                    : null)
-                : null;
+        var targetInfo = ResolveTargetInfo(
+            requiresTargetInfo,
+            targetTriple,
+            targetDataLayout,
+            targetCpu,
+            targetFeatures);
         var source = inputPath is not null
             ? await File.ReadAllTextAsync(inputPath)
             : await stdin.ReadToEndAsync();
@@ -258,7 +286,7 @@ internal static class CompilerCli
             case CliMode.EmitLlvmIr:
                 return await EmitTextArtifactAsync(outputPath, stdout, result, CompilerArtifactKeys.LlvmIrModule, static module => module.Text);
             case CliMode.EmitObject:
-                return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, toolchainOptions);
+                return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, targetInfo, toolchainOptions);
             case CliMode.EmitLibrary:
                 return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitExecutable:
@@ -294,7 +322,11 @@ internal static class CompilerCli
         {
             var rootObjectPath = Path.Combine(intermediateDirectory, $"root{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
             var rootLlvmPath = toolchainOptions.SaveTempsDirectory is null ? null : Path.Combine(intermediateDirectory, "root.ll");
-            var rootObjectResult = NativeToolchain.EmitObject(llvmModule.Text, rootObjectPath, preservedLlvmOutputPath: rootLlvmPath);
+            var rootObjectResult = NativeToolchain.EmitObject(
+                llvmModule.Text,
+                rootObjectPath,
+                preservedLlvmOutputPath: rootLlvmPath,
+                targetInfo: compilerOptions.TargetInfo);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -302,6 +334,8 @@ internal static class CompilerCli
             }
 
             linkInputs.Add(rootObjectResult.OutputPath);
+            var requiresMathLibrary = TargetRequiresExplicitMathLibrary(compilerOptions.TargetInfo)
+                && LlvmTextRequiresMathLibrary(llvmModule.Text);
 
             if (result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
                 && loadedModules is not null)
@@ -339,15 +373,18 @@ internal static class CompilerCli
                     {
                         linkInputs.Add(dependencyResult.ObjectPath);
                     }
+
+                    requiresMathLibrary |= dependencyResult.RequiresMathLibrary;
                 }
             }
 
+            var linkArguments = BuildImplicitLinkArguments(toolchainOptions.LinkArguments, requiresMathLibrary);
             var toolchainResult = NativeToolchain.LinkExecutable(
                 linkInputs,
                 resolvedOutputPath,
                 toolchainOptions.LinkerTool,
                 toolchainOptions.LibrarySearchDirectories,
-                toolchainOptions.LinkArguments);
+                linkArguments);
             if (!toolchainResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, toolchainResult);
@@ -403,7 +440,11 @@ internal static class CompilerCli
         {
             var rootObjectPath = Path.Combine(intermediateDirectory, $"root{(OperatingSystem.IsWindows() ? ".obj" : ".o")}");
             var rootLlvmPath = toolchainOptions.SaveTempsDirectory is null ? null : Path.Combine(intermediateDirectory, "root.ll");
-            var rootObjectResult = NativeToolchain.EmitObject(llvmModule.Text, rootObjectPath, preservedLlvmOutputPath: rootLlvmPath);
+            var rootObjectResult = NativeToolchain.EmitObject(
+                llvmModule.Text,
+                rootObjectPath,
+                preservedLlvmOutputPath: rootLlvmPath,
+                targetInfo: compilerOptions.TargetInfo);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -484,6 +525,7 @@ internal static class CompilerCli
         TextWriter stdout,
         TextWriter stderr,
         CompilationResult result,
+        LlvmTargetInfo? targetInfo,
         ToolchainCliOptions toolchainOptions)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
@@ -498,7 +540,11 @@ internal static class CompilerCli
             : Path.Combine(
                 CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-obj-", out _),
                 $"{Path.GetFileNameWithoutExtension(resolvedOutputPath)}.ll");
-        var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, resolvedOutputPath, preservedLlvmOutputPath: preservedLlvmPath);
+        var toolchainResult = NativeToolchain.EmitObject(
+            llvmModule.Text,
+            resolvedOutputPath,
+            preservedLlvmOutputPath: preservedLlvmPath,
+            targetInfo: targetInfo);
         if (!toolchainResult.Succeeded)
         {
             if (!string.IsNullOrWhiteSpace(toolchainResult.StandardOutput))
@@ -580,6 +626,64 @@ internal static class CompilerCli
         }
     }
 
+    private static IReadOnlyList<string> BuildImplicitLinkArguments(
+        IReadOnlyList<string> explicitArguments,
+        bool requiresMathLibrary)
+    {
+        if (!requiresMathLibrary || explicitArguments.Contains("-lm", StringComparer.Ordinal))
+        {
+            return explicitArguments;
+        }
+
+        var combined = explicitArguments.ToList();
+        combined.Add("-lm");
+        return combined;
+    }
+
+    private static bool TargetRequiresExplicitMathLibrary(LlvmTargetInfo? targetInfo)
+    {
+        if (targetInfo?.Triple is { Length: > 0 } triple)
+        {
+            return !triple.Contains("windows", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return !OperatingSystem.IsWindows();
+    }
+
+    private static bool LlvmTextRequiresMathLibrary(string llvmText)
+    {
+        ReadOnlySpan<string> intrinsicNames =
+        [
+            "@llvm.acos.",
+            "@llvm.asin.",
+            "@llvm.atan.",
+            "@llvm.atan2.",
+            "@llvm.cos.",
+            "@llvm.cosh.",
+            "@llvm.exp.",
+            "@llvm.exp2.",
+            "@llvm.log.",
+            "@llvm.log10.",
+            "@llvm.log2.",
+            "@llvm.pow.",
+            "@llvm.sin.",
+            "@llvm.sincos.",
+            "@llvm.sinh.",
+            "@llvm.tan.",
+            "@llvm.tanh."
+        ];
+
+        foreach (var intrinsicName in intrinsicNames)
+        {
+            if (llvmText.Contains(intrinsicName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static DependencyCompileResult CompileDependencyObject(
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
@@ -591,7 +695,7 @@ internal static class CompilerCli
         {
             if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
             {
-                return new DependencyCompileResult(false, null, [], null, null);
+                return new DependencyCompileResult(false, null, [], null, null, RequiresMathLibrary: false);
             }
 
             sourceText = File.ReadAllText(module.Reference.FilePath);
@@ -612,13 +716,15 @@ internal static class CompilerCli
 
         if (!dependencyResult.Succeeded)
         {
-            return new DependencyCompileResult(false, null, dependencyResult.Diagnostics, dependencyResult.Logs, null);
+            return new DependencyCompileResult(false, null, dependencyResult.Diagnostics, dependencyResult.Logs, null, RequiresMathLibrary: false);
         }
 
         if (!dependencyResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
-            return new DependencyCompileResult(false, null, [], dependencyResult.Logs, null);
+            return new DependencyCompileResult(false, null, [], dependencyResult.Logs, null, RequiresMathLibrary: false);
         }
+
+        var requiresMathLibrary = LlvmTextRequiresMathLibrary(llvmModule.Text);
 
         var objectPath = Path.Combine(
             intermediateDirectory,
@@ -626,10 +732,14 @@ internal static class CompilerCli
         var llvmPath = preserveTemps
             ? Path.Combine(intermediateDirectory, $"{module.SyntaxModel.ModuleName.Replace(".", "_", StringComparison.Ordinal)}.ll")
             : null;
-        var toolchainResult = NativeToolchain.EmitObject(llvmModule.Text, objectPath, preservedLlvmOutputPath: llvmPath);
+        var toolchainResult = NativeToolchain.EmitObject(
+            llvmModule.Text,
+            objectPath,
+            preservedLlvmOutputPath: llvmPath,
+            targetInfo: rootOptions.TargetInfo);
         return toolchainResult.Succeeded
-            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult)
-            : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult);
+            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, requiresMathLibrary)
+            : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult, RequiresMathLibrary: false);
     }
 
     private static string CreateIntermediateDirectory(string? requestedDirectory, string tempPrefix, out DirectoryInfo? cleanupDirectory)
@@ -670,6 +780,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("Targeting and Native Toolchain:");
         await stdout.WriteLineAsync("  --target <triple>              Override the LLVM target triple");
         await stdout.WriteLineAsync("  --target-data-layout <layout>  Override the LLVM target data layout");
+        await stdout.WriteLineAsync("  --target-cpu <cpu>             Forward an explicit target CPU to native codegen (for example: znver4)");
+        await stdout.WriteLineAsync("  --target-feature <feature>     Forward a target feature string; repeatable (for example: +sse4.1)");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
@@ -754,14 +866,53 @@ internal static class CompilerCli
         return true;
     }
 
-    private static LlvmTargetInfo? CreateTargetInfo(string? targetTriple, string? targetDataLayout)
+    private static LlvmTargetInfo? ResolveTargetInfo(
+        bool requiresTargetInfo,
+        string? targetTriple,
+        string? targetDataLayout,
+        string? targetCpu,
+        IReadOnlyList<string> targetFeatures)
+    {
+        if (!requiresTargetInfo)
+        {
+            return null;
+        }
+
+        var explicitTargetInfo = CreateTargetInfo(targetTriple, targetDataLayout, targetCpu, targetFeatures);
+        if (explicitTargetInfo is not null)
+        {
+            return explicitTargetInfo;
+        }
+
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+        {
+            return null;
+        }
+
+        return detectedTargetInfo with
+        {
+            DataLayout = string.IsNullOrWhiteSpace(targetDataLayout) ? detectedTargetInfo.DataLayout : targetDataLayout,
+            Cpu = string.IsNullOrWhiteSpace(targetCpu) ? detectedTargetInfo.Cpu : targetCpu,
+            Features = targetFeatures.Count == 0 ? detectedTargetInfo.Features : targetFeatures.ToArray()
+        };
+    }
+
+    private static LlvmTargetInfo? CreateTargetInfo(
+        string? targetTriple,
+        string? targetDataLayout,
+        string? targetCpu,
+        IReadOnlyList<string> targetFeatures)
     {
         if (string.IsNullOrWhiteSpace(targetTriple))
         {
             return null;
         }
 
-        return new LlvmTargetInfo(targetTriple, string.IsNullOrWhiteSpace(targetDataLayout) ? null : targetDataLayout);
+        return new LlvmTargetInfo(
+            targetTriple,
+            string.IsNullOrWhiteSpace(targetDataLayout) ? null : targetDataLayout,
+            string.IsNullOrWhiteSpace(targetCpu) ? null : targetCpu,
+            targetFeatures.Count == 0 ? null : targetFeatures.ToArray());
     }
 
     private static string? ResolveStopAfterPassId(CliMode mode)
@@ -913,7 +1064,8 @@ internal static class CompilerCli
         string? ObjectPath,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
         IReadOnlyList<CompilerLogEntry> Logs,
-        NativeToolchainResult? ToolchainResult);
+        NativeToolchainResult? ToolchainResult,
+        bool RequiresMathLibrary);
 
     private sealed record ToolchainCliOptions(
         string? LinkerTool,

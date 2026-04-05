@@ -107,6 +107,7 @@ internal sealed class MidLevelIrLowerer(
             _typeModel,
             _enumLayoutModel,
             _typeResolver,
+            _functionsByName,
             _destructorsByTypeName,
             _logs,
             loweringContext.FilePath,
@@ -388,6 +389,79 @@ internal sealed class MidLevelIrLowerer(
             public List<(string Name, StarkTypeSymbol Type)> Locals { get; } = [];
         }
 
+        private sealed record CompileTimeBinding(CompileTimeConstant Value, bool IsMutable);
+
+        private sealed record CompileTimeScopeEntry(
+            string Name,
+            bool HadPreviousBinding,
+            CompileTimeBinding? PreviousBinding);
+
+        private sealed class CompileTimeEvaluationState
+        {
+            private readonly Dictionary<string, CompileTimeBinding> _bindings = new(StringComparer.Ordinal);
+            private readonly Stack<List<CompileTimeScopeEntry>> _scopes = new();
+
+            public void PushScope()
+            {
+                _scopes.Push([]);
+            }
+
+            public void PopScope()
+            {
+                if (_scopes.Count == 0)
+                {
+                    return;
+                }
+
+                foreach (var entry in _scopes.Pop().AsEnumerable().Reverse())
+                {
+                    if (entry.HadPreviousBinding && entry.PreviousBinding is not null)
+                    {
+                        _bindings[entry.Name] = entry.PreviousBinding;
+                    }
+                    else
+                    {
+                        _bindings.Remove(entry.Name);
+                    }
+                }
+            }
+
+            public void Declare(string name, CompileTimeConstant value, bool isMutable)
+            {
+                if (_scopes.Count == 0)
+                {
+                    PushScope();
+                }
+
+                var hadPreviousBinding = _bindings.TryGetValue(name, out var previousBinding);
+                _scopes.Peek().Add(new CompileTimeScopeEntry(name, hadPreviousBinding, previousBinding));
+                _bindings[name] = new CompileTimeBinding(value, isMutable);
+            }
+
+            public bool TryResolve(string name, out CompileTimeConstant value)
+            {
+                if (_bindings.TryGetValue(name, out var binding))
+                {
+                    value = binding.Value;
+                    return true;
+                }
+
+                value = default;
+                return false;
+            }
+
+            public bool TryAssign(string name, CompileTimeConstant value)
+            {
+                if (!_bindings.TryGetValue(name, out var binding) || !binding.IsMutable)
+                {
+                    return false;
+                }
+
+                _bindings[name] = binding with { Value = value };
+                return true;
+            }
+        }
+
         private sealed class DestructorContext : IDisposable
         {
             private readonly FunctionMirBuilder _builder;
@@ -429,6 +503,7 @@ internal sealed class MidLevelIrLowerer(
         private readonly TypeCheckModel _typeModel;
         private readonly EnumLayoutModel _enumLayoutModel;
         private readonly StarkTypeResolver _typeResolver;
+        private readonly IReadOnlyDictionary<string, FunctionLoweringContext> _functionsByName;
         private readonly IReadOnlyDictionary<string, DestructorLoweringContext> _destructorsByTypeName;
         private readonly CompilerLogBag _logs;
         private readonly string? _moduleFilePath;
@@ -447,6 +522,7 @@ internal sealed class MidLevelIrLowerer(
         private readonly Dictionary<string, string> _nameAliases = new(StringComparer.Ordinal);
         private readonly List<BasicBlockBuilder> _blocks = [];
         private readonly Stack<LoopTargets> _loops = [];
+        private readonly Stack<BreakTargets> _breakTargets = [];
         private readonly Stack<ScopeFrame> _scopes = [];
         private string? _moduleNameOverride;
         private int _nextBlockId;
@@ -458,6 +534,7 @@ internal sealed class MidLevelIrLowerer(
             TypeCheckModel typeModel,
             EnumLayoutModel enumLayoutModel,
             StarkTypeResolver typeResolver,
+            IReadOnlyDictionary<string, FunctionLoweringContext> functionsByName,
             IReadOnlyDictionary<string, DestructorLoweringContext> destructorsByTypeName,
             CompilerLogBag logs,
             string? moduleFilePath,
@@ -472,6 +549,7 @@ internal sealed class MidLevelIrLowerer(
             _typeModel = typeModel;
             _enumLayoutModel = enumLayoutModel;
             _typeResolver = typeResolver;
+            _functionsByName = functionsByName;
             _destructorsByTypeName = destructorsByTypeName;
             _logs = logs;
             _moduleFilePath = moduleFilePath;
@@ -599,14 +677,26 @@ internal sealed class MidLevelIrLowerer(
 
             if (statement.breakStatement() is not null)
             {
-                var loop = _loops.Peek();
-                EmitStorageDeadBeyondDepth(loop.ScopeDepth);
-                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [loop.BreakTarget]);
+                if (_breakTargets.Count == 0)
+                {
+                    MarkUnsupported(statement.breakStatement(), "'break' requires an enclosing loop or switch.");
+                    return;
+                }
+
+                var breakTarget = _breakTargets.Peek();
+                EmitStorageDeadBeyondDepth(breakTarget.ScopeDepth);
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [breakTarget.Target]);
                 return;
             }
 
             if (statement.continueStatement() is not null)
             {
+                if (_loops.Count == 0)
+                {
+                    MarkUnsupported(statement.continueStatement(), "'continue' requires an enclosing loop.");
+                    return;
+                }
+
                 var loop = _loops.Peek();
                 EmitStorageDeadBeyondDepth(loop.ScopeDepth);
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [loop.ContinueTarget]);
@@ -1011,15 +1101,23 @@ internal sealed class MidLevelIrLowerer(
                 ConditionText: switchStatement.expression().GetText(),
                 SwitchCases: cases);
 
-            foreach (var (section, block) in sectionBlocks)
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            try
             {
-                CurrentBlock = block;
-                foreach (var nested in section.statement())
+                foreach (var (section, block) in sectionBlocks)
                 {
-                    LowerStatement(nested);
-                }
+                    CurrentBlock = block;
+                    foreach (var nested in section.statement())
+                    {
+                        LowerStatement(nested);
+                    }
 
-                EnsureGoto(exitBlock.Id);
+                    EnsureGoto(exitBlock.Id);
+                }
+            }
+            finally
+            {
+                _breakTargets.Pop();
             }
 
             CurrentBlock = exitBlock;
@@ -1110,15 +1208,23 @@ internal sealed class MidLevelIrLowerer(
                 SwitchCases: switchCases,
                 DefaultTarget: resolvedDefaultTarget);
 
-            foreach (var section in sections)
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            try
             {
-                CurrentBlock = section.Block;
-                foreach (var nested in section.Section.statement())
+                foreach (var section in sections)
                 {
-                    LowerStatement(nested);
-                }
+                    CurrentBlock = section.Block;
+                    foreach (var nested in section.Section.statement())
+                    {
+                        LowerStatement(nested);
+                    }
 
-                EnsureGoto(exitBlock.Id);
+                    EnsureGoto(exitBlock.Id);
+                }
+            }
+            finally
+            {
+                _breakTargets.Pop();
             }
 
             CurrentBlock = exitBlock;
@@ -1234,15 +1340,23 @@ internal sealed class MidLevelIrLowerer(
                 }
             }
 
-            foreach (var section in sections)
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            try
             {
-                CurrentBlock = section.Block;
-                foreach (var nested in section.Section.statement())
+                foreach (var section in sections)
                 {
-                    LowerStatement(nested);
-                }
+                    CurrentBlock = section.Block;
+                    foreach (var nested in section.Section.statement())
+                    {
+                        LowerStatement(nested);
+                    }
 
-                EnsureGoto(exitBlock.Id);
+                    EnsureGoto(exitBlock.Id);
+                }
+            }
+            finally
+            {
+                _breakTargets.Pop();
             }
 
             CurrentBlock = exitBlock;
@@ -1309,15 +1423,23 @@ internal sealed class MidLevelIrLowerer(
                 }
             }
 
-            foreach (var section in sections)
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            try
             {
-                CurrentBlock = section.BodyBlock;
-                foreach (var nested in section.Section.statement())
+                foreach (var section in sections)
                 {
-                    LowerStatement(nested);
-                }
+                    CurrentBlock = section.BodyBlock;
+                    foreach (var nested in section.Section.statement())
+                    {
+                        LowerStatement(nested);
+                    }
 
-                EnsureGoto(exitBlock.Id);
+                    EnsureGoto(exitBlock.Id);
+                }
+            }
+            finally
+            {
+                _breakTargets.Pop();
             }
 
             CurrentBlock = exitBlock;
@@ -2196,9 +2318,17 @@ internal sealed class MidLevelIrLowerer(
                 Condition: LowerExpressionToOperand(whileStatement.expression(), StarkTypeSymbols.Bool));
 
             _loops.Push(new LoopTargets(conditionBlock.Id, exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
-            LowerStatement(whileStatement.statement());
-            _loops.Pop();
+            try
+            {
+                LowerStatement(whileStatement.statement());
+            }
+            finally
+            {
+                _breakTargets.Pop();
+                _loops.Pop();
+            }
             EnsureGoto(conditionBlock.Id);
 
             CurrentBlock = exitBlock;
@@ -2255,9 +2385,17 @@ internal sealed class MidLevelIrLowerer(
             }
 
             _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
-            LowerStatement(forStatement.statement());
-            _loops.Pop();
+            try
+            {
+                LowerStatement(forStatement.statement());
+            }
+            finally
+            {
+                _breakTargets.Pop();
+                _loops.Pop();
+            }
             EnsureGoto(iteratorBlock.Id);
 
             CurrentBlock = iteratorBlock;
@@ -2275,8 +2413,433 @@ internal sealed class MidLevelIrLowerer(
 
         private MidLevelIrOperand? LowerExpressionToOperand(StarkParser.ExpressionContext expression, StarkTypeSymbol? expectedType = null)
         {
+            if (TryEvaluateCompileTimeExpression(expression, CurrentModuleName, state: null, activeCalls: null, out var constant))
+            {
+                if (expectedType is not null
+                    && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
+                {
+                    return CreateCompileTimeOperand(coerced);
+                }
+
+                return expectedType is null
+                    ? CreateCompileTimeOperand(constant)
+                    : CoerceOperand(CreateCompileTimeOperand(constant), expectedType);
+            }
+
             var operand = LowerAssignmentExpressionToOperand(expression.assignmentExpression(), expectedType);
             return expectedType is null ? operand : CoerceOperand(operand, expectedType);
+        }
+
+        private bool TryEvaluateCompileTimeExpression(
+            StarkParser.ExpressionContext expression,
+            string moduleName,
+            CompileTimeEvaluationState? state,
+            HashSet<string>? activeCalls,
+            out CompileTimeConstant constant)
+        {
+            activeCalls ??= new HashSet<string>(StringComparer.Ordinal);
+            TryResolveCompileTimeIdentifier? nameResolver = state is null
+                ? null
+                : new TryResolveCompileTimeIdentifier(state.TryResolve);
+            TryEvaluateCompileTimePostfixExpression postfixResolver =
+                (StarkParser.PostfixExpressionContext postfix, CompileTimeEvaluationServices _, out CompileTimeConstant value) =>
+                    TryEvaluateCompileTimeLawCall(postfix, moduleName, state, activeCalls, out value);
+            var services = new CompileTimeEvaluationServices(
+                TryResolveIdentifier: nameResolver,
+                TryEvaluatePostfixExpression: postfixResolver);
+            return CompileTimeExpressionEvaluator.TryEvaluate(expression, out constant, services);
+        }
+
+        private bool TryEvaluateCompileTimeInteger(
+            StarkParser.ExpressionContext expression,
+            string moduleName,
+            CompileTimeEvaluationState? state,
+            HashSet<string>? activeCalls,
+            out BigInteger value)
+        {
+            activeCalls ??= new HashSet<string>(StringComparer.Ordinal);
+            TryResolveCompileTimeIdentifier? nameResolver = state is null
+                ? null
+                : new TryResolveCompileTimeIdentifier(state.TryResolve);
+            TryEvaluateCompileTimePostfixExpression postfixResolver =
+                (StarkParser.PostfixExpressionContext postfix, CompileTimeEvaluationServices _, out CompileTimeConstant constant) =>
+                    TryEvaluateCompileTimeLawCall(postfix, moduleName, state, activeCalls, out constant);
+            var services = new CompileTimeEvaluationServices(
+                TryResolveIdentifier: nameResolver,
+                TryEvaluatePostfixExpression: postfixResolver);
+            return CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out value, services);
+        }
+
+        private bool TryEvaluateCompileTimeLawCall(
+            StarkParser.PostfixExpressionContext expression,
+            string moduleName,
+            CompileTimeEvaluationState? state,
+            HashSet<string> activeCalls,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+
+            if (expression.postfixPart().Length == 0
+                || expression.postfixPart()[^1].argumentList() is not { } finalArguments)
+            {
+                return false;
+            }
+
+            string? currentName = expression.primaryExpression().Identifier()?.GetText()
+                ?? expression.primaryExpression().qualifiedName()?.GetText();
+            if (currentName is null)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < expression.postfixPart().Length; index++)
+            {
+                var postfixPart = expression.postfixPart()[index];
+                if (postfixPart.argumentList() is { } arguments)
+                {
+                    return index == expression.postfixPart().Length - 1
+                        && currentName is not null
+                        && ReferenceEquals(arguments, finalArguments)
+                        && TryEvaluateCompileTimeCallByName(currentName, moduleName, arguments, state, activeCalls, out constant);
+                }
+
+                if (postfixPart.expressionList() is not null)
+                {
+                    return false;
+                }
+
+                var memberName = postfixPart.Identifier()?.GetText();
+                if (memberName is null)
+                {
+                    return false;
+                }
+
+                currentName = $"{currentName}.{memberName}";
+            }
+
+            return false;
+        }
+
+        private bool TryEvaluateCompileTimeCallByName(
+            string functionName,
+            string moduleName,
+            StarkParser.ArgumentListContext arguments,
+            CompileTimeEvaluationState? state,
+            HashSet<string> activeCalls,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+
+            var argumentConstants = new List<CompileTimeConstant>(arguments.argument().Length);
+            foreach (var argument in arguments.argument())
+            {
+                if (!TryEvaluateCompileTimeExpression(argument.expression(), moduleName, state, activeCalls, out var argumentConstant))
+                {
+                    return false;
+                }
+
+                argumentConstants.Add(argumentConstant);
+            }
+
+            TypedFunctionSignature signature;
+            if (TryGetFunctionOverloads(functionName, moduleName, out var overloads))
+            {
+                var resolution = FunctionOverloadFacts.Resolve(
+                    overloads,
+                    receiverType: null,
+                    argumentConstants.Select(static argument => argument.Type).ToArray(),
+                    TypeCompatibilityFacts.CanAssign);
+                if (!resolution.Succeeded)
+                {
+                    return false;
+                }
+
+                signature = resolution.Match!;
+            }
+            else if (!TryResolveFunctionSignature(functionName, moduleName, out signature))
+            {
+                return false;
+            }
+
+            if (arguments.argument().Length != signature.Parameters.Count
+                || !_functionsByName.TryGetValue(signature.Name, out var functionContext)
+                || !functionContext.Declaration.HasBody
+                || functionContext.Declaration.Body.block() is not { } body
+                || !FunctionKindFacts.IsLaw(functionContext.Declaration.DeclaredKind)
+                || functionContext.Declaration.TypeParameters is not null)
+            {
+                return false;
+            }
+
+            var coercedArguments = new List<CompileTimeConstant>(argumentConstants.Count);
+            for (var index = 0; index < argumentConstants.Count; index++)
+            {
+                if (!CompileTimeExpressionEvaluator.TryCoerce(argumentConstants[index], signature.Parameters[index].Type, out var coerced))
+                {
+                    return false;
+                }
+
+                coercedArguments.Add(coerced);
+            }
+
+            return TryExecuteCompileTimeFunction(signature, functionContext, body, coercedArguments, activeCalls, out constant);
+        }
+
+        private bool TryExecuteCompileTimeFunction(
+            TypedFunctionSignature signature,
+            FunctionLoweringContext functionContext,
+            StarkParser.BlockContext body,
+            IReadOnlyList<CompileTimeConstant> arguments,
+            HashSet<string> activeCalls,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+
+            if (!activeCalls.Add(signature.Name))
+            {
+                return false;
+            }
+
+            var state = new CompileTimeEvaluationState();
+            state.PushScope();
+            try
+            {
+                for (var index = 0; index < signature.Parameters.Count; index++)
+                {
+                    state.Declare(signature.Parameters[index].Name, arguments[index], isMutable: false);
+                }
+
+                if (!TryExecuteCompileTimeBlock(body, functionContext.ModuleName, state, activeCalls, signature.ReturnType, out var returned, out var returnValue)
+                    || !returned
+                    || signature.ReturnType.Kind == StarkTypeKind.Void)
+                {
+                    return false;
+                }
+
+                if (!CompileTimeExpressionEvaluator.TryCoerce(returnValue, signature.ReturnType, out constant))
+                {
+                    return false;
+                }
+
+                return true;
+            }
+            finally
+            {
+                state.PopScope();
+                activeCalls.Remove(signature.Name);
+            }
+        }
+
+        private bool TryExecuteCompileTimeBlock(
+            StarkParser.BlockContext block,
+            string moduleName,
+            CompileTimeEvaluationState state,
+            HashSet<string> activeCalls,
+            StarkTypeSymbol returnType,
+            out bool returned,
+            out CompileTimeConstant returnValue)
+        {
+            returned = false;
+            returnValue = default;
+            state.PushScope();
+            try
+            {
+                foreach (var statement in block.statement())
+                {
+                    if (!TryExecuteCompileTimeStatement(statement, moduleName, state, activeCalls, returnType, out returned, out returnValue))
+                    {
+                        return false;
+                    }
+
+                    if (returned)
+                    {
+                        return true;
+                    }
+                }
+
+                return true;
+            }
+            finally
+            {
+                state.PopScope();
+            }
+        }
+
+        private bool TryExecuteCompileTimeScopedStatement(
+            StarkParser.StatementContext statement,
+            string moduleName,
+            CompileTimeEvaluationState state,
+            HashSet<string> activeCalls,
+            StarkTypeSymbol returnType,
+            out bool returned,
+            out CompileTimeConstant returnValue)
+        {
+            returned = false;
+            returnValue = default;
+            state.PushScope();
+            try
+            {
+                return TryExecuteCompileTimeStatement(statement, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+            }
+            finally
+            {
+                state.PopScope();
+            }
+        }
+
+        private bool TryExecuteCompileTimeStatement(
+            StarkParser.StatementContext statement,
+            string moduleName,
+            CompileTimeEvaluationState state,
+            HashSet<string> activeCalls,
+            StarkTypeSymbol returnType,
+            out bool returned,
+            out CompileTimeConstant returnValue)
+        {
+            returned = false;
+            returnValue = default;
+
+            if (statement.block() is { } block)
+            {
+                return TryExecuteCompileTimeBlock(block, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+            }
+
+            if (statement.localConstantDeclaration() is { } localConstant)
+            {
+                var declaredType = _typeResolver.ResolveType(localConstant.type_(), currentModuleName: moduleName);
+                foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
+                {
+                    if (declarator.variableInitializer()?.expression() is not { } initializerExpression
+                        || !TryEvaluateCompileTimeExpression(initializerExpression, moduleName, state, activeCalls, out var initializer)
+                        || !CompileTimeExpressionEvaluator.TryCoerce(initializer, declaredType, out var coerced))
+                    {
+                        return false;
+                    }
+
+                    state.Declare(declarator.Identifier().GetText(), coerced, isMutable: false);
+                }
+
+                return true;
+            }
+
+            if (statement.localVariableDeclaration() is { } localVariable)
+            {
+                var declaredType = _typeResolver.ResolveType(localVariable.type_(), currentModuleName: moduleName);
+                foreach (var declarator in localVariable.variableDeclarators().variableDeclarator())
+                {
+                    if (declarator.variableInitializer()?.expression() is not { } initializerExpression
+                        || !TryEvaluateCompileTimeExpression(initializerExpression, moduleName, state, activeCalls, out var initializer)
+                        || !CompileTimeExpressionEvaluator.TryCoerce(initializer, declaredType, out var coerced))
+                    {
+                        return false;
+                    }
+
+                    state.Declare(declarator.Identifier().GetText(), coerced, isMutable: localVariable.MUT() is not null);
+                }
+
+                return true;
+            }
+
+            if (statement.ifStatement() is { } ifStatement)
+            {
+                if (!TryEvaluateCompileTimeExpression(ifStatement.expression(), moduleName, state, activeCalls, out var condition)
+                    || condition.Kind != CompileTimeConstantKind.Bool)
+                {
+                    return false;
+                }
+
+                if (!condition.BoolValue)
+                {
+                    return ifStatement.statement().Length < 2
+                        || TryExecuteCompileTimeScopedStatement(ifStatement.statement(1), moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                }
+
+                return TryExecuteCompileTimeScopedStatement(ifStatement.statement(0), moduleName, state, activeCalls, returnType, out returned, out returnValue);
+            }
+
+            if (statement.returnStatement() is { } returnStatement)
+            {
+                returned = true;
+                if (returnStatement.expression() is null)
+                {
+                    return returnType.Kind == StarkTypeKind.Void;
+                }
+
+                if (!TryEvaluateCompileTimeExpression(returnStatement.expression(), moduleName, state, activeCalls, out var computed)
+                    || !CompileTimeExpressionEvaluator.TryCoerce(computed, returnType, out returnValue))
+                {
+                    returned = false;
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (statement.expressionStatement() is { } expressionStatement)
+            {
+                return TryHandleCompileTimeAssignmentStatement(expressionStatement.expression(), moduleName, state, activeCalls)
+                    || TryEvaluateCompileTimeExpression(expressionStatement.expression(), moduleName, state, activeCalls, out _);
+            }
+
+            return false;
+        }
+
+        private bool TryHandleCompileTimeAssignmentStatement(
+            StarkParser.ExpressionContext expression,
+            string moduleName,
+            CompileTimeEvaluationState state,
+            HashSet<string> activeCalls)
+        {
+            var assignment = expression.assignmentExpression();
+            if (assignment.assignmentOperator() is null
+                || assignment.assignmentOperator().GetText() != "="
+                || assignment.unaryExpression() is not { } unaryExpression
+                || !TryResolveCompileTimeAssignmentTarget(unaryExpression, out var targetName)
+                || !state.TryResolve(targetName, out var targetValue)
+                || !TryEvaluateCompileTimeAssignmentExpression(assignment.assignmentExpression(), moduleName, state, activeCalls, out var assignedValue)
+                || !CompileTimeExpressionEvaluator.TryCoerce(assignedValue, targetValue.Type, out var coerced))
+            {
+                return false;
+            }
+
+            return state.TryAssign(targetName, coerced);
+        }
+
+        private bool TryEvaluateCompileTimeAssignmentExpression(
+            StarkParser.AssignmentExpressionContext expression,
+            string moduleName,
+            CompileTimeEvaluationState? state,
+            HashSet<string>? activeCalls,
+            out CompileTimeConstant constant)
+        {
+            activeCalls ??= new HashSet<string>(StringComparer.Ordinal);
+            TryResolveCompileTimeIdentifier? nameResolver = state is null
+                ? null
+                : new TryResolveCompileTimeIdentifier(state.TryResolve);
+            TryEvaluateCompileTimePostfixExpression postfixResolver =
+                (StarkParser.PostfixExpressionContext postfix, CompileTimeEvaluationServices _, out CompileTimeConstant value) =>
+                    TryEvaluateCompileTimeLawCall(postfix, moduleName, state, activeCalls, out value);
+            var services = new CompileTimeEvaluationServices(
+                TryResolveIdentifier: nameResolver,
+                TryEvaluatePostfixExpression: postfixResolver);
+            return CompileTimeExpressionEvaluator.TryEvaluate(expression, out constant, services);
+        }
+
+        private static bool TryResolveCompileTimeAssignmentTarget(
+            StarkParser.UnaryExpressionContext expression,
+            out string name)
+        {
+            name = string.Empty;
+
+            if (TryGetSimplePostfixExpression(expression) is not { } postfix
+                || postfix.postfixPart().Length != 0
+                || postfix.primaryExpression().Identifier() is not { } identifier)
+            {
+                return false;
+            }
+
+            name = identifier.GetText();
+            return true;
         }
 
         private MidLevelIrOperand? LowerAssignmentExpressionToOperand(
@@ -3799,6 +4362,19 @@ internal sealed class MidLevelIrLowerer(
             return expectedType is null ? operand : CoerceOperand(operand, expectedType);
         }
 
+        private static MidLevelIrOperand CreateCompileTimeOperand(CompileTimeConstant constant)
+        {
+            return constant.Kind switch
+            {
+                CompileTimeConstantKind.Integer => new MidLevelIrIntegerConstantOperand(constant.IntegerValue, constant.Type),
+                CompileTimeConstantKind.Float => new MidLevelIrFloatConstantOperand(CompileTimeExpressionEvaluator.FormatFloatLiteral(constant), constant.Type),
+                CompileTimeConstantKind.Bool => new MidLevelIrBoolConstantOperand(constant.BoolValue),
+                CompileTimeConstantKind.Null => new MidLevelIrNullOperand(constant.Type),
+                CompileTimeConstantKind.Text when constant.TextLiteral is not null => new MidLevelIrStringConstantOperand(constant.TextLiteral, constant.Type),
+                _ => throw new InvalidOperationException($"Unsupported compile-time constant kind '{constant.Kind}'.")
+            };
+        }
+
         private StarkTypeSymbol LookupLiteralType(StarkParser.LiteralContext literal)
         {
             var key = new LiteralKey(literal.GetText(), literal.Start.Line, literal.Start.Column + 1);
@@ -3909,8 +4485,13 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
         {
+            return TryGetFunctionOverloads(sourceName, CurrentModuleName, out overloads);
+        }
+
+        private bool TryGetFunctionOverloads(string sourceName, string currentModuleName, out IReadOnlyList<TypedFunctionSignature> overloads)
+        {
             if (!sourceName.Contains('.', StringComparison.Ordinal)
-                && _typeModel.Overloads.TryGetValue($"{CurrentModuleName}.{sourceName}", out overloads!))
+                && _typeModel.Overloads.TryGetValue($"{currentModuleName}.{sourceName}", out overloads!))
             {
                 return true;
             }
@@ -3926,8 +4507,13 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryResolveFunctionSignature(string name, out TypedFunctionSignature signature)
         {
+            return TryResolveFunctionSignature(name, CurrentModuleName, out signature);
+        }
+
+        private bool TryResolveFunctionSignature(string name, string currentModuleName, out TypedFunctionSignature signature)
+        {
             if (!name.Contains('.', StringComparison.Ordinal)
-                && _typeModel.Functions.TryGetValue($"{CurrentModuleName}.{name}", out signature!))
+                && _typeModel.Functions.TryGetValue($"{currentModuleName}.{name}", out signature!))
             {
                 return true;
             }
@@ -3937,14 +4523,14 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
-            if (TryGetFunctionOverloads(name, out var overloads) && overloads.Count == 1)
+            if (TryGetFunctionOverloads(name, currentModuleName, out var overloads) && overloads.Count == 1)
             {
                 signature = overloads[0];
                 return true;
             }
 
             if (!name.Contains('.', StringComparison.Ordinal)
-                && _fallbackFunctions.TryGetValue($"{CurrentModuleName}.{name}", out signature!))
+                && _fallbackFunctions.TryGetValue($"{currentModuleName}.{name}", out signature!))
             {
                 return true;
             }
@@ -4888,13 +5474,10 @@ internal sealed class MidLevelIrLowerer(
                 return false;
             }
 
-            var literal = TryGetSimpleLiteral(expression);
-            if (literal?.signedIntegerLiteral() is not { } integerLiteral)
+            if (!TryEvaluateCompileTimeInteger(expression, CurrentModuleName, state: null, activeCalls: null, out var parsed))
             {
                 return false;
             }
-
-            var parsed = ParseIntegerLiteral(integerLiteral);
             if (parsed < 0 || parsed > int.MaxValue)
             {
                 return false;
@@ -6729,5 +7312,6 @@ internal sealed class MidLevelIrLowerer(
         }
 
         private readonly record struct LoopTargets(int ContinueTarget, int BreakTarget, int ScopeDepth);
+        private readonly record struct BreakTargets(int Target, int ScopeDepth);
     }
 }

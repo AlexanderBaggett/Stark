@@ -20,13 +20,27 @@ internal sealed class SsaCleanupOptimizer
         }
 
         var current = CanonicalizeCompareAndBranchShapes(function);
+        current = SimplifyTrivialTerminators(current);
+        current = SimplifySingleCaseSwitches(current);
+        current = NormalizeSwitchLoweringStructures(current);
         current = ReuseIdenticalMaterializedValues(current);
         current = RewriteTrivialCopiesAndIdentityPhis(current);
         current = RemoveUnusedPureInstructions(current);
+        current = RemoveUnusedLocalStorage(current);
+        current = RemoveUnusedPureInstructions(current);
         current = CollapseTrampolineBlocks(current);
+        current = MergeLinearBlocks(current);
+        current = CanonicalizeEarlyReturnDiamonds(current);
         current = PruneUnreachableBlocks(current);
+        current = SimplifyTrivialTerminators(current);
+        current = NormalizeSwitchLoweringStructures(current);
         current = RewriteTrivialCopiesAndIdentityPhis(current);
         current = RemoveUnusedPureInstructions(current);
+        current = RemoveUnusedLocalStorage(current);
+        current = RemoveUnusedPureInstructions(current);
+        current = CollapseTrampolineBlocks(current);
+        current = MergeLinearBlocks(current);
+        current = CanonicalizeEarlyReturnDiamonds(current);
         return PruneUnreachableBlocks(current);
     }
 
@@ -182,6 +196,450 @@ internal sealed class SsaCleanupOptimizer
             : ApplyReplacements(function, replacements);
     }
 
+    private static SsaFunction SimplifyTrivialTerminators(SsaFunction function)
+    {
+        var byId = function.Blocks.ToDictionary(static block => block.Id);
+        var changed = false;
+        var blocks = function.Blocks
+            .Select(block =>
+            {
+                var simplified = SimplifyTrivialTerminator(block.Id, block.Terminator, byId);
+                if (!EqualityComparer<SsaTerminator>.Default.Equals(simplified, block.Terminator))
+                {
+                    changed = true;
+                    return block with { Terminator = simplified };
+                }
+
+                return block;
+            })
+            .ToArray();
+
+        return changed ? function with { Blocks = blocks } : function;
+    }
+
+    private static SsaFunction SimplifySingleCaseSwitches(SsaFunction function)
+    {
+        var usedNames = CollectDefinedValueNames(function);
+        var changed = false;
+        var blocks = function.Blocks
+            .Select(block =>
+            {
+                if (block.Terminator.Kind != SsaTerminatorKind.Switch
+                    || block.Terminator.Condition is null
+                    || block.Terminator.DefaultTarget is null
+                    || block.Terminator.SwitchCases is not { Count: 1 } switchCases)
+                {
+                    return block;
+                }
+
+                var switchCase = switchCases[0];
+                if (TryBuildSingleCaseSwitchBranch(block.Terminator, switchCase, out var branchTerminator))
+                {
+                    changed = true;
+                    return block with { Terminator = branchTerminator };
+                }
+
+                var conditionName = CreateUniqueValueName(usedNames, $"switch_case_match_{block.Id}");
+                var compareInstruction = new SsaValueInstruction(
+                    conditionName,
+                    new SsaBinaryRValue(
+                        SsaBinaryOperator.Equal,
+                        block.Terminator.Condition,
+                        switchCase.MatchValue,
+                        StarkTypeSymbols.Bool,
+                        "=="));
+
+                changed = true;
+                return new SsaBasicBlock(
+                    block.Id,
+                    block.Label,
+                    block.Phis,
+                    block.Instructions.Concat([compareInstruction]).ToArray(),
+                    new SsaTerminator(
+                        SsaTerminatorKind.Branch,
+                        [switchCase.TargetBlockId, block.Terminator.DefaultTarget.Value],
+                        Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool)));
+            })
+            .ToArray();
+
+        return changed ? function with { Blocks = blocks } : function;
+    }
+
+    private static SsaFunction NormalizeSwitchLoweringStructures(SsaFunction function)
+    {
+        if (function.Blocks.Count == 0)
+        {
+            return function;
+        }
+
+        var byId = function.Blocks.ToDictionary(static block => block.Id);
+        var usedNames = CollectDefinedValueNames(function);
+        var nextBlockId = function.Blocks.Max(static block => block.Id) + 1;
+        var changed = false;
+        var blocks = new List<SsaBasicBlock>(function.Blocks.Count);
+
+        foreach (var block in function.Blocks)
+        {
+            if (TryNormalizeSwitchBlock(block, byId, usedNames, ref nextBlockId, out var replacementBlocks))
+            {
+                changed = true;
+                blocks.AddRange(replacementBlocks);
+                continue;
+            }
+
+            blocks.Add(block);
+        }
+
+        return changed ? function with { Blocks = blocks.ToArray() } : function;
+    }
+
+    private static bool TryNormalizeSwitchBlock(
+        SsaBasicBlock block,
+        IReadOnlyDictionary<int, SsaBasicBlock> byId,
+        ISet<string> usedNames,
+        ref int nextBlockId,
+        out IReadOnlyList<SsaBasicBlock> replacementBlocks)
+    {
+        replacementBlocks = [];
+
+        if (block.Terminator.Kind != SsaTerminatorKind.Switch
+            || block.Terminator.Condition is null
+            || block.Terminator.DefaultTarget is null
+            || block.Terminator.SwitchCases is not { Count: > 1 } switchCases)
+        {
+            return false;
+        }
+
+        if (TryBuildExhaustiveBoolSwitchBranch(block.Terminator, byId, out var branchTerminator))
+        {
+            replacementBlocks = [block with { Terminator = branchTerminator }];
+            return true;
+        }
+
+        if (!TryGetOrderedIntegerSwitchCases(block.Terminator, out var orderedCases)
+            || !ShouldLowerSwitchToCompareChain(orderedCases)
+            || !CanRewriteSwitchWithDistinctPhiFreeTargets(orderedCases.Select(static switchCase => switchCase.TargetBlockId)
+                .Append(block.Terminator.DefaultTarget.Value), byId))
+        {
+            return false;
+        }
+
+        replacementBlocks = BuildSwitchCompareChain(block, orderedCases, usedNames, ref nextBlockId);
+        return true;
+    }
+
+    private static bool TryBuildExhaustiveBoolSwitchBranch(
+        SsaTerminator terminator,
+        IReadOnlyDictionary<int, SsaBasicBlock> byId,
+        out SsaTerminator branchTerminator)
+    {
+        branchTerminator = new SsaTerminator(SsaTerminatorKind.Unreachable, []);
+
+        if (terminator.Condition is not { Type.Kind: StarkTypeKind.Bool }
+            || terminator.DefaultTarget is null
+            || terminator.SwitchCases is not { Count: 2 } switchCases)
+        {
+            return false;
+        }
+
+        SsaSwitchCase? trueCase = null;
+        SsaSwitchCase? falseCase = null;
+
+        foreach (var switchCase in switchCases)
+        {
+            if (switchCase.MatchValue is not SsaBoolConstant match)
+            {
+                return false;
+            }
+
+            if (match.Value)
+            {
+                trueCase = switchCase;
+            }
+            else
+            {
+                falseCase = switchCase;
+            }
+        }
+
+        if (trueCase is null
+            || falseCase is null
+            || !CanRewriteSwitchWithDistinctPhiFreeTargets(
+                [trueCase.TargetBlockId, falseCase.TargetBlockId, terminator.DefaultTarget.Value],
+                byId))
+        {
+            return false;
+        }
+
+        branchTerminator = new SsaTerminator(
+            SsaTerminatorKind.Branch,
+            [trueCase.TargetBlockId, falseCase.TargetBlockId],
+            Condition: terminator.Condition);
+        return true;
+    }
+
+    private static bool TryGetOrderedIntegerSwitchCases(
+        SsaTerminator terminator,
+        out IReadOnlyList<SsaSwitchCase> orderedCases)
+    {
+        orderedCases = [];
+
+        if (terminator.Condition is not { Type.Kind: StarkTypeKind.Integer }
+            || terminator.SwitchCases is null)
+        {
+            return false;
+        }
+
+        var cases = new List<(SsaSwitchCase SwitchCase, BigInteger Value)>(terminator.SwitchCases.Count);
+        foreach (var switchCase in terminator.SwitchCases)
+        {
+            if (switchCase.MatchValue is not SsaIntegerConstant match)
+            {
+                return false;
+            }
+
+            cases.Add((switchCase, match.Value));
+        }
+
+        orderedCases = cases
+            .OrderBy(static item => item.Value)
+            .Select(static item => item.SwitchCase)
+            .ToArray();
+        return orderedCases.Count != 0;
+    }
+
+    private static bool ShouldLowerSwitchToCompareChain(IReadOnlyList<SsaSwitchCase> orderedCases)
+    {
+        if (orderedCases.Count is < 2 or > 4)
+        {
+            return false;
+        }
+
+        if (orderedCases.Count <= 3)
+        {
+            return true;
+        }
+
+        var values = orderedCases
+            .Select(static switchCase => ((SsaIntegerConstant)switchCase.MatchValue).Value)
+            .ToArray();
+        var span = values[^1] - values[0] + BigInteger.One;
+        return span > orderedCases.Count * 2;
+    }
+
+    private static bool CanRewriteSwitchWithDistinctPhiFreeTargets(
+        IEnumerable<int> targetBlockIds,
+        IReadOnlyDictionary<int, SsaBasicBlock> byId)
+    {
+        var seen = new HashSet<int>();
+        foreach (var targetBlockId in targetBlockIds)
+        {
+            if (!seen.Add(targetBlockId))
+            {
+                return false;
+            }
+
+            if (byId.TryGetValue(targetBlockId, out var targetBlock) && targetBlock.Phis.Count != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IReadOnlyList<SsaBasicBlock> BuildSwitchCompareChain(
+        SsaBasicBlock block,
+        IReadOnlyList<SsaSwitchCase> orderedCases,
+        ISet<string> usedNames,
+        ref int nextBlockId)
+    {
+        var replacementBlocks = new List<SsaBasicBlock>(orderedCases.Count);
+        var currentBlockId = block.Id;
+        var currentLabel = block.Label;
+        var currentPhis = block.Phis;
+        var currentInstructions = block.Instructions;
+        var condition = block.Terminator.Condition!;
+        var defaultTarget = block.Terminator.DefaultTarget!.Value;
+
+        for (var index = 0; index < orderedCases.Count; index++)
+        {
+            var switchCase = orderedCases[index];
+            var conditionName = CreateUniqueValueName(usedNames, $"switch_match_{block.Id}_{index}");
+            var compareInstruction = new SsaValueInstruction(
+                conditionName,
+                new SsaBinaryRValue(
+                    SsaBinaryOperator.Equal,
+                    condition,
+                    switchCase.MatchValue,
+                    StarkTypeSymbols.Bool,
+                    "=="));
+
+            var falseTarget = index == orderedCases.Count - 1
+                ? defaultTarget
+                : nextBlockId++;
+
+            replacementBlocks.Add(new SsaBasicBlock(
+                currentBlockId,
+                currentLabel,
+                currentPhis,
+                currentInstructions.Concat([compareInstruction]).ToArray(),
+                new SsaTerminator(
+                    SsaTerminatorKind.Branch,
+                    [switchCase.TargetBlockId, falseTarget],
+                    Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool))));
+
+            currentBlockId = falseTarget;
+            currentLabel = $"{block.Label}_switch_cmp_{index + 1}";
+            currentPhis = [];
+            currentInstructions = [];
+        }
+
+        return replacementBlocks;
+    }
+
+    private static SsaTerminator SimplifyTrivialTerminator(
+        int blockId,
+        SsaTerminator terminator,
+        IReadOnlyDictionary<int, SsaBasicBlock> byId)
+    {
+        switch (terminator.Kind)
+        {
+            case SsaTerminatorKind.Branch when terminator.Targets.Count == 2
+                                             && terminator.Targets[0] == terminator.Targets[1]
+                                             && CanCollapseMultiEdgeTerminator(blockId, terminator.Targets[0], byId):
+                return new SsaTerminator(SsaTerminatorKind.Goto, [terminator.Targets[0]]);
+            case SsaTerminatorKind.Switch:
+            {
+                terminator = RemoveSwitchCasesThatMatchDefaultTarget(terminator);
+
+                if ((terminator.SwitchCases is null || terminator.SwitchCases.Count == 0)
+                    && terminator.DefaultTarget is { } defaultTarget)
+                {
+                    return new SsaTerminator(SsaTerminatorKind.Goto, [defaultTarget]);
+                }
+
+                var allTargets = new List<int>(terminator.Targets);
+                if (terminator.DefaultTarget is { } fallthroughTarget)
+                {
+                    allTargets.Add(fallthroughTarget);
+                }
+
+                if (allTargets.Count != 0
+                    && allTargets.All(target => target == allTargets[0])
+                    && CanCollapseMultiEdgeTerminator(blockId, allTargets[0], byId))
+                {
+                    return new SsaTerminator(SsaTerminatorKind.Goto, [allTargets[0]]);
+                }
+
+                break;
+            }
+        }
+
+        return terminator;
+    }
+
+    private static bool CanCollapseMultiEdgeTerminator(
+        int predecessorBlockId,
+        int targetBlockId,
+        IReadOnlyDictionary<int, SsaBasicBlock> byId)
+    {
+        if (!byId.TryGetValue(targetBlockId, out var targetBlock))
+        {
+            return true;
+        }
+
+        return targetBlock.Phis.All(phi => phi.Incomings.Count(incoming => incoming.PredecessorBlockId == predecessorBlockId) <= 1);
+    }
+
+    private static SsaTerminator RemoveSwitchCasesThatMatchDefaultTarget(SsaTerminator terminator)
+    {
+        if (terminator.Kind != SsaTerminatorKind.Switch
+            || terminator.DefaultTarget is not { } defaultTarget
+            || terminator.SwitchCases is not { Count: > 0 } switchCases)
+        {
+            return terminator;
+        }
+
+        var filteredCases = switchCases
+            .Where(switchCase => switchCase.TargetBlockId != defaultTarget)
+            .ToArray();
+
+        if (filteredCases.Length == switchCases.Count)
+        {
+            return terminator;
+        }
+
+        return terminator with
+        {
+            Targets = filteredCases
+                .Select(static switchCase => switchCase.TargetBlockId)
+                .Distinct()
+                .ToArray(),
+            SwitchCases = filteredCases
+        };
+    }
+
+    private static bool TryBuildSingleCaseSwitchBranch(
+        SsaTerminator terminator,
+        SsaSwitchCase switchCase,
+        out SsaTerminator branchTerminator)
+    {
+        if (terminator.Condition is { Type.Kind: StarkTypeKind.Bool }
+            && switchCase.MatchValue is SsaBoolConstant match)
+        {
+            var targets = match.Value
+                ? new[] { switchCase.TargetBlockId, terminator.DefaultTarget!.Value }
+                : new[] { terminator.DefaultTarget!.Value, switchCase.TargetBlockId };
+
+            branchTerminator = new SsaTerminator(
+                SsaTerminatorKind.Branch,
+                targets,
+                Condition: terminator.Condition);
+            return true;
+        }
+
+        branchTerminator = new SsaTerminator(SsaTerminatorKind.Unreachable, []);
+        return false;
+    }
+
+    private static HashSet<string> CollectDefinedValueNames(SsaFunction function)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var parameter in function.Parameters)
+        {
+            names.Add($"arg_{parameter.Name}");
+        }
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                names.Add(phi.ResultName);
+            }
+
+            foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
+            {
+                names.Add(instruction.ResultName);
+            }
+        }
+
+        return names;
+    }
+
+    private static string CreateUniqueValueName(ISet<string> usedNames, string baseName)
+    {
+        var candidate = baseName;
+        var suffix = 0;
+        while (!usedNames.Add(candidate))
+        {
+            suffix++;
+            candidate = $"{baseName}_{suffix}";
+        }
+
+        return candidate;
+    }
+
     private static bool TryGetReusableInstructionKey(
         SsaRValue value,
         int memoryVersion,
@@ -310,6 +768,7 @@ internal sealed class SsaCleanupOptimizer
     private static Dictionary<string, SsaValue> ComputeTrivialReplacements(IReadOnlyList<SsaBasicBlock> blocks)
     {
         var replacements = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
+        var definitions = BuildValueDefinitions(blocks);
         var changed = true;
 
         while (changed)
@@ -318,6 +777,8 @@ internal sealed class SsaCleanupOptimizer
 
             foreach (var block in blocks)
             {
+                var equivalentPhis = new Dictionary<string, string>(StringComparer.Ordinal);
+
                 foreach (var phi in block.Phis)
                 {
                     if (replacements.ContainsKey(phi.ResultName))
@@ -325,15 +786,32 @@ internal sealed class SsaCleanupOptimizer
                         continue;
                     }
 
-                    var rewrittenIncomings = phi.Incomings
-                        .Select(incoming => RewriteValue(incoming.Value, replacements))
-                        .ToArray();
+                    var rewrittenIncomings = CoalescePhiIncomings(
+                        phi.Incomings
+                            .Select(incoming => new SsaPhiIncoming(
+                                incoming.PredecessorBlockId,
+                                RewriteValue(incoming.Value, replacements)))
+                            .ToArray());
 
-                    if (TryFindIdentityValue(phi.ResultName, rewrittenIncomings, out var identityValue))
+                    if (TryFindIdentityValue(
+                            phi.ResultName,
+                            rewrittenIncomings.Select(static incoming => incoming.Value).ToArray(),
+                            out var identityValue))
                     {
                         replacements[phi.ResultName] = identityValue!;
                         changed = true;
+                        continue;
                     }
+
+                    var phiKey = BuildEquivalentPhiKey(phi.Type, rewrittenIncomings);
+                    if (equivalentPhis.TryGetValue(phiKey, out var existingPhi))
+                    {
+                        replacements[phi.ResultName] = new SsaValueReference(existingPhi, phi.Type);
+                        changed = true;
+                        continue;
+                    }
+
+                    equivalentPhis[phiKey] = phi.ResultName;
                 }
 
                 foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
@@ -347,12 +825,30 @@ internal sealed class SsaCleanupOptimizer
                     {
                         replacements[instruction.ResultName] = RewriteValue(use.Value, replacements);
                         changed = true;
+                        continue;
+                    }
+
+                    if (TryFindTrivialInstructionReplacement(
+                            instruction.Value,
+                            replacements,
+                            definitions,
+                            out var trivialReplacement))
+                    {
+                        replacements[instruction.ResultName] = trivialReplacement;
+                        changed = true;
                     }
                 }
             }
         }
 
         return replacements;
+    }
+
+    private static IReadOnlyDictionary<string, SsaRValue> BuildValueDefinitions(IReadOnlyList<SsaBasicBlock> blocks)
+    {
+        return blocks
+            .SelectMany(static block => block.Instructions.OfType<SsaValueInstruction>())
+            .ToDictionary(static instruction => instruction.ResultName, static instruction => instruction.Value, StringComparer.Ordinal);
     }
 
     private static bool TryFindIdentityValue(
@@ -367,20 +863,340 @@ internal sealed class SsaCleanupOptimizer
             return false;
         }
 
-        var first = values[0];
-        if (values.Any(value => !EqualityComparer<SsaValue>.Default.Equals(value, first)))
+        var nonSelfValues = values
+            .Where(value => value is not SsaValueReference reference
+                            || !string.Equals(reference.Name, resultName, StringComparison.Ordinal))
+            .ToArray();
+
+        if (nonSelfValues.Length == 0)
         {
             return false;
         }
 
-        if (first is SsaValueReference reference
-            && string.Equals(reference.Name, resultName, StringComparison.Ordinal))
+        var first = nonSelfValues[0];
+        if (nonSelfValues.Any(value => !EqualityComparer<SsaValue>.Default.Equals(value, first)))
         {
             return false;
         }
 
         identityValue = first;
         return true;
+    }
+
+    private static string BuildEquivalentPhiKey(
+        StarkTypeSymbol type,
+        IReadOnlyList<SsaPhiIncoming> incomings)
+    {
+        var ordered = incomings
+            .OrderBy(static incoming => incoming.PredecessorBlockId)
+            .ThenBy(static incoming => ValueKey(incoming.Value), StringComparer.Ordinal)
+            .ToArray();
+
+        return $"{TypeKey(type)}|{string.Join(";", ordered.Select(static incoming => $"{incoming.PredecessorBlockId}={ValueKey(incoming.Value)}"))}";
+    }
+
+    private static bool TryFindTrivialInstructionReplacement(
+        SsaRValue value,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaValue replacement)
+    {
+        switch (value)
+        {
+            case SsaConvertRValue convert:
+            {
+                var operand = RewriteValue(convert.Operand, replacements);
+                if (operand.Type == convert.TargetType)
+                {
+                    replacement = operand;
+                    return true;
+                }
+
+                break;
+            }
+            case SsaExtractFieldRValue extractField:
+                if (TryResolveAggregateFieldValue(
+                        extractField.Target,
+                        extractField.FieldName,
+                        extractField.FieldIndex,
+                        extractField.Type,
+                        replacements,
+                        definitions,
+                        out replacement))
+                {
+                    return true;
+                }
+
+                break;
+            case SsaExtractIndexRValue extractIndex:
+                if (TryResolveAggregateIndexValue(
+                        extractIndex.Target,
+                        extractIndex.ElementIndex,
+                        extractIndex.Type,
+                        replacements,
+                        definitions,
+                        out replacement))
+                {
+                    return true;
+                }
+
+                break;
+            case SsaInsertFieldRValue insertField:
+            {
+                var target = RewriteValue(insertField.Target, replacements);
+                var insertedValue = RewriteValue(insertField.Value, replacements);
+                if (TryResolveAggregateFieldValue(
+                        target,
+                        insertField.FieldName,
+                        insertField.FieldIndex,
+                        insertField.Value.Type,
+                        replacements,
+                        definitions,
+                        out var existingField)
+                    && EqualityComparer<SsaValue>.Default.Equals(existingField, insertedValue))
+                {
+                    replacement = target;
+                    return true;
+                }
+
+                break;
+            }
+            case SsaInsertIndexRValue insertIndex:
+            {
+                var target = RewriteValue(insertIndex.Target, replacements);
+                var insertedValue = RewriteValue(insertIndex.Value, replacements);
+                if (TryResolveAggregateIndexValue(
+                        target,
+                        insertIndex.ElementIndex,
+                        insertIndex.Value.Type,
+                        replacements,
+                        definitions,
+                        out var existingElement)
+                    && EqualityComparer<SsaValue>.Default.Equals(existingElement, insertedValue))
+                {
+                    replacement = target;
+                    return true;
+                }
+
+                break;
+            }
+        }
+
+        replacement = new SsaUndefValue(value.Type);
+        return false;
+    }
+
+    private static bool TryResolveAggregateFieldValue(
+        SsaValue aggregate,
+        string fieldName,
+        int fieldIndex,
+        StarkTypeSymbol fieldType,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaValue replacement)
+    {
+        return TryResolveAggregateFieldValueCore(
+            RewriteValue(aggregate, replacements),
+            fieldName,
+            fieldIndex,
+            fieldType,
+            replacements,
+            definitions,
+            new HashSet<string>(StringComparer.Ordinal),
+            out replacement);
+    }
+
+    private static bool TryResolveAggregateFieldValueCore(
+        SsaValue aggregate,
+        string fieldName,
+        int fieldIndex,
+        StarkTypeSymbol fieldType,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> seen,
+        out SsaValue replacement)
+    {
+        switch (aggregate)
+        {
+            case SsaZeroInitializerValue:
+                replacement = CreateZeroValue(fieldType);
+                return true;
+            case SsaValueReference reference when seen.Add(reference.Name) && definitions.TryGetValue(reference.Name, out var definition):
+                return TryResolveAggregateFieldValueFromDefinition(
+                    definition,
+                    fieldName,
+                    fieldIndex,
+                    fieldType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            default:
+                replacement = aggregate;
+                return false;
+        }
+    }
+
+    private static bool TryResolveAggregateFieldValueFromDefinition(
+        SsaRValue definition,
+        string fieldName,
+        int fieldIndex,
+        StarkTypeSymbol fieldType,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> seen,
+        out SsaValue replacement)
+    {
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolveAggregateFieldValueCore(
+                    RewriteValue(use.Value, replacements),
+                    fieldName,
+                    fieldIndex,
+                    fieldType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            case SsaInsertFieldRValue insertField when insertField.FieldIndex == fieldIndex
+                                                     && string.Equals(insertField.FieldName, fieldName, StringComparison.Ordinal):
+                replacement = RewriteValue(insertField.Value, replacements);
+                return true;
+            case SsaInsertFieldRValue insertField:
+                return TryResolveAggregateFieldValueCore(
+                    RewriteValue(insertField.Target, replacements),
+                    fieldName,
+                    fieldIndex,
+                    fieldType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            case SsaInsertIndexRValue insertIndex:
+                return TryResolveAggregateFieldValueCore(
+                    RewriteValue(insertIndex.Target, replacements),
+                    fieldName,
+                    fieldIndex,
+                    fieldType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            default:
+                replacement = new SsaUndefValue(fieldType);
+                return false;
+        }
+    }
+
+    private static bool TryResolveAggregateIndexValue(
+        SsaValue aggregate,
+        int elementIndex,
+        StarkTypeSymbol elementType,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaValue replacement)
+    {
+        return TryResolveAggregateIndexValueCore(
+            RewriteValue(aggregate, replacements),
+            elementIndex,
+            elementType,
+            replacements,
+            definitions,
+            new HashSet<string>(StringComparer.Ordinal),
+            out replacement);
+    }
+
+    private static bool TryResolveAggregateIndexValueCore(
+        SsaValue aggregate,
+        int elementIndex,
+        StarkTypeSymbol elementType,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> seen,
+        out SsaValue replacement)
+    {
+        switch (aggregate)
+        {
+            case SsaZeroInitializerValue:
+                replacement = CreateZeroValue(elementType);
+                return true;
+            case SsaValueReference reference when seen.Add(reference.Name) && definitions.TryGetValue(reference.Name, out var definition):
+                return TryResolveAggregateIndexValueFromDefinition(
+                    definition,
+                    elementIndex,
+                    elementType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            default:
+                replacement = aggregate;
+                return false;
+        }
+    }
+
+    private static bool TryResolveAggregateIndexValueFromDefinition(
+        SsaRValue definition,
+        int elementIndex,
+        StarkTypeSymbol elementType,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> seen,
+        out SsaValue replacement)
+    {
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolveAggregateIndexValueCore(
+                    RewriteValue(use.Value, replacements),
+                    elementIndex,
+                    elementType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            case SsaInsertIndexRValue insertIndex when insertIndex.ElementIndex == elementIndex:
+                replacement = RewriteValue(insertIndex.Value, replacements);
+                return true;
+            case SsaInsertIndexRValue insertIndex:
+                return TryResolveAggregateIndexValueCore(
+                    RewriteValue(insertIndex.Target, replacements),
+                    elementIndex,
+                    elementType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            case SsaInsertFieldRValue insertField:
+                return TryResolveAggregateIndexValueCore(
+                    RewriteValue(insertField.Target, replacements),
+                    elementIndex,
+                    elementType,
+                    replacements,
+                    definitions,
+                    seen,
+                    out replacement);
+            default:
+                replacement = new SsaUndefValue(elementType);
+                return false;
+        }
+    }
+
+    private static SsaValue CreateZeroValue(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.Bool => new SsaBoolConstant(false),
+            StarkTypeKind.Integer => new SsaIntegerConstant(BigInteger.Zero, type),
+            StarkTypeKind.Float => new SsaFloatConstant(FormatFloatLiteral(0, type), type),
+            _ => new SsaZeroInitializerValue(type)
+        };
+    }
+
+    private static string FormatFloatLiteral(double value, StarkTypeSymbol type)
+    {
+        return value.ToString("R", CultureInfo.InvariantCulture);
     }
 
     private static SsaFunction RemoveUnusedPureInstructions(SsaFunction function)
@@ -433,6 +1249,102 @@ internal sealed class SsaCleanupOptimizer
     private static bool IsPureRemovableInstruction(SsaRValue value)
     {
         return value is not SsaCallRValue;
+    }
+
+    private static SsaFunction RemoveUnusedLocalStorage(SsaFunction function)
+    {
+        var requiredLocals = CollectRequiredLocalSlots(function);
+        var changed = false;
+        var blocks = function.Blocks
+            .Select(block =>
+            {
+                var instructions = block.Instructions
+                    .Where(instruction =>
+                    {
+                        if (!TryGetLocalStorageName(instruction, out var localName)
+                            || requiredLocals.Contains(localName))
+                        {
+                            return true;
+                        }
+
+                        changed = true;
+                        return false;
+                    })
+                    .ToArray();
+
+                return instructions.Length == block.Instructions.Count
+                    ? block
+                    : block with { Instructions = instructions };
+            })
+            .ToArray();
+
+        return changed ? function with { Blocks = blocks } : function;
+    }
+
+    private static HashSet<string> CollectRequiredLocalSlots(SsaFunction function)
+    {
+        var requiredLocals = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                if (instruction is SsaValueInstruction valueInstruction)
+                {
+                    AddReferencedLocalSlots(valueInstruction.Value, requiredLocals);
+                }
+            }
+        }
+
+        return requiredLocals;
+    }
+
+    private static void AddReferencedLocalSlots(SsaRValue value, ISet<string> requiredLocals)
+    {
+        switch (value)
+        {
+            case SsaMakeSliceFromLocalRValue makeSlice:
+                requiredLocals.Add(makeSlice.LocalName);
+                break;
+            case SsaAddressOfLocalRValue addressOfLocal:
+                requiredLocals.Add(addressOfLocal.LocalName);
+                break;
+            case SsaLoadLocalRValue loadLocal:
+                requiredLocals.Add(loadLocal.LocalName);
+                break;
+            case SsaCallRValue { IndirectArgumentLocalNames: { } indirectLocals }:
+                foreach (var localName in indirectLocals)
+                {
+                    if (localName is not null)
+                    {
+                        requiredLocals.Add(localName);
+                    }
+                }
+
+                break;
+        }
+    }
+
+    private static bool TryGetLocalStorageName(SsaInstruction instruction, out string localName)
+    {
+        switch (instruction)
+        {
+            case SsaAllocateLocalInstruction allocateLocal:
+                localName = allocateLocal.LocalName;
+                return true;
+            case SsaLifetimeStartInstruction lifetimeStart:
+                localName = lifetimeStart.LocalName;
+                return true;
+            case SsaLifetimeEndInstruction lifetimeEnd:
+                localName = lifetimeEnd.LocalName;
+                return true;
+            case SsaStoreLocalInstruction storeLocal:
+                localName = storeLocal.LocalName;
+                return true;
+            default:
+                localName = string.Empty;
+                return false;
+        }
     }
 
     private static HashSet<string> CollectUsedValueNames(SsaFunction function)
@@ -648,6 +1560,205 @@ internal sealed class SsaCleanupOptimizer
             .ToArray();
 
         return function with { Blocks = blocks };
+    }
+
+    private static SsaFunction MergeLinearBlocks(SsaFunction function)
+    {
+        var current = function;
+
+        while (TryFindLinearMergeCandidate(current, out var predecessorBlockId, out var blockId))
+        {
+            current = MergeLinearBlocks(current, predecessorBlockId, blockId);
+        }
+
+        return current;
+    }
+
+    private static bool TryFindLinearMergeCandidate(
+        SsaFunction function,
+        out int predecessorBlockId,
+        out int blockId)
+    {
+        predecessorBlockId = -1;
+        blockId = -1;
+
+        var byId = function.Blocks.ToDictionary(static block => block.Id);
+        var predecessors = BuildPredecessors(function.Blocks);
+
+        foreach (var block in function.Blocks)
+        {
+            if (block.Id == function.EntryBlockId || block.Phis.Count != 0)
+            {
+                continue;
+            }
+
+            var blockPredecessors = predecessors.GetValueOrDefault(block.Id, []);
+            if (blockPredecessors.Count != 1)
+            {
+                continue;
+            }
+
+            var predecessor = byId[blockPredecessors[0]];
+            if (predecessor.Terminator.Kind != SsaTerminatorKind.Goto
+                || predecessor.Terminator.Targets.Count != 1
+                || predecessor.Terminator.Targets[0] != block.Id)
+            {
+                continue;
+            }
+
+            predecessorBlockId = predecessor.Id;
+            blockId = block.Id;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static SsaFunction MergeLinearBlocks(
+        SsaFunction function,
+        int predecessorBlockId,
+        int blockId)
+    {
+        var byId = function.Blocks.ToDictionary(static block => block.Id);
+        var predecessor = byId[predecessorBlockId];
+        var block = byId[blockId];
+
+        var blocks = function.Blocks
+            .Where(candidate => candidate.Id != blockId)
+            .Select(candidate =>
+            {
+                if (candidate.Id == predecessorBlockId)
+                {
+                    return new SsaBasicBlock(
+                        candidate.Id,
+                        candidate.Label,
+                        candidate.Phis,
+                        candidate.Instructions.Concat(block.Instructions).ToArray(),
+                        block.Terminator);
+                }
+
+                var phis = candidate.Phis
+                    .Select(phi => new SsaPhi(
+                        phi.ResultName,
+                        phi.VariableName,
+                        phi.Type,
+                        CoalescePhiIncomings(
+                            phi.Incomings
+                                .Select(incoming => incoming.PredecessorBlockId == blockId
+                                    ? new SsaPhiIncoming(predecessorBlockId, incoming.Value)
+                                    : incoming)
+                                .ToArray())))
+                    .ToArray();
+
+                return candidate with { Phis = phis };
+            })
+            .ToArray();
+
+        return function with { Blocks = blocks };
+    }
+
+    private static SsaFunction CanonicalizeEarlyReturnDiamonds(SsaFunction function)
+    {
+        var predecessors = BuildPredecessors(function.Blocks);
+        var byId = function.Blocks.ToDictionary(static block => block.Id);
+        var replacementsByPredecessor = new Dictionary<int, SsaTerminator>();
+
+        foreach (var block in function.Blocks)
+        {
+            if (!TryBuildEarlyReturnDiamondReplacements(block, predecessors, byId, out var replacements))
+            {
+                continue;
+            }
+
+            foreach (var replacement in replacements)
+            {
+                replacementsByPredecessor[replacement.Key] = replacement.Value;
+            }
+        }
+
+        if (replacementsByPredecessor.Count == 0)
+        {
+            return function;
+        }
+
+        var blocks = function.Blocks
+            .Select(block => replacementsByPredecessor.TryGetValue(block.Id, out var replacement)
+                ? block with { Terminator = replacement }
+                : block)
+            .ToArray();
+
+        return function with { Blocks = blocks };
+    }
+
+    private static bool TryBuildEarlyReturnDiamondReplacements(
+        SsaBasicBlock block,
+        IReadOnlyDictionary<int, List<int>> predecessors,
+        IReadOnlyDictionary<int, SsaBasicBlock> byId,
+        out Dictionary<int, SsaTerminator> replacements)
+    {
+        replacements = new Dictionary<int, SsaTerminator>();
+
+        if (block.Terminator.Kind != SsaTerminatorKind.Return || block.Instructions.Count != 0)
+        {
+            return false;
+        }
+
+        var blockPredecessors = predecessors.GetValueOrDefault(block.Id, []);
+        if (blockPredecessors.Count < 2)
+        {
+            return false;
+        }
+
+        foreach (var predecessorId in blockPredecessors)
+        {
+            if (!byId.TryGetValue(predecessorId, out var predecessor)
+                || predecessor.Terminator.Kind != SsaTerminatorKind.Goto
+                || predecessor.Terminator.Targets.Count != 1
+                || predecessor.Terminator.Targets[0] != block.Id)
+            {
+                replacements.Clear();
+                return false;
+            }
+        }
+
+        foreach (var predecessorId in blockPredecessors)
+        {
+            var phiReplacements = BuildPhiIncomingReplacementMap(block, predecessorId);
+            if (phiReplacements is null)
+            {
+                replacements.Clear();
+                return false;
+            }
+
+            replacements[predecessorId] = new SsaTerminator(
+                SsaTerminatorKind.Return,
+                [],
+                Value: block.Terminator.Value is null
+                    ? null
+                    : RewriteValue(block.Terminator.Value, phiReplacements));
+        }
+
+        return replacements.Count != 0;
+    }
+
+    private static Dictionary<string, SsaValue>? BuildPhiIncomingReplacementMap(
+        SsaBasicBlock block,
+        int predecessorBlockId)
+    {
+        var replacements = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
+
+        foreach (var phi in block.Phis)
+        {
+            var incoming = phi.Incomings.FirstOrDefault(incoming => incoming.PredecessorBlockId == predecessorBlockId);
+            if (incoming is null)
+            {
+                return null;
+            }
+
+            replacements[phi.ResultName] = incoming.Value;
+        }
+
+        return replacements;
     }
 
     private static int ResolveCollapsedTarget(
@@ -997,6 +2108,7 @@ internal sealed class SsaConstantPropagator
     private readonly SsaCleanupOptimizer _cleanupOptimizer = new();
     private static readonly IReadOnlyDictionary<string, ConstantState> EmptyConstantStates =
         new Dictionary<string, ConstantState>(StringComparer.Ordinal);
+    private const int PropagationPassCount = 2;
 
     public SsaIrModule Optimize(SsaIrModule module)
     {
@@ -1012,6 +2124,18 @@ internal sealed class SsaConstantPropagator
             return function;
         }
 
+        var current = function;
+
+        for (var iteration = 0; iteration < PropagationPassCount; iteration++)
+        {
+            current = OptimizeFunctionCore(current);
+        }
+
+        return current;
+    }
+
+    private SsaFunction OptimizeFunctionCore(SsaFunction function)
+    {
         var byId = function.Blocks.ToDictionary(static block => block.Id);
         var states = new Dictionary<string, ConstantState>(StringComparer.Ordinal);
 

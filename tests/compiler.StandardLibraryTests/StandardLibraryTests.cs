@@ -20,10 +20,12 @@ public sealed class StandardLibraryTests
         Assert.NotNull(moduleGraph);
 
         Assert.True(moduleGraph.ContainsLoadedModule("System"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.BitOperations"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Console"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.File"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.Path"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Math"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Text"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Buffer"));
@@ -70,18 +72,22 @@ public sealed class StandardLibraryTests
             var modules = manifest.RootElement.GetProperty("Modules").EnumerateArray().ToArray();
 
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.BitOperations");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Console");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.File");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Path");
+            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Math");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Syscall");
             Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Text");
             Assert.DoesNotContain(modules, module => module.GetProperty("ModuleName").GetString() == "System.Runtime.Buffer");
 
             var rootModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System");
             var reExports = rootModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
+            Assert.Contains("System.BitOperations", reExports);
             Assert.Contains("System.Console", reExports);
             Assert.Contains("System.IO", reExports);
+            Assert.Contains("System.Math", reExports);
             Assert.Contains("System.Text", reExports);
 
             var ioModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.IO");
@@ -105,6 +111,33 @@ public sealed class StandardLibraryTests
             Assert.True(fileType.TryGetProperty("Destructor", out var fileDestructor));
             Assert.True(fileDestructor.GetProperty("IsMutable").GetBoolean());
             Assert.Equal("{self.Close();}", fileDestructor.GetProperty("BodyText").GetString());
+
+            var mathModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.Math");
+            var mathTypes = mathModule.GetProperty("Types").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            var mathFunctions = mathModule.GetProperty("Functions").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            Assert.Contains("SinCosF32", mathTypes);
+            Assert.Contains("SinCosF64", mathTypes);
+            Assert.Contains("Sin", mathFunctions);
+            Assert.Contains("Cos", mathFunctions);
+            Assert.Contains("Atan2", mathFunctions);
+            Assert.Contains("Pow", mathFunctions);
+            Assert.Contains("Tanh", mathFunctions);
+            Assert.Contains("SinCos", mathFunctions);
+            Assert.Contains("Sqrt", mathFunctions);
+            Assert.Contains("FusedMultiplyAdd", mathFunctions);
+            Assert.Contains("ReciprocalEstimate", mathFunctions);
+            Assert.Contains("ReciprocalSqrtEstimate", mathFunctions);
+            Assert.Contains("Round", mathFunctions);
+            Assert.Contains("Min", mathFunctions);
+            Assert.Contains("Max", mathFunctions);
+
+            var bitOperationsModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.BitOperations");
+            var bitOperationsFunctions = bitOperationsModule.GetProperty("Functions").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            Assert.Contains("LeadingZeroCount", bitOperationsFunctions);
+            Assert.Contains("TrailingZeroCount", bitOperationsFunctions);
+            Assert.Contains("PopCount", bitOperationsFunctions);
+            Assert.Contains("RotateLeft", bitOperationsFunctions);
+            Assert.Contains("RotateRight", bitOperationsFunctions);
         }
         finally
         {
@@ -815,6 +848,365 @@ public sealed class StandardLibraryTests
             Assert.Equal($"Stark IO\n{(OperatingSystem.IsWindows() ? "\\" : "/")}\n", processStdout);
             Assert.Equal(string.Empty, processStderr);
             Assert.Equal("Stark IO\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "io-test.txt")));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PackagedStdLibMathIntrinsicsWorkWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || !SupportsSystemMathHardwareAsmTarget(targetInfo.Triple))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-math-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                module App
+
+                export ffi fn i32 main() {
+                    stack f64 zero = 0.0;
+                    stack f64 one = 1.0;
+                    stack f64 two = 2.0;
+                    stack f64 three = 3.0;
+                    stack f64 eight = 8.0;
+                    stack i32 oneI32 = 1;
+                    stack i32 twoI32 = 2;
+                    stack i32 threeI32 = 3;
+                    stack i32 fourI32 = 4;
+                    stack i32 thirtyOne = 31;
+                    stack i32 minI32 = -2147483648;
+                    stack i64 oneI64 = 1;
+                    stack i64 twoI64 = 2;
+                    stack i64 threeI64 = 3;
+                    stack i64 fourI64 = 4;
+                    stack i64 sixtyThree = 63;
+
+                    if (System.Math.Sin(zero) != zero) {
+                        return 1;
+                    }
+
+                    if (System.Math.Cos(zero) != one) {
+                        return 2;
+                    }
+
+                    if (System.Math.Tan(zero) != zero) {
+                        return 3;
+                    }
+
+                    if (System.Math.Exp(zero) != one) {
+                        return 4;
+                    }
+
+                    if (System.Math.Exp2(three) != eight) {
+                        return 5;
+                    }
+
+                    if (System.Math.Log(one) != zero) {
+                        return 6;
+                    }
+
+                    if (System.Math.Log2(eight) != three) {
+                        return 7;
+                    }
+
+                    if (System.Math.Log10(one) != zero) {
+                        return 8;
+                    }
+
+                    if (System.Math.Asin(zero) != zero) {
+                        return 9;
+                    }
+
+                    if (System.Math.Acos(one) != zero) {
+                        return 10;
+                    }
+
+                    if (System.Math.Atan(zero) != zero) {
+                        return 11;
+                    }
+
+                    if (System.Math.Atan2(zero, one) != zero) {
+                        return 12;
+                    }
+
+                    if (System.Math.Pow(two, three) != eight) {
+                        return 13;
+                    }
+
+                    if (System.Math.Sinh(zero) != zero) {
+                        return 14;
+                    }
+
+                    if (System.Math.Cosh(zero) != one) {
+                        return 15;
+                    }
+
+                    if (System.Math.Tanh(zero) != zero) {
+                        return 16;
+                    }
+
+                    stack System.Math.SinCosF64 pair = System.Math.SinCos(zero);
+                    if (pair.Sin != zero || pair.Cos != one) {
+                        return 17;
+                    }
+
+                    if (System.Math.Sqrt(9.0) != three) {
+                        return 18;
+                    }
+
+                    stack f32 reciprocal = System.Math.ReciprocalEstimate(4.0);
+                    if (reciprocal < 0.24 || reciprocal > 0.26) {
+                        return 19;
+                    }
+
+                    stack f32 reciprocalSqrt = System.Math.ReciprocalSqrtEstimate(4.0);
+                    if (reciprocalSqrt < 0.49 || reciprocalSqrt > 0.51) {
+                        return 20;
+                    }
+
+                    if (System.Math.Ceiling(2.25) != three) {
+                        return 21;
+                    }
+
+                    if (System.Math.Floor(2.75) != two) {
+                        return 22;
+                    }
+
+                    if (System.Math.Truncate(-2.75) != -2.0) {
+                        return 23;
+                    }
+
+                    if (System.Math.Round(2.5) != two) {
+                        return 24;
+                    }
+
+                    if (System.Math.Round(3.5) != 4.0) {
+                        return 25;
+                    }
+
+                    if (System.Math.Min(two, three) != two) {
+                        return 26;
+                    }
+
+                    if (System.Math.Max(two, three) != three) {
+                        return 27;
+                    }
+
+                    if (System.BitOperations.LeadingZeroCount(oneI32) != thirtyOne) {
+                        return 28;
+                    }
+
+                    if (System.BitOperations.TrailingZeroCount(fourI32) != twoI32) {
+                        return 29;
+                    }
+
+                    if (System.BitOperations.PopCount(threeI32) != twoI32) {
+                        return 30;
+                    }
+
+                    if (System.BitOperations.RotateLeft(oneI32, thirtyOne) != minI32) {
+                        return 31;
+                    }
+
+                    if (System.BitOperations.RotateRight(twoI32, oneI32) != oneI32) {
+                        return 32;
+                    }
+
+                    if (System.BitOperations.LeadingZeroCount(oneI64) != sixtyThree) {
+                        return 33;
+                    }
+
+                    if (System.BitOperations.TrailingZeroCount(fourI64) != twoI64) {
+                        return 34;
+                    }
+
+                    if (System.BitOperations.PopCount(threeI64) != twoI64) {
+                        return 35;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = appDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PackagedStdLibFusedMultiplyAddWorksWithoutSourceWhenRuntimeSupportsIt()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || !SupportsSystemMathHardwareAsmTarget(targetInfo.Triple)
+            || !SupportsSystemMathFusedMultiplyAddRuntime(targetInfo.Triple))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-fma-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                module App
+
+                export ffi fn i32 main() {
+                    stack f64 two = 2.0;
+                    stack f64 three = 3.0;
+                    stack f64 four = 4.0;
+                    stack f64 value = System.Math.FusedMultiplyAdd(two, three, four);
+                    if (value != 10.0) {
+                        return 1;
+                    }
+
+                    stack f32 twoSmall = 2.0;
+                    stack f32 threeSmall = 3.0;
+                    stack f32 fourSmall = 4.0;
+                    stack f32 small = System.Math.FusedMultiplyAdd(twoSmall, threeSmall, fourSmall);
+                    if (small != 10.0) {
+                        return 2;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = appDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
         }
         finally
         {
@@ -2608,6 +3000,42 @@ public sealed class StandardLibraryTests
     private static void AssertCompilerLogsEmitted(string text)
     {
         Assert.Equal(string.Empty, text);
+    }
+
+    private static bool SupportsSystemMathHardwareAsmTarget(string triple)
+    {
+        var dashIndex = triple.IndexOf('-');
+        var architecture = dashIndex >= 0
+            ? triple[..dashIndex]
+            : triple;
+
+        return architecture is
+            "x86_64"
+            or "amd64"
+            or "aarch64"
+            or "arm64"
+            or "x86"
+            or "i386"
+            or "i486"
+            or "i586"
+            or "i686";
+    }
+
+    private static bool SupportsSystemMathFusedMultiplyAddRuntime(string triple)
+    {
+        var dashIndex = triple.IndexOf('-');
+        var architecture = dashIndex >= 0
+            ? triple[..dashIndex]
+            : triple;
+
+        return architecture switch
+        {
+            "x86_64" or "amd64" or "x86" or "i386" or "i486" or "i586" or "i686"
+                => System.Runtime.Intrinsics.X86.Fma.IsSupported,
+            "aarch64" or "arm64"
+                => true,
+            _ => false
+        };
     }
 
     public static IEnumerable<object[]> SystemSyscallArchitectureCases()

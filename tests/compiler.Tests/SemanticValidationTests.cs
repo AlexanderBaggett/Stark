@@ -97,13 +97,28 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
-    public void ConstGlobalsRejectInitializersThatCannotBeMaterializedAsStaticData()
+    public void ConstGlobalsAllowPureArithmeticInitializers()
     {
         var result = Compile(
             """
             module Demo
 
             const i32 Answer = 1 + 2;
+            """);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void ConstGlobalsRejectNonEvaluableFunctionCallInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Read();
+
+            const i32 Answer = Read();
             """);
 
         Assert.False(result.Succeeded);

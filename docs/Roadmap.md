@@ -1,5 +1,7 @@
 # Stark Roadmap
 
+Remember this languge aims to be faster than idiomatic C or Rust on most projects, we must chose the best posible optimization strategy and explore optimization opportunities.
+
 This document is the working implementation roadmap for Stark.
 
 It is intended to track:
@@ -664,43 +666,44 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
 ## Milestone 7.5 Standard Library: System.Math
 
 
-### Hardware Intrinsics (ASM/Compiler)
+### Single instruction Hardware Intrinsics (ASM/Compiler)
 
-- [ ] `Math.Sqrt` → x86: `vsqrtsd`/`vsqrtss` (AVX, fallback `sqrtsd` SSE2) | ARM64: `fsqrt`
-- [ ] `Math.FusedMultiplyAdd` → x86: `vfmadd213sd/ss` (FMA3, incl. `vfnmadd`/`vfmsub` variants) | ARM64: `fmadd`
-- [ ] `Math.ReciprocalSqrtEstimate` → x86: `rsqrtss` | ARM64: `frsqrte` (~12-bit precision)
-- [ ] `Math.ReciprocalEstimate` → x86: `rcpss` | ARM64: `frecpe`
-- [ ] `Math.Ceiling` → x86: `vroundsd` mode 2 (SSE4.1) | ARM64: `frintp`
-- [ ] `Math.Floor` → x86: `vroundsd` mode 1 (SSE4.1) | ARM64: `frintm`
-- [ ] `Math.Truncate` → x86: `vroundsd` mode 3 (SSE4.1) | ARM64: `frintz`
-- [ ] `Math.Round` (ToEven) → x86: `vroundsd` mode 0 (SSE4.1) | ARM64: `frintn`
-- [ ] `Math.Min` (float/double) → x86: `vminsd`/`vminss` | ARM64: `fminnm` (IEEE NaN semantics)
-- [ ] `Math.Max` (float/double) → x86: `vmaxsd`/`vmaxss` | ARM64: `fmaxnm` (IEEE NaN semantics)
-- [ ] `BitOperations.LeadingZeroCount` → x86: `lzcnt` (ABM) | ARM64: `clz`
-- [ ] `BitOperations.TrailingZeroCount` → x86: `tzcnt` (BMI1) | ARM64: `rbit` + `clz`
-- [ ] `BitOperations.PopCount` → x86: `popcnt` (POPCNT) | ARM64: `cnt` (NEON)
-- [ ] `BitOperations.RotateLeft/Right` → x86: `rol`/`ror` | ARM64: `ror`/`rorv`
+- [x] Prerequisite: extend `ffi asm(arch)` to support floating-point parameters and returns so single-instruction math intrinsics can bind FP registers on x86/x64 and ARM64
+- [x] `Math.Sqrt` → x86: `vsqrtsd`/`vsqrtss` (AVX, fallback `sqrtsd` SSE2) | ARM64: `fsqrt`
+- [x] `Math.FusedMultiplyAdd` → x86: `vfmadd213sd/ss` (FMA3, incl. `vfnmadd`/`vfmsub` variants) | ARM64: `fmadd`
+- [x] `Math.ReciprocalSqrtEstimate` → x86: `rsqrtss` | ARM64: `frsqrte` (~12-bit precision)
+- [x] `Math.ReciprocalEstimate` → x86: `rcpss` | ARM64: `frecpe`
+- [x] `Math.Ceiling` → x86: `vroundsd` mode 2 (SSE4.1) | ARM64: `frintp`
+- [x] `Math.Floor` → x86: `vroundsd` mode 1 (SSE4.1) | ARM64: `frintm`
+- [x] `Math.Truncate` → x86: `vroundsd` mode 3 (SSE4.1) | ARM64: `frintz`
+- [x] `Math.Round` (ToEven) → x86: `vroundsd` mode 0 (SSE4.1) | ARM64: `frintn`
+- [x] `Math.Min` (float/double) → x86: `vminsd`/`vminss` | ARM64: `fminnm` (IEEE NaN semantics)
+- [x] `Math.Max` (float/double) → x86: `vmaxsd`/`vmaxss` | ARM64: `fmaxnm` (IEEE NaN semantics)
+- [x] `BitOperations.LeadingZeroCount` → x86: `lzcnt` (ABM) | ARM64: `clz`
+- [x] `BitOperations.TrailingZeroCount` → x86: `tzcnt` (BMI1) | ARM64: `rbit` + `clz`
+- [x] `BitOperations.PopCount` → x86: `popcnt` (POPCNT) | ARM64: `cnt` (NEON)
+- [x] `BitOperations.RotateLeft/Right` → x86: `rol`/`ror` | ARM64: `ror`/`rorv`
 
 
-### LLVM BuiltIn Mappings
+### LLVM IR intrinsics BuiltIn Mappings
 
-- [ ] `Math.Sin` → `@llvm.sin.*`
-- [ ] `Math.Cos` → `@llvm.cos.*`
-- [ ] `Math.Tan` → `@llvm.tan.*`
-- [ ] `Math.Exp` → `@llvm.exp.*`
-- [ ] `Math.Exp2` → `@llvm.exp2.*`
-- [ ] `Math.Log` → `@llvm.log.*`
-- [ ] `Math.Log2` → `@llvm.log2.*`
-- [ ] `Math.Log10` → `@llvm.log10.*`
-- [ ] `Math.Asin` → `@llvm.asin.*`
-- [ ] `Math.Acos` → `@llvm.acos.*`
-- [ ] `Math.Atan` → `@llvm.atan.*`
-- [ ] `Math.Atan2` → `@llvm.atan2.*`
-- [ ] `Math.Pow` → `@llvm.pow.*`
-- [ ] `Math.Sinh` → `@llvm.sinh.*`
-- [ ] `Math.Cosh` → `@llvm.cosh.*`
-- [ ] `Math.Tanh` → `@llvm.tanh.*`
-- [ ] `Math.SinCos` → `@llvm.sincos.*`
+- [x] `Math.Sin` → `@llvm.sin.*`
+- [x] `Math.Cos` → `@llvm.cos.*`
+- [x] `Math.Tan` → `@llvm.tan.*`
+- [x] `Math.Exp` → `@llvm.exp.*`
+- [x] `Math.Exp2` → `@llvm.exp2.*`
+- [x] `Math.Log` → `@llvm.log.*`
+- [x] `Math.Log2` → `@llvm.log2.*`
+- [x] `Math.Log10` → `@llvm.log10.*`
+- [x] `Math.Asin` → `@llvm.asin.*`
+- [x] `Math.Acos` → `@llvm.acos.*`
+- [x] `Math.Atan` → `@llvm.atan.*`
+- [x] `Math.Atan2` → `@llvm.atan2.*`
+- [x] `Math.Pow` → `@llvm.pow.*`
+- [x] `Math.Sinh` → `@llvm.sinh.*`
+- [x] `Math.Cosh` → `@llvm.cosh.*`
+- [x] `Math.Tanh` → `@llvm.tanh.*`
+- [x] `Math.SinCos` → `@llvm.sincos.*`
 
 ## Milestone 8: Optimization and Backend Quality
 
@@ -708,36 +711,36 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
 
 ### Frontend Optimization Passes
 
-- [ ] Constant folding
-  - [ ] fold scalar arithmetic and comparison expressions
-  - [ ] fold boolean and branch conditions
-  - [ ] fold simple aggregate/initializer constants where safe
-  - [ ] regression tests for folded MIR and SSA
-- [ ] Compile-time evaluation
-  - [ ] evaluator for pure literal and arithmetic expressions
-  - [ ] evaluator for `law` calls with constant inputs where legal
-  - [ ] diagnostics for non-evaluable expressions in constant-required contexts
-  - [ ] regression tests for compile-time evaluation results
-- [ ] Dead code elimination before LLVM emission
-  - [ ] remove unreachable blocks after simplification passes
-  - [ ] remove unused SSA instructions and temporaries
-  - [ ] remove unused allocas and locals where safe
-  - [ ] regression tests for removed dead code
-- [ ] Better SSA cleanup/value numbering
-  - [ ] canonicalize identical commutative expressions
-  - [ ] remove redundant casts and materializations
-  - [ ] coalesce equivalent phi nodes
-  - [ ] rerun branch and block simplification after cleanup
-- [ ] Simplify trivial branches and blocks
-  - [ ] fold branch-on-constant
-  - [ ] merge blocks with single predecessor/single successor
-  - [ ] remove empty jump-only blocks
-  - [ ] simplify trivial single-case or default-only switches
-- [ ] Normalize more control-flow patterns before LLVM
-  - [ ] canonical loop header/latch forms
-  - [ ] normalized `switch` lowering structure
-  - [ ] canonical early-return diamonds
-  - [ ] regression tests over normalized MIR and SSA
+- [x] Constant folding
+  - [x] fold scalar arithmetic and comparison expressions
+  - [x] fold boolean and branch conditions
+  - [x] fold simple aggregate/initializer constants where safe
+  - [x] regression tests for folded MIR and SSA
+- [x] Compile-time evaluation
+  - [x] evaluator for pure literal and arithmetic expressions
+  - [x] evaluator for `law` calls with constant inputs where legal
+  - [x] diagnostics for non-evaluable expressions in constant-required contexts
+  - [x] regression tests for compile-time evaluation results
+- [x] Dead code elimination before LLVM emission
+  - [x] remove unreachable blocks after simplification passes
+  - [x] remove unused SSA instructions and temporaries
+  - [x] remove unused allocas and locals where safe
+  - [x] regression tests for removed dead code
+- [x] Better SSA cleanup/value numbering
+  - [x] canonicalize identical commutative expressions
+  - [x] remove redundant casts and materializations
+  - [x] coalesce equivalent phi nodes
+  - [x] rerun branch and block simplification after cleanup
+- [x] Simplify trivial branches and blocks
+  - [x] fold branch-on-constant
+  - [x] merge blocks with single predecessor/single successor
+  - [x] remove empty jump-only blocks
+  - [x] simplify trivial single-case or default-only switches
+- [x] Normalize more control-flow patterns before LLVM
+  - [x] canonical loop header/latch forms
+  - [x] normalized `switch` lowering structure
+  - [x] canonical early-return diamonds
+  - [x] regression tests over normalized MIR and SSA
 
 ### LLVM Semantic Richness
 
@@ -755,8 +758,8 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
 
 - [x] native LLVM `switch` for simple integer/bool cases
 - [ ] better aggregate lowering quality
-  - [ ] small aggregate scalarization heuristics
-  - [ ] memcpy vs field-store heuristics
+  - [x] small aggregate scalarization heuristics
+  - [x] memcpy vs field-store heuristics
   - [ ] sret/byval tuning
   - [ ] aggregate call/return regression benchmarks
 - [ ] better global data lowering quality

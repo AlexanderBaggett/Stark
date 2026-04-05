@@ -125,9 +125,9 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn bool Broken(ascii text, f32 scale)
+            public ffi asm(x86_64) fn bool Broken(ascii text, i32 count)
                 in("rdi") text,
-                in("rsi") scale,
+                in("rsi") count,
                 out("rax") return
             {
                 "syscall"
@@ -140,7 +140,73 @@ public sealed class TypeTypingDiagnosticsTests
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "return type 'bool'");
         AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "parameter 'text'", "type 'ascii'");
-        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "parameter 'scale'", "type 'f32'");
+    }
+
+    [Fact]
+    public void AsmFunctionsAcceptFloatingPointParametersAndReturns()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi asm(x86_64) fn f64 Identity(f64 value)
+                in("xmm0") value,
+                out("xmm0") return
+            {
+                "nop"
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void AsmFunctionsAcceptAArch64FloatingPointRegisters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi asm(aarch64) fn f32 Identity(f32 value)
+                in("s0") value,
+                out("s0") return
+            {
+                "nop"
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("aarch64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void AsmFunctionsRejectRegisterClassesThatDoNotMatchValueKinds()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi asm(x86_64) fn f32 Broken(f32 scale, i32 count)
+                in("rdi") scale,
+                in("xmm1") count,
+                out("rax") return
+            {
+                "nop"
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "parameter 'scale'", "register 'rdi'", "general-purpose register", "Floating-point values must use a floating-point register on x86_64");
+        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "parameter 'count'", "register 'xmm1'", "floating-point register", "Integer and raw-pointer values must use a general-purpose register on x86_64");
+        AssertDiagnostic(result, "STK3008", "Asm function 'Broken'", "return value", "register 'rax'", "general-purpose register", "Floating-point values must use a floating-point register on x86_64");
     }
 
     [Fact]

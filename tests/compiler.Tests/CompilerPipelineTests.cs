@@ -48,6 +48,149 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlow()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Demo
+
+            fn i32 Run(bool flag, i32 limit) {
+                stack i32 sum = 0;
+                stack i32 i = 0;
+
+                while willexit (i < limit) {
+                    switch (flag) {
+                        case true:
+                            sum = sum + 1;
+                            break;
+                        case false:
+                            break;
+                    }
+
+                    i = i + 1;
+                }
+
+                return sum;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var mirFunction = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        Assert.Contains(mirFunction.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(mirFunction.Blocks, block => block.Label.Contains("switch_exit", StringComparison.Ordinal));
+
+        var ssaFunction = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(ssaFunction.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Switch);
+        var loopHeader = Assert.Single(ssaFunction.Blocks, block => block.Label.Contains("while_willexit_cond", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            loopHeader.Phis,
+            static phi => phi.Incomings.Any(incoming => incoming.Value is SsaValueReference reference
+                                                       && reference.Name == phi.ResultName));
+    }
+
+    [Fact]
+    public void PipelineFoldsPureConstantsInMirAndOptimizedSsa()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Demo
+
+            fn i32 Run() {
+                return (1 + 2) * 3;
+            }
+            """));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var mirFunction = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        var mirBlock = Assert.Single(mirFunction.Blocks);
+        Assert.Empty(mirBlock.Statements);
+        var mirValue = Assert.IsType<MidLevelIrIntegerConstantOperand>(mirBlock.Terminator.Value);
+        Assert.Equal(9, (int)mirValue.Value);
+
+        var ssaFunction = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var ssaBlock = Assert.Single(ssaFunction.Blocks);
+        Assert.Empty(ssaBlock.Instructions);
+        var ssaValue = Assert.IsType<SsaIntegerConstant>(ssaBlock.Terminator.Value);
+        Assert.Equal(9, (int)ssaValue.Value);
+    }
+
+    [Fact]
+    public void PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Lib
+                module Demo
+
+                fn i32 Run() {
+                    return Lib.Adjust(4);
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib", "/virtual/Lib.stark", IsExternal: false),
+                        """
+                        module Lib
+
+                        public finite law i32 Adjust(i32 value) {
+                            stack mut i32 current = value;
+                            if (current < 10) {
+                                current = current + 3;
+                            }
+
+                            return current;
+                        }
+                        """,
+                        "/virtual/Lib.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+
+        var mirFunction = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        var mirBlock = Assert.Single(mirFunction.Blocks);
+        Assert.Empty(mirBlock.Statements);
+        var mirValue = Assert.IsType<MidLevelIrIntegerConstantOperand>(mirBlock.Terminator.Value);
+        Assert.Equal(7, (int)mirValue.Value);
+
+        var ssaFunction = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var ssaBlock = Assert.Single(ssaFunction.Blocks);
+        Assert.Empty(ssaBlock.Instructions);
+        var ssaValue = Assert.IsType<SsaIntegerConstant>(ssaBlock.Terminator.Value);
+        Assert.Equal(7, (int)ssaValue.Value);
+
+        Assert.Contains("ret i32 7", llvmModule.Text);
+        Assert.DoesNotContain("call fastcc i32 @Lib_Adjust", llvmModule.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @Lib.Adjust", llvmModule.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PipelineDoesNotPrintInformationalLogsToConsoleErrorByDefault()
     {
         var pipeline = DefaultCompilerPipeline.Create();

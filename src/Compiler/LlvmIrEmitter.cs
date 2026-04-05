@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text;
+using System.Globalization;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -8,6 +9,8 @@ internal sealed class LlvmIrEmitter
 {
     private const string AsciiStringTypeName = "stark_ascii";
     private const string UnicodeStringTypeName = "stark_unicode";
+    private const int AggregateScalarizationThresholdBytes = 16;
+    private const int AggregateScalarizationMaxLeafCount = 4;
     private const int AggregateMemcpyThresholdBytes = 32;
     private readonly CompilationInput _input;
     private readonly ParseResult _parseResult;
@@ -965,6 +968,16 @@ internal sealed class LlvmIrEmitter
             declarations.Add($"declare {llvmType} @llvm.pow.{suffix}({llvmType}, {llvmType})");
         }
 
+        foreach (var declaration in EnumerateSystemMathIntrinsicDeclarations())
+        {
+            declarations.Add(declaration);
+        }
+
+        foreach (var declaration in EnumerateSystemBitOperationsIntrinsicDeclarations())
+        {
+            declarations.Add(declaration);
+        }
+
         if (UsesLifetimeMarkers())
         {
             declarations.Add("declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)");
@@ -985,6 +998,76 @@ internal sealed class LlvmIrEmitter
         {
             builder.AppendLine();
         }
+    }
+
+    private IEnumerable<string> EnumerateSystemMathIntrinsicDeclarations()
+    {
+        foreach (var signature in _allFunctionSignatures.Values)
+        {
+            if (!TryResolveSystemMathBuiltin(_syntaxModel.ModuleName, signature, out var builtinKind))
+            {
+                continue;
+            }
+
+            if (!IsLlvmIntrinsicSystemMathBuiltin(builtinKind))
+            {
+                continue;
+            }
+
+            yield return BuildSystemMathIntrinsicDeclaration(signature, builtinKind);
+        }
+    }
+
+    private IEnumerable<string> EnumerateSystemBitOperationsIntrinsicDeclarations()
+    {
+        foreach (var signature in _allFunctionSignatures.Values)
+        {
+            if (!TryResolveSystemBitOperationsBuiltin(_syntaxModel.ModuleName, signature, out var builtinKind))
+            {
+                continue;
+            }
+
+            yield return BuildSystemBitOperationsIntrinsicDeclaration(signature, builtinKind);
+        }
+    }
+
+    private string BuildSystemMathIntrinsicDeclaration(
+        TypedFunctionSignature function,
+        SystemMathBuiltinKind builtinKind)
+    {
+        var arity = GetSystemMathIntrinsicArity(builtinKind);
+        var scalarType = ValidateSystemMathBuiltinSignature(function, builtinKind, arity);
+        var intrinsicName = $"@llvm.{GetSystemMathIntrinsicBaseName(builtinKind)}.{GetFloatIntrinsicSuffix(scalarType)}";
+        var llvmType = MapType(scalarType);
+
+        if (builtinKind == SystemMathBuiltinKind.SinCos)
+        {
+            var pairType = $"{{ {llvmType}, {llvmType} }}";
+            return $"declare {pairType} {intrinsicName}({llvmType})";
+        }
+
+        return $"declare {llvmType} {intrinsicName}({string.Join(", ", Enumerable.Repeat(llvmType, arity))})";
+    }
+
+    private string BuildSystemBitOperationsIntrinsicDeclaration(
+        TypedFunctionSignature function,
+        SystemBitOperationsBuiltinKind builtinKind)
+    {
+        var surfaceArity = GetSystemBitOperationsSurfaceArity(builtinKind);
+        var scalarType = ValidateSystemBitOperationsBuiltinSignature(function, builtinKind, surfaceArity);
+        var intrinsicName = $"@llvm.{GetSystemBitOperationsIntrinsicBaseName(builtinKind)}.i{scalarType.BitWidth}";
+        var llvmType = MapType(scalarType);
+
+        return builtinKind switch
+        {
+            SystemBitOperationsBuiltinKind.LeadingZeroCount or SystemBitOperationsBuiltinKind.TrailingZeroCount
+                => $"declare {llvmType} {intrinsicName}({llvmType}, i1 immarg)",
+            SystemBitOperationsBuiltinKind.PopCount
+                => $"declare {llvmType} {intrinsicName}({llvmType})",
+            SystemBitOperationsBuiltinKind.RotateLeft or SystemBitOperationsBuiltinKind.RotateRight
+                => $"declare {llvmType} {intrinsicName}({llvmType}, {llvmType}, {llvmType})",
+            _ => throw new InvalidOperationException($"Unsupported System.BitOperations builtin '{builtinKind}'.")
+        };
     }
 
     private bool UsesLifetimeMarkers()
@@ -1090,7 +1173,8 @@ internal sealed class LlvmIrEmitter
             _stringConstants,
             ResolveGlobalSymbolName,
             MapType,
-            TryGetConcreteTypeLayout);
+            TryGetConcreteTypeLayout,
+            ResolveNamedTypeSymbol);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);
@@ -1309,6 +1393,22 @@ internal sealed class LlvmIrEmitter
         FunctionEffectProfile effects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
+        if (TryResolveSystemMathBuiltin(moduleName, function, out var systemMathBuiltinKind))
+        {
+            builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects) + " {");
+            EmitSystemMathBuiltin(builder, function, abiFunction, systemMathBuiltinKind);
+            builder.AppendLine("}");
+            return true;
+        }
+
+        if (TryResolveSystemBitOperationsBuiltin(moduleName, function, out var systemBitOperationsBuiltinKind))
+        {
+            builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects) + " {");
+            EmitSystemBitOperationsBuiltin(builder, function, abiFunction, systemBitOperationsBuiltinKind);
+            builder.AppendLine("}");
+            return true;
+        }
+
         if (!TryGetSystemTextBuiltin(moduleName, function.Name, out var builtinKind))
         {
             return false;
@@ -1343,6 +1443,303 @@ internal sealed class LlvmIrEmitter
 
         builder.AppendLine("}");
         return true;
+    }
+
+    private void EmitSystemMathBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemMathBuiltinKind builtinKind)
+    {
+        var arity = GetSystemMathIntrinsicArity(builtinKind);
+        var scalarType = ValidateSystemMathBuiltinSignature(function, builtinKind, arity);
+
+        if (abiFunction.UserParameters.Count != arity)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{abiFunction.Name}' expects exactly {arity} user parameter(s).");
+        }
+
+        if (IsHardwareAsmSystemMathBuiltin(builtinKind))
+        {
+            EmitSystemMathHardwareBuiltin(builder, function, abiFunction, builtinKind, scalarType);
+            return;
+        }
+
+        var llvmType = MapType(scalarType);
+        var intrinsicName = $"@llvm.{GetSystemMathIntrinsicBaseName(builtinKind)}.{GetFloatIntrinsicSuffix(scalarType)}";
+
+        if (builtinKind == SystemMathBuiltinKind.SinCos)
+        {
+            EmitSystemMathSinCosBuiltin(builder, function, abiFunction, intrinsicName, scalarType);
+            return;
+        }
+
+        builder.AppendLine("entry:");
+        if (arity == 1)
+        {
+            var value = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+            builder.AppendLine($"  %math_result = call {llvmType} {intrinsicName}({llvmType} {value})");
+            builder.AppendLine($"  ret {llvmType} %math_result");
+            return;
+        }
+
+        var left = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+        var right = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+        builder.AppendLine($"  %math_result = call {llvmType} {intrinsicName}({llvmType} {left}, {llvmType} {right})");
+        builder.AppendLine($"  ret {llvmType} %math_result");
+    }
+
+    private void EmitSystemBitOperationsBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemBitOperationsBuiltinKind builtinKind)
+    {
+        var surfaceArity = GetSystemBitOperationsSurfaceArity(builtinKind);
+        var scalarType = ValidateSystemBitOperationsBuiltinSignature(function, builtinKind, surfaceArity);
+        if (abiFunction.UserParameters.Count != surfaceArity)
+        {
+            throw new InvalidOperationException($"System.BitOperations builtin '{abiFunction.Name}' expects exactly {surfaceArity} user parameter(s).");
+        }
+
+        var llvmType = MapType(scalarType);
+        var intrinsicName = $"@llvm.{GetSystemBitOperationsIntrinsicBaseName(builtinKind)}.i{scalarType.BitWidth}";
+        var value = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+
+        builder.AppendLine("entry:");
+        switch (builtinKind)
+        {
+            case SystemBitOperationsBuiltinKind.LeadingZeroCount:
+            case SystemBitOperationsBuiltinKind.TrailingZeroCount:
+                builder.AppendLine($"  %bit_result = call {llvmType} {intrinsicName}({llvmType} {value}, i1 false)");
+                break;
+            case SystemBitOperationsBuiltinKind.PopCount:
+                builder.AppendLine($"  %bit_result = call {llvmType} {intrinsicName}({llvmType} {value})");
+                break;
+            case SystemBitOperationsBuiltinKind.RotateLeft:
+            case SystemBitOperationsBuiltinKind.RotateRight:
+            {
+                var amount = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  %bit_result = call {llvmType} {intrinsicName}({llvmType} {value}, {llvmType} {value}, {llvmType} {amount})");
+                break;
+            }
+            default:
+                throw new InvalidOperationException($"Unsupported System.BitOperations builtin '{builtinKind}'.");
+        }
+
+        builder.AppendLine($"  ret {llvmType} %bit_result");
+    }
+
+    private void EmitSystemMathHardwareBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemMathBuiltinKind builtinKind,
+        StarkTypeSymbol scalarType)
+    {
+        if (builtinKind == SystemMathBuiltinKind.FusedMultiplyAdd)
+        {
+            EmitSystemMathFusedMultiplyAddHardwareBuiltin(builder, function, abiFunction, scalarType);
+            return;
+        }
+
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{function.Name}' expects exactly 1 user parameter.");
+        }
+
+        var architecture = StarkAsmArchitectureFacts.ResolveActiveArchitecture(_targetInfo);
+        var template = GetSystemMathHardwareAsmTemplate(builtinKind, scalarType, architecture);
+        var constraints = GetSystemMathHardwareAsmConstraints(scalarType, architecture);
+        var llvmType = MapType(scalarType);
+        var value = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine(
+            $"  %math_result = call {llvmType} asm \"{EscapeInlineAsmString(template)}\", \"{EscapeInlineAsmString(constraints)}\"({llvmType} {value})");
+        builder.AppendLine($"  ret {llvmType} %math_result");
+    }
+
+    private void EmitSystemMathFusedMultiplyAddHardwareBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        StarkTypeSymbol scalarType)
+    {
+        if (abiFunction.UserParameters.Count != 3)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{function.Name}' expects exactly 3 user parameters.");
+        }
+
+        var architecture = StarkAsmArchitectureFacts.ResolveActiveArchitecture(_targetInfo);
+        var template = GetSystemMathFusedMultiplyAddAsmTemplate(scalarType, architecture);
+        var constraints = GetSystemMathFusedMultiplyAddAsmConstraints(scalarType, architecture);
+        var llvmType = MapType(scalarType);
+        var left = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+        var right = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+        var addend = $"%{EscapeIdentifier(abiFunction.UserParameters[2].LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine(
+            $"  %math_result = call {llvmType} asm \"{EscapeInlineAsmString(template)}\", \"{EscapeInlineAsmString(constraints)}\"({llvmType} {left}, {llvmType} {right}, {llvmType} {addend})");
+        builder.AppendLine($"  ret {llvmType} %math_result");
+    }
+
+    private static string GetSystemMathFusedMultiplyAddAsmTemplate(
+        StarkTypeSymbol scalarType,
+        StarkAsmArchitecture architecture)
+    {
+        return architecture switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.X86 => scalarType.BitWidth switch
+            {
+                32 => "vfmadd213ss %xmm2, %xmm1, %xmm0",
+                64 => "vfmadd213sd %xmm2, %xmm1, %xmm0",
+                _ => throw new InvalidOperationException(
+                    $"System.Math FusedMultiplyAdd single-instruction lowering currently supports only f32 and f64, but found '{scalarType.DisplayName}'.")
+            },
+            StarkAsmArchitecture.AArch64 => scalarType.BitWidth switch
+            {
+                32 => "fmadd s0, s0, s1, s2",
+                64 => "fmadd d0, d0, d1, d2",
+                _ => throw new InvalidOperationException(
+                    $"System.Math FusedMultiplyAdd single-instruction lowering currently supports only f32 and f64, but found '{scalarType.DisplayName}'.")
+            },
+            _ => throw new InvalidOperationException(
+                $"System.Math builtin '{SystemMathBuiltinKind.FusedMultiplyAdd}' currently has single-instruction lowering only on x86/x64 and aarch64 targets, but the active target is '{DescribeAsmArchitecture(architecture)}'.")
+        };
+    }
+
+    private static string GetSystemMathFusedMultiplyAddAsmConstraints(
+        StarkTypeSymbol scalarType,
+        StarkAsmArchitecture architecture)
+    {
+        return architecture switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.X86 => "={xmm0},0,{xmm1},{xmm2}",
+            StarkAsmArchitecture.AArch64 => scalarType.BitWidth switch
+            {
+                32 => "={s0},0,{s1},{s2}",
+                64 => "={d0},0,{d1},{d2}",
+                _ => throw new InvalidOperationException(
+                    $"System.Math FusedMultiplyAdd single-instruction lowering currently supports only f32 and f64, but found '{scalarType.DisplayName}'.")
+            },
+            _ => throw new InvalidOperationException(
+                $"System.Math builtin '{SystemMathBuiltinKind.FusedMultiplyAdd}' currently has single-instruction lowering only on x86/x64 and aarch64 targets, but the active target is '{DescribeAsmArchitecture(architecture)}'.")
+        };
+    }
+
+    private static string GetSystemMathHardwareAsmTemplate(
+        SystemMathBuiltinKind builtinKind,
+        StarkTypeSymbol scalarType,
+        StarkAsmArchitecture architecture)
+    {
+        return architecture switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.X86 => GetX86SystemMathHardwareAsmTemplate(builtinKind, scalarType),
+            StarkAsmArchitecture.AArch64 => GetAArch64SystemMathHardwareAsmTemplate(builtinKind, scalarType),
+            _ => throw new InvalidOperationException(
+                $"System.Math builtin '{builtinKind}' currently has single-instruction lowering only on x86/x64 and aarch64 targets, but the active target is '{DescribeAsmArchitecture(architecture)}'.")
+        };
+    }
+
+    private static string GetSystemMathHardwareAsmConstraints(
+        StarkTypeSymbol scalarType,
+        StarkAsmArchitecture architecture)
+    {
+        return architecture switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.X86 => "={xmm0},0",
+            StarkAsmArchitecture.AArch64 => scalarType.BitWidth switch
+            {
+                32 => "={s0},0",
+                64 => "={d0},0",
+                _ => throw new InvalidOperationException(
+                    $"System.Math single-instruction lowering currently supports only f32 and f64, but found '{scalarType.DisplayName}'.")
+            },
+            _ => throw new InvalidOperationException(
+                $"System.Math single-instruction lowering currently supports only x86/x64 and aarch64 targets, but the active target is '{DescribeAsmArchitecture(architecture)}'.")
+        };
+    }
+
+    private static string GetX86SystemMathHardwareAsmTemplate(
+        SystemMathBuiltinKind builtinKind,
+        StarkTypeSymbol scalarType)
+    {
+        return scalarType.BitWidth switch
+        {
+            32 => builtinKind switch
+            {
+                SystemMathBuiltinKind.Sqrt => "sqrtss %xmm0, %xmm0",
+                SystemMathBuiltinKind.ReciprocalEstimate => "rcpss %xmm0, %xmm0",
+                SystemMathBuiltinKind.ReciprocalSqrtEstimate => "rsqrtss %xmm0, %xmm0",
+                SystemMathBuiltinKind.Ceiling => "roundss $$2, %xmm0, %xmm0",
+                SystemMathBuiltinKind.Floor => "roundss $$1, %xmm0, %xmm0",
+                SystemMathBuiltinKind.Truncate => "roundss $$3, %xmm0, %xmm0",
+                SystemMathBuiltinKind.Round => "roundss $$0, %xmm0, %xmm0",
+                _ => throw new InvalidOperationException($"Unsupported x86/x64 hardware System.Math builtin '{builtinKind}'.")
+            },
+            64 => builtinKind switch
+            {
+                SystemMathBuiltinKind.Sqrt => "sqrtsd %xmm0, %xmm0",
+                SystemMathBuiltinKind.Ceiling => "roundsd $$2, %xmm0, %xmm0",
+                SystemMathBuiltinKind.Floor => "roundsd $$1, %xmm0, %xmm0",
+                SystemMathBuiltinKind.Truncate => "roundsd $$3, %xmm0, %xmm0",
+                SystemMathBuiltinKind.Round => "roundsd $$0, %xmm0, %xmm0",
+                _ => throw new InvalidOperationException($"Unsupported x86/x64 hardware System.Math builtin '{builtinKind}'.")
+            },
+            _ => throw new InvalidOperationException(
+                $"System.Math single-instruction lowering currently supports only f32 and f64, but found '{scalarType.DisplayName}'.")
+        };
+    }
+
+    private static string GetAArch64SystemMathHardwareAsmTemplate(
+        SystemMathBuiltinKind builtinKind,
+        StarkTypeSymbol scalarType)
+    {
+        var register = scalarType.BitWidth switch
+        {
+            32 => "s0",
+            64 => "d0",
+            _ => throw new InvalidOperationException(
+                $"System.Math single-instruction lowering currently supports only f32 and f64, but found '{scalarType.DisplayName}'.")
+        };
+
+        var opcode = builtinKind switch
+        {
+            SystemMathBuiltinKind.Sqrt => "fsqrt",
+            SystemMathBuiltinKind.ReciprocalEstimate => "frecpe",
+            SystemMathBuiltinKind.ReciprocalSqrtEstimate => "frsqrte",
+            SystemMathBuiltinKind.Ceiling => "frintp",
+            SystemMathBuiltinKind.Floor => "frintm",
+            SystemMathBuiltinKind.Truncate => "frintz",
+            SystemMathBuiltinKind.Round => "frintn",
+            _ => throw new InvalidOperationException($"Unsupported aarch64 hardware System.Math builtin '{builtinKind}'.")
+        };
+
+        return $"{opcode} {register}, {register}";
+    }
+
+    private void EmitSystemMathSinCosBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        string intrinsicName,
+        StarkTypeSymbol scalarType)
+    {
+        var signature = ValidateSystemMathSinCosBuiltinSignature(function);
+        var scalarLlvmType = MapType(scalarType);
+        var pairType = $"{{ {scalarLlvmType}, {scalarLlvmType} }}";
+        var resultType = MapType(function.ReturnType);
+        var value = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %math_pair = call {pairType} {intrinsicName}({scalarLlvmType} {value})");
+        builder.AppendLine($"  %math_sin = extractvalue {pairType} %math_pair, 0");
+        builder.AppendLine($"  %math_cos = extractvalue {pairType} %math_pair, 1");
+        builder.AppendLine($"  %math_with_sin = insertvalue {resultType} zeroinitializer, {scalarLlvmType} %math_sin, {signature.SinFieldIndex}");
+        builder.AppendLine($"  %math_result = insertvalue {resultType} %math_with_sin, {scalarLlvmType} %math_cos, {signature.CosFieldIndex}");
+        builder.AppendLine($"  ret {resultType} %math_result");
     }
 
     private void EmitOwnedTextViewBuiltin(
@@ -1573,6 +1970,358 @@ internal sealed class LlvmIrEmitter
             or "AsciiData" or "UnicodeData"
             or "AsciiLength" or "UnicodeLength"
             or "TryConcatAscii" or "TryConcatUnicode";
+    }
+
+    private static bool TryGetSystemMathBuiltin(
+        string moduleName,
+        string functionName,
+        out SystemMathBuiltinKind builtinKind)
+    {
+        builtinKind = default;
+
+        string sourceName;
+        if (functionName.Contains('.', StringComparison.Ordinal))
+        {
+            const string prefix = "System.Math.";
+            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName[prefix.Length..];
+        }
+        else
+        {
+            if (!string.Equals(moduleName, "System.Math", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName;
+        }
+
+        builtinKind = sourceName switch
+        {
+            "Sin" => SystemMathBuiltinKind.Sin,
+            "Cos" => SystemMathBuiltinKind.Cos,
+            "Tan" => SystemMathBuiltinKind.Tan,
+            "Exp" => SystemMathBuiltinKind.Exp,
+            "Exp2" => SystemMathBuiltinKind.Exp2,
+            "Log" => SystemMathBuiltinKind.Log,
+            "Log2" => SystemMathBuiltinKind.Log2,
+            "Log10" => SystemMathBuiltinKind.Log10,
+            "Asin" => SystemMathBuiltinKind.Asin,
+            "Acos" => SystemMathBuiltinKind.Acos,
+            "Atan" => SystemMathBuiltinKind.Atan,
+            "Atan2" => SystemMathBuiltinKind.Atan2,
+            "Pow" => SystemMathBuiltinKind.Pow,
+            "Sinh" => SystemMathBuiltinKind.Sinh,
+            "Cosh" => SystemMathBuiltinKind.Cosh,
+            "Tanh" => SystemMathBuiltinKind.Tanh,
+            "SinCos" => SystemMathBuiltinKind.SinCos,
+            "Sqrt" => SystemMathBuiltinKind.Sqrt,
+            "FusedMultiplyAdd" => SystemMathBuiltinKind.FusedMultiplyAdd,
+            "ReciprocalEstimate" => SystemMathBuiltinKind.ReciprocalEstimate,
+            "ReciprocalSqrtEstimate" => SystemMathBuiltinKind.ReciprocalSqrtEstimate,
+            "Ceiling" => SystemMathBuiltinKind.Ceiling,
+            "Floor" => SystemMathBuiltinKind.Floor,
+            "Truncate" => SystemMathBuiltinKind.Truncate,
+            "Round" => SystemMathBuiltinKind.Round,
+            "Min" => SystemMathBuiltinKind.Min,
+            "Max" => SystemMathBuiltinKind.Max,
+            _ => default
+        };
+
+        return sourceName is
+            "Sin" or "Cos" or "Tan"
+            or "Exp" or "Exp2"
+            or "Log" or "Log2" or "Log10"
+            or "Asin" or "Acos" or "Atan" or "Atan2"
+            or "Pow"
+            or "Sinh" or "Cosh" or "Tanh"
+            or "SinCos"
+            or "Sqrt" or "FusedMultiplyAdd" or "ReciprocalEstimate" or "ReciprocalSqrtEstimate"
+            or "Ceiling" or "Floor" or "Truncate" or "Round"
+            or "Min" or "Max";
+    }
+
+    private static bool TryResolveSystemMathBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemMathBuiltinKind builtinKind)
+    {
+        return TryGetSystemMathBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
+            || TryGetSystemMathBuiltin(moduleName: string.Empty, function.Name, out builtinKind);
+    }
+
+    private static int GetSystemMathIntrinsicArity(SystemMathBuiltinKind builtinKind)
+    {
+        return builtinKind switch
+        {
+            SystemMathBuiltinKind.Atan2 or SystemMathBuiltinKind.Pow => 2,
+            SystemMathBuiltinKind.FusedMultiplyAdd => 3,
+            SystemMathBuiltinKind.Min or SystemMathBuiltinKind.Max => 2,
+            _ => 1
+        };
+    }
+
+    private static bool IsLlvmIntrinsicSystemMathBuiltin(SystemMathBuiltinKind builtinKind)
+    {
+        return builtinKind is
+            SystemMathBuiltinKind.Sin
+            or SystemMathBuiltinKind.Cos
+            or SystemMathBuiltinKind.Tan
+            or SystemMathBuiltinKind.Exp
+            or SystemMathBuiltinKind.Exp2
+            or SystemMathBuiltinKind.Log
+            or SystemMathBuiltinKind.Log2
+            or SystemMathBuiltinKind.Log10
+            or SystemMathBuiltinKind.Asin
+            or SystemMathBuiltinKind.Acos
+            or SystemMathBuiltinKind.Atan
+            or SystemMathBuiltinKind.Atan2
+            or SystemMathBuiltinKind.Pow
+            or SystemMathBuiltinKind.Sinh
+            or SystemMathBuiltinKind.Cosh
+            or SystemMathBuiltinKind.Tanh
+            or SystemMathBuiltinKind.SinCos
+            or SystemMathBuiltinKind.Min
+            or SystemMathBuiltinKind.Max;
+    }
+
+    private static bool IsHardwareAsmSystemMathBuiltin(SystemMathBuiltinKind builtinKind)
+    {
+        return builtinKind is
+            SystemMathBuiltinKind.Sqrt
+            or SystemMathBuiltinKind.FusedMultiplyAdd
+            or SystemMathBuiltinKind.ReciprocalEstimate
+            or SystemMathBuiltinKind.ReciprocalSqrtEstimate
+            or SystemMathBuiltinKind.Ceiling
+            or SystemMathBuiltinKind.Floor
+            or SystemMathBuiltinKind.Truncate
+            or SystemMathBuiltinKind.Round;
+    }
+
+    private static string GetSystemMathIntrinsicBaseName(SystemMathBuiltinKind builtinKind)
+    {
+        return builtinKind switch
+        {
+            SystemMathBuiltinKind.Sin => "sin",
+            SystemMathBuiltinKind.Cos => "cos",
+            SystemMathBuiltinKind.Tan => "tan",
+            SystemMathBuiltinKind.Exp => "exp",
+            SystemMathBuiltinKind.Exp2 => "exp2",
+            SystemMathBuiltinKind.Log => "log",
+            SystemMathBuiltinKind.Log2 => "log2",
+            SystemMathBuiltinKind.Log10 => "log10",
+            SystemMathBuiltinKind.Asin => "asin",
+            SystemMathBuiltinKind.Acos => "acos",
+            SystemMathBuiltinKind.Atan => "atan",
+            SystemMathBuiltinKind.Atan2 => "atan2",
+            SystemMathBuiltinKind.Pow => "pow",
+            SystemMathBuiltinKind.Sinh => "sinh",
+            SystemMathBuiltinKind.Cosh => "cosh",
+            SystemMathBuiltinKind.Tanh => "tanh",
+            SystemMathBuiltinKind.SinCos => "sincos",
+            SystemMathBuiltinKind.Min => "minnum",
+            SystemMathBuiltinKind.Max => "maxnum",
+            _ => throw new InvalidOperationException($"Unsupported System.Math builtin '{builtinKind}'.")
+        };
+    }
+
+    private static bool TryGetSystemBitOperationsBuiltin(
+        string moduleName,
+        string functionName,
+        out SystemBitOperationsBuiltinKind builtinKind)
+    {
+        builtinKind = default;
+
+        string sourceName;
+        if (functionName.Contains('.', StringComparison.Ordinal))
+        {
+            const string prefix = "System.BitOperations.";
+            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName[prefix.Length..];
+        }
+        else
+        {
+            if (!string.Equals(moduleName, "System.BitOperations", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName;
+        }
+
+        builtinKind = sourceName switch
+        {
+            "LeadingZeroCount" => SystemBitOperationsBuiltinKind.LeadingZeroCount,
+            "TrailingZeroCount" => SystemBitOperationsBuiltinKind.TrailingZeroCount,
+            "PopCount" => SystemBitOperationsBuiltinKind.PopCount,
+            "RotateLeft" => SystemBitOperationsBuiltinKind.RotateLeft,
+            "RotateRight" => SystemBitOperationsBuiltinKind.RotateRight,
+            _ => default
+        };
+
+        return sourceName is
+            "LeadingZeroCount"
+            or "TrailingZeroCount"
+            or "PopCount"
+            or "RotateLeft"
+            or "RotateRight";
+    }
+
+    private static bool TryResolveSystemBitOperationsBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemBitOperationsBuiltinKind builtinKind)
+    {
+        return TryGetSystemBitOperationsBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
+            || TryGetSystemBitOperationsBuiltin(moduleName: string.Empty, function.Name, out builtinKind);
+    }
+
+    private static int GetSystemBitOperationsSurfaceArity(SystemBitOperationsBuiltinKind builtinKind)
+    {
+        return builtinKind switch
+        {
+            SystemBitOperationsBuiltinKind.RotateLeft or SystemBitOperationsBuiltinKind.RotateRight => 2,
+            _ => 1
+        };
+    }
+
+    private static string GetSystemBitOperationsIntrinsicBaseName(SystemBitOperationsBuiltinKind builtinKind)
+    {
+        return builtinKind switch
+        {
+            SystemBitOperationsBuiltinKind.LeadingZeroCount => "ctlz",
+            SystemBitOperationsBuiltinKind.TrailingZeroCount => "cttz",
+            SystemBitOperationsBuiltinKind.PopCount => "ctpop",
+            SystemBitOperationsBuiltinKind.RotateLeft => "fshl",
+            SystemBitOperationsBuiltinKind.RotateRight => "fshr",
+            _ => throw new InvalidOperationException($"Unsupported System.BitOperations builtin '{builtinKind}'.")
+        };
+    }
+
+    private static string DescribeAsmArchitecture(StarkAsmArchitecture architecture)
+    {
+        return architecture switch
+        {
+            StarkAsmArchitecture.X86_64 => "x86_64",
+            StarkAsmArchitecture.AArch64 => "aarch64",
+            StarkAsmArchitecture.RiscV64 => "riscv64",
+            StarkAsmArchitecture.X86 => "x86",
+            StarkAsmArchitecture.Arm32 => "arm",
+            _ => "unknown"
+        };
+    }
+
+    private StarkTypeSymbol ValidateSystemMathBuiltinSignature(
+        TypedFunctionSignature function,
+        SystemMathBuiltinKind builtinKind,
+        int arity)
+    {
+        if (builtinKind == SystemMathBuiltinKind.SinCos)
+        {
+            return ValidateSystemMathSinCosBuiltinSignature(function).ScalarType;
+        }
+
+        if (function.ReturnType.Kind != StarkTypeKind.Float)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{function.Name}' requires a floating-point return type.");
+        }
+
+        if (function.Parameters.Count != arity)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{function.Name}' expects exactly {arity} parameter(s).");
+        }
+
+        foreach (var parameter in function.Parameters)
+        {
+            if (parameter.Type.Kind != StarkTypeKind.Float
+                || parameter.Type.BitWidth != function.ReturnType.BitWidth)
+            {
+                throw new InvalidOperationException(
+                $"System.Math builtin '{function.Name}' requires all parameters to match the floating-point return type '{function.ReturnType.DisplayName}'.");
+            }
+        }
+
+        if ((builtinKind is SystemMathBuiltinKind.ReciprocalEstimate or SystemMathBuiltinKind.ReciprocalSqrtEstimate)
+            && function.ReturnType.BitWidth != 32)
+        {
+            throw new InvalidOperationException(
+                $"System.Math builtin '{function.Name}' currently supports only 'f32' because the shared single-instruction surface is single-precision.");
+        }
+
+        return function.ReturnType;
+    }
+
+    private StarkTypeSymbol ValidateSystemBitOperationsBuiltinSignature(
+        TypedFunctionSignature function,
+        SystemBitOperationsBuiltinKind builtinKind,
+        int arity)
+    {
+        if (function.ReturnType.Kind != StarkTypeKind.Integer)
+        {
+            throw new InvalidOperationException($"System.BitOperations builtin '{function.Name}' requires an integer return type.");
+        }
+
+        if (function.ReturnType.BitWidth is not (32 or 64))
+        {
+            throw new InvalidOperationException(
+                $"System.BitOperations builtin '{function.Name}' currently supports only 'i32' and 'i64', but found '{function.ReturnType.DisplayName}'.");
+        }
+
+        if (function.Parameters.Count != arity)
+        {
+            throw new InvalidOperationException($"System.BitOperations builtin '{function.Name}' expects exactly {arity} parameter(s).");
+        }
+
+        foreach (var parameter in function.Parameters)
+        {
+            if (parameter.Type.Kind != StarkTypeKind.Integer
+                || parameter.Type.BitWidth != function.ReturnType.BitWidth)
+            {
+                throw new InvalidOperationException(
+                    $"System.BitOperations builtin '{function.Name}' requires all parameters to match the integer return type '{function.ReturnType.DisplayName}'.");
+            }
+        }
+
+        return function.ReturnType;
+    }
+
+    private SystemMathSinCosSignature ValidateSystemMathSinCosBuiltinSignature(TypedFunctionSignature function)
+    {
+        if (function.Parameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{function.Name}' expects exactly 1 parameter.");
+        }
+
+        var scalarType = function.Parameters[0].Type;
+        if (scalarType.Kind != StarkTypeKind.Float)
+        {
+            throw new InvalidOperationException($"System.Math builtin '{function.Name}' requires a floating-point input parameter.");
+        }
+
+        var namedType = ResolveNamedTypeSymbol(function.ReturnType);
+        if (namedType is null
+            || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+            || namedType.OrderedFields.Count != 2
+            || !namedType.TryGetField("Sin", out var sinField, out var sinFieldIndex)
+            || !namedType.TryGetField("Cos", out var cosField, out var cosFieldIndex)
+            || sinField.Type.Kind != StarkTypeKind.Float
+            || cosField.Type.Kind != StarkTypeKind.Float
+            || sinField.Type.BitWidth != scalarType.BitWidth
+            || cosField.Type.BitWidth != scalarType.BitWidth)
+        {
+            throw new InvalidOperationException(
+                $"System.Math builtin '{function.Name}' requires a two-field struct/record return type with 'Sin' and 'Cos' fields matching the floating-point parameter type '{scalarType.DisplayName}'.");
+        }
+
+        return new SystemMathSinCosSignature(scalarType, sinFieldIndex, cosFieldIndex);
     }
 
     private string RenderAbiParameter(
@@ -2210,6 +2959,13 @@ internal sealed class LlvmIrEmitter
     {
         plan = null!;
 
+        if (CompileTimeExpressionEvaluator.TryEvaluate(expression, out var constant)
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced)
+            && TryPlanCompileTimeConstant(coerced, targetType, out plan))
+        {
+            return true;
+        }
+
         if (!TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression))
         {
             return false;
@@ -2231,6 +2987,39 @@ internal sealed class LlvmIrEmitter
         }
 
         return false;
+    }
+
+    private bool TryPlanCompileTimeConstant(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType,
+        out GlobalInitializerPlan plan)
+    {
+        plan = null!;
+        string rendered;
+
+        switch (constant.Kind)
+        {
+            case CompileTimeConstantKind.Integer:
+                rendered = constant.IntegerValue.ToString();
+                break;
+            case CompileTimeConstantKind.Float:
+                rendered = CompileTimeExpressionEvaluator.FormatFloatLiteral(constant);
+                break;
+            case CompileTimeConstantKind.Bool:
+                rendered = constant.BoolValue ? "true" : "false";
+                break;
+            case CompileTimeConstantKind.Null:
+                rendered = "null";
+                break;
+            case CompileTimeConstantKind.Text when constant.TextLiteral is not null:
+                rendered = FormatGlobalStringConstantValue(constant.TextLiteral, targetType);
+                break;
+            default:
+                return false;
+        }
+
+        plan = new GlobalInitializerPlan(rendered, []);
+        return true;
     }
 
     private bool TryPlanLiteralInitializer(
@@ -2658,6 +3447,7 @@ internal sealed class LlvmIrEmitter
         private readonly Func<string, string> _mapGlobalSymbolName;
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
+        private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
         private int _nextAbiTempId;
@@ -2671,7 +3461,8 @@ internal sealed class LlvmIrEmitter
             IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> stringConstants,
             Func<string, string> mapGlobalSymbolName,
             Func<StarkTypeSymbol, string> mapType,
-            Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout)
+            Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
+            Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedTypeSymbol)
         {
             _builder = builder;
             _function = function;
@@ -2682,6 +3473,7 @@ internal sealed class LlvmIrEmitter
             _mapGlobalSymbolName = mapGlobalSymbolName;
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
+            _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
         }
 
         public void Emit()
@@ -3160,7 +3952,11 @@ internal sealed class LlvmIrEmitter
 
                 var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"callarg_{parameter.SourceName}"))}";
                 AppendLine($"  {tempSlot} = alloca {MapType(parameter.SourceType)}");
-                AppendLine($"  store {MapType(parameter.SourceType)} {FormatValue(argument)}, ptr {tempSlot}");
+                if (!TryEmitScalarizedAggregateStore(tempSlot, parameter.SourceType, argument))
+                {
+                    AppendLine($"  store {MapType(parameter.SourceType)} {FormatValue(argument)}, ptr {tempSlot}");
+                }
+
                 arguments.Add($"ptr {tempSlot}");
             }
 
@@ -3221,11 +4017,20 @@ internal sealed class LlvmIrEmitter
         private void EmitStoreLocal(SsaStoreLocalInstruction storeLocal)
         {
             EnsureLocalSlotExists(storeLocal.LocalName, storeLocal.LocalType);
-            AppendLine($"  store {MapType(storeLocal.LocalType)} {FormatValue(storeLocal.Value)}, ptr %{EscapeIdentifier($"slot_{storeLocal.LocalName}")}");
+            var slot = $"%{EscapeIdentifier($"slot_{storeLocal.LocalName}")}";
+            if (!TryEmitScalarizedAggregateStore(slot, storeLocal.LocalType, storeLocal.Value))
+            {
+                AppendLine($"  store {MapType(storeLocal.LocalType)} {FormatValue(storeLocal.Value)}, ptr {slot}");
+            }
         }
 
         private void EmitCopyMemory(SsaCopyMemoryInstruction copyMemory)
         {
+            if (TryEmitScalarizedAggregateCopy(copyMemory.DestinationAddress, copyMemory.SourceAddress, copyMemory.CopyType))
+            {
+                return;
+            }
+
             if (_tryGetConcreteTypeLayout(copyMemory.CopyType) is { } layout
                 && layout.SizeBytes > AggregateMemcpyThresholdBytes)
             {
@@ -3241,7 +4046,266 @@ internal sealed class LlvmIrEmitter
 
         private void EmitStoreIndirect(SsaStoreIndirectInstruction storeIndirect)
         {
-            AppendLine($"  store {MapType(storeIndirect.ValueType)} {FormatValue(storeIndirect.Value)}, ptr {FormatValue(storeIndirect.Address)}");
+            if (!TryEmitScalarizedAggregateStore(FormatValue(storeIndirect.Address), storeIndirect.ValueType, storeIndirect.Value))
+            {
+                AppendLine($"  store {MapType(storeIndirect.ValueType)} {FormatValue(storeIndirect.Value)}, ptr {FormatValue(storeIndirect.Address)}");
+            }
+        }
+
+        private bool TryEmitScalarizedAggregateCopy(SsaValue destinationAddress, SsaValue sourceAddress, StarkTypeSymbol copyType)
+        {
+            if (!TryGetScalarizableAggregateLeaves(copyType, requireRepresentationPreserving: true, out var leaves))
+            {
+                return false;
+            }
+
+            foreach (var leaf in leaves)
+            {
+                var sourceLeafAddress = EmitScalarizedAggregateLeafAddress(sourceAddress, copyType, leaf.Indices, "copy_src");
+                var loadedLeaf = $"%{EscapeIdentifier(CreateAbiTempName("copy_scalar_load"))}";
+                AppendLine($"  {loadedLeaf} = load {MapType(leaf.Type)}, ptr {sourceLeafAddress}");
+                var destinationLeafAddress = EmitScalarizedAggregateLeafAddress(destinationAddress, copyType, leaf.Indices, "copy_dest");
+                AppendLine($"  store {MapType(leaf.Type)} {loadedLeaf}, ptr {destinationLeafAddress}");
+            }
+
+            return true;
+        }
+
+        private bool TryEmitScalarizedAggregateStore(string destinationAddress, StarkTypeSymbol valueType, SsaValue value)
+        {
+            if (!TryGetScalarizableAggregateLeaves(valueType, requireRepresentationPreserving: true, out var leaves))
+            {
+                return false;
+            }
+
+            foreach (var leaf in leaves)
+            {
+                var leafValue = EmitScalarizedAggregateLeafValue(value, valueType, leaf.Indices, leaf.Type);
+                var leafAddress = EmitScalarizedAggregateLeafAddress(destinationAddress, valueType, leaf.Indices, "store_dest");
+                AppendLine($"  store {MapType(leaf.Type)} {leafValue}, ptr {leafAddress}");
+            }
+
+            return true;
+        }
+
+        private bool TryGetScalarizableAggregateLeaves(
+            StarkTypeSymbol type,
+            bool requireRepresentationPreserving,
+            out IReadOnlyList<AggregateScalarLeaf> leaves)
+        {
+            leaves = Array.Empty<AggregateScalarLeaf>();
+
+            if (_tryGetConcreteTypeLayout(NormalizeAggregateType(type)) is not { } layout
+                || layout.SizeBytes <= 0
+                || layout.SizeBytes > AggregateScalarizationThresholdBytes)
+            {
+                return false;
+            }
+
+            var collectedLeaves = new List<AggregateScalarLeaf>();
+            if (!TryCollectScalarizableAggregateLeaves(
+                    NormalizeAggregateType(type),
+                    requireRepresentationPreserving,
+                    [],
+                    collectedLeaves))
+            {
+                return false;
+            }
+
+            if (collectedLeaves.Count == 0 || collectedLeaves.Count > AggregateScalarizationMaxLeafCount)
+            {
+                return false;
+            }
+
+            leaves = collectedLeaves;
+            return true;
+        }
+
+        private bool TryCollectScalarizableAggregateLeaves(
+            StarkTypeSymbol type,
+            bool requireRepresentationPreserving,
+            List<int> path,
+            List<AggregateScalarLeaf> leaves)
+        {
+            var normalizedType = NormalizeAggregateType(type);
+            switch (normalizedType.Kind)
+            {
+                case StarkTypeKind.Bool:
+                case StarkTypeKind.Integer:
+                case StarkTypeKind.Float:
+                case StarkTypeKind.RawPointer:
+                    leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
+                    return true;
+                case StarkTypeKind.FixedArray when normalizedType.ElementType is not null && normalizedType.FixedLength is int fixedLength:
+                    for (var index = 0; index < fixedLength; index++)
+                    {
+                        path.Add(index);
+                        if (!TryCollectScalarizableAggregateLeaves(normalizedType.ElementType, requireRepresentationPreserving, path, leaves))
+                        {
+                            path.RemoveAt(path.Count - 1);
+                            return false;
+                        }
+
+                        path.RemoveAt(path.Count - 1);
+                    }
+
+                    return true;
+                case StarkTypeKind.Named:
+                {
+                    var namedType = _resolveNamedTypeSymbol(normalizedType);
+                    if (namedType is null || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+                    {
+                        return false;
+                    }
+
+                    var sizeBytes = 0;
+                    var alignmentBytes = 1;
+                    for (var index = 0; index < namedType.OrderedFields.Count; index++)
+                    {
+                        var field = namedType.OrderedFields[index];
+                        var fieldLayout = _tryGetConcreteTypeLayout(NormalizeAggregateType(field.Type));
+                        if (fieldLayout is null)
+                        {
+                            return false;
+                        }
+
+                        var alignedOffset = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                        if (requireRepresentationPreserving && alignedOffset != sizeBytes)
+                        {
+                            return false;
+                        }
+
+                        path.Add(index);
+                        if (!TryCollectScalarizableAggregateLeaves(field.Type, requireRepresentationPreserving, path, leaves))
+                        {
+                            path.RemoveAt(path.Count - 1);
+                            return false;
+                        }
+
+                        path.RemoveAt(path.Count - 1);
+                        sizeBytes = checked(alignedOffset + fieldLayout.SizeBytes);
+                        alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+                    }
+
+                    if (requireRepresentationPreserving && AlignTo(sizeBytes, alignmentBytes) != sizeBytes)
+                    {
+                        return false;
+                    }
+
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        private string EmitScalarizedAggregateLeafValue(
+            SsaValue value,
+            StarkTypeSymbol rootType,
+            IReadOnlyList<int> indices,
+            StarkTypeSymbol leafType)
+        {
+            if (value is SsaZeroInitializerValue)
+            {
+                return FormatZeroInitializer(leafType);
+            }
+
+            if (value is SsaUndefValue)
+            {
+                return "undef";
+            }
+
+            var currentValue = FormatValue(value);
+            var currentType = NormalizeAggregateType(rootType);
+
+            foreach (var index in indices)
+            {
+                var nextType = GetAggregateElementType(currentType, index)
+                    ?? throw new UnsupportedBodyEmissionException(
+                        $"Cannot scalarize aggregate leaf '{value.Text}' for '{rootType.DisplayName}'.");
+                var extracted = $"%{EscapeIdentifier(CreateAbiTempName("scalar_extract"))}";
+                AppendLine($"  {extracted} = extractvalue {MapType(currentType)} {currentValue}, {index}");
+                currentValue = extracted;
+                currentType = NormalizeAggregateType(nextType);
+            }
+
+            return currentValue;
+        }
+
+        private string EmitScalarizedAggregateLeafAddress(
+            SsaValue baseAddress,
+            StarkTypeSymbol rootType,
+            IReadOnlyList<int> indices,
+            string purpose)
+        {
+            return EmitScalarizedAggregateLeafAddress(FormatValue(baseAddress), rootType, indices, purpose);
+        }
+
+        private string EmitScalarizedAggregateLeafAddress(
+            string baseAddress,
+            StarkTypeSymbol rootType,
+            IReadOnlyList<int> indices,
+            string purpose)
+        {
+            if (indices.Count == 0)
+            {
+                return baseAddress;
+            }
+
+            var leafAddress = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+            var gepIndices = string.Join(", ", indices.Select(static index => $"i32 {index}"));
+            AppendLine($"  {leafAddress} = getelementptr inbounds {MapType(rootType)}, ptr {baseAddress}, i32 0, {gepIndices}");
+            return leafAddress;
+        }
+
+        private StarkTypeSymbol? GetAggregateElementType(StarkTypeSymbol type, int index)
+        {
+            var normalizedType = NormalizeAggregateType(type);
+            return normalizedType.Kind switch
+            {
+                StarkTypeKind.FixedArray when normalizedType.ElementType is not null => normalizedType.ElementType,
+                StarkTypeKind.Named when _resolveNamedTypeSymbol(normalizedType) is { } namedType
+                                           && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                           && index >= 0
+                                           && index < namedType.OrderedFields.Count
+                    => namedType.OrderedFields[index].Type,
+                _ => null
+            };
+        }
+
+        private static StarkTypeSymbol NormalizeAggregateType(StarkTypeSymbol type)
+        {
+            return type with
+            {
+                BorrowKind = StarkBorrowKind.None,
+                AccessKind = StarkAccessKind.None,
+                InitializationKind = StarkInitializationKind.None,
+                IsMutableView = false
+            };
+        }
+
+        private static int AlignTo(int value, int alignment)
+        {
+            if (alignment <= 1)
+            {
+                return value;
+            }
+
+            var remainder = value % alignment;
+            return remainder == 0 ? value : checked(value + alignment - remainder);
+        }
+
+        private static string FormatZeroInitializer(StarkTypeSymbol type)
+        {
+            var normalizedType = NormalizeAggregateType(type);
+            return normalizedType.Kind switch
+            {
+                StarkTypeKind.Integer => "0",
+                StarkTypeKind.Float => "0.0",
+                StarkTypeKind.Bool => "false",
+                StarkTypeKind.RawPointer => "null",
+                _ => "zeroinitializer"
+            };
         }
 
         private void EmitMakeSliceFromLocal(string result, SsaMakeSliceFromLocalRValue makeSlice)
@@ -3451,7 +4515,7 @@ internal sealed class LlvmIrEmitter
             {
                 SsaValueReference reference => FormatValueReference(reference),
                 SsaIntegerConstant integer => integer.Value.ToString(),
-                SsaFloatConstant floating => floating.LiteralText,
+                SsaFloatConstant floating => FormatFloatLiteral(floating),
                 SsaStringConstant text => FormatStringConstantValue(text),
                 SsaBoolConstant boolean => boolean.Value ? "true" : "false",
                 SsaNullConstant => "null",
@@ -3460,6 +4524,37 @@ internal sealed class LlvmIrEmitter
                 SsaUndefValue => "undef",
                 _ => throw new UnsupportedBodyEmissionException($"Unsupported SSA value '{value.GetType().Name}'.")
             };
+        }
+
+        private static string FormatFloatLiteral(SsaFloatConstant floating)
+        {
+            if (!double.TryParse(
+                    floating.LiteralText,
+                    NumberStyles.Float | NumberStyles.AllowThousands,
+                    CultureInfo.InvariantCulture,
+                    out var parsed))
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Unable to parse floating-point literal '{floating.LiteralText}' for LLVM emission.");
+            }
+
+            if (double.IsNaN(parsed) || double.IsInfinity(parsed))
+            {
+                var bits = floating.Type.BitWidth == 32
+                    ? BitConverter.DoubleToUInt64Bits((double)(float)parsed)
+                    : BitConverter.DoubleToUInt64Bits(parsed);
+                return $"0x{bits:X16}";
+            }
+
+            var rendered = floating.Type.BitWidth == 32
+                ? ((double)(float)parsed).ToString("R", CultureInfo.InvariantCulture)
+                : parsed.ToString("R", CultureInfo.InvariantCulture);
+
+            return rendered.Contains('.', StringComparison.Ordinal)
+                || rendered.Contains('E', StringComparison.Ordinal)
+                || rendered.Contains('e', StringComparison.Ordinal)
+                ? rendered
+                : rendered + ".0";
         }
 
         private string RenderDirectArgument(AbiParameterSymbol parameter, SsaValue argument)
@@ -3570,6 +4665,8 @@ internal sealed class LlvmIrEmitter
             };
         }
 
+        private sealed record AggregateScalarLeaf(IReadOnlyList<int> Indices, StarkTypeSymbol Type);
+
         private void AppendLine(string text) => _builder.AppendLine(text);
     }
 
@@ -3609,6 +4706,51 @@ internal sealed class LlvmIrEmitter
         TryConcatAscii,
         TryConcatUnicode
     }
+
+    private enum SystemMathBuiltinKind
+    {
+        Sin,
+        Cos,
+        Tan,
+        Exp,
+        Exp2,
+        Log,
+        Log2,
+        Log10,
+        Asin,
+        Acos,
+        Atan,
+        Atan2,
+        Pow,
+        Sinh,
+        Cosh,
+        Tanh,
+        SinCos,
+        Sqrt,
+        FusedMultiplyAdd,
+        ReciprocalEstimate,
+        ReciprocalSqrtEstimate,
+        Ceiling,
+        Floor,
+        Truncate,
+        Round,
+        Min,
+        Max
+    }
+
+    private enum SystemBitOperationsBuiltinKind
+    {
+        LeadingZeroCount,
+        TrailingZeroCount,
+        PopCount,
+        RotateLeft,
+        RotateRight
+    }
+
+    private readonly record struct SystemMathSinCosSignature(
+        StarkTypeSymbol ScalarType,
+        int SinFieldIndex,
+        int CosFieldIndex);
 
     private static StringConstantKey CreateStringConstantKey(string literalText, StarkTypeSymbol type)
     {

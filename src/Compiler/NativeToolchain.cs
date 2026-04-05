@@ -96,14 +96,18 @@ internal static class NativeToolchain
         }
     }
 
-    public static NativeToolchainResult EmitObject(string llvmIr, string outputPath, string? preservedLlvmOutputPath = null)
+    public static NativeToolchainResult EmitObject(
+        string llvmIr,
+        string outputPath,
+        string? preservedLlvmOutputPath = null,
+        LlvmTargetInfo? targetInfo = null)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo);
     }
 
-    public static NativeToolchainResult EmitExecutable(string llvmIr, string outputPath)
+    public static NativeToolchainResult EmitExecutable(string llvmIr, string outputPath, LlvmTargetInfo? targetInfo = null)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo);
     }
 
     public static NativeToolchainResult LinkExecutable(
@@ -175,7 +179,12 @@ internal static class NativeToolchain
         }
     }
 
-    private static NativeToolchainResult CompileLlvmIr(string llvmIr, string outputPath, bool compileOnly, string? preservedLlvmOutputPath)
+    private static NativeToolchainResult CompileLlvmIr(
+        string llvmIr,
+        string outputPath,
+        bool compileOnly,
+        string? preservedLlvmOutputPath,
+        LlvmTargetInfo? targetInfo)
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
@@ -204,6 +213,7 @@ internal static class NativeToolchain
                 startInfo.ArgumentList.Add("-c");
             }
 
+            AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
             startInfo.ArgumentList.Add(fullOutputPath);
@@ -349,5 +359,42 @@ internal static class NativeToolchain
         return firstQuote >= 0 && lastQuote > firstQuote
             ? line[(firstQuote + 1)..lastQuote]
             : null;
+    }
+
+    private static void AppendTargetCodegenArguments(ICollection<string> arguments, LlvmTargetInfo? targetInfo)
+    {
+        if (targetInfo is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(targetInfo.Triple))
+        {
+            arguments.Add("-target");
+            arguments.Add(targetInfo.Triple);
+        }
+
+        if (!string.IsNullOrWhiteSpace(targetInfo.Cpu))
+        {
+            arguments.Add($"-mcpu={targetInfo.Cpu}");
+        }
+
+        if (targetInfo.Features is null)
+        {
+            return;
+        }
+
+        foreach (var feature in targetInfo.Features)
+        {
+            if (string.IsNullOrWhiteSpace(feature))
+            {
+                continue;
+            }
+
+            arguments.Add("-Xclang");
+            arguments.Add("-target-feature");
+            arguments.Add("-Xclang");
+            arguments.Add(feature);
+        }
     }
 }

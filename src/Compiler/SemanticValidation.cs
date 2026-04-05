@@ -2447,6 +2447,12 @@ internal sealed class SemanticValidator
         StarkParser.ExpressionContext expression,
         StarkTypeSymbol targetType)
     {
+        if (CompileTimeExpressionEvaluator.TryEvaluate(expression, out var constant)
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out _))
+        {
+            return true;
+        }
+
         if (!TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression))
         {
             return false;

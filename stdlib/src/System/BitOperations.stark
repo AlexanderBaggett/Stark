@@ -1,0 +1,16 @@
+module System.BitOperations
+
+public finite law i32 LeadingZeroCount(i32 value);
+public finite law i64 LeadingZeroCount(i64 value);
+
+public finite law i32 TrailingZeroCount(i32 value);
+public finite law i64 TrailingZeroCount(i64 value);
+
+public finite law i32 PopCount(i32 value);
+public finite law i64 PopCount(i64 value);
+
+public finite law i32 RotateLeft(i32 value, i32 amount);
+public finite law i64 RotateLeft(i64 value, i64 amount);
+
+public finite law i32 RotateRight(i32 value, i32 amount);
+public finite law i64 RotateRight(i64 value, i64 amount);

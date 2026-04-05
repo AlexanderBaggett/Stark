@@ -1,0 +1,86 @@
+module System.Math
+
+public struct SinCosF32 {
+    f32 Sin;
+    f32 Cos;
+}
+
+public struct SinCosF64 {
+    f64 Sin;
+    f64 Cos;
+}
+
+public finite law f32 Sin(f32 value);
+public finite law f64 Sin(f64 value);
+
+public finite law f32 Cos(f32 value);
+public finite law f64 Cos(f64 value);
+
+public finite law f32 Tan(f32 value);
+public finite law f64 Tan(f64 value);
+
+public finite law f32 Exp(f32 value);
+public finite law f64 Exp(f64 value);
+
+public finite law f32 Exp2(f32 value);
+public finite law f64 Exp2(f64 value);
+
+public finite law f32 Log(f32 value);
+public finite law f64 Log(f64 value);
+
+public finite law f32 Log2(f32 value);
+public finite law f64 Log2(f64 value);
+
+public finite law f32 Log10(f32 value);
+public finite law f64 Log10(f64 value);
+
+public finite law f32 Asin(f32 value);
+public finite law f64 Asin(f64 value);
+
+public finite law f32 Acos(f32 value);
+public finite law f64 Acos(f64 value);
+
+public finite law f32 Atan(f32 value);
+public finite law f64 Atan(f64 value);
+
+public finite law f32 Atan2(f32 y, f32 x);
+public finite law f64 Atan2(f64 y, f64 x);
+
+public finite law f32 Pow(f32 value, f32 exponent);
+public finite law f64 Pow(f64 value, f64 exponent);
+
+public finite law f32 Sinh(f32 value);
+public finite law f64 Sinh(f64 value);
+
+public finite law f32 Cosh(f32 value);
+public finite law f64 Cosh(f64 value);
+
+public finite law f32 Tanh(f32 value);
+public finite law f64 Tanh(f64 value);
+
+public finite law SinCosF32 SinCos(f32 value);
+public finite law SinCosF64 SinCos(f64 value);
+
+public finite law f32 Sqrt(f32 value);
+public finite law f64 Sqrt(f64 value);
+public finite law f32 FusedMultiplyAdd(f32 left, f32 right, f32 addend);
+public finite law f64 FusedMultiplyAdd(f64 left, f64 right, f64 addend);
+
+public finite law f32 Ceiling(f32 value);
+public finite law f64 Ceiling(f64 value);
+
+public finite law f32 Floor(f32 value);
+public finite law f64 Floor(f64 value);
+
+public finite law f32 Truncate(f32 value);
+public finite law f64 Truncate(f64 value);
+
+public finite law f32 Round(f32 value);
+public finite law f64 Round(f64 value);
+public finite law f32 Min(f32 left, f32 right);
+public finite law f64 Min(f64 left, f64 right);
+public finite law f32 Max(f32 left, f32 right);
+public finite law f64 Max(f64 left, f64 right);
+
+public finite law f32 ReciprocalEstimate(f32 value);
+public finite law f32 ReciprocalSqrtEstimate(f32 value);

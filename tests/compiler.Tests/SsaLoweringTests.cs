@@ -57,7 +57,7 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
-    public void TrivialPhiNodesAreRemovedAndRewritten()
+    public void OptimizedSsaRemovesTrivialPhiNodesAndRewritesReturns()
     {
         var result = Compile(
             """
@@ -76,13 +76,12 @@ public sealed class SsaLoweringTests
         """);
 
         Assert.True(result.Succeeded);
-        var function = Assert.Single(GetSsa(result).Functions);
+        var function = Assert.Single(GetOptimizedSsa(result).Functions);
 
         Assert.All(function.Blocks, static block => Assert.Empty(block.Phis));
         Assert.Contains(
             function.Blocks,
-            static block => block.Label.Contains("if_join", StringComparison.Ordinal)
-                && block.Terminator.Value is SsaValueReference);
+            static block => block.Terminator.Value is SsaIntegerConstant { Value: var value } && value == 7);
     }
 
     [Fact]
@@ -827,6 +826,13 @@ public sealed class SsaLoweringTests
     private static SsaIrModule GetSsa(CompilationResult result)
     {
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        return ssa;
+    }
+
+    private static SsaIrModule GetOptimizedSsa(CompilationResult result)
+    {
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
         Assert.NotNull(ssa);
         return ssa;
     }

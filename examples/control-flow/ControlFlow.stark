@@ -1,0 +1,18 @@
+module ControlFlow
+
+export ffi fn i32 main() {
+    stack i32 index = 0;
+    stack i32 total = 0;
+
+    while willexit (index < 5) {
+        total += index;
+        index += 1;
+    }
+
+    switch (total) {
+        case 10:
+            return 0;
+        default:
+            return 1;
+    }
+}

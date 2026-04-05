@@ -1,5 +1,7 @@
 # Stark Language Reference
 
+Remember this languge aims to be faster than idiomatic C or Rust on most projects, we must chose the best posible optimization strategy and explore optimization opportunities.
+
 This document is the consolidated reference for Stark.
 
 It defines the source-level Stark language contract.

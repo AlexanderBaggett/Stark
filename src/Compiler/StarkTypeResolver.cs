@@ -338,36 +338,10 @@ internal sealed class StarkTypeResolver
         return literal.MINUS() is null ? value : -value;
     }
 
-    private static BigInteger? TryEvaluateConstantInteger(StarkParser.ExpressionContext expression)
+    private BigInteger? TryEvaluateConstantInteger(StarkParser.ExpressionContext expression)
     {
-        var postfixExpression = expression.assignmentExpression()
-            .conditionalExpression()
-            ?.logicalOrExpression()
-            ?.logicalAndExpression(0)
-            ?.bitwiseOrExpression(0)
-            ?.bitwiseXorExpression(0)
-            ?.bitwiseAndExpression(0)
-            ?.equalityExpression(0)
-            ?.relationalExpression(0)
-            ?.shiftExpression(0)
-            ?.additiveExpression(0)
-            ?.multiplicativeExpression(0)
-            ?.unaryExpression(0)
-            ?.powerExpression()
-            ?.postfixExpression();
-
-        if (postfixExpression is not null && postfixExpression.postfixPart().Length == 0)
-        {
-            var literal = postfixExpression.primaryExpression()
-                ?.literal()
-                ?.signedIntegerLiteral();
-
-            if (literal is not null)
-            {
-                return ParseSignedIntegerLiteral(literal);
-            }
-        }
-
-        return null;
+        return CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out var value)
+            ? value
+            : null;
     }
 }

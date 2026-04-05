@@ -107,6 +107,70 @@ public sealed class ExamplesCompileRunTests
     }
 
     [Fact]
+    public async Task ArithmeticExampleCompilesAndRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-examples-arithmetic-");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "arithmetic.exe" : "arithmetic");
+
+        try
+        {
+            var result = await CompileExecutableAsync(
+                Path.Combine(repositoryRoot, "examples", "arithmetic", "Arithmetic.stark"),
+                outputPath);
+
+            Assert.Contains("Emitted executable:", result.Stdout);
+
+            var processResult = await RunNativeExecutableAsync(outputPath);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal(string.Empty, processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task ControlFlowExampleCompilesAndRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-examples-control-flow-");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "control-flow.exe" : "control-flow");
+
+        try
+        {
+            var result = await CompileExecutableAsync(
+                Path.Combine(repositoryRoot, "examples", "control-flow", "ControlFlow.stark"),
+                outputPath);
+
+            Assert.Contains("Emitted executable:", result.Stdout);
+
+            var processResult = await RunNativeExecutableAsync(outputPath);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal(string.Empty, processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task StaticLibraryExampleBuildsAndRunsFromPackage()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

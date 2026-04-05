@@ -14,6 +14,28 @@ dotnet run --project src -- examples/hello.stark --emit-exe -I stdlib/dist -o ex
 ./examples/hello
 ```
 
+## `arithmetic/Arithmetic.stark`
+
+Small arithmetic check that exercises local variables, integer operators, and a simple `if` guard.
+
+Build and run it directly:
+
+```bash
+dotnet run --project src -- examples/arithmetic/Arithmetic.stark --emit-exe -o examples/arithmetic/arithmetic
+./examples/arithmetic/arithmetic
+```
+
+## `control-flow/ControlFlow.stark`
+
+Compact control-flow sample that combines a `while` loop with a `switch` statement.
+
+Build and run it directly:
+
+```bash
+dotnet run --project src -- examples/control-flow/ControlFlow.stark --emit-exe -o examples/control-flow/control-flow
+./examples/control-flow/control-flow
+```
+
 ## `multi-module/`
 
 Two-source-file example that shows cross-module imports and a public helper function.

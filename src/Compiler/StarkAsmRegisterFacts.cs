@@ -1,14 +1,23 @@
 namespace Stark.Compiler;
 
+internal enum StarkAsmRegisterClass
+{
+    Unknown,
+    GeneralPurpose,
+    FloatingPoint
+}
+
 internal static class StarkAsmRegisterFacts
 {
-    private static readonly IReadOnlySet<string> X86_64Registers = CreateSet(
+    private static readonly IReadOnlySet<string> X86_64GeneralPurposeRegisters = CreateSet(
     [
         "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
         "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
     ]);
 
-    private static readonly IReadOnlySet<string> AArch64Registers = CreateSet(
+    private static readonly IReadOnlySet<string> X86_64FloatingPointRegisters = CreateIndexedSet("xmm", 16);
+
+    private static readonly IReadOnlySet<string> AArch64GeneralPurposeRegisters = CreateSet(
     [
         "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
         "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
@@ -20,7 +29,11 @@ internal static class StarkAsmRegisterFacts
         "w24", "w25", "w26", "w27", "w28", "w29", "w30"
     ]);
 
-    private static readonly IReadOnlySet<string> RiscV64Registers = CreateSet(
+    private static readonly IReadOnlySet<string> AArch64FloatingPointRegisters = CreateSet(
+        Enumerable.Range(0, 32).Select(index => $"s{index}")
+            .Concat(Enumerable.Range(0, 32).Select(index => $"d{index}")));
+
+    private static readonly IReadOnlySet<string> RiscV64GeneralPurposeRegisters = CreateSet(
     [
         "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
         "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
@@ -33,28 +46,42 @@ internal static class StarkAsmRegisterFacts
         "fp"
     ]);
 
-    private static readonly IReadOnlySet<string> X86Registers = CreateSet(
+    private static readonly IReadOnlySet<string> RiscV64FloatingPointRegisters = CreateSet(Array.Empty<string>());
+
+    private static readonly IReadOnlySet<string> X86GeneralPurposeRegisters = CreateSet(
     [
         "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"
     ]);
 
-    private static readonly IReadOnlySet<string> Arm32Registers = CreateSet(
+    private static readonly IReadOnlySet<string> X86FloatingPointRegisters = CreateIndexedSet("xmm", 8);
+
+    private static readonly IReadOnlySet<string> Arm32GeneralPurposeRegisters = CreateSet(
     [
         "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7",
         "r8", "r9", "r10", "r11", "r12", "sp", "lr", "pc"
     ]);
 
+    private static readonly IReadOnlySet<string> Arm32FloatingPointRegisters = CreateSet(Array.Empty<string>());
+
     public static bool IsValidRegister(StarkAsmArchitecture architecture, string registerName)
+    {
+        return TryGetRegisterClass(architecture, registerName, out _);
+    }
+
+    public static bool TryGetRegisterClass(
+        StarkAsmArchitecture architecture,
+        string registerName,
+        out StarkAsmRegisterClass registerClass)
     {
         var normalized = Normalize(registerName);
         return architecture switch
         {
-            StarkAsmArchitecture.X86_64 => X86_64Registers.Contains(normalized),
-            StarkAsmArchitecture.AArch64 => AArch64Registers.Contains(normalized),
-            StarkAsmArchitecture.RiscV64 => RiscV64Registers.Contains(normalized),
-            StarkAsmArchitecture.X86 => X86Registers.Contains(normalized),
-            StarkAsmArchitecture.Arm32 => Arm32Registers.Contains(normalized),
-            _ => false
+            StarkAsmArchitecture.X86_64 => TryGetRegisterClass(normalized, X86_64GeneralPurposeRegisters, X86_64FloatingPointRegisters, out registerClass),
+            StarkAsmArchitecture.AArch64 => TryGetRegisterClass(normalized, AArch64GeneralPurposeRegisters, AArch64FloatingPointRegisters, out registerClass),
+            StarkAsmArchitecture.RiscV64 => TryGetRegisterClass(normalized, RiscV64GeneralPurposeRegisters, RiscV64FloatingPointRegisters, out registerClass),
+            StarkAsmArchitecture.X86 => TryGetRegisterClass(normalized, X86GeneralPurposeRegisters, X86FloatingPointRegisters, out registerClass),
+            StarkAsmArchitecture.Arm32 => TryGetRegisterClass(normalized, Arm32GeneralPurposeRegisters, Arm32FloatingPointRegisters, out registerClass),
+            _ => TryGetUnknownRegisterClass(out registerClass)
         };
     }
 
@@ -63,8 +90,41 @@ internal static class StarkAsmRegisterFacts
         return registerName.Trim().ToLowerInvariant();
     }
 
+    private static bool TryGetRegisterClass(
+        string normalizedRegisterName,
+        IReadOnlySet<string> generalPurposeRegisters,
+        IReadOnlySet<string> floatingPointRegisters,
+        out StarkAsmRegisterClass registerClass)
+    {
+        if (generalPurposeRegisters.Contains(normalizedRegisterName))
+        {
+            registerClass = StarkAsmRegisterClass.GeneralPurpose;
+            return true;
+        }
+
+        if (floatingPointRegisters.Contains(normalizedRegisterName))
+        {
+            registerClass = StarkAsmRegisterClass.FloatingPoint;
+            return true;
+        }
+
+        registerClass = StarkAsmRegisterClass.Unknown;
+        return false;
+    }
+
+    private static bool TryGetUnknownRegisterClass(out StarkAsmRegisterClass registerClass)
+    {
+        registerClass = StarkAsmRegisterClass.Unknown;
+        return false;
+    }
+
     private static IReadOnlySet<string> CreateSet(IEnumerable<string> registers)
     {
         return registers.ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static IReadOnlySet<string> CreateIndexedSet(string prefix, int count)
+    {
+        return CreateSet(Enumerable.Range(0, count).Select(index => $"{prefix}{index}"));
     }
 }

@@ -1,5 +1,8 @@
 # Standard Library
 
+Remember this languge aims to be faster than idiomatic C or Rust on most projects, we must chose the best posible optimization strategy and explore optimization opportunities.
+
+
 This document describes the planned standard library design for Stark.
 
 It replaces the current first-slice libc-backed plan with a cross-platform `System` package built around:
@@ -37,10 +40,12 @@ User code calls `System.Console` or `System.IO.*` and never touches platform sys
 The current public module references live here:
 
 - [System](stdlib/System.md)
+- [System.BitOperations](stdlib/System.BitOperations.md)
 - [System.Console](stdlib/System.Console.md)
 - [System.IO](stdlib/System.IO.md)
 - [System.IO.File](stdlib/System.IO.File.md)
 - [System.IO.Path](stdlib/System.IO.Path.md)
+- [System.Math](stdlib/System.Math.md)
 - [System.Text](stdlib/System.Text.md)
 
 ## Module Layout
@@ -50,6 +55,7 @@ The package root is `System`.
 Repository source layout:
 
 - `stdlib/src/System.stark`
+- `stdlib/src/System/BitOperations.stark`
 - `stdlib/src/System/Console.stark`
 - `stdlib/src/System/IO.stark`
 - `stdlib/src/System/IO/File.stark`
@@ -65,6 +71,7 @@ Repository source layout:
 Public module surface:
 
 - `System`
+- `System.BitOperations`
 - `System.Console`
 - `System.IO`
 - `System.IO.File`
@@ -83,8 +90,10 @@ Internal modules:
 `System.stark` is a pure package root that re-exports the public submodules:
 
 ```stark
+export import System.BitOperations
 export import System.Console
 export import System.IO
+export import System.Math
 export import System.Text
 module System
 ```
@@ -584,14 +593,26 @@ The next implementation pass should focus on:
 
 ## System.Math
 
+Current status:
+
+- The LLVM-intrinsic scalar math slice is implemented for `f32` and `f64`.
+- `Math.SinCos` now returns a small `SinCosF32`/`SinCosF64` aggregate backed by `@llvm.sincos.*`.
+- The current hardware/compiler-intrinsic math batch is implemented for `Math.Sqrt`, `Math.FusedMultiplyAdd`, `Math.ReciprocalEstimate`, `Math.ReciprocalSqrtEstimate`, `Math.Ceiling`, `Math.Floor`, `Math.Truncate`, `Math.Round`, `Math.Min`, and `Math.Max` on x86/x64 and ARM64.
+- On non-Windows targets, only the LLVM-intrinsic-backed math functions currently add `-lm`; the hardware-asm batch does not.
+- `Math.ReciprocalEstimate` and `Math.ReciprocalSqrtEstimate` are currently exposed as `f32` only so the shared single-instruction surface stays aligned across x86/x64 and ARM64.
+- For v1, x86/x64 hardware math lowerings target a modern baseline rather than per-feature CPU gating. `Math.Ceiling`, `Math.Floor`, `Math.Truncate`, and `Math.Round` therefore assume SSE4.1-capable x86/x64 machines.
+- `Math.FusedMultiplyAdd` on x86/x64 currently assumes FMA3 support.
+- If older x86/x64 compatibility is added later, prefer a compile-time fallback lowering mode over runtime CPU dispatch so the `System.Math` API surface stays unchanged and builds remain explicit and reproducible.
+- `System.BitOperations` is now public and lowers through LLVM bit intrinsics so the backend can pick the documented instruction or short instruction sequence for the active target.
+
 ### Use ASM/Compiler Intrinsics for these functions
 
 | Function | x86/x64 Instruction | ARM64 Instruction | Notes |
 |---|---|---|---|
 | `Math.Sqrt` | `vsqrtsd` / `vsqrtss` | `fsqrt` | AVX; falls to `sqrtsd` on SSE2 |
 | `Math.FusedMultiplyAdd` | `vfmadd213sd/ss` | `fmadd` | Requires FMA3; also emits `vfnmadd`, `vfmsub` variants |
-| `Math.ReciprocalSqrtEstimate` | `rsqrtss` | `frsqrte` | Approximate; ~12-bit precision |
-| `Math.ReciprocalEstimate` | `rcpss` | `frecpe` | Approximate 1/x |
+| `Math.ReciprocalSqrtEstimate` | `rsqrtss` | `frsqrte` | Approximate; ~12-bit precision; currently `f32` only |
+| `Math.ReciprocalEstimate` | `rcpss` | `frecpe` | Approximate 1/x; currently `f32` only |
 | `Math.Ceiling` | `vroundsd` (mode 2) | `frintp` | Requires SSE4.1 |
 | `Math.Floor` | `vroundsd` (mode 1) | `frintm` | Requires SSE4.1 |
 | `Math.Truncate` | `vroundsd` (mode 3) | `frintz` | Promoted to HW intrinsic in .NET 7 |

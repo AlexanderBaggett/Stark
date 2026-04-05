@@ -29,7 +29,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ConstantBranchConditionsFoldToUnconditionalBranches()
+    public void ConstantBranchConditionsCanFoldAllTheWayToReturn()
     {
         var result = Compile(
             """
@@ -47,13 +47,13 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("br label %bb1", llvm);
         Assert.Contains("ret i32 1", llvm);
         Assert.DoesNotContain("br i1", llvm);
+        Assert.DoesNotContain("br label", llvm);
     }
 
     [Fact]
-    public void BranchJoinEmitsPhiNode()
+    public void BranchJoinCanOptimizeToDirectReturns()
     {
         var result = Compile(
             """
@@ -74,8 +74,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("phi i32", llvm);
-        Assert.Contains("[ 1, %bb1 ], [ 2, %bb2 ]", llvm);
+        Assert.Contains("br i1 %arg_flag, label %bb1, label %bb2", llvm);
+        Assert.Contains("ret i32 1", llvm);
+        Assert.Contains("ret i32 2", llvm);
+        Assert.DoesNotContain("phi i32", llvm);
     }
 
     [Fact]
@@ -185,6 +187,28 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("%Pair = type { i32, i32 }", llvm);
         Assert.Contains("@Origin = constant %Pair { i32 1, i32 2 }", llvm);
+        Assert.Contains("@Values = constant [3 x i32] [i32 4, i32 7, i32 9]", llvm);
+    }
+
+    [Fact]
+    public void ConstArithmeticGlobalsEmitConcreteInitializers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32 Answer = (1 + 2) * 3;
+            const i32[1 + 2] Values = { 4, 7, 9 };
+
+            finite i32 Run() {
+                return Answer + Values[2];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("@Answer = constant i32 9", llvm);
         Assert.Contains("@Values = constant [3 x i32] [i32 4, i32 7, i32 9]", llvm);
     }
 
@@ -519,6 +543,42 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc float @Run()", llvm);
         Assert.Contains("ret float 8", llvm);
         Assert.DoesNotContain("@llvm.pow.f32", llvm);
+    }
+
+    [Fact]
+    public void FloatLiteralArgumentsEmitLlvmDecimalConstants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn f64 Echo(f64 value) {
+                return value;
+            }
+
+            fn i32 Run() {
+                if (Echo(0.0) != 0.0) {
+                    return 1;
+                }
+
+                if (Echo(3.0) != 3.0) {
+                    return 2;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("call double @Echo(double 0.0)", llvm);
+        Assert.Contains("fcmp one double %", llvm);
+        Assert.Contains(", 0.0", llvm);
+        Assert.Contains("call double @Echo(double 3.0)", llvm);
+        Assert.Contains(", 3.0", llvm);
+        Assert.DoesNotContain("call double @Echo(double 0)", llvm);
+        Assert.DoesNotContain("call double @Echo(double 3)", llvm);
     }
 
     [Fact]
@@ -943,6 +1003,255 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
+    {
+        var result = Compile(
+            """
+            module System.Math
+
+            public struct SinCosF64 {
+                f64 Sin;
+                f64 Cos;
+            }
+
+            public finite law f32 Sin(f32 value);
+            public finite law f64 Cos(f64 value);
+            public finite law f64 Atan2(f64 y, f64 x);
+            public finite law f64 Pow(f64 value, f64 exponent);
+            public finite law f32 Tanh(f32 value);
+            public finite law SinCosF64 SinCos(f64 value);
+            public finite law f32 Min(f32 left, f32 right);
+            public finite law f64 Max(f64 left, f64 right);
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc float @Sin(float %arg_value)", llvm);
+        Assert.Contains("define fastcc double @Cos(double %arg_value)", llvm);
+        Assert.Contains("define fastcc double @Atan2(double %arg_y, double %arg_x)", llvm);
+        Assert.Contains("define fastcc double @Pow(double %arg_value, double %arg_exponent)", llvm);
+        Assert.Contains("define fastcc float @Tanh(float %arg_value)", llvm);
+        Assert.Contains("define fastcc %SinCosF64 @SinCos(double %arg_value)", llvm);
+        Assert.Contains("define fastcc float @Min(float %arg_left, float %arg_right)", llvm);
+        Assert.Contains("define fastcc double @Max(double %arg_left, double %arg_right)", llvm);
+        Assert.Contains("call float @llvm.sin.f32(float %arg_value)", llvm);
+        Assert.Contains("call double @llvm.cos.f64(double %arg_value)", llvm);
+        Assert.Contains("call double @llvm.atan2.f64(double %arg_y, double %arg_x)", llvm);
+        Assert.Contains("call double @llvm.pow.f64(double %arg_value, double %arg_exponent)", llvm);
+        Assert.Contains("call float @llvm.tanh.f32(float %arg_value)", llvm);
+        Assert.Contains("call { double, double } @llvm.sincos.f64(double %arg_value)", llvm);
+        Assert.Contains("call float @llvm.minnum.f32(float %arg_left, float %arg_right)", llvm);
+        Assert.Contains("call double @llvm.maxnum.f64(double %arg_left, double %arg_right)", llvm);
+        Assert.Contains("extractvalue { double, double } %math_pair, 0", llvm);
+        Assert.Contains("extractvalue { double, double } %math_pair, 1", llvm);
+        Assert.Contains("insertvalue %SinCosF64 zeroinitializer, double %math_sin, 0", llvm);
+        Assert.Contains("insertvalue %SinCosF64 %math_with_sin, double %math_cos, 1", llvm);
+        Assert.Contains("declare float @llvm.sin.f32(float)", llvm);
+        Assert.Contains("declare double @llvm.cos.f64(double)", llvm);
+        Assert.Contains("declare double @llvm.atan2.f64(double, double)", llvm);
+        Assert.Contains("declare double @llvm.pow.f64(double, double)", llvm);
+        Assert.Contains("declare float @llvm.tanh.f32(float)", llvm);
+        Assert.Contains("declare { double, double } @llvm.sincos.f64(double)", llvm);
+        Assert.Contains("declare float @llvm.minnum.f32(float, float)", llvm);
+        Assert.Contains("declare double @llvm.maxnum.f64(double, double)", llvm);
+        Assert.DoesNotContain("declare fastcc float @Sin(", llvm);
+        Assert.DoesNotContain("declare fastcc double @Cos(", llvm);
+        Assert.DoesNotContain("declare fastcc double @Atan2(", llvm);
+        Assert.DoesNotContain("declare fastcc double @Pow(", llvm);
+        Assert.DoesNotContain("declare fastcc float @Tanh(", llvm);
+        Assert.DoesNotContain("declare fastcc %SinCosF64 @SinCos(", llvm);
+        Assert.DoesNotContain("declare fastcc float @Min(", llvm);
+        Assert.DoesNotContain("declare fastcc double @Max(", llvm);
+    }
+
+    [Fact]
+    public void SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
+    {
+        var result = Compile(
+            """
+            module System.BitOperations
+
+            public finite law i32 LeadingZeroCount(i32 value);
+            public finite law i64 TrailingZeroCount(i64 value);
+            public finite law i32 PopCount(i32 value);
+            public finite law i64 RotateLeft(i64 value, i64 amount);
+            public finite law i32 RotateRight(i32 value, i32 amount);
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @LeadingZeroCount(i32 %arg_value)", llvm);
+        Assert.Contains("define fastcc i64 @TrailingZeroCount(i64 %arg_value)", llvm);
+        Assert.Contains("define fastcc i32 @PopCount(i32 %arg_value)", llvm);
+        Assert.Contains("define fastcc i64 @RotateLeft(i64 %arg_value, i64 %arg_amount)", llvm);
+        Assert.Contains("define fastcc i32 @RotateRight(i32 %arg_value, i32 %arg_amount)", llvm);
+        Assert.Contains("call i32 @llvm.ctlz.i32(i32 %arg_value, i1 false)", llvm);
+        Assert.Contains("call i64 @llvm.cttz.i64(i64 %arg_value, i1 false)", llvm);
+        Assert.Contains("call i32 @llvm.ctpop.i32(i32 %arg_value)", llvm);
+        Assert.Contains("call i64 @llvm.fshl.i64(i64 %arg_value, i64 %arg_value, i64 %arg_amount)", llvm);
+        Assert.Contains("call i32 @llvm.fshr.i32(i32 %arg_value, i32 %arg_value, i32 %arg_amount)", llvm);
+        Assert.Contains("declare i32 @llvm.ctlz.i32(i32, i1 immarg)", llvm);
+        Assert.Contains("declare i64 @llvm.cttz.i64(i64, i1 immarg)", llvm);
+        Assert.Contains("declare i32 @llvm.ctpop.i32(i32)", llvm);
+        Assert.Contains("declare i64 @llvm.fshl.i64(i64, i64, i64)", llvm);
+        Assert.Contains("declare i32 @llvm.fshr.i32(i32, i32, i32)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @LeadingZeroCount(", llvm);
+        Assert.DoesNotContain("declare fastcc i64 @TrailingZeroCount(", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @PopCount(", llvm);
+        Assert.DoesNotContain("declare fastcc i64 @RotateLeft(", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @RotateRight(", llvm);
+    }
+
+    [Fact]
+    public void SystemMathHardwareBuiltinsEmitInlineAsmForX86_64()
+    {
+        var result = Compile(
+            """
+            module System.Math
+
+            public finite law f64 Sqrt(f64 value);
+            public finite law f32 FusedMultiplyAdd(f32 left, f32 right, f32 addend);
+            public finite law f64 FusedMultiplyAdd(f64 left, f64 right, f64 addend);
+            public finite law f32 ReciprocalEstimate(f32 value);
+            public finite law f32 ReciprocalSqrtEstimate(f32 value);
+            public finite law f32 Ceiling(f32 value);
+            public finite law f64 Floor(f64 value);
+            public finite law f64 Truncate(f64 value);
+            public finite law f64 Round(f64 value);
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc double @Sqrt(double %arg_value)", llvm);
+        Assert.Contains("call double asm \"sqrtsd %xmm0, %xmm0\", \"={xmm0},0\"(double %arg_value)", llvm);
+        Assert.Contains("call float asm \"vfmadd213ss %xmm2, %xmm1, %xmm0\", \"={xmm0},0,{xmm1},{xmm2}\"(", llvm);
+        Assert.Contains("call double asm \"vfmadd213sd %xmm2, %xmm1, %xmm0\", \"={xmm0},0,{xmm1},{xmm2}\"(", llvm);
+        Assert.Contains("define fastcc float @ReciprocalEstimate(float %arg_value)", llvm);
+        Assert.Contains("call float asm \"rcpss %xmm0, %xmm0\", \"={xmm0},0\"(float %arg_value)", llvm);
+        Assert.Contains("define fastcc float @ReciprocalSqrtEstimate(float %arg_value)", llvm);
+        Assert.Contains("call float asm \"rsqrtss %xmm0, %xmm0\", \"={xmm0},0\"(float %arg_value)", llvm);
+        Assert.Contains("define fastcc float @Ceiling(float %arg_value)", llvm);
+        Assert.Contains("call float asm \"roundss $$2, %xmm0, %xmm0\", \"={xmm0},0\"(float %arg_value)", llvm);
+        Assert.Contains("call double asm \"roundsd $$1, %xmm0, %xmm0\", \"={xmm0},0\"(double %arg_value)", llvm);
+        Assert.Contains("call double asm \"roundsd $$3, %xmm0, %xmm0\", \"={xmm0},0\"(double %arg_value)", llvm);
+        Assert.Contains("call double asm \"roundsd $$0, %xmm0, %xmm0\", \"={xmm0},0\"(double %arg_value)", llvm);
+        Assert.DoesNotContain("@llvm.sqrt.", llvm);
+        Assert.DoesNotContain("@llvm.ceil.", llvm);
+        Assert.DoesNotContain("@llvm.floor.", llvm);
+        Assert.DoesNotContain("@llvm.trunc.", llvm);
+        Assert.DoesNotContain("@llvm.roundeven.", llvm);
+    }
+
+    [Fact]
+    public void SystemMathHardwareBuiltinsEmitInlineAsmForAArch64()
+    {
+        var result = Compile(
+            """
+            module System.Math
+
+            public finite law f64 Sqrt(f64 value);
+            public finite law f32 FusedMultiplyAdd(f32 left, f32 right, f32 addend);
+            public finite law f64 FusedMultiplyAdd(f64 left, f64 right, f64 addend);
+            public finite law f32 ReciprocalEstimate(f32 value);
+            public finite law f32 ReciprocalSqrtEstimate(f32 value);
+            public finite law f32 Ceiling(f32 value);
+            public finite law f64 Floor(f64 value);
+            public finite law f64 Truncate(f64 value);
+            public finite law f64 Round(f64 value);
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("aarch64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("call double asm \"fsqrt d0, d0\", \"={d0},0\"(double %arg_value)", llvm);
+        Assert.Contains("call float asm \"fmadd s0, s0, s1, s2\", \"={s0},0,{s1},{s2}\"(", llvm);
+        Assert.Contains("call double asm \"fmadd d0, d0, d1, d2\", \"={d0},0,{d1},{d2}\"(", llvm);
+        Assert.Contains("call float asm \"frecpe s0, s0\", \"={s0},0\"(float %arg_value)", llvm);
+        Assert.Contains("call float asm \"frsqrte s0, s0\", \"={s0},0\"(float %arg_value)", llvm);
+        Assert.Contains("call float asm \"frintp s0, s0\", \"={s0},0\"(float %arg_value)", llvm);
+        Assert.Contains("call double asm \"frintm d0, d0\", \"={d0},0\"(double %arg_value)", llvm);
+        Assert.Contains("call double asm \"frintz d0, d0\", \"={d0},0\"(double %arg_value)", llvm);
+        Assert.Contains("call double asm \"frintn d0, d0\", \"={d0},0\"(double %arg_value)", llvm);
+    }
+
+    [Fact]
+    public void ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIr()
+    {
+        var result = Compile(
+            """
+            import System.Math
+            module Demo
+
+            fn f64 Run(f64 value) {
+                return System.Math.Sqrt(value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Math", "/virtual/System/Math.stark", IsExternal: false),
+                        """
+                        module System.Math
+
+                        public finite law f64 Sqrt(f64 value);
+                        """,
+                        "/virtual/System/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc double @System_Math_Sqrt(double %arg_value)", llvm);
+        Assert.Contains("call double @System_Math_Sqrt(double %arg_value)", llvm);
+        Assert.DoesNotContain("declare fastcc double @System_Math_Sqrt(", llvm);
+    }
+
+    [Fact]
+    public void ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIr()
+    {
+        var result = Compile(
+            """
+            import System.BitOperations
+            module Demo
+
+            fn i32 Run(i32 value) {
+                return System.BitOperations.PopCount(value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.BitOperations", "/virtual/System/BitOperations.stark", IsExternal: false),
+                        """
+                        module System.BitOperations
+
+                        public finite law i32 PopCount(i32 value);
+                        """,
+                        "/virtual/System/BitOperations.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @System_BitOperations_PopCount(i32 %arg_value)", llvm);
+        Assert.Contains("call i32 @System_BitOperations_PopCount(i32 %arg_value)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @System_BitOperations_PopCount(", llvm);
+    }
+
+    [Fact]
     public void HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody()
     {
         var result = Compile(
@@ -977,8 +1286,8 @@ public sealed class LlvmIrEmissionTests
                 return text;
             }
 
-            finite law ascii Run() {
-                return Echo("Hi");
+            finite law ascii Run(ascii input) {
+                return Echo(input);
             }
             """);
 
@@ -988,7 +1297,8 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
         Assert.Contains("define fastcc %stark_ascii @Echo(%stark_ascii %arg_text)", llvm);
         Assert.Contains("ret %stark_ascii %arg_text", llvm);
-        Assert.Contains("call %stark_ascii @Echo(%stark_ascii { ptr getelementptr inbounds ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 })", llvm);
+        Assert.Contains("define fastcc %stark_ascii @Run(%stark_ascii %arg_input)", llvm);
+        Assert.Contains("call %stark_ascii @Echo(%stark_ascii %arg_input)", llvm);
     }
 
     [Fact]
@@ -1134,7 +1444,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void StructFieldAccessEmitsConcreteAggregateTypeAndExtractvalue()
+    public void StructFieldAccessCanFoldToScalarReturn()
     {
         var result = Compile(
             """
@@ -1154,14 +1464,12 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Box = type { i32 }", llvm);
-        Assert.Contains("insertvalue %Box zeroinitializer, i32", llvm);
-        Assert.Contains("extractvalue %Box", llvm);
-        Assert.Contains("ret i32", llvm);
+        Assert.Contains("ret i32 41", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Run()", llvm);
     }
 
     [Fact]
-    public void FieldAssignmentEmitsAggregateInsertvalueUpdate()
+    public void FieldAssignmentCanFoldToScalarReturn()
     {
         var result = Compile(
             """
@@ -1182,13 +1490,12 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Box = type { i32 }", llvm);
-        Assert.True(CountOccurrences(llvm, "insertvalue %Box") >= 2);
-        Assert.Contains("extractvalue %Box", llvm);
+        Assert.Contains("ret i32 2", llvm);
         Assert.DoesNotContain("; LLVM body emission pending for Run", llvm);
     }
 
     [Fact]
-    public void RegisterObjectCreationKeepsDirectAggregateLlvmLowering()
+    public void RegisterObjectCreationCanFoldToScalarReturn()
     {
         var result = Compile(
             """
@@ -1208,7 +1515,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Run()", llvm);
-        Assert.Contains("extractvalue %Box", llvm);
+        Assert.Contains("ret i32 7", llvm);
         Assert.DoesNotContain("alloca %Box", llvm);
         Assert.DoesNotContain("; LLVM body emission pending for Run", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
@@ -1276,7 +1583,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void RecordTypeUsesConcreteAggregateLayout()
+    public void RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReads()
     {
         var result = Compile(
             """
@@ -1294,9 +1601,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Point = type { i32, i32 }", llvm);
-        Assert.Contains("insertvalue %Point zeroinitializer, i32", llvm);
-        Assert.Contains("insertvalue %Point", llvm);
-        Assert.Contains("extractvalue %Point", llvm);
+        Assert.Contains("ret i32 4", llvm);
     }
 
     [Fact]
@@ -1400,7 +1705,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void SmallAddressableAggregateCopyUsesDirectLoadStore()
+    public void SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStores()
     {
         var result = Compile(
             """
@@ -1425,8 +1730,39 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Pair = type { i32, i32 }", llvm);
-        Assert.Contains("getelementptr inbounds %Pair, ptr %slot_source", llvm);
-        Assert.Contains("getelementptr inbounds %Pair, ptr %slot_dest", llvm);
+        Assert.Equal(2, llvm.Split('\n').Count(static line => line.Contains("load i32, ptr %abi_copy_src_", StringComparison.Ordinal)));
+        Assert.Equal(2, llvm.Split('\n').Count(static line => line.Contains("store i32 %abi_copy_scalar_load_", StringComparison.Ordinal)));
+        Assert.DoesNotContain("load %Pair, ptr %v", llvm);
+        Assert.DoesNotContain("store %Pair %abi_copy_load_", llvm);
+        Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm);
+    }
+
+    [Fact]
+    public void SmallPaddedAggregateCopyPreservesWholeAggregateTransfer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i8 Tag;
+                i32 Value;
+            }
+
+            fn i32 Run() {
+                stack Pair source = new Pair() { Tag = 1, Value = 2 };
+                stack mut Pair dest = new Pair() { Tag = 0, Value = 0 };
+                stack rawptr<Pair> sourcePtr = &source;
+                stack rawptr<Pair> destPtr = &dest;
+                dest = source;
+                return dest.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Pair = type { i8, i32 }", llvm);
         Assert.Contains("load %Pair, ptr %v", llvm);
         Assert.Contains("store %Pair %abi_copy_load_", llvm);
         Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm);
@@ -1515,7 +1851,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("store %Pair undef, ptr %slot_source", llvm);
+        Assert.Equal(2, llvm.Split('\n').Count(static line => line.Contains("store i32 undef, ptr %abi_store_dest_", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -1767,7 +2103,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void FixedArrayInitializerAndIndexEmitConcreteArrayIr()
+    public void FixedArrayInitializerAndIndexCanFoldToScalarReturn()
     {
         var result = Compile(
             """
@@ -1783,14 +2119,13 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Run()", llvm);
-        Assert.Contains("insertvalue [3 x i32] zeroinitializer", llvm);
-        Assert.Contains("extractvalue [3 x i32]", llvm);
+        Assert.Contains("ret i32 2", llvm);
         Assert.DoesNotContain("alloca [3 x i32]", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Run()", llvm);
     }
 
     [Fact]
-    public void FixedArrayIndexAssignmentEmitsInsertvalueUpdate()
+    public void FixedArrayIndexAssignmentCanFoldToScalarReturn()
     {
         var result = Compile(
             """
@@ -1806,8 +2141,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.True(CountOccurrences(llvm, "insertvalue [3 x i32]") >= 2);
-        Assert.Contains("extractvalue [3 x i32]", llvm);
+        Assert.Contains("ret i32 9", llvm);
         Assert.DoesNotContain("alloca [3 x i32]", llvm);
     }
 
@@ -1970,9 +2304,9 @@ public sealed class LlvmIrEmissionTests
 
             ffi fn void Touch();
 
-            fn i32 Run() {
+            fn i32 Run(i32 left, i32 right) {
                 Touch();
-                return Math.Add(3, 4);
+                return Math.Add(left, right);
             }
             """,
             new CompilerOptions(
@@ -2071,6 +2405,36 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("call i64 @Syscall2(i64 2, ptr %arg_path)", llvm);
         Assert.DoesNotContain("; imported asm definition: Syscall.Syscall2", llvm);
         Assert.DoesNotContain("define i64 @Syscall2", llvm);
+    }
+
+    [Fact]
+    public void RootAsmFunctionsEmitFloatingPointRegisterBindings()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi asm(x86_64) fn f64 Identity(f64 value)
+                in("xmm0") value,
+                out("xmm0") return
+            {
+                "nop"
+            }
+
+            fn f64 Run(f64 value) {
+                return Identity(value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define double @Identity(double %arg_value) inlinehint", llvm);
+        Assert.Contains("call double asm sideeffect \"nop\", \"={xmm0},0,~{memory},~{dirflag},~{fpsr},~{flags}\"(double %arg_value)", llvm);
+        Assert.Contains("ret double %asm_result", llvm);
+        Assert.DoesNotContain("declare double @Identity", llvm);
     }
 
     [Fact]
@@ -2192,7 +2556,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void RootLawCallsToImportedAlwaysInlineLawBodiesEmitClosedWorldClones()
+    public void ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmission()
     {
         var result = Compile(
             """
@@ -2226,13 +2590,13 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_UseLaw() nounwind nosync nofree memory(none) alwaysinline", llvm);
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_LawOnly() nounwind nosync nofree memory(none) alwaysinline", llvm);
-        Assert.Contains("call i32 @__stark_law_clone_Math_UseLaw()", llvm);
+        Assert.DoesNotContain("__stark_law_clone_Math_UseLaw", llvm);
+        Assert.DoesNotContain("call i32 @Math_UseLaw()", llvm);
+        Assert.Contains("ret i32 1", llvm);
     }
 
     [Fact]
-    public void MixedLawAndNonLawRootCallersUseSelectiveImportedLawClones()
+    public void ConstantImportedLawCallsStillFoldInsideImpureCallers()
     {
         var result = Compile(
             """
@@ -2269,9 +2633,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_UseLaw() nounwind nosync nofree memory(none) alwaysinline", llvm);
-        Assert.Contains("call i32 @__stark_law_clone_Math_UseLaw()", llvm);
-        Assert.Contains("call i32 @Math_UseLaw()", llvm);
+        Assert.DoesNotContain("__stark_law_clone_Math_UseLaw", llvm);
+        Assert.DoesNotContain("call i32 @Math_UseLaw()", llvm);
+        Assert.Contains("call void @Touch()", llvm);
+        Assert.Contains("ret i32 1", llvm);
     }
 
     [Fact]
@@ -2282,13 +2647,13 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 UseLawClone() {
-                return Math.Numbers.Add(1, 2);
+            law i32 UseLawClone(i32 left, i32 right) {
+                return Math.Numbers.Add(left, right);
             }
 
-            fn i32 UseDirect() {
+            fn i32 UseDirect(i32 left, i32 right) {
                 Touch();
-                return Math.Numbers.Add(3, 4);
+                return Math.Numbers.Add(left, right);
             }
 
             ffi fn void Touch();
@@ -2315,8 +2680,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
-        Assert.Contains("call i32 @__stark_law_clone_Math_Numbers_Add(i32 1, i32 2)", llvm);
-        Assert.Contains("call i32 @Math_Numbers_Add(i32 3, i32 4)", llvm);
+        Assert.Contains("call i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right)", llvm);
+        Assert.Contains("call i32 @Math_Numbers_Add(i32 %arg_left, i32 %arg_right)", llvm);
     }
 
     [Fact]
@@ -2327,9 +2692,9 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            fn i32 Use() {
+            fn i32 Use(i32 value) {
                 Touch();
-                return Math.UseLaw();
+                return Math.UseLaw(value);
             }
 
             ffi fn void Touch();
@@ -2342,12 +2707,12 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        law i32 LawOnly() {
-                            return 1;
+                        law i32 LawOnly(i32 value) {
+                            return value + 1;
                         }
 
-                        public law i32 UseLaw() {
-                            return LawOnly();
+                        public law i32 UseLaw(i32 value) {
+                            return LawOnly(value);
                         }
                         """,
                         "/virtual/Math.stark"
@@ -2358,7 +2723,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.DoesNotContain("__stark_law_clone_Math_UseLaw", llvm);
-        Assert.Contains("call i32 @Math_UseLaw()", llvm);
+        Assert.Contains("call i32 @Math_UseLaw(i32 %arg_value)", llvm);
     }
 
     [Fact]
@@ -2369,8 +2734,8 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 Use() {
-                return Math.UseLaw();
+            law i32 Use(i32 value) {
+                return Math.UseLaw(value);
             }
             """,
             new CompilerOptions(
@@ -2381,8 +2746,8 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public inlinehint law i32 UseLaw() {
-                            return 1;
+                        public inlinehint law i32 UseLaw(i32 value) {
+                            return value + 1;
                         }
                         """,
                         "/virtual/Math.stark"
@@ -2393,7 +2758,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.DoesNotContain("__stark_law_clone_Math_UseLaw", llvm);
-        Assert.Contains("call i32 @Math_UseLaw()", llvm);
+        Assert.Contains("call i32 @Math_UseLaw(i32 %arg_value)", llvm);
     }
 
     [Fact]
@@ -2501,7 +2866,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("alloca [3 x i32]", llvm);
-        Assert.Contains("store [3 x i32]", llvm);
+        Assert.Equal(3, llvm.Split('\n').Count(static line => line.Contains("store i32 %abi_scalar_extract_", StringComparison.Ordinal)));
+        Assert.DoesNotContain("store [3 x i32]", llvm);
         Assert.Contains("getelementptr inbounds [3 x i32], ptr %slot_values, i32 0, i32 0", llvm);
         Assert.Contains("insertvalue { ptr, i64 } zeroinitializer, ptr", llvm);
         Assert.Contains("call i32 @Read({ ptr, i64 }", llvm);

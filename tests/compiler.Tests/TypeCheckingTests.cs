@@ -158,6 +158,24 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FixedArrayLengthsAcceptConstantArithmeticExpressions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32[1 + 2] values) {
+                return values[2];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
     public void ExplicitNonAsciiLiteralToAsciiConversionTypeChecks()
     {
         var result = Compile(

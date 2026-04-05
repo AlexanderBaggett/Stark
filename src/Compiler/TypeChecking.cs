@@ -472,7 +472,7 @@ internal sealed class TypeChecker
 
                 if (declarationModel.Function?.Asm is not null)
                 {
-                    ValidateAsmSignatureSurface(localName, returnType, functionSyntax.ReturnType, parameters, functionSyntax.ParameterList.parameter());
+                    ValidateAsmSignatureSurface(localName, returnType, functionSyntax.ReturnType, parameters, functionSyntax.ParameterList.parameter(), declarationModel.Function.Asm);
                 }
 
                 var sourceQualifiedName = QualifyName(module, localName);
@@ -4674,19 +4674,25 @@ internal sealed class TypeChecker
         StarkTypeSymbol returnType,
         StarkParser.ReturnTypeContext returnContext,
         IReadOnlyList<TypedParameterSymbol> parameters,
-        IReadOnlyList<StarkParser.ParameterContext> parameterContexts)
+        IReadOnlyList<StarkParser.ParameterContext> parameterContexts,
+        AsmFunctionModel asmFunction)
     {
         if (!IsSupportedAsmValueType(returnType, allowVoid: true))
         {
             ReportError(
                 "STK3008",
-                $"Asm function '{functionName}' currently supports only integer scalars, raw pointers, and 'void' at the ABI boundary, but found return type '{returnType.DisplayName}'.",
+                $"Asm function '{functionName}' currently supports only integer scalars, floating-point scalars, raw pointers, and 'void' at the ABI boundary, but found return type '{returnType.DisplayName}'.",
                 returnContext);
         }
 
+        var parametersByName = new Dictionary<string, TypedParameterSymbol>(StringComparer.Ordinal);
+        var parameterContextsByName = new Dictionary<string, StarkParser.ParameterContext>(StringComparer.Ordinal);
         for (var index = 0; index < parameters.Count; index++)
         {
             var parameter = parameters[index];
+            parametersByName[parameter.Name] = parameter;
+            parameterContextsByName[parameter.Name] = parameterContexts[index];
+
             if (IsSupportedAsmValueType(parameter.Type, allowVoid: false))
             {
                 continue;
@@ -4694,8 +4700,60 @@ internal sealed class TypeChecker
 
             ReportError(
                 "STK3008",
-                $"Asm function '{functionName}' currently supports only integer scalars and raw pointers on parameters, but parameter '{parameter.Name}' has type '{parameter.Type.DisplayName}'.",
+                $"Asm function '{functionName}' currently supports only integer scalars, floating-point scalars, and raw pointers on parameters, but parameter '{parameter.Name}' has type '{parameter.Type.DisplayName}'.",
                 parameterContexts[index].type_());
+        }
+
+        if (returnType.Kind != StarkTypeKind.Void && IsSupportedAsmValueType(returnType, allowVoid: false))
+        {
+            var returnBinding = asmFunction.Outputs.FirstOrDefault(static output => output.BindsReturnValue);
+            if (returnBinding is not null)
+            {
+                ValidateAsmRegisterBinding(
+                    functionName,
+                    asmFunction.Architecture,
+                    returnBinding.RegisterName,
+                    returnType,
+                    "return value",
+                    returnContext);
+            }
+        }
+
+        foreach (var input in asmFunction.Inputs)
+        {
+            if (!parametersByName.TryGetValue(input.ValueName, out var parameter)
+                || !parameterContextsByName.TryGetValue(input.ValueName, out var parameterContext)
+                || !IsSupportedAsmValueType(parameter.Type, allowVoid: false))
+            {
+                continue;
+            }
+
+            ValidateAsmRegisterBinding(
+                functionName,
+                asmFunction.Architecture,
+                input.RegisterName,
+                parameter.Type,
+                $"parameter '{input.ValueName}'",
+                parameterContext.type_());
+        }
+
+        foreach (var output in asmFunction.Outputs)
+        {
+            if (output.BindsReturnValue
+                || !parametersByName.TryGetValue(output.ValueName, out var parameter)
+                || !parameterContextsByName.TryGetValue(output.ValueName, out var parameterContext)
+                || !IsSupportedAsmValueType(parameter.Type, allowVoid: false))
+            {
+                continue;
+            }
+
+            ValidateAsmRegisterBinding(
+                functionName,
+                asmFunction.Architecture,
+                output.RegisterName,
+                parameter.Type,
+                $"parameter '{output.ValueName}'",
+                parameterContext.type_());
         }
     }
 
@@ -4717,7 +4775,72 @@ internal sealed class TypeChecker
             return false;
         }
 
-        return type.Kind is StarkTypeKind.Integer or StarkTypeKind.RawPointer;
+        return type.Kind is StarkTypeKind.Integer or StarkTypeKind.Float or StarkTypeKind.RawPointer;
+    }
+
+    private void ValidateAsmRegisterBinding(
+        string functionName,
+        StarkAsmArchitecture architecture,
+        string registerName,
+        StarkTypeSymbol valueType,
+        string valueDescription,
+        ParserRuleContext context)
+    {
+        if (!TryGetExpectedAsmRegisterClass(valueType, out var expectedRegisterClass)
+            || !StarkAsmRegisterFacts.TryGetRegisterClass(architecture, registerName, out var actualRegisterClass)
+            || actualRegisterClass == expectedRegisterClass)
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3008",
+            $"Asm function '{functionName}' binds {valueDescription} of type '{valueType.DisplayName}' to register '{registerName}', but '{registerName}' is a {DescribeAsmRegisterClass(actualRegisterClass)} register. {DescribeAsmRegisterExpectation(expectedRegisterClass, architecture)}",
+            context);
+    }
+
+    private static bool TryGetExpectedAsmRegisterClass(StarkTypeSymbol type, out StarkAsmRegisterClass registerClass)
+    {
+        switch (type.Kind)
+        {
+            case StarkTypeKind.Integer:
+            case StarkTypeKind.RawPointer:
+                registerClass = StarkAsmRegisterClass.GeneralPurpose;
+                return true;
+            case StarkTypeKind.Float:
+                registerClass = StarkAsmRegisterClass.FloatingPoint;
+                return true;
+            default:
+                registerClass = StarkAsmRegisterClass.Unknown;
+                return false;
+        }
+    }
+
+    private static string DescribeAsmRegisterClass(StarkAsmRegisterClass registerClass)
+    {
+        return registerClass switch
+        {
+            StarkAsmRegisterClass.GeneralPurpose => "general-purpose",
+            StarkAsmRegisterClass.FloatingPoint => "floating-point",
+            _ => "unknown"
+        };
+    }
+
+    private static string DescribeAsmRegisterExpectation(StarkAsmRegisterClass registerClass, StarkAsmArchitecture architecture)
+    {
+        var architectureName = architecture switch
+        {
+            StarkAsmArchitecture.X86_64 => "x86_64",
+            StarkAsmArchitecture.AArch64 => "aarch64",
+            StarkAsmArchitecture.RiscV64 => "riscv64",
+            StarkAsmArchitecture.X86 => "x86",
+            StarkAsmArchitecture.Arm32 => "arm",
+            _ => "the active target"
+        };
+
+        return registerClass == StarkAsmRegisterClass.FloatingPoint
+            ? $"Floating-point values must use a floating-point register on {architectureName}."
+            : $"Integer and raw-pointer values must use a general-purpose register on {architectureName}.";
     }
 
     private void ValidateRuntimeTypeDoesNotDependOnEnum(StarkTypeSymbol type, ParserRuleContext context, string usage)

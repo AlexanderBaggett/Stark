@@ -2,6 +2,7 @@ using Stark.Compiler;
 
 namespace compiler.IntegrationTests;
 
+[Collection("SerialToolchain")]
 public sealed class CompilerCliTests
 {
     [Fact]
@@ -42,6 +43,8 @@ public sealed class CompilerCliTests
         Assert.Contains("Inputs and Outputs:", text);
         Assert.Contains("Targeting and Native Toolchain:", text);
         Assert.Contains("Compiler Logs:", text);
+        Assert.Contains("--target-cpu <cpu>", text);
+        Assert.Contains("--target-feature <feature>", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
@@ -336,6 +339,75 @@ public sealed class CompilerCliTests
             if (File.Exists(outputPath))
             {
                 File.Delete(outputPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitObjectModeForwardsTargetCpuAndFeaturesToClang()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-target-cpu-feature-");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "--emit-obj",
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
+                    "--target-cpu", "znver4",
+                    "--target-feature", "+sse4.1",
+                    "--target-feature=-avx"
+                ],
+                new StringReader(
+                    """
+                    module Demo
+
+                    fn i32 Run() {
+                        return 7;
+                    }
+                    """),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted object file:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-target", clangLog, StringComparison.Ordinal);
+            Assert.Contains("x86_64-unknown-linux-gnu", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-mcpu=znver4", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-target-feature", clangLog, StringComparison.Ordinal);
+            Assert.Contains("+sse4.1", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-avx", clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
             }
         }
     }
@@ -1261,6 +1333,32 @@ public sealed class CompilerCliTests
               prev="$arg"
             done
             : > "$out"
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
+    }
+
+    private static async Task<string> CreateUnixCaptureClangAsync(string directory, string logPath)
+    {
+        var path = Path.Combine(directory, "clang");
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf '%s\n' "$@" > "{{logPath}}"
+            out=""
+            prev=""
+            for arg in "$@"; do
+              if [ "$prev" = "-o" ]; then
+                out="$arg"
+                break
+              fi
+              prev="$arg"
+            done
+            if [ -n "$out" ]; then
+              : > "$out"
+            fi
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;
