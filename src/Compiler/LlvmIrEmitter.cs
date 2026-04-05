@@ -146,8 +146,9 @@ internal sealed class LlvmIrEmitter
             var signature = _typeModel.Functions[resolvedName];
             var abiSignature = _abiModel.Functions[resolvedName];
             var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == resolvedName);
-            var parameterEffects = GetRootParameterEffects(resolvedName, function.HasBody)
+            var parameterEffects = GetRootParameterEffects(resolvedName, function.HasBody && !effects.IsFfi)
                 ?? GetBuiltinParameterEffects(_syntaxModel.ModuleName, resolvedName, signature);
+            var memoryEffects = GetFunctionMemoryEffects(resolvedName, function.HasBody && !effects.IsFfi);
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
@@ -160,6 +161,7 @@ internal sealed class LlvmIrEmitter
                         signature,
                         abiSignature,
                         effects,
+                        memoryEffects,
                         function.Asm,
                         parameterEffects,
                         out var asmFailureReason))
@@ -176,7 +178,7 @@ internal sealed class LlvmIrEmitter
                     FunctionBodyLoweringKind.AsmBypass,
                     supportsDirectCodeGeneration: false,
                     operation: "EmitAsmFunctionDefinition");
-                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects));
+                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
                 builder.AppendLine();
                 continue;
             }
@@ -189,6 +191,7 @@ internal sealed class LlvmIrEmitter
                     signature,
                     abiSignature,
                     effects,
+                    memoryEffects,
                     parameterEffects))
             {
                 builder.AppendLine();
@@ -201,7 +204,7 @@ internal sealed class LlvmIrEmitter
             {
                 try
                 {
-                    EmitFunctionDefinition(builder, definitionInternalize, signature, abiSignature, effects, ssaFunction, parameterEffects, resolveCallAbi);
+                    EmitFunctionDefinition(builder, definitionInternalize, signature, abiSignature, effects, memoryEffects, ssaFunction, parameterEffects, resolveCallAbi);
                     builder.AppendLine();
                     continue;
                 }
@@ -229,7 +232,7 @@ internal sealed class LlvmIrEmitter
                     operation: "EmitFunctionDefinition");
             }
 
-            builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, parameterEffects));
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
             builder.AppendLine();
         }
 
@@ -242,6 +245,7 @@ internal sealed class LlvmIrEmitter
                 clone.Signature,
                 clone.AbiSignature,
                 clone.Effects,
+                memoryEffects: null,
                 clone.SsaFunction,
                 parameterEffects: null,
                 resolveCallAbi);
@@ -267,6 +271,7 @@ internal sealed class LlvmIrEmitter
                     signature,
                     abiFunction,
                     effects,
+                    memoryEffects: null,
                     parameterEffects))
             {
                 builder.AppendLine();
@@ -274,7 +279,7 @@ internal sealed class LlvmIrEmitter
             }
 
             builder.AppendLine($"; imported declaration: {abiFunction.Name}");
-            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, parameterEffects));
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, memoryEffects: null, parameterEffects));
             builder.AppendLine();
         }
 
@@ -1156,12 +1161,13 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects,
         SsaFunction ssaFunction,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         Func<string, string, AbiFunctionSignature?> resolveCallAbi)
     {
         var functionBuilder = new StringBuilder();
-        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects));
+        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects));
         functionBuilder.AppendLine("{");
 
         var bodyEmitter = new FunctionBodyEmitter(
@@ -1186,6 +1192,7 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects,
         AsmFunctionModel asmFunction,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         out string failureReason)
@@ -1226,7 +1233,7 @@ internal sealed class LlvmIrEmitter
         }
 
         var functionBuilder = new StringBuilder();
-        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects));
+        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects));
         functionBuilder.AppendLine("{");
         EmitAsmFunctionBody(functionBuilder, function, abiFunction, asmFunction);
         functionBuilder.AppendLine("}");
@@ -1327,6 +1334,7 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var segments = new List<string> { "declare" };
@@ -1344,7 +1352,7 @@ internal sealed class LlvmIrEmitter
         segments.Add(MapType(abiFunction.LlvmReturnType));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: false, parameterEffects)))})");
 
-        var attributes = BuildFunctionAttributes(effects);
+        var attributes = BuildFunctionAttributes(effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
@@ -1358,6 +1366,7 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var segments = new List<string> { "define" };
@@ -1375,7 +1384,7 @@ internal sealed class LlvmIrEmitter
         segments.Add(MapType(abiFunction.LlvmReturnType));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => RenderAbiParameter(parameter, includeName: true, parameterEffects)))})");
 
-        var attributes = BuildFunctionAttributes(effects);
+        var attributes = BuildFunctionAttributes(effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
@@ -1391,11 +1400,12 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         if (TryResolveSystemMathBuiltin(moduleName, function, out var systemMathBuiltinKind))
         {
-            builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects) + " {");
+            builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
             EmitSystemMathBuiltin(builder, function, abiFunction, systemMathBuiltinKind);
             builder.AppendLine("}");
             return true;
@@ -1403,7 +1413,7 @@ internal sealed class LlvmIrEmitter
 
         if (TryResolveSystemBitOperationsBuiltin(moduleName, function, out var systemBitOperationsBuiltinKind))
         {
-            builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects) + " {");
+            builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
             EmitSystemBitOperationsBuiltin(builder, function, abiFunction, systemBitOperationsBuiltinKind);
             builder.AppendLine("}");
             return true;
@@ -1414,7 +1424,7 @@ internal sealed class LlvmIrEmitter
             return false;
         }
 
-        builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, parameterEffects) + " {");
+        builder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
         switch (builtinKind)
         {
             case SystemTextBuiltinKind.AsciiView:
@@ -2366,7 +2376,7 @@ internal sealed class LlvmIrEmitter
             attributes.Add("nonnull");
             attributes.Add("noalias");
             AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
-            AppendNoCaptureAttribute(attributes, parameterEffects);
+            AppendCaptureAttribute(attributes, parameterEffects);
 
             if (TryGetConcreteTypeLayout(parameter.SourceType) is { } indirectLayout)
             {
@@ -2396,7 +2406,7 @@ internal sealed class LlvmIrEmitter
         }
 
         AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
-        AppendNoCaptureAttribute(attributes, parameterEffects);
+        AppendCaptureAttribute(attributes, parameterEffects);
 
         return attributes;
     }
@@ -2412,6 +2422,18 @@ internal sealed class LlvmIrEmitter
         }
 
         return validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+    }
+
+    private FunctionMemoryEffectSummary? GetFunctionMemoryEffects(string functionName, bool hasBody)
+    {
+        if (!hasBody
+            || _semanticValidation is null
+            || !_semanticValidation.Functions.TryGetValue(functionName, out var validation))
+        {
+            return null;
+        }
+
+        return validation.MemoryEffects;
     }
 
     private static ParameterMemoryEffectSummary? ResolveParameterEffects(
@@ -2464,15 +2486,32 @@ internal sealed class LlvmIrEmitter
         }
     }
 
-    private static void AppendNoCaptureAttribute(List<string> attributes, ParameterMemoryEffectSummary? parameterEffects)
+    private static void AppendCaptureAttribute(List<string> attributes, ParameterMemoryEffectSummary? parameterEffects)
     {
-        if (parameterEffects?.CaptureKind == ParameterCaptureKind.None)
+        if (parameterEffects is null)
+        {
+            return;
+        }
+
+        if (parameterEffects.CaptureKind == ParameterCaptureKind.None)
         {
             attributes.Add("nocapture");
+            return;
         }
+
+        attributes.Add(parameterEffects.CaptureKind switch
+        {
+            ParameterCaptureKind.Return => parameterEffects.GuaranteedReadOnly
+                ? "captures(ret: address, read_provenance)"
+                : "captures(ret: address, provenance)",
+            ParameterCaptureKind.Escape => parameterEffects.GuaranteedReadOnly
+                ? "captures(address, read_provenance)"
+                : "captures(address, provenance)",
+            _ => "captures(address, provenance)"
+        });
     }
 
-    private static string BuildFunctionAttributes(FunctionEffectProfile effects)
+    private static string BuildFunctionAttributes(FunctionEffectProfile effects, FunctionMemoryEffectSummary? memoryEffects)
     {
         var attributes = new List<string>();
 
@@ -2501,9 +2540,10 @@ internal sealed class LlvmIrEmitter
             attributes.Add("nofree");
         }
 
-        if (effects.IsPure)
+        var memoryAttribute = BuildMemoryAttribute(effects, memoryEffects);
+        if (!string.IsNullOrWhiteSpace(memoryAttribute))
         {
-            attributes.Add(effects.ReadsArgumentMemory ? "memory(argmem: read)" : "memory(none)");
+            attributes.Add(memoryAttribute);
         }
 
         if (effects.IsHot)
@@ -2524,6 +2564,54 @@ internal sealed class LlvmIrEmitter
         });
 
         return string.Join(" ", attributes);
+    }
+
+    private static string? BuildMemoryAttribute(FunctionEffectProfile effects, FunctionMemoryEffectSummary? memoryEffects)
+    {
+        if (memoryEffects is null)
+        {
+            return effects.IsPure
+                ? effects.ReadsArgumentMemory
+                    ? "memory(argmem: read)"
+                    : "memory(none)"
+                : null;
+        }
+
+        var defaultAccess = GetMemoryAccessName(memoryEffects.ReadsOtherMemory, memoryEffects.WritesOtherMemory);
+        var argumentAccess = GetMemoryAccessName(memoryEffects.ReadsArgumentMemory, memoryEffects.WritesArgumentMemory);
+
+        if (defaultAccess == "readwrite" && argumentAccess == "readwrite")
+        {
+            return null;
+        }
+
+        if (defaultAccess == argumentAccess)
+        {
+            return $"memory({defaultAccess})";
+        }
+
+        if (defaultAccess == "none")
+        {
+            return $"memory(argmem: {argumentAccess})";
+        }
+
+        if (argumentAccess == "none")
+        {
+            return $"memory({defaultAccess}, argmem: none)";
+        }
+
+        return $"memory({defaultAccess}, argmem: {argumentAccess})";
+    }
+
+    private static string GetMemoryAccessName(bool reads, bool writes)
+    {
+        return (reads, writes) switch
+        {
+            (false, false) => "none",
+            (true, false) => "read",
+            (false, true) => "write",
+            _ => "readwrite"
+        };
     }
 
     private bool ShouldInternalize(StarkVisibility visibility) => _internalizeModulePrivate && visibility == StarkVisibility.Module;
@@ -3448,6 +3536,7 @@ internal sealed class LlvmIrEmitter
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
+        private readonly HashSet<string> _referencedValueNames;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
         private int _nextAbiTempId;
@@ -3474,6 +3563,7 @@ internal sealed class LlvmIrEmitter
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
             _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
+            _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         }
 
         public void Emit()
@@ -4633,9 +4723,144 @@ internal sealed class LlvmIrEmitter
                     continue;
                 }
 
+                if (!_referencedValueNames.Contains(parameter.LlvmName))
+                {
+                    continue;
+                }
+
                 var materializedName = $"%{EscapeIdentifier(CreateAbiTempName($"arg_{parameter.SourceName}_value"))}";
                 AppendLine($"  {materializedName} = load {MapType(parameter.SourceType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}");
                 _materializedParameters[parameter.LlvmName] = materializedName;
+            }
+        }
+
+        private static HashSet<string> CollectReferencedValueNames(SsaFunction function)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var block in function.Blocks)
+            {
+                foreach (var phi in block.Phis)
+                {
+                    foreach (var incoming in phi.Incomings)
+                    {
+                        VisitValue(incoming.Value);
+                    }
+                }
+
+                foreach (var instruction in block.Instructions)
+                {
+                    VisitInstruction(instruction);
+                }
+
+                VisitValue(block.Terminator.Condition);
+                VisitValue(block.Terminator.Value);
+
+                if (block.Terminator.SwitchCases is not null)
+                {
+                    foreach (var switchCase in block.Terminator.SwitchCases)
+                    {
+                        VisitValue(switchCase.MatchValue);
+                    }
+                }
+            }
+
+            return names;
+
+            void VisitInstruction(SsaInstruction instruction)
+            {
+                switch (instruction)
+                {
+                    case SsaValueInstruction valueInstruction:
+                        VisitRValue(valueInstruction.Value);
+                        break;
+                    case SsaStoreLocalInstruction storeLocal:
+                        VisitValue(storeLocal.Value);
+                        break;
+                    case SsaStoreIndirectInstruction storeIndirect:
+                        VisitValue(storeIndirect.Address);
+                        VisitValue(storeIndirect.Value);
+                        break;
+                    case SsaCopyMemoryInstruction copyMemory:
+                        VisitValue(copyMemory.DestinationAddress);
+                        VisitValue(copyMemory.SourceAddress);
+                        break;
+                    case SsaStoreGlobalInstruction storeGlobal:
+                        VisitValue(storeGlobal.Value);
+                        break;
+                }
+            }
+
+            void VisitRValue(SsaRValue value)
+            {
+                switch (value)
+                {
+                    case SsaUseRValue use:
+                        VisitValue(use.Value);
+                        break;
+                    case SsaUnaryRValue unary:
+                        VisitValue(unary.Operand);
+                        break;
+                    case SsaBinaryRValue binary:
+                        VisitValue(binary.Left);
+                        VisitValue(binary.Right);
+                        break;
+                    case SsaCallRValue call:
+                        foreach (var argument in call.Arguments)
+                        {
+                            VisitValue(argument);
+                        }
+
+                        break;
+                    case SsaConvertRValue convert:
+                        VisitValue(convert.Operand);
+                        break;
+                    case SsaExtractFieldRValue extractField:
+                        VisitValue(extractField.Target);
+                        break;
+                    case SsaInsertFieldRValue insertField:
+                        VisitValue(insertField.Target);
+                        VisitValue(insertField.Value);
+                        break;
+                    case SsaExtractIndexRValue extractIndex:
+                        VisitValue(extractIndex.Target);
+                        break;
+                    case SsaInsertIndexRValue insertIndex:
+                        VisitValue(insertIndex.Target);
+                        VisitValue(insertIndex.Value);
+                        break;
+                    case SsaLoadSliceElementRValue loadSlice:
+                        VisitValue(loadSlice.Slice);
+                        VisitValue(loadSlice.Index);
+                        break;
+                    case SsaTextSliceRValue textSlice:
+                        VisitValue(textSlice.TextValue);
+                        VisitValue(textSlice.Start);
+                        VisitValue(textSlice.Length);
+                        break;
+                    case SsaFieldAddressRValue fieldAddress:
+                        VisitValue(fieldAddress.Address);
+                        break;
+                    case SsaElementAddressRValue elementAddress:
+                        VisitValue(elementAddress.Address);
+                        VisitValue(elementAddress.Index);
+                        break;
+                    case SsaSliceElementAddressRValue sliceElementAddress:
+                        VisitValue(sliceElementAddress.Slice);
+                        VisitValue(sliceElementAddress.Index);
+                        break;
+                    case SsaLoadIndirectRValue loadIndirect:
+                        VisitValue(loadIndirect.Address);
+                        break;
+                }
+            }
+
+            void VisitValue(SsaValue? value)
+            {
+                if (value is SsaValueReference reference)
+                {
+                    names.Add(reference.Name);
+                }
             }
         }
 

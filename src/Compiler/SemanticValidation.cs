@@ -1893,22 +1893,40 @@ internal sealed class SemanticValidator
 
     private void RecordObservedMemoryRead(ValidationValue value, FunctionValidationBuilder summary)
     {
-        if (value.RootSymbol?.Origin != SymbolOrigin.Parameter || !value.IsIndirectStorageAccess)
+        if (value.RootSymbol is null)
         {
             return;
         }
 
-        summary.MarkParameterRead(value.RootSymbol.Name);
+        if (value.RootSymbol.Origin == SymbolOrigin.Parameter && value.IsIndirectStorageAccess)
+        {
+            summary.MarkParameterRead(value.RootSymbol.Name);
+            return;
+        }
+
+        if (TouchesOtherMemory(value))
+        {
+            summary.MarkOtherMemoryRead();
+        }
     }
 
     private void RecordObservedMemoryWrite(ValidationValue value, FunctionValidationBuilder summary)
     {
-        if (value.RootSymbol?.Origin != SymbolOrigin.Parameter || !value.IsIndirectStorageAccess)
+        if (value.RootSymbol is null)
         {
             return;
         }
 
-        summary.MarkParameterWrite(value.RootSymbol.Name);
+        if (value.RootSymbol.Origin == SymbolOrigin.Parameter && value.IsIndirectStorageAccess)
+        {
+            summary.MarkParameterWrite(value.RootSymbol.Name);
+            return;
+        }
+
+        if (TouchesOtherMemory(value))
+        {
+            summary.MarkOtherMemoryWrite();
+        }
     }
 
     private void RecordReturnCapture(ValidationValue value, FunctionDeclarationModel function, FunctionValidationBuilder summary)
@@ -1942,15 +1960,26 @@ internal sealed class SemanticValidator
             {
                 foreach (var pendingCall in summary.PendingCalls)
                 {
+                    changed |= summary.ApplyFunctionMemoryEffects(GetCallMemoryEffects(pendingCall));
+
                     foreach (var argument in pendingCall.Arguments)
                     {
-                        if (!argument.AliasesCalleeMemory || argument.CallerParameterName is null)
+                        if (!argument.AliasesCalleeMemory)
                         {
                             continue;
                         }
 
                         var propagated = GetCallArgumentEffects(pendingCall.CalleeName, argument.CalleeParameterName, argument.FallbackEffects);
-                        changed |= summary.ApplyArgumentEffects(argument.CallerParameterName, propagated);
+                        if (argument.CallerParameterName is not null)
+                        {
+                            changed |= summary.ApplyArgumentEffects(argument.CallerParameterName, propagated);
+                            continue;
+                        }
+
+                        if (argument.RootSymbol is not null && AliasedArgumentTouchesOtherMemory(argument.RootSymbol))
+                        {
+                            changed |= summary.ApplyAliasedOtherMemoryEffects(propagated);
+                        }
                     }
                 }
             }
@@ -2030,11 +2059,41 @@ internal sealed class SemanticValidator
 
         return new CallMemoryEffectSummary(
             call.CalleeName,
-            new FunctionMemoryEffectSummary(
-                argumentSummaries.Any(static argument => argument.Reads),
-                argumentSummaries.Any(static argument => argument.Writes),
-                argumentSummaries.Any(static argument => argument.CaptureKind != ParameterCaptureKind.None)),
+            GetCallMemoryEffects(call),
             argumentSummaries);
+    }
+
+    private FunctionMemoryEffectSummary GetCallMemoryEffects(PendingCall call)
+    {
+        if (_summaries.TryGetValue(call.CalleeName, out var summary))
+        {
+            return summary.GetCurrentMemoryEffects();
+        }
+
+        if (_effectModel.Functions.TryGetValue(call.CalleeName, out var effects))
+        {
+            if (effects.IsPure)
+            {
+                return new FunctionMemoryEffectSummary(
+                    ReadsArgumentMemory: effects.ReadsArgumentMemory,
+                    WritesArgumentMemory: false,
+                    CapturesArgumentMemory: false);
+            }
+
+            return new FunctionMemoryEffectSummary(
+                ReadsArgumentMemory: effects.ReadsArgumentMemory,
+                WritesArgumentMemory: effects.ReadsArgumentMemory,
+                CapturesArgumentMemory: false,
+                ReadsOtherMemory: true,
+                WritesOtherMemory: true);
+        }
+
+        return new FunctionMemoryEffectSummary(
+            ReadsArgumentMemory: false,
+            WritesArgumentMemory: false,
+            CapturesArgumentMemory: false,
+            ReadsOtherMemory: true,
+            WritesOtherMemory: true);
     }
 
     private void InferEffectiveFunctionKindsAndValidateDeclaredContracts()
@@ -2710,6 +2769,48 @@ internal sealed class SemanticValidator
         }
 
         return target.IsIndirectStorageAccess && IsExternallyVisibleMemory(target.RootSymbol);
+    }
+
+    private static bool TouchesOtherMemory(ValidationValue value)
+    {
+        if (value.RootSymbol is null)
+        {
+            return false;
+        }
+
+        if (value.RootSymbol.Origin == SymbolOrigin.Global)
+        {
+            return true;
+        }
+
+        if (!value.IsIndirectStorageAccess || value.RootSymbol.Origin == SymbolOrigin.Parameter)
+        {
+            return false;
+        }
+
+        return AliasedArgumentTouchesOtherMemory(value.RootSymbol);
+    }
+
+    private static bool AliasedArgumentTouchesOtherMemory(VariableSymbol symbol)
+    {
+        if (symbol.Origin == SymbolOrigin.Global)
+        {
+            return true;
+        }
+
+        if (symbol.Origin == SymbolOrigin.Parameter)
+        {
+            return false;
+        }
+
+        if (symbol.StorageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
+        {
+            return true;
+        }
+
+        return symbol.Type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice
+            || symbol.Type.BorrowKind != StarkBorrowKind.None
+            || symbol.Type.InitializationKind != StarkInitializationKind.None;
     }
 
     private static bool PreservesStorageView(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -3390,6 +3491,10 @@ internal sealed class SemanticValidator
 
         public List<CallMemoryEffectSummary> ResolvedCalls { get; } = [];
 
+        public bool ReadsOtherMemory { get; private set; }
+
+        public bool WritesOtherMemory { get; private set; }
+
         public void Configure(StarkTypeSymbol returnType, bool hasBody, StarkFunctionKind declaredKind)
         {
             ReturnType = returnType;
@@ -3435,9 +3540,57 @@ internal sealed class SemanticValidator
             }
         }
 
+        public void MarkOtherMemoryRead()
+        {
+            ReadsOtherMemory = true;
+        }
+
+        public void MarkOtherMemoryWrite()
+        {
+            WritesOtherMemory = true;
+        }
+
         public bool ApplyArgumentEffects(string parameterName, ArgumentEffects effects)
         {
             return Parameters.TryGetValue(parameterName, out var parameter) && parameter.Apply(effects);
+        }
+
+        public bool ApplyAliasedOtherMemoryEffects(ArgumentEffects effects)
+        {
+            var changed = false;
+
+            if (effects.Reads && !ReadsOtherMemory)
+            {
+                ReadsOtherMemory = true;
+                changed = true;
+            }
+
+            if (effects.Writes && !WritesOtherMemory)
+            {
+                WritesOtherMemory = true;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        public bool ApplyFunctionMemoryEffects(FunctionMemoryEffectSummary effects)
+        {
+            var changed = false;
+
+            if (effects.ReadsOtherMemory && !ReadsOtherMemory)
+            {
+                ReadsOtherMemory = true;
+                changed = true;
+            }
+
+            if (effects.WritesOtherMemory && !WritesOtherMemory)
+            {
+                WritesOtherMemory = true;
+                changed = true;
+            }
+
+            return changed;
         }
 
         public bool TryGetParameter(string name, out ParameterSummaryBuilder parameter)
@@ -3466,6 +3619,20 @@ internal sealed class SemanticValidator
             EffectiveKind = kind;
         }
 
+        public FunctionMemoryEffectSummary GetCurrentMemoryEffects()
+        {
+            var parameterEffects = Parameters.Values
+                .Select(parameter => parameter.GetEffectiveEffects(HasBody))
+                .ToArray();
+
+            return new FunctionMemoryEffectSummary(
+                parameterEffects.Any(static parameter => parameter.Reads),
+                parameterEffects.Any(static parameter => parameter.Writes),
+                parameterEffects.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
+                ReadsOtherMemory,
+                WritesOtherMemory);
+        }
+
         public FunctionValidationSummary Build()
         {
             var parameterSummaries = Parameters.Values
@@ -3475,7 +3642,9 @@ internal sealed class SemanticValidator
             var memoryEffects = new FunctionMemoryEffectSummary(
                 parameterSummaries.Any(static parameter => parameter.Reads),
                 parameterSummaries.Any(static parameter => parameter.Writes),
-                parameterSummaries.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None));
+                parameterSummaries.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
+                ReadsOtherMemory,
+                WritesOtherMemory);
 
             return new FunctionValidationSummary(
                 Name,

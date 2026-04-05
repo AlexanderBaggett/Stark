@@ -1385,6 +1385,61 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void BorrowParametersEmitCapturesAttributes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            fn retborrow Box Echo(retborrow Box value) {
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("captures(ret: address, read_provenance)", llvm);
+    }
+
+    [Fact]
+    public void MemoryAttributesDistinguishArgumentAndOtherMemoryEffects()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static mut i32 Counter = 0;
+
+            fn i32 ReadGlobal() {
+                return Counter;
+            }
+
+            fn void TouchArg(borrow mut Box box) {
+                box.Value = 1;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @ReadGlobal()", llvm);
+        Assert.Contains("memory(read, argmem: none)", llvm);
+        Assert.Contains("define fastcc void @TouchArg(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("memory(argmem: write)", llvm);
+        Assert.DoesNotContain("load %Box, ptr %arg_box", llvm);
+    }
+
+    [Fact]
     public void EscapedTextLiteralsEmitDecodedBytes()
     {
         var result = Compile(

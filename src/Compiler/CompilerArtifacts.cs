@@ -986,7 +986,14 @@ internal static class ConcreteTypeLayoutHelper
 public sealed record FunctionMemoryEffectSummary(
     bool ReadsArgumentMemory,
     bool WritesArgumentMemory,
-    bool CapturesArgumentMemory);
+    bool CapturesArgumentMemory,
+    bool ReadsOtherMemory = false,
+    bool WritesOtherMemory = false)
+{
+    public bool ReadsMemory => ReadsArgumentMemory || ReadsOtherMemory;
+
+    public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory;
+}
 
 public sealed record CallArgumentMemoryEffectSummary(
     int ArgumentIndex,

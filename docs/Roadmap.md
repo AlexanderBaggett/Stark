@@ -751,8 +751,8 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
 - [x] parameter-level `nonnull`
 - [x] parameter-level `align`
 - [x] parameter-level `dereferenceable`
-- [ ] `captures(...)` style escape-derived lowering
-- [ ] better `memory(...)` precision
+- [x] `captures(...)` style escape-derived lowering
+- [x] better `memory(...)` precision
 
 ### Targeting and Code Generation Quality
 
@@ -1147,3 +1147,94 @@ Everything before this point is frozen
 - [ ] Add opt-in structured trace-file sinks that emit machine-readable logs to disk
 - [ ] Emit per-symbol trace files and gap-only audit artifacts for post-mortem debugging
 - [ ] Add regression coverage for value-flow tracing, correlation IDs, and emitted trace artifacts
+
+
+## Milestone V3.0
+
+### Macro/Metaprogramming System
+
+
+### Additional Optimization Work
+
+- [ ] Interprocedural MIR/SSA inlining
+  - [ ] inline tiny wrapper, `law`, and monomorphized helper bodies before LLVM
+  - [ ] use a performance-first cost model that prefers runtime speed over code size and compile time
+  - [ ] clone hot callees when constant arguments or closed-world facts create faster specialized bodies
+  - [ ] add regression tests that wrapper abstractions disappear from MIR, SSA, and LLVM
+
+- [ ] Full SSA global value numbering and redundancy elimination
+  - [ ] add cross-block value numbering for pure expressions
+  - [ ] eliminate redundant loads using ownership, `noalias`, and future `captures(...)` facts
+  - [ ] implement PRE and FRE for partially and fully redundant expressions
+  - [ ] reassociate arithmetic and bitwise expressions to expose more common subexpressions
+
+- [ ] MIR/SSA scalar replacement of aggregates
+  - [ ] implement real SROA for stack locals, temporaries, and small enum payloads before ABI lowering
+  - [ ] scalar-replace eligible small aggregates across call boundaries
+  - [ ] remove address-taken artifacts that exist only to service copies, returns, or temporary borrows
+  - [ ] add regression tests for struct, record, fixed-array, and enum scalarization
+
+- [ ] Destination propagation and result-location optimization
+  - [ ] forward object and fixed-array construction directly into final destinations
+  - [ ] propagate return/result slots backward through wrappers and helper calls
+  - [ ] eliminate copy-like temporaries introduced by assignment chains and aggregate updates
+  - [ ] add regression tests for constructor, call, and copy elision
+
+- [ ] Memory-aware dead-store and drop cleanup
+  - [ ] perform dead-store elimination for locals, fields, and scalarized aggregate lanes
+  - [ ] remove stores overwritten before any observable read
+  - [ ] elide destructor/drop work for trivially droppable or already-disarmed values
+  - [ ] collapse redundant lifetime markers and no-op drop scaffolding
+
+- [ ] Proof/range propagation engine
+  - [ ] add integer range and known-bits reasoning
+  - [ ] add enum tag/value correlation reasoning
+  - [ ] add non-null and noalias-derived pointer facts for raw-pointer fast paths
+  - [ ] feed proven facts back into branch simplification and redundancy elimination
+
+- [ ] Safety-check elimination on top of proof facts
+  - [ ] remove redundant bounds checks for fixed arrays, slices, and text indexing once check lowering exists
+  - [ ] remove redundant discriminant and tag checks
+  - [ ] remove dominated duplicate raw-pointer guard checks where Stark semantics introduce them
+  - [ ] add regression tests for removed checks in MIR, SSA, and LLVM
+
+- [ ] Loop optimization pipeline before LLVM
+  - [ ] perform loop-invariant code motion for pure operations and proven-safe loads
+  - [ ] simplify induction variables and apply strength reduction
+  - [ ] implement loop unswitching, peeling, and rotation for hot loops
+  - [ ] canonicalize loops specifically to maximize LLVM loop-vectorizer and SLP uptake
+
+- [ ] Branch shaping and predication
+  - [ ] implement jump threading from proven branch conditions
+  - [ ] perform if-conversion of hot diamonds into `select` and other branchless forms where profitable
+  - [ ] normalize boolean and compare chains into backend-friendly branch shapes
+  - [ ] add regression tests for branchless lowering and fewer hot-path branches
+
+- [ ] Tail-call and recursion elimination
+  - [ ] convert self-tail-recursion into loops
+  - [ ] preserve sibling-tail-call eligibility through Stark ABI lowering
+  - [ ] add regression tests for tail-recursive wrappers and recursive state machines
+
+- [ ] Escape analysis and allocation elimination once `heap` and `arena` lowering are real
+  - [ ] promote non-escaping heap allocations to stack storage
+  - [ ] scalar-replace non-escaping heap and arena aggregates
+  - [ ] eliminate temporary allocation wrappers introduced by future stdlib abstractions
+  - [ ] add regression tests for heap-to-stack promotion and allocation removal
+
+- [ ] Specialization-driven optimization after full generics and constrained generics land
+  - [ ] run monomorphization-time constant propagation and clone specialization
+  - [ ] add SpecConstr-style specialization for recursive functions over known enum and state shapes
+  - [ ] erase doctrine and trait abstraction overhead when constraint resolution is compile-time complete
+  - [ ] add regression tests comparing generic abstractions to hand-written monomorphic code
+
+- [ ] Rule-based optimizer for pure and `law` code
+  - [ ] support phase-controlled rewrite rules for `law` functions and selected stdlib combinators
+  - [ ] add fusion and deforestation for future iterator, view, and text pipelines
+  - [ ] emit diagnostics for rule firings, missed firings, and inhibited rewrites
+  - [ ] add benchmark-backed regression tests for intermediate-structure elimination
+
+- [ ] Equality-saturation experiments for selected hot kernels
+  - [ ] build e-graph rewrite sets for arithmetic, bitwise, and pure `law` expressions
+  - [ ] use an extraction cost model tuned for Stark ABI and LLVM lowering realities
+  - [ ] confine usage to explicit optimization tiers or hot kernels until it proves broadly useful
+  - [ ] compare extracted code against conventional GVN, PRE, and reassociation on representative workloads

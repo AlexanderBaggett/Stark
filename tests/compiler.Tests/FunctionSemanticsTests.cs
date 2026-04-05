@@ -170,6 +170,46 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void SemanticValidationSummariesDistinguishArgumentAndOtherMemory()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            static mut i32 Counter = 0;
+
+            fn i32 ReadGlobal() {
+                return Counter;
+            }
+
+            fn void TouchArg(borrow mut Box box) {
+                box.Value = 1;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var readGlobal = validation.Functions["ReadGlobal"];
+        Assert.NotNull(readGlobal.MemoryEffects);
+        Assert.True(readGlobal.MemoryEffects!.ReadsOtherMemory);
+        Assert.False(readGlobal.MemoryEffects.WritesOtherMemory);
+        Assert.False(readGlobal.MemoryEffects.ReadsArgumentMemory);
+
+        var touchArg = validation.Functions["TouchArg"];
+        Assert.NotNull(touchArg.MemoryEffects);
+        Assert.True(touchArg.MemoryEffects!.WritesArgumentMemory);
+        Assert.False(touchArg.MemoryEffects.ReadsOtherMemory);
+        Assert.False(touchArg.MemoryEffects.WritesOtherMemory);
+    }
+
+    [Fact]
     public void LawsCanCallPlainFnsThatInferAsLaws()
     {
         var result = Compile(
