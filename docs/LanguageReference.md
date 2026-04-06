@@ -129,7 +129,7 @@ Rules:
 - `ffi` marks a foreign-facing function boundary and disables the default internal calling convention behavior
 - `strictfp` selects strict IEEE-style floating-point semantics for the function
 
-The `strictfp` modifier is reserved in the surface syntax, but the current compiler rejects it until strict floating-point lowering is implemented.
+The current compiler lowers `strictfp` through to LLVM's strict floating-point function attribute so a function can opt out of Stark's default fast-math model.
 
 The current compiler enforces the modifier exclusivity rules above as declaration errors.
 

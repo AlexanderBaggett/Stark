@@ -83,7 +83,7 @@ The current pass skeleton still leaves room for the next substantial compiler wo
 
 - deeper dead-code elimination beyond the current cleanup/constant-propagation passes
 - richer aggregate copy/move lowering
-- allocator-backed `heap` and `arena` lowering
+- allocator-backed `arena` lowering
 - debug-info and source-span propagation through MIR, SSA, and LLVM
 - monomorphization or specialization planning
 

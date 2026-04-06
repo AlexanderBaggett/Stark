@@ -24,7 +24,13 @@ Stark can currently:
 - emit a static library plus a package manifest from the CLI
 - emit object files from the CLI
 
-The active implementation checklist lives in [Roadmap.md](./Roadmap.md).
+The active implementation checklist lives in [docs/Roadmap.md](./docs/Roadmap.md).
+
+Known unsupported or partial language, lowering, runtime, and standard-library areas are tracked in [docs/UnsupportedFeatures.md](./docs/UnsupportedFeatures.md).
+
+The current `v1.0` release baseline is defined in [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md).
+
+Pre-release notes currently live in [docs/ReleaseNotes.md](./docs/ReleaseNotes.md).
 
 ## Build
 
@@ -123,10 +129,13 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 
 ## Key Docs
 
-- [LanguageReference.md](./LanguageReference.md)
-- [general-idea.md](./general-idea.md)
-- [BorrowerSystem.md](./BorrowerSystem.md)
-- [ModulesAndVisibility.md](./ModulesAndVisibility.md)
-- [CompilerPipeline.md](./CompilerPipeline.md)
-- [StandardLibrary.md](./StandardLibrary.md)
-- [Roadmap.md](./Roadmap.md)
+- [docs/LanguageReference.md](./docs/LanguageReference.md)
+- [docs/general-idea.md](./docs/general-idea.md)
+- [docs/BorrowerSystem.md](./docs/BorrowerSystem.md)
+- [docs/ModulesAndVisibility.md](./docs/ModulesAndVisibility.md)
+- [docs/CompilerPipeline.md](./docs/CompilerPipeline.md)
+- [docs/StandardLibrary.md](./docs/StandardLibrary.md)
+- [docs/UnsupportedFeatures.md](./docs/UnsupportedFeatures.md)
+- [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md)
+- [docs/ReleaseNotes.md](./docs/ReleaseNotes.md)
+- [docs/Roadmap.md](./docs/Roadmap.md)

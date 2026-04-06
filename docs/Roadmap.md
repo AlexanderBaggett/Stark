@@ -861,10 +861,10 @@ Goal: Stark is pleasant to work on and pleasant to use.
 
 Goal: Stark is not just a compiler experiment, but a coherent language/toolchain release.
 
-- [ ] Define a minimum viable Stark language subset for a first release
-  - [ ] feature inclusion matrix
-  - [ ] platform and toolchain support matrix
-  - [ ] cut line between release blockers and post-release features
+- [x] Define a minimum viable Stark language subset for a first release
+  - [x] feature inclusion matrix
+  - [x] platform and toolchain support matrix
+  - [x] cut line between release blockers and post-release features
 - [ ] Freeze syntax for that subset
   - [ ] grammar audit against the language reference
   - [ ] parser regression lock for accepted and rejected syntax
@@ -874,21 +874,21 @@ Goal: Stark is not just a compiler experiment, but a coherent language/toolchain
   - [ ] emitted LLVM/object invariants for supported constructs
   - [ ] regression tests keyed to the frozen lowering contract
 - [ ] Document unsupported features explicitly
-  - [ ] user-facing unsupported features list
+  - [x] user-facing unsupported features list
   - [x] stable diagnostic behavior for unsupported paths
-  - [ ] README and release-note pointers to unsupported areas
-  - [ ] MIR lowering gaps
+  - [x] README and release-note pointers to unsupported areas
+  - [x] MIR lowering gaps
     - [x] control-flow misuse diagnostics: `break` without an enclosing loop/switch and `continue` without an enclosing loop
-    - [ ] initializer gaps: unsupported variable initializer shapes; object/array initializers that do not materialize a MIR value; variable initializers that cannot lower to a MIR operand
-    - [ ] assignment and expression gaps: assignment targets or values that cannot be resolved/coerced; conditional expressions outside the direct ternary shape; expression statements that are neither assignments, rvalues, nor operands
-    - [ ] operator and type gaps: dereference requires raw pointers; exponentiation currently requires a floating-point common type; integer-only operator chains reject non-integer common types; equality/comparison lowering is still limited to integer, float, bool, and raw-pointer families
-    - [ ] name and call gaps: function names/function groups do not lower as first-class operands yet; void-valued direct/member/postfix calls cannot appear in value position
-    - [ ] aggregate construction gaps: object initializers require resolved named fields; primary object creation only supports matched primary constructors; enum named constructors require named-field variants with complete payloads; enum positional constructors require exact arity; array initializers only lower for fixed arrays
-    - [ ] place/update gaps: aggregate reads and writes still fall back when field/index paths or address materialization cannot be resolved
-    - [ ] switch gaps: switch scrutinees must lower to operands; only the current direct switch subset lowers; text-switch partitioning still requires supported `ascii`/`unicode` view types and literal cases
-    - [ ] indexing gaps: dynamic fixed-array indexing currently requires a local fixed-array source and an integer index; slice/raw-pointer indexing require integer indices; indexing is only supported for fixed arrays, raw pointers, slices, `ascii`, and `unicode`; text slicing currently requires exactly two integer indices
-    - [ ] runtime-drop gaps: enum/aggregate drop helpers still mark MIR unsupported when tag, field, or comparison temporaries cannot be materialized
-  - [ ] single-element text indexing and general runtime `ascii`/`unicode` conversion
+    - [x] initializer gaps: unsupported variable initializer shapes; object/array initializers that do not materialize a MIR value; variable initializers that cannot lower to a MIR operand
+    - [x] assignment and expression gaps: assignment targets or values that cannot be resolved/coerced; conditional expressions outside the direct ternary shape; expression statements that are neither assignments, rvalues, nor operands
+    - [x] operator and type gaps: dereference requires raw pointers; exponentiation currently requires a floating-point common type; integer-only operator chains reject non-integer common types; equality/comparison lowering is still limited to integer, float, bool, and raw-pointer families
+    - [x] name and call gaps: function names/function groups do not lower as first-class operands yet; void-valued direct/member/postfix calls cannot appear in value position
+    - [x] aggregate construction gaps: object initializers require resolved named fields; primary object creation only supports matched primary constructors; enum named constructors require named-field variants with complete payloads; enum positional constructors require exact arity; array initializers only lower for fixed arrays
+    - [x] place/update gaps: aggregate reads and writes still fall back when field/index paths or address materialization cannot be resolved
+    - [x] switch gaps: switch scrutinees must lower to operands; only the current direct switch subset lowers; text-switch partitioning still requires supported `ascii`/`unicode` view types and literal cases
+    - [x] indexing gaps: dynamic fixed-array indexing currently requires a local fixed-array source and an integer index; slice/raw-pointer indexing require integer indices; indexing is only supported for fixed arrays, raw pointers, slices, `ascii`, and `unicode`; text slicing currently requires exactly two integer indices
+    - [x] runtime-drop gaps: enum/aggregate drop helpers still mark MIR unsupported when tag, field, or comparison temporaries cannot be materialized
+  - [x] single-element text indexing and general runtime `ascii`/`unicode` conversion
 - [ ] Provide a versioned standard library baseline
   - [ ] package versioning scheme
   - [ ] baseline module list
