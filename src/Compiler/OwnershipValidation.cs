@@ -1964,7 +1964,34 @@ internal sealed class OwnershipValidator
         return StarkTypeSymbols.Null;
     }
 
-    private SourceLocation Location(IToken token) => new(_context.Input.FilePath, token.Line, token.Column + 1);
+    private SourceLocation Location(IToken token)
+    {
+        var tokenText = token.Text;
+        if (string.IsNullOrEmpty(tokenText))
+        {
+            return new SourceLocation(_context.Input.FilePath, token.Line, token.Column + 1);
+        }
+
+        var normalizedText = tokenText.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var lines = normalizedText.Split('\n');
+        if (lines.Length == 1)
+        {
+            return new SourceLocation(
+                _context.Input.FilePath,
+                token.Line,
+                token.Column + 1,
+                token.Line,
+                token.Column + Math.Max(lines[0].Length, 1));
+        }
+
+        return new SourceLocation(
+            _context.Input.FilePath,
+            token.Line,
+            token.Column + 1,
+            token.Line + lines.Length - 1,
+            Math.Max(lines[^1].Length, 1));
+    }
 
     private void OwnershipError(FunctionOwnershipBuilder summary, string code, string message, ParserRuleContext context)
     {
@@ -1974,17 +2001,33 @@ internal sealed class OwnershipValidator
     private void OwnershipError(FunctionOwnershipBuilder summary, string code, string message, IToken token)
     {
         summary.OwnershipValid = false;
-        _context.Diagnostics.Error(code, message, "ownership-validate", Location(token));
+        var location = Location(token);
+        if (!summary.TryRecordDiagnostic(DiagnosticSeverity.Error, code, message, location))
+        {
+            return;
+        }
+
+        _context.Diagnostics.Error(code, message, "ownership-validate", location);
     }
 
     private void OwnershipError(FunctionOwnershipBuilder summary, string code, string message, SourceLocation? location)
     {
         summary.OwnershipValid = false;
+        if (!summary.TryRecordDiagnostic(DiagnosticSeverity.Error, code, message, location))
+        {
+            return;
+        }
+
         _context.Diagnostics.Error(code, message, "ownership-validate", location);
     }
 
-    private void OwnershipNote(string code, string message, SourceLocation location)
+    private void OwnershipNote(FunctionOwnershipBuilder summary, string code, string message, SourceLocation location)
     {
+        if (!summary.TryRecordDiagnostic(DiagnosticSeverity.Info, code, message, location))
+        {
+            return;
+        }
+
         _context.Diagnostics.Info(code, message, "ownership-validate", location);
     }
 
@@ -2129,7 +2172,7 @@ internal sealed class OwnershipValidator
                 token);
             if (fieldState.UnavailableLocation is not null)
             {
-                OwnershipNote("STK4200", $"Field '{topLevelField}' of '{variable.Name}' was moved here.", fieldState.UnavailableLocation);
+                OwnershipNote(summary, "STK4200", $"Field '{topLevelField}' of '{variable.Name}' was moved here.", fieldState.UnavailableLocation);
             }
 
             return false;
@@ -2154,7 +2197,7 @@ internal sealed class OwnershipValidator
             token);
         if (variable.DeclarationLocation is not null)
         {
-            OwnershipNote("STK4205", $"Aggregate '{variable.Name}' was declared here.", variable.DeclarationLocation);
+            OwnershipNote(summary, "STK4205", $"Aggregate '{variable.Name}' was declared here.", variable.DeclarationLocation);
         }
 
         return false;
@@ -2183,7 +2226,7 @@ internal sealed class OwnershipValidator
                 {
                     if (movedField.UnavailableLocation is not null)
                     {
-                        OwnershipNote("STK4200", $"Field '{movedField.Name}' of '{variable.Name}' was moved here.", movedField.UnavailableLocation);
+                        OwnershipNote(summary, "STK4200", $"Field '{movedField.Name}' of '{variable.Name}' was moved here.", movedField.UnavailableLocation);
                     }
                 }
 
@@ -2197,27 +2240,27 @@ internal sealed class OwnershipValidator
                 token);
             if (variable.DeclarationLocation is not null)
             {
-                OwnershipNote("STK4205", $"Aggregate '{variable.Name}' was declared here.", variable.DeclarationLocation);
+                OwnershipNote(summary, "STK4205", $"Aggregate '{variable.Name}' was declared here.", variable.DeclarationLocation);
             }
 
             return;
         }
 
         OwnershipError(summary, "STK4200", DescribeUnavailableValue(variable.Name, state), token);
-        ReportUnavailableValueNote(variable, state);
+        ReportUnavailableValueNote(summary, variable, state);
     }
 
-    private void ReportUnavailableValueNote(VariableInfo variable, VariableState state)
+    private void ReportUnavailableValueNote(FunctionOwnershipBuilder summary, VariableInfo variable, VariableState state)
     {
         if (state.UnavailableKind == UnavailableValueKind.Moved && state.UnavailableLocation is not null)
         {
-            OwnershipNote("STK4200", $"Value '{variable.Name}' was moved here.", state.UnavailableLocation);
+            OwnershipNote(summary, "STK4200", $"Value '{variable.Name}' was moved here.", state.UnavailableLocation);
             return;
         }
 
         if (state.UnavailableKind == UnavailableValueKind.NeverInitialized && variable.DeclarationLocation is not null)
         {
-            OwnershipNote("STK4200", $"Value '{variable.Name}' was declared here without an initializer.", variable.DeclarationLocation);
+            OwnershipNote(summary, "STK4200", $"Value '{variable.Name}' was declared here without an initializer.", variable.DeclarationLocation);
         }
     }
 
@@ -2228,7 +2271,7 @@ internal sealed class OwnershipValidator
             return;
         }
 
-        OwnershipNote("STK4202", lifetime.OriginDescription is null ? "Borrow source is here." : $"{lifetime.OriginDescription} is here.", lifetime.OriginLocation);
+        OwnershipNote(summary, "STK4202", lifetime.OriginDescription is null ? "Borrow source is here." : $"{lifetime.OriginDescription} is here.", lifetime.OriginLocation);
     }
 
     private bool TryGetNamedAggregate(StarkTypeSymbol type, out NamedTypeSymbol namedType)
@@ -3207,6 +3250,8 @@ internal sealed class OwnershipValidator
 
     private sealed class FunctionOwnershipBuilder
     {
+        private readonly HashSet<EmittedOwnershipDiagnosticKey> _emittedDiagnostics = [];
+
         public FunctionOwnershipBuilder(string name)
         {
             Name = name;
@@ -3220,6 +3265,11 @@ internal sealed class OwnershipValidator
 
         public List<string> Moves { get; } = [];
 
+        public bool TryRecordDiagnostic(DiagnosticSeverity severity, string code, string message, SourceLocation? location)
+        {
+            return _emittedDiagnostics.Add(new EmittedOwnershipDiagnosticKey(severity, code, message, location));
+        }
+
         public FunctionOwnershipSummary Build()
         {
             return new FunctionOwnershipSummary(
@@ -3229,4 +3279,10 @@ internal sealed class OwnershipValidator
                 Moves.ToArray());
         }
     }
+
+    private readonly record struct EmittedOwnershipDiagnosticKey(
+        DiagnosticSeverity Severity,
+        string Code,
+        string Message,
+        SourceLocation? Location);
 }

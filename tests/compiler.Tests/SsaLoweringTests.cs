@@ -315,6 +315,7 @@ public sealed class SsaLoweringTests
         var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
 
         Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "box", StorageClass: "heap" });
+        Assert.Contains(instructions, static instruction => instruction is SsaDeallocateLocalInstruction { LocalName: "box", StorageClass: "heap" });
         Assert.Contains(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "box" });
         Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeStartInstruction { LocalName: "box" });
         Assert.DoesNotContain(instructions, static instruction => instruction is SsaLifetimeEndInstruction { LocalName: "box" });

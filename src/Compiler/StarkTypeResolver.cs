@@ -330,7 +330,34 @@ internal sealed class StarkTypeResolver
         _context.Diagnostics.Error(code, message, _stage, Location(token));
     }
 
-    private SourceLocation Location(IToken token) => new(_context.Input.FilePath, token.Line, token.Column + 1);
+    private SourceLocation Location(IToken token)
+    {
+        var tokenText = token.Text;
+        if (string.IsNullOrEmpty(tokenText))
+        {
+            return new SourceLocation(_context.Input.FilePath, token.Line, token.Column + 1);
+        }
+
+        var normalizedText = tokenText.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var lines = normalizedText.Split('\n');
+        if (lines.Length == 1)
+        {
+            return new SourceLocation(
+                _context.Input.FilePath,
+                token.Line,
+                token.Column + 1,
+                token.Line,
+                token.Column + Math.Max(lines[0].Length, 1));
+        }
+
+        return new SourceLocation(
+            _context.Input.FilePath,
+            token.Line,
+            token.Column + 1,
+            token.Line + lines.Length - 1,
+            Math.Max(lines[^1].Length, 1));
+    }
 
     private static BigInteger ParseSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)
     {

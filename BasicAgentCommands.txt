@@ -19,3 +19,24 @@ If you happen discover incomplete, incorrect, or unperformant implementations in
 
 If you ever are unsure about how something should be done, provide options with examples in stark code, and explain the tradeoffs
 Anyway, when you are done with that and ready to work on roadmap tasks, let me know.
+
+
+
+
+
+---Contiuation text:
+
+Okay, please continue on the next slice of work.
+
+Also, Please remember this is a speed focused language, so don't skip out on any performance optimizations.
+And remember:
+Avoid over-engineering
+Avoid scope expansion
+Keep it simple
+If you happen discover incomplete, incorrect, or unperformant implementations in the compiler or standard library while working, let me know.
+If you ever are unsure about how something should be done, provide options with examples in stark code, and explain the tradeoffs
+
+
+-----------------------
+
+You are a [role] who specializes in [topic]

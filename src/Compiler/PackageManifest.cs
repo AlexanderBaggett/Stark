@@ -42,6 +42,7 @@ internal sealed record StarkPackageFunctionManifest(
     string ReturnType,
     IReadOnlyList<StarkPackageParameterManifest> Parameters,
     bool IsFfi,
+    bool IsStrictFp,
     bool UseFastCallingConvention,
     StarkPackageAsmManifest? Asm = null);
 
@@ -73,6 +74,7 @@ internal sealed record StarkPackageMethodManifest(
     string ReturnType,
     IReadOnlyList<StarkPackageParameterManifest> Parameters,
     bool IsFfi,
+    bool IsStrictFp,
     bool UseFastCallingConvention);
 
 internal sealed record StarkPackageDestructorManifest(
@@ -290,6 +292,7 @@ internal static class PackageManifestBuilder
                     RenderManifestTypeText(parameter.Type, ModuleNameFromQualifiedName(qualifiedName))))
                 .ToArray(),
             effects.IsFfi,
+            effects.IsStrictFp,
             effects.UseFastCallingConvention,
             BuildAsmManifest(declarationFunction.Asm));
         return true;
@@ -350,6 +353,7 @@ internal static class PackageManifestBuilder
                             RenderManifestTypeText(parameter.Type, module.SyntaxModel.ModuleName)))
                         .ToArray(),
                     effects.IsFfi,
+                    effects.IsStrictFp,
                     effects.UseFastCallingConvention);
             })
             .Where(static manifest => manifest is not null)
@@ -599,6 +603,11 @@ internal static class PackageManifestLoader
                         builder.Append("ffi ");
                     }
 
+                    if (method.IsStrictFp)
+                    {
+                        builder.Append("strictfp ");
+                    }
+
                     builder.Append(RenderFunctionKind(method.Kind));
                     builder.Append(' ');
                     builder.Append(method.ReturnType);
@@ -675,6 +684,11 @@ internal static class PackageManifestLoader
         if (function.IsFfi)
         {
             builder.Append("ffi ");
+        }
+
+        if (function.IsStrictFp)
+        {
+            builder.Append("strictfp ");
         }
 
         if (function.Asm is not null)

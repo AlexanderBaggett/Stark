@@ -316,6 +316,7 @@ public sealed class CompilerPipelineTests
             module Effects
 
             public finite law i32 Add(i32 left, i32 right);
+            public strictfp finite law f32 Precise(f32 left, f32 right);
             export ffi cold fn void Accept(rawptr<i8> value);
             internal hot fn i32 Warm(i32 value);
             """));
@@ -332,6 +333,9 @@ public sealed class CompilerPipelineTests
         Assert.True(add.WillReturn);
         Assert.True(add.MustProgress);
         Assert.True(add.UseFastCallingConvention);
+
+        var precise = effectModel.Functions["Precise"];
+        Assert.True(precise.IsStrictFp);
 
         var accept = effectModel.Functions["Accept"];
         Assert.False(accept.IsPure);
@@ -775,7 +779,34 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void LlvmDeclarationFallbackProducesStructuredWarningLogs()
+    public void EmitLlvmModesConvertUnsupportedMirLoweringIntoStableDiagnostics()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32 Run(i32[2] values, i32 index) {
+                    return values[index];
+                }
+                """),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK5000"
+                && diagnostic.Stage == "lower-mir"
+                && diagnostic.Message.Contains("Dynamic fixed-array indexing currently requires a local fixed array source.", StringComparison.Ordinal));
+        Assert.False(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? _));
+    }
+
+    [Fact]
+    public void HeapAllocatorLoweringAvoidsLlvmFallbackLogs()
     {
         var pipeline = DefaultCompilerPipeline.Create();
 
@@ -794,21 +825,15 @@ public sealed class CompilerPipelineTests
             """));
 
         Assert.True(result.Succeeded);
-        var log = Assert.Single(result.Logs, log =>
+        Assert.DoesNotContain(result.Logs, log =>
             log.Category == "codegen"
             && log.EventId == "llvm-body-fallback"
             && log.Stage == "emit-llvm"
             && log.SymbolName == "Run");
-
-        Assert.Equal(DiagnosticSeverity.Warning, log.Severity);
-        Assert.Equal(CompilerLogKind.Gap, log.Kind);
-        Assert.Equal(CompilerLogOutcome.Bypassed, log.Outcome);
-        Assert.NotNull(log.Data);
-        Assert.Equal("Demo", log.Data["module"]);
-        Assert.Equal("StarkCfg", log.Data["bodyLoweringKind"]);
-        Assert.Equal("True", log.Data["supportsDirectCodeGeneration"]);
-        Assert.Equal("llvm-body-fallback", log.Data["feature"]);
-        Assert.Contains("Local storage class 'heap'", log.Data["reason"], StringComparison.Ordinal);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+        Assert.Contains("call ptr @malloc(i64", llvmModule.Text);
+        Assert.Contains("call void @free(ptr %slot_box)", llvmModule.Text);
     }
 
     [Fact]
@@ -1797,6 +1822,79 @@ public sealed class CompilerPipelineTests
                 diagnostic => diagnostic.Code == "STK2102"
                     && diagnostic.Message.Contains("Syscall0", StringComparison.Ordinal)
                     && diagnostic.Message.Contains("aarch64", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedStrictFpFunctionsPreserveModifierAndEffects()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-strictfp-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public strictfp finite law f32 Add(f32 left, f32 right) {
+                    return left + right;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var addFunction = Assert.Single(facadeModule.Functions, static function => function.Name == "Add");
+            Assert.True(addFunction.IsStrictFp);
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn f32 Run() {
+                        return Facade.Add(1.0, 2.0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+
+            var importedAdd = Assert.Single(importedModule.SyntaxModel.Declarations, static declaration => declaration.Name == "Add");
+            Assert.NotNull(importedAdd.Function);
+            Assert.True(importedAdd.Function!.Modifiers.IsStrictFp);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+            Assert.NotNull(effectModel);
+            Assert.True(effectModel.Functions["Facade.Add"].IsStrictFp);
         }
         finally
         {

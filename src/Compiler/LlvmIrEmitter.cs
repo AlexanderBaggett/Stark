@@ -1370,6 +1370,7 @@ internal sealed class LlvmIrEmitter
             SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
             SsaLifetimeStartInstruction => [],
             SsaLifetimeEndInstruction => [],
+            SsaDeallocateLocalInstruction => [],
             SsaStoreLocalInstruction storeLocal => [storeLocal.Value],
             SsaCopyMemoryInstruction copyMemory => [copyMemory.DestinationAddress, copyMemory.SourceAddress],
             SsaStoreIndirectInstruction storeIndirect => [storeIndirect.Address, storeIndirect.Value],
@@ -1578,6 +1579,12 @@ internal sealed class LlvmIrEmitter
             declarations.Add("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)");
         }
 
+        if (UsesHeapAllocator())
+        {
+            declarations.Add($"declare ptr @malloc({GetAllocatorSizeType()})");
+            declarations.Add("declare void @free(ptr)");
+        }
+
         if (UsesMemcpyInlineIntrinsic())
         {
             declarations.Add("declare void @llvm.memcpy.inline.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64 immarg, i1 immarg)");
@@ -1706,6 +1713,21 @@ internal sealed class LlvmIrEmitter
             .Any(UsesLargeZeroInitializedAggregateStore);
     }
 
+    private bool UsesHeapAllocator()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(static instruction => instruction is SsaAllocateLocalInstruction { StorageClass: "heap" }
+                or SsaDeallocateLocalInstruction { StorageClass: "heap" });
+    }
+
+    private string GetAllocatorSizeType()
+    {
+        var pointerSizeBytes = TryGetTargetPointerSizeBytes() ?? 8;
+        return $"i{pointerSizeBytes * 8}";
+    }
+
     private bool UsesLargeZeroInitializedAggregateStore(SsaInstruction instruction)
     {
         return instruction switch
@@ -1816,6 +1838,7 @@ internal sealed class LlvmIrEmitter
             MapType,
             TryGetConcreteTypeLayout,
             ResolveNamedTypeSymbol,
+            GetAllocatorSizeType(),
             debugFunction);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
@@ -3291,6 +3314,11 @@ internal sealed class LlvmIrEmitter
             attributes.Add("cold");
         }
 
+        if (effects.IsStrictFp)
+        {
+            attributes.Add("strictfp");
+        }
+
         attributes.Add(effects.InlinePreference switch
         {
             InlinePreference.Inline => "alwaysinline",
@@ -4268,9 +4296,11 @@ internal sealed class LlvmIrEmitter
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
+        private readonly string _allocatorSizeType;
         private readonly DebugFunctionContext? _debugFunction;
         private readonly HashSet<string> _referencedValueNames;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _localStorageClasses;
         private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
         private SourceLocation? _currentDebugLocation;
         private int _nextAbiTempId;
@@ -4286,6 +4316,7 @@ internal sealed class LlvmIrEmitter
             Func<StarkTypeSymbol, string> mapType,
             Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
             Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedTypeSymbol,
+            string allocatorSizeType,
             DebugFunctionContext? debugFunction)
         {
             _builder = builder;
@@ -4298,8 +4329,10 @@ internal sealed class LlvmIrEmitter
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
             _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
+            _allocatorSizeType = allocatorSizeType;
             _debugFunction = debugFunction;
             _referencedValueNames = CollectReferencedValueNames(ssaFunction);
+            _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
         }
 
         public void Emit()
@@ -4363,6 +4396,9 @@ internal sealed class LlvmIrEmitter
                     return;
                 case SsaLifetimeEndInstruction lifetimeEnd:
                     EmitLifetimeEnd(lifetimeEnd);
+                    return;
+                case SsaDeallocateLocalInstruction deallocateLocal:
+                    EmitDeallocateLocal(deallocateLocal);
                     return;
                 case SsaStoreLocalInstruction storeLocal:
                     EmitStoreLocal(storeLocal);
@@ -4813,18 +4849,12 @@ internal sealed class LlvmIrEmitter
 
         private void EmitAllocateLocal(SsaAllocateLocalInstruction allocateLocal)
         {
-            if (allocateLocal.StorageClass is not "stack")
-            {
-                throw new UnsupportedBodyEmissionException(
-                    $"Local storage class '{allocateLocal.StorageClass}' is not yet supported for LLVM body emission.");
-            }
-
-            var slotName = EscapeIdentifier($"slot_{allocateLocal.LocalName}");
-            if (_allocatedLocalSlots.Add(slotName))
-            {
-                AppendLine($"  %{slotName} = alloca {MapType(allocateLocal.LocalType)}");
-                EmitLocalDebugDeclare($"%{slotName}", allocateLocal.LocalName, allocateLocal.LocalType, allocateLocal.Location);
-            }
+            EnsureLocalSlotExists(allocateLocal.LocalName, allocateLocal.LocalType);
+            EmitLocalDebugDeclare(
+                $"%{EscapeIdentifier($"slot_{allocateLocal.LocalName}")}",
+                allocateLocal.LocalName,
+                allocateLocal.LocalType,
+                allocateLocal.Location);
         }
 
         private void EmitLifetimeStart(SsaLifetimeStartInstruction lifetimeStart)
@@ -4835,6 +4865,18 @@ internal sealed class LlvmIrEmitter
         private void EmitLifetimeEnd(SsaLifetimeEndInstruction lifetimeEnd)
         {
             EmitLifetimeMarker("end", lifetimeEnd.LocalName, lifetimeEnd.LocalType);
+        }
+
+        private void EmitDeallocateLocal(SsaDeallocateLocalInstruction deallocateLocal)
+        {
+            if (deallocateLocal.StorageClass != "heap")
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Local storage class '{deallocateLocal.StorageClass}' is not yet supported for LLVM deallocation.");
+            }
+
+            var slotName = $"%{EscapeIdentifier($"slot_{deallocateLocal.LocalName}")}";
+            AppendLine($"  call void @free(ptr {slotName})");
         }
 
         private void EmitLifetimeMarker(string phase, string localName, StarkTypeSymbol localType)
@@ -5501,10 +5543,39 @@ internal sealed class LlvmIrEmitter
         private void EnsureLocalSlotExists(string localName, StarkTypeSymbol localType)
         {
             var slotName = EscapeIdentifier($"slot_{localName}");
-            if (_allocatedLocalSlots.Add(slotName))
+            if (!_allocatedLocalSlots.Add(slotName))
             {
-                AppendLine($"  %{slotName} = alloca {MapType(localType)}");
+                return;
             }
+
+            switch (GetLocalStorageClass(localName))
+            {
+                case "stack":
+                    AppendLine($"  %{slotName} = alloca {MapType(localType)}");
+                    return;
+                case "heap":
+                    EmitHeapAllocateLocalSlot(slotName, localType);
+                    return;
+                default:
+                    throw new UnsupportedBodyEmissionException(
+                        $"Local storage class '{GetLocalStorageClass(localName)}' is not yet supported for LLVM body emission.");
+            }
+        }
+
+        private void EmitHeapAllocateLocalSlot(string slotName, StarkTypeSymbol localType)
+        {
+            var sizePointer = $"%{EscapeIdentifier(CreateAbiTempName("heap_size_ptr"))}";
+            var sizeValue = $"%{EscapeIdentifier(CreateAbiTempName("heap_size"))}";
+            AppendLine($"  {sizePointer} = getelementptr {MapType(localType)}, ptr null, i32 1");
+            AppendLine($"  {sizeValue} = ptrtoint ptr {sizePointer} to {_allocatorSizeType}");
+            AppendLine($"  %{slotName} = call ptr @malloc({_allocatorSizeType} {sizeValue})");
+        }
+
+        private string GetLocalStorageClass(string localName)
+        {
+            return _localStorageClasses.TryGetValue(localName, out var storageClass)
+                ? storageClass
+                : "stack";
         }
 
         private void EnsureParameterSlotExists(AbiParameterSymbol parameter, StarkTypeSymbol parameterType)
@@ -5705,6 +5776,24 @@ internal sealed class LlvmIrEmitter
             }
         }
 
+        private static Dictionary<string, string> CollectLocalStorageClasses(SsaFunction function)
+        {
+            var storageClasses = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaAllocateLocalInstruction allocateLocal)
+                    {
+                        storageClasses[allocateLocal.LocalName] = allocateLocal.StorageClass;
+                    }
+                }
+            }
+
+            return storageClasses;
+        }
+
         private string FormatValueReference(SsaValueReference reference)
         {
             return _materializedParameters.TryGetValue(reference.Name, out var materialized)
@@ -5724,6 +5813,7 @@ internal sealed class LlvmIrEmitter
                 SsaAllocateLocalInstruction allocateLocal => allocateLocal.Location,
                 SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
                 SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
+                SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal.Location,
                 SsaStoreLocalInstruction storeLocal => storeLocal.Location,
                 SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
                 SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,

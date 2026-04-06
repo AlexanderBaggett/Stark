@@ -1,8 +1,12 @@
+using System.Text;
+using System.Text.Json;
+
 namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const int DiagnosticTabWidth = 4;
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -22,6 +26,7 @@ internal static class CompilerCli
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
+        var diagnosticFormat = DiagnosticOutputFormat.Text;
         var logLevel = DiagnosticSeverity.Warning;
         var logVerbosity = CompilerLogVerbosity.Normal;
         var logCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +174,18 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (TryReadOptionValue(argument, "--diagnostic-format", args, ref index, out var diagnosticFormatValue))
+            {
+                if (!TryParseDiagnosticFormat(diagnosticFormatValue, out diagnosticFormat))
+                {
+                    await stderr.WriteLineAsync($"Unknown diagnostic format '{diagnosticFormatValue}'. Expected text or json.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
             if (TryReadOptionValue(argument, "--log-verbosity", args, ref index, out var logVerbosityValue))
             {
                 if (!TryParseLogVerbosity(logVerbosityValue, out logVerbosity))
@@ -308,20 +325,20 @@ internal static class CompilerCli
             librarySearchDirectories,
             linkArguments,
             saveTempsDirectory);
-        using var logOutputScope = CompilerLogOutput.Push(stderr, logLevel, logVerbosity, logCategories, logStages, logKinds);
+        using var logOutputScope = diagnosticFormat == DiagnosticOutputFormat.Json
+            ? CompilerLogOutput.Push(TextWriter.Null, DiagnosticSeverity.Error)
+            : CompilerLogOutput.Push(stderr, logLevel, logVerbosity, logCategories, logStages, logKinds);
         var result = pipeline.Run(
             new CompilationInput(source, inputPath),
             compilerOptions);
 
         if (!result.Succeeded)
         {
-            foreach (var diagnostic in result.Diagnostics)
-            {
-                await stderr.WriteLineAsync(diagnostic.ToString());
-            }
-
+            await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: false, source, inputPath);
             return 1;
         }
+
+        await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: true, source, inputPath);
 
         switch (mode)
         {
@@ -337,9 +354,9 @@ internal static class CompilerCli
             case CliMode.EmitObject:
                 return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitLibrary:
-                return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
+                return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
             case CliMode.EmitExecutable:
-                return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
+                return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
             default:
                 var executedPasses = result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed);
                 await stdout.WriteLineAsync($"Compilation pipeline succeeded. Executed {executedPasses} passes.");
@@ -354,7 +371,8 @@ internal static class CompilerCli
         TextWriter stderr,
         CompilationResult result,
         CompilerOptions compilerOptions,
-        ToolchainCliOptions toolchainOptions)
+        ToolchainCliOptions toolchainOptions,
+        DiagnosticOutputFormat diagnosticFormat)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -406,10 +424,7 @@ internal static class CompilerCli
                     var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
                     if (!dependencyResult.Success)
                     {
-                        foreach (var diagnostic in dependencyResult.Diagnostics)
-                        {
-                            await stderr.WriteLineAsync(diagnostic.ToString());
-                        }
+                        await WriteDiagnosticsAsync(stderr, dependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
 
                         if (dependencyResult.ToolchainResult is not null)
                         {
@@ -475,7 +490,8 @@ internal static class CompilerCli
         TextWriter stderr,
         CompilationResult result,
         CompilerOptions compilerOptions,
-        ToolchainCliOptions toolchainOptions)
+        ToolchainCliOptions toolchainOptions,
+        DiagnosticOutputFormat diagnosticFormat)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -513,10 +529,7 @@ internal static class CompilerCli
                     var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
                     if (!dependencyResult.Success)
                     {
-                        foreach (var diagnostic in dependencyResult.Diagnostics)
-                        {
-                            await stderr.WriteLineAsync(diagnostic.ToString());
-                        }
+                        await WriteDiagnosticsAsync(stderr, dependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
 
                         if (dependencyResult.ToolchainResult is not null)
                         {
@@ -815,6 +828,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync(Usage);
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Workflows:");
+        await stdout.WriteLineAsync("  (default)      Run the full compilation pipeline and print a pass summary");
         await stdout.WriteLineAsync("  --check       Validate through ownership/lifetime analysis");
         await stdout.WriteLineAsync("  --emit-mir    Print lowered MIR");
         await stdout.WriteLineAsync("  --emit-ssa    Print lowered SSA");
@@ -846,6 +860,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --save-temps <dir>             Preserve intermediate LLVM and object files in <dir>");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Compiler Logs:");
+        await stdout.WriteLineAsync("  --diagnostic-format <text|json>      Choose text diagnostics or a stable JSON diagnostic document (default: text)");
         await stdout.WriteLineAsync("  --log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)");
         await stdout.WriteLineAsync("  --log-verbosity <normal|verbose>     Choose low-noise normal output or richer verbose output");
         await stdout.WriteLineAsync("  --log-category <name>                Print only matching compiler log categories (repeatable)");
@@ -855,7 +870,15 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
         await stdout.WriteLineAsync("  --emit-lib and --emit-exe perform link/archive steps.");
+        await stdout.WriteLineAsync("  With no workflow flag, the compiler runs the full pipeline and prints a success summary.");
+        await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
         await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable.");
+        await stdout.WriteLineAsync();
+        await stdout.WriteLineAsync("Examples:");
+        await stdout.WriteLineAsync("  compiler app.stark --check");
+        await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
+        await stdout.WriteLineAsync("  compiler app.stark --emit-exe -o app");
+        await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
     }
 
     private static async Task<int> EmitTextArtifactAsync<T>(
@@ -1048,6 +1071,22 @@ internal static class CompilerCli
         }
     }
 
+    private static bool TryParseDiagnosticFormat(string value, out DiagnosticOutputFormat format)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "text":
+                format = DiagnosticOutputFormat.Text;
+                return true;
+            case "json":
+                format = DiagnosticOutputFormat.Json;
+                return true;
+            default:
+                format = DiagnosticOutputFormat.Text;
+                return false;
+        }
+    }
+
     private static bool TryParseLogKind(string value, out CompilerLogKind kind)
     {
         switch (value.Trim().ToLowerInvariant())
@@ -1224,5 +1263,400 @@ internal static class CompilerCli
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
         string? SaveTempsDirectory);
+
+    private static async Task WriteDiagnosticsAsync(
+        TextWriter writer,
+        IReadOnlyList<CompilerDiagnostic> diagnostics,
+        DiagnosticOutputFormat format,
+        bool succeeded,
+        string? rootSourceText = null,
+        string? rootInputPath = null)
+    {
+        if (diagnostics.Count == 0)
+        {
+            return;
+        }
+
+        var summary = BuildDiagnosticSummary(diagnostics);
+        switch (format)
+        {
+            case DiagnosticOutputFormat.Json:
+                await writer.WriteLineAsync(FormatDiagnosticsAsJson(diagnostics, summary, succeeded));
+                break;
+            default:
+                var snippetCache = new DiagnosticSnippetCache(rootSourceText, rootInputPath);
+                for (var index = 0; index < diagnostics.Count; index++)
+                {
+                    var diagnostic = diagnostics[index];
+                    if (diagnostic.Severity == DiagnosticSeverity.Info)
+                    {
+                        await WriteStandaloneDiagnosticAsync(writer, diagnostic, snippetCache);
+                        continue;
+                    }
+
+                    await WritePrimaryDiagnosticAsync(writer, diagnostic, snippetCache);
+                    while (index + 1 < diagnostics.Count
+                        && diagnostics[index + 1].Severity == DiagnosticSeverity.Info)
+                    {
+                        index++;
+                        await WriteRelatedNoteAsync(writer, diagnostics[index], snippetCache);
+                    }
+                }
+
+                await writer.WriteLineAsync(FormatDiagnosticSummary(summary, succeeded));
+                break;
+        }
+    }
+
+    private static async Task WritePrimaryDiagnosticAsync(
+        TextWriter writer,
+        CompilerDiagnostic diagnostic,
+        DiagnosticSnippetCache snippetCache)
+    {
+        await writer.WriteLineAsync(diagnostic.ToString());
+        if (TryFormatDiagnosticSnippet(diagnostic, snippetCache, out var snippet))
+        {
+            await writer.WriteLineAsync(snippet);
+        }
+    }
+
+    private static async Task WriteStandaloneDiagnosticAsync(
+        TextWriter writer,
+        CompilerDiagnostic diagnostic,
+        DiagnosticSnippetCache snippetCache)
+    {
+        await writer.WriteLineAsync(diagnostic.ToString());
+        if (TryFormatDiagnosticSnippet(diagnostic, snippetCache, out var snippet))
+        {
+            await writer.WriteLineAsync(snippet);
+        }
+    }
+
+    private static async Task WriteRelatedNoteAsync(
+        TextWriter writer,
+        CompilerDiagnostic diagnostic,
+        DiagnosticSnippetCache snippetCache)
+    {
+        await writer.WriteLineAsync($"  {FormatGroupedNoteHeader(diagnostic)}");
+        if (TryFormatDiagnosticSnippet(diagnostic, snippetCache, out var snippet))
+        {
+            await writer.WriteLineAsync(IndentBlock(snippet, "  "));
+        }
+    }
+
+    private static string FormatGroupedNoteHeader(CompilerDiagnostic diagnostic)
+    {
+        var stage = string.IsNullOrWhiteSpace(diagnostic.Stage)
+            ? string.Empty
+            : $" [{diagnostic.Stage}]";
+        var location = diagnostic.Location is null
+            ? string.Empty
+            : $" at {diagnostic.Location}";
+        return $"note{stage}{location}: {diagnostic.Message}";
+    }
+
+    private static string IndentBlock(string text, string indent)
+    {
+        return indent + text.Replace(Environment.NewLine, Environment.NewLine + indent, StringComparison.Ordinal);
+    }
+
+    private static DiagnosticSummary BuildDiagnosticSummary(IReadOnlyList<CompilerDiagnostic> diagnostics)
+    {
+        var errorCount = 0;
+        var warningCount = 0;
+        var infoCount = 0;
+
+        foreach (var diagnostic in diagnostics)
+        {
+            switch (diagnostic.Severity)
+            {
+                case DiagnosticSeverity.Error:
+                    errorCount++;
+                    break;
+                case DiagnosticSeverity.Warning:
+                    warningCount++;
+                    break;
+                case DiagnosticSeverity.Info:
+                    infoCount++;
+                    break;
+            }
+        }
+
+        return new DiagnosticSummary(
+            diagnostics.Count,
+            errorCount,
+            warningCount,
+            infoCount);
+    }
+
+    private static string FormatDiagnosticSummary(DiagnosticSummary summary, bool succeeded)
+    {
+        var label = succeeded ? "Summary" : "Failure summary";
+        return $"{label}: {FormatCount(summary.ErrorCount, "error")}, {FormatCount(summary.WarningCount, "warning")}, {FormatCount(summary.InfoCount, "info")}.";
+    }
+
+    private static string FormatDiagnosticsAsJson(
+        IReadOnlyList<CompilerDiagnostic> diagnostics,
+        DiagnosticSummary summary,
+        bool succeeded)
+    {
+        var document = new DiagnosticDocument(
+            succeeded,
+            summary,
+            diagnostics
+                .Select(static diagnostic => new DiagnosticRecord(
+                    diagnostic.Code,
+                    diagnostic.Severity.ToString().ToLowerInvariant(),
+                    diagnostic.Message,
+                    diagnostic.Stage,
+                    diagnostic.Location is null
+                        ? null
+                        : new DiagnosticLocationRecord(
+                            diagnostic.Location.FilePath,
+                            diagnostic.Location.Line,
+                            diagnostic.Location.Column,
+                            diagnostic.Location.EndLine > 0 ? diagnostic.Location.EndLine : null,
+                            diagnostic.Location.EndColumn > 0 ? diagnostic.Location.EndColumn : null)))
+                .ToArray());
+
+        return JsonSerializer.Serialize(
+            document,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+    }
+
+    private static string FormatCount(int count, string singularNoun)
+    {
+        return count == 1 ? $"1 {singularNoun}" : $"{count} {singularNoun}s";
+    }
+
+    private static bool TryFormatDiagnosticSnippet(
+        CompilerDiagnostic diagnostic,
+        DiagnosticSnippetCache snippetCache,
+        out string snippet)
+    {
+        snippet = string.Empty;
+
+        if (diagnostic.Location is not { Line: > 0, Column: > 0 } location
+            || !snippetCache.TryGetLines(location, out var sourceLines))
+        {
+            return false;
+        }
+
+        var endLine = Math.Clamp(Math.Max(location.ResolvedEndLine, location.Line), location.Line, sourceLines.Length);
+        var lineNumberWidth = endLine.ToString().Length;
+        var builder = new StringBuilder();
+
+        for (var lineNumber = location.Line; lineNumber <= endLine; lineNumber++)
+        {
+            var lineText = sourceLines[lineNumber - 1];
+            var displayLineText = ExpandTabsForDisplay(lineText);
+            var caretStartColumn = lineNumber == location.Line
+                ? GetDisplayColumn(lineText, location.Column)
+                : 0;
+            var caretWidth = GetSpanCaretWidth(location, lineText, displayLineText, lineNumber, endLine, caretStartColumn);
+
+            builder.Append("  ")
+                .Append(lineNumber.ToString().PadLeft(lineNumberWidth))
+                .Append(" | ")
+                .Append(displayLineText)
+                .AppendLine();
+            builder.Append("  ")
+                .Append(new string(' ', lineNumberWidth))
+                .Append(" | ")
+                .Append(new string(' ', caretStartColumn))
+                .Append(new string('^', caretWidth));
+
+            if (lineNumber < endLine)
+            {
+                builder.AppendLine();
+            }
+        }
+
+        snippet = builder.ToString();
+        return true;
+    }
+
+    private static int GetSpanCaretWidth(
+        SourceLocation location,
+        string lineText,
+        string displayLineText,
+        int lineNumber,
+        int endLine,
+        int caretStartColumn)
+    {
+        if (lineNumber == location.Line && lineNumber == endLine)
+        {
+            var endColumnExclusive = GetDisplayColumn(lineText, Math.Max(location.ResolvedEndColumn, location.Column) + 1);
+            return Math.Max(endColumnExclusive - caretStartColumn, 1);
+        }
+
+        if (lineNumber == location.Line)
+        {
+            return Math.Max(displayLineText.Length - caretStartColumn, 1);
+        }
+
+        if (lineNumber == endLine)
+        {
+            return Math.Max(GetDisplayColumn(lineText, Math.Max(location.ResolvedEndColumn, 1) + 1), 1);
+        }
+
+        return Math.Max(displayLineText.Length, 1);
+    }
+
+    private static string ExpandTabsForDisplay(string text)
+    {
+        if (!text.Contains('\t', StringComparison.Ordinal))
+        {
+            return text;
+        }
+
+        var builder = new StringBuilder(text.Length);
+        var displayColumn = 0;
+        foreach (var character in text)
+        {
+            if (character == '\t')
+            {
+                var width = GetDisplayWidth(character, displayColumn);
+                builder.Append(' ', width);
+                displayColumn += width;
+            }
+            else
+            {
+                builder.Append(character);
+                displayColumn++;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static int GetDisplayColumn(string text, int oneBasedColumn)
+    {
+        var characterCount = Math.Max(oneBasedColumn - 1, 0);
+        var boundedCharacterCount = Math.Min(characterCount, text.Length);
+        var displayColumn = 0;
+        for (var index = 0; index < boundedCharacterCount; index++)
+        {
+            displayColumn += GetDisplayWidth(text[index], displayColumn);
+        }
+
+        if (characterCount > text.Length)
+        {
+            displayColumn += characterCount - text.Length;
+        }
+
+        return displayColumn;
+    }
+
+    private static int GetDisplayWidth(char character, int displayColumn)
+    {
+        if (character != '\t')
+        {
+            return 1;
+        }
+
+        var remainder = displayColumn % DiagnosticTabWidth;
+        return remainder == 0 ? DiagnosticTabWidth : DiagnosticTabWidth - remainder;
+    }
+
+    private enum DiagnosticOutputFormat
+    {
+        Text,
+        Json
+    }
+
+    private sealed record DiagnosticSummary(
+        int TotalCount,
+        int ErrorCount,
+        int WarningCount,
+        int InfoCount);
+
+    private sealed record DiagnosticDocument(
+        bool Succeeded,
+        DiagnosticSummary Summary,
+        IReadOnlyList<DiagnosticRecord> Diagnostics);
+
+    private sealed record DiagnosticRecord(
+        string Code,
+        string Severity,
+        string Message,
+        string? Stage,
+        DiagnosticLocationRecord? Location);
+
+    private sealed record DiagnosticLocationRecord(
+        string? FilePath,
+        int Line,
+        int Column,
+        int? EndLine,
+        int? EndColumn);
+
+    private sealed class DiagnosticSnippetCache(string? rootSourceText, string? rootInputPath)
+    {
+        private readonly string? _rootSourceText = rootSourceText;
+        private readonly string? _rootInputPath = string.IsNullOrWhiteSpace(rootInputPath) ? null : Path.GetFullPath(rootInputPath);
+        private readonly string[]? _rootLines = rootSourceText is null ? null : SplitLines(rootSourceText);
+        private readonly Dictionary<string, string[]?> _linesByPath = new(StringComparer.Ordinal);
+
+        public bool TryGetLines(SourceLocation location, out string[] lines)
+        {
+            lines = [];
+
+            var resolvedLines = ResolveLines(location.FilePath);
+            if (resolvedLines is null
+                || location.Line < 1
+                || location.Line > resolvedLines.Length)
+            {
+                return false;
+            }
+
+            lines = resolvedLines;
+            return true;
+        }
+
+        private string[]? ResolveLines(string? filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                return _rootLines;
+            }
+
+            var fullPath = Path.GetFullPath(filePath);
+            if (_rootInputPath is not null
+                && string.Equals(fullPath, _rootInputPath, StringComparison.Ordinal))
+            {
+                return _rootLines;
+            }
+
+            if (_linesByPath.TryGetValue(fullPath, out var cached))
+            {
+                return cached;
+            }
+
+            try
+            {
+                cached = File.Exists(fullPath)
+                    ? SplitLines(File.ReadAllText(fullPath))
+                    : null;
+            }
+            catch
+            {
+                cached = null;
+            }
+
+            _linesByPath[fullPath] = cached;
+            return cached;
+        }
+
+        private static string[] SplitLines(string sourceText)
+        {
+            return sourceText.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n')
+                .Split('\n');
+        }
+    }
 
 }

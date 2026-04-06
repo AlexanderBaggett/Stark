@@ -58,6 +58,43 @@ public sealed class OwnershipValidationTests
     }
 
     [Fact]
+    public void MoveDiagnosticsAreNotDuplicatedForTheSameUse()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            finite law void Consume(Box value) {
+                return;
+            }
+
+            finite law i32 Run() {
+                stack Box box = new Box() { Value = 1 };
+                Consume(box);
+                return box.Value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            1,
+            result.Diagnostics.Count(diagnostic =>
+                diagnostic.Code == "STK4200"
+                && diagnostic.Severity == DiagnosticSeverity.Error
+                && diagnostic.Message.Contains("Move error", StringComparison.Ordinal)));
+        Assert.Equal(
+            1,
+            result.Diagnostics.Count(diagnostic =>
+                diagnostic.Code == "STK4200"
+                && diagnostic.Severity == DiagnosticSeverity.Info
+                && diagnostic.Message.Contains("was moved here", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void ValueReceiverMethodCallsMoveTheReceiver()
     {
         var result = Compile(

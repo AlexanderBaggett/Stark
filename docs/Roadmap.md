@@ -659,7 +659,7 @@ Goal: replace the current libc-backed stdlib slice with a cross-platform `System
   - [x] package manifest coverage for the new module graph
   - [x] package consumption tests without stdlib source imports
   - [x] reference docs for each public stdlib module family
-- [ ] Destructor syntax and implementation
+- [x] Destructor syntax and implementation
   - [x] stdlib regression tests for owned-resource cleanup
 
 
@@ -827,18 +827,19 @@ Goal: Stark is pleasant to work on and pleasant to use.
 - [x] `--emit-llvm`
 - [x] `--emit-obj`
 - [x] `--emit-exe`
-- [ ] better help/usage output
+- [x] better help/usage output
   - [x] group options by workflow in help output
-  - [ ] document emit-mode defaults and examples
+  - [x] document emit-mode defaults and examples
   - [x] document package/stdlib/native toolchain options
-- [ ] structured diagnostic formatting
-  - [ ] stable machine-readable diagnostic shape
-  - [ ] grouped notes and related spans
-  - [ ] summary/error-count formatting for CLI output
-- [ ] source snippets in diagnostics
-  - [ ] single primary-span source rendering
-  - [ ] secondary-span rendering
-  - [ ] underline/caret formatting with tabs and multiline spans
+- [x] structured diagnostic formatting
+  - [x] stable machine-readable diagnostic shape
+  - [x] grouped notes and related spans
+  - [x] summary/error-count formatting for CLI output
+- [x] source snippets in diagnostics
+  - [x] single primary-span source rendering
+  - [x] secondary-span rendering
+  - [x] underline/caret formatting with tabs
+  - [x] multiline span rendering
 
 ### Repository and Documentation
 
@@ -874,8 +875,20 @@ Goal: Stark is not just a compiler experiment, but a coherent language/toolchain
   - [ ] regression tests keyed to the frozen lowering contract
 - [ ] Document unsupported features explicitly
   - [ ] user-facing unsupported features list
-  - [ ] stable diagnostic behavior for unsupported paths
+  - [x] stable diagnostic behavior for unsupported paths
   - [ ] README and release-note pointers to unsupported areas
+  - [ ] MIR lowering gaps
+    - [x] control-flow misuse diagnostics: `break` without an enclosing loop/switch and `continue` without an enclosing loop
+    - [ ] initializer gaps: unsupported variable initializer shapes; object/array initializers that do not materialize a MIR value; variable initializers that cannot lower to a MIR operand
+    - [ ] assignment and expression gaps: assignment targets or values that cannot be resolved/coerced; conditional expressions outside the direct ternary shape; expression statements that are neither assignments, rvalues, nor operands
+    - [ ] operator and type gaps: dereference requires raw pointers; exponentiation currently requires a floating-point common type; integer-only operator chains reject non-integer common types; equality/comparison lowering is still limited to integer, float, bool, and raw-pointer families
+    - [ ] name and call gaps: function names/function groups do not lower as first-class operands yet; void-valued direct/member/postfix calls cannot appear in value position
+    - [ ] aggregate construction gaps: object initializers require resolved named fields; primary object creation only supports matched primary constructors; enum named constructors require named-field variants with complete payloads; enum positional constructors require exact arity; array initializers only lower for fixed arrays
+    - [ ] place/update gaps: aggregate reads and writes still fall back when field/index paths or address materialization cannot be resolved
+    - [ ] switch gaps: switch scrutinees must lower to operands; only the current direct switch subset lowers; text-switch partitioning still requires supported `ascii`/`unicode` view types and literal cases
+    - [ ] indexing gaps: dynamic fixed-array indexing currently requires a local fixed-array source and an integer index; slice/raw-pointer indexing require integer indices; indexing is only supported for fixed arrays, raw pointers, slices, `ascii`, and `unicode`; text slicing currently requires exactly two integer indices
+    - [ ] runtime-drop gaps: enum/aggregate drop helpers still mark MIR unsupported when tag, field, or comparison temporaries cannot be materialized
+  - [ ] single-element text indexing and general runtime `ascii`/`unicode` conversion
 - [ ] Provide a versioned standard library baseline
   - [ ] package versioning scheme
   - [ ] baseline module list
@@ -927,7 +940,7 @@ If the goal is to make Stark feel substantially more complete as a language, the
 - [ ] Real type/layout/ABI lowering
 - [ ] Field/index/object lowering on top of that
 - [x] Real multi-file module loading and imported symbol binding
-- [ ] Minimal standard library and runtime surface
+- [ ] Minimal runtime surface
 - [ ] Doctrine/trait optimization
 - [ ] Optimization and backend quality passes
 - [ ] Tooling, diagnostics, and release hardening

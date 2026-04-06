@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Stark.Compiler;
 
 namespace compiler.IntegrationTests;
@@ -51,14 +52,182 @@ public sealed class CompilerCliTests
         Assert.Contains("--optimize <0|1|2|3>", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
+        Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
         Assert.Contains("--log-verbosity <normal|verbose>", text);
         Assert.Contains("--log-category <name>", text);
         Assert.Contains("--log-stage <pass-id>", text);
         Assert.Contains("--log-kind <pipeline|symbol|decision|gap>", text);
+        Assert.Contains("(default)      Run the full compilation pipeline and print a pass summary", text);
+        Assert.Contains("With no workflow flag, the compiler runs the full pipeline and prints a success summary.", text);
+        Assert.Contains("Examples:", text);
+        Assert.Contains("compiler app.stark --emit-llvm -o app.ll", text);
+        Assert.Contains("compiler app.stark --diagnostic-format json", text);
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public async Task JsonDiagnosticFormatEmitsStableMachineReadableDocument()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--diagnostic-format", "json"],
+            new StringReader(
+                """
+                module Demo
+
+                fn bool Run() {
+                    return 1;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+
+        using var document = JsonDocument.Parse(stderr.ToString());
+        var root = document.RootElement;
+
+        Assert.False(root.GetProperty("succeeded").GetBoolean());
+        var summary = root.GetProperty("summary");
+        Assert.Equal(1, summary.GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, summary.GetProperty("errorCount").GetInt32());
+        Assert.Equal(0, summary.GetProperty("warningCount").GetInt32());
+        Assert.Equal(0, summary.GetProperty("infoCount").GetInt32());
+
+        var diagnostic = Assert.Single(root.GetProperty("diagnostics").EnumerateArray().ToArray());
+        Assert.Equal("error", diagnostic.GetProperty("severity").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(diagnostic.GetProperty("code").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(diagnostic.GetProperty("message").GetString()));
+        Assert.True(diagnostic.TryGetProperty("stage", out _));
+        var location = diagnostic.GetProperty("location");
+        Assert.True(location.GetProperty("line").GetInt32() > 0);
+        Assert.True(location.GetProperty("column").GetInt32() > 0);
+    }
+
+    [Fact]
+    public async Task TextDiagnosticsRenderSingleLineSourceSnippets()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                fn bool Run() {
+                    return 1;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("error", text, StringComparison.Ordinal);
+        Assert.Contains("4 |     return 1;", text, StringComparison.Ordinal);
+        Assert.Contains("^", text, StringComparison.Ordinal);
+        Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TextDiagnosticsExpandTabsBeforeRenderingCarets()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--log-level", "error"],
+            new StringReader("module Demo\n\nfn bool Run() {\n\treturn 1;\n}\n"),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("4:9: error", text, StringComparison.Ordinal);
+        Assert.Contains("4 |     return 1;", text, StringComparison.Ordinal);
+        Assert.Contains("    |            ^", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\t", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TextDiagnosticsRenderMultilineSpansAcrossSourceLines()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--log-level", "error"],
+            new StringReader(
+                """
+                module Demo
+
+                fn ascii Run(ascii text, i32 first, i32 second, i32 third) {
+                    return text[
+                        first,
+                        second,
+                        third
+                    ];
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("STK3008", text, StringComparison.Ordinal);
+        Assert.Contains("4 |     return text[", text, StringComparison.Ordinal);
+        Assert.Contains("5 |         first,", text, StringComparison.Ordinal);
+        Assert.Contains("6 |         second,", text, StringComparison.Ordinal);
+        Assert.Contains("7 |         third", text, StringComparison.Ordinal);
+        Assert.Contains("8 |     ];", text, StringComparison.Ordinal);
+        Assert.Contains("^^^^^^^^^^^^^^", text, StringComparison.Ordinal);
+        Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TextDiagnosticsGroupCrossCodeNotesUnderTheirPrimaryDiagnostic()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32 Run(bool value) {
+                    switch (value) {
+                        case true:
+                            return 1;
+                        case false:
+                            return 0;
+                        default:
+                            return 2;
+                    }
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("STK3019", text, StringComparison.Ordinal);
+        Assert.Contains("note [type-check]", text, StringComparison.Ordinal);
+        Assert.Contains("Switch coverage becomes exhaustive here for 'bool'.", text, StringComparison.Ordinal);
+        Assert.Contains("7 |         case false:", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -191,6 +360,120 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task SuccessfulChecksPrintWarningsAndTextSummary()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                struct Buffer {
+                    i32 Value;
+
+                    mut drop {
+                        ;
+                    }
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Check succeeded.", stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("warning STK4010", text, StringComparison.Ordinal);
+        Assert.Contains("Summary: 0 errors, 1 warning, 0 infos.", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TextDiagnosticsRenderSourceSnippetsForInfoNotesToo()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                struct Box {
+                    i32 Value;
+                }
+
+                fn void Consume(Box value) {
+                    return;
+                }
+
+                fn i32 Run() {
+                    stack Box box = new Box() { Value = 1 };
+                    Consume(box);
+                    return box.Value;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("Move error", text, StringComparison.Ordinal);
+        Assert.Contains("13 |     Consume(box);", text, StringComparison.Ordinal);
+        Assert.Contains("14 |     return box.Value;", text, StringComparison.Ordinal);
+        Assert.Contains("note [ownership-validate]", text, StringComparison.Ordinal);
+        Assert.Contains("was moved here", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TextDiagnosticsDoNotRepeatTheSameOwnershipMoveError()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                struct Box {
+                    i32 Value;
+                }
+
+                fn void Consume(Box value) {
+                    return;
+                }
+
+                fn i32 Run() {
+                    stack Box box = new Box() { Value = 1 };
+                    Consume(box);
+                    return box.Value;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Equal(
+            1,
+            text.Split(
+                "error STK4200 [ownership-validate]: Move error: value 'box' was moved and must be reinitialized before it can be read.",
+                StringSplitOptions.None).Length - 1);
+        Assert.Equal(
+            1,
+            text.Split(
+                "note [ownership-validate] at 13:13: Value 'box' was moved here.",
+                StringSplitOptions.None).Length - 1);
+        Assert.Contains("Failure summary: 1 error, 0 warnings, 1 info.", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LogFiltersRenderHumanReadableStructuredWarnings()
     {
         var stdout = new StringWriter();
@@ -219,6 +502,33 @@ public sealed class CompilerCliTests
         Assert.Contains("outcome=unsupported", text, StringComparison.Ordinal);
         Assert.Contains("feature=lower-index-access", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Starting pass", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitLlvmModeFailsWithStableUnsupportedLoweringDiagnostic()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--emit-llvm"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32 Run(i32[2] values, i32 index) {
+                    return values[index];
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("error STK5000 [lower-mir]", text, StringComparison.Ordinal);
+        Assert.Contains("Dynamic fixed-array indexing currently requires a local fixed array source.", text, StringComparison.Ordinal);
+        Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
     }
 
     [Fact]

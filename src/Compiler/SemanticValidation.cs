@@ -314,7 +314,7 @@ internal sealed class SemanticValidator
                 IsConstant: false));
         }
 
-        CheckBlock(block, scope, syntaxDeclaration.Function, effects, summary);
+        CheckBlock(block, scope, syntaxDeclaration.Function, effects, summary, ControlFlowContext.Root);
     }
 
     private void ValidateFunctionSignature(
@@ -408,12 +408,13 @@ internal sealed class SemanticValidator
         ValidationScope parentScope,
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
-        FunctionValidationBuilder summary)
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow)
     {
         var scope = new ValidationScope(parentScope);
         foreach (var statement in block.statement())
         {
-            CheckStatement(statement, scope, function, effects, summary);
+            CheckStatement(statement, scope, function, effects, summary, controlFlow);
         }
     }
 
@@ -422,11 +423,12 @@ internal sealed class SemanticValidator
         ValidationScope scope,
         FunctionDeclarationModel function,
         FunctionEffectProfile effects,
-        FunctionValidationBuilder summary)
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow)
     {
         if (statement.block() is { } nestedBlock)
         {
-            CheckBlock(nestedBlock, scope, function, effects, summary);
+            CheckBlock(nestedBlock, scope, function, effects, summary, controlFlow);
             return;
         }
 
@@ -492,10 +494,10 @@ internal sealed class SemanticValidator
         if (statement.ifStatement() is { } ifStatement)
         {
             EvaluateExpression(ifStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            CheckStatement(ifStatement.statement(0), new ValidationScope(scope), function, effects, summary);
+            CheckStatement(ifStatement.statement(0), new ValidationScope(scope), function, effects, summary, controlFlow);
             if (ifStatement.statement().Length > 1)
             {
-                CheckStatement(ifStatement.statement(1), new ValidationScope(scope), function, effects, summary);
+                CheckStatement(ifStatement.statement(1), new ValidationScope(scope), function, effects, summary, controlFlow);
             }
 
             return;
@@ -504,6 +506,7 @@ internal sealed class SemanticValidator
         if (statement.switchStatement() is { } switchStatement)
         {
             var switchValue = EvaluateExpression(switchStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            var switchControlFlow = controlFlow.EnterSwitch();
 
             foreach (var section in switchStatement.switchSection())
             {
@@ -523,7 +526,7 @@ internal sealed class SemanticValidator
 
                 foreach (var nestedStatement in section.statement())
                 {
-                    CheckStatement(nestedStatement, sectionScope, function, effects, summary);
+                    CheckStatement(nestedStatement, sectionScope, function, effects, summary, switchControlFlow);
                 }
             }
 
@@ -545,7 +548,7 @@ internal sealed class SemanticValidator
             }
 
             EvaluateExpression(whileStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            CheckStatement(whileStatement.statement(), new ValidationScope(scope), function, effects, summary);
+            CheckStatement(whileStatement.statement(), new ValidationScope(scope), function, effects, summary, controlFlow.EnterLoop());
             return;
         }
 
@@ -618,7 +621,7 @@ internal sealed class SemanticValidator
                 }
             }
 
-            CheckStatement(forStatement.statement(), loopScope, function, effects, summary);
+            CheckStatement(forStatement.statement(), loopScope, function, effects, summary, controlFlow.EnterLoop());
             return;
         }
 
@@ -635,6 +638,26 @@ internal sealed class SemanticValidator
                     allowFunctionReference: false,
                     ExpressionObservation.Read);
                 RecordReturnCapture(returnedValue, function, summary);
+            }
+
+            return;
+        }
+
+        if (statement.breakStatement() is { } breakStatement)
+        {
+            if (!controlFlow.CanBreak)
+            {
+                EffectError(summary, "STK4113", "'break' requires an enclosing loop or switch.", breakStatement);
+            }
+
+            return;
+        }
+
+        if (statement.continueStatement() is { } continueStatement)
+        {
+            if (!controlFlow.CanContinue)
+            {
+                EffectError(summary, "STK4114", "'continue' requires an enclosing loop.", continueStatement);
             }
 
             return;
@@ -3060,7 +3083,7 @@ internal sealed class SemanticValidator
     private void BorrowError(FunctionValidationBuilder summary, string code, string message, ParserRuleContext context)
     {
         summary.BorrowingValid = false;
-        _context.Diagnostics.Error(code, message, "semantic-validate", Location(context.Start));
+        _context.Diagnostics.Error(code, message, "semantic-validate", Location(context));
     }
 
     private void BorrowError(FunctionValidationBuilder summary, string code, string message, IToken token)
@@ -3072,7 +3095,7 @@ internal sealed class SemanticValidator
     private void EffectError(FunctionValidationBuilder summary, string code, string message, ParserRuleContext context)
     {
         summary.EffectsValid = false;
-        _context.Diagnostics.Error(code, message, "semantic-validate", Location(context.Start));
+        _context.Diagnostics.Error(code, message, "semantic-validate", Location(context));
     }
 
     private void EffectError(FunctionValidationBuilder summary, string code, string message, IToken token)
@@ -3132,91 +3155,129 @@ internal sealed class SemanticValidator
         return condition is null || string.Equals(condition.GetText(), "true", StringComparison.Ordinal);
     }
 
-    private static bool ContainsStructuralLoopExit(StarkParser.StatementContext statement, int nestedLoopDepth = 0)
+    private static bool ContainsStructuralLoopExit(
+        StarkParser.StatementContext statement,
+        int nestedLoopDepth = 0,
+        int nestedSwitchDepth = 0)
     {
         if (statement.returnStatement() is not null)
         {
             return true;
         }
 
-        if (nestedLoopDepth == 0 && statement.breakStatement() is not null)
+        if (nestedLoopDepth == 0
+            && nestedSwitchDepth == 0
+            && statement.breakStatement() is not null)
         {
             return true;
         }
 
         if (statement.block() is { } block)
         {
-            return block.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth));
+            return block.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
         }
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            return ifStatement.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth));
+            return ifStatement.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
         }
 
         if (statement.switchStatement() is { } switchStatement)
         {
             return switchStatement.switchSection()
                 .SelectMany(static section => section.statement())
-                .Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth));
+                .Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth, nestedSwitchDepth + 1));
         }
 
         if (statement.whileStatement() is { } nestedWhile)
         {
-            return ContainsStructuralLoopExit(nestedWhile.statement(), nestedLoopDepth + 1);
+            return ContainsStructuralLoopExit(nestedWhile.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         if (statement.forStatement() is { } nestedFor)
         {
-            return ContainsStructuralLoopExit(nestedFor.statement(), nestedLoopDepth + 1);
+            return ContainsStructuralLoopExit(nestedFor.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         return false;
     }
 
-    private static bool ContainsForbiddenInfiniteLoopExit(StarkParser.StatementContext statement, int nestedLoopDepth = 0)
+    private static bool ContainsForbiddenInfiniteLoopExit(
+        StarkParser.StatementContext statement,
+        int nestedLoopDepth = 0,
+        int nestedSwitchDepth = 0)
     {
         if (statement.returnStatement() is not null)
         {
             return true;
         }
 
-        if (nestedLoopDepth == 0 && statement.breakStatement() is not null)
+        if (nestedLoopDepth == 0
+            && nestedSwitchDepth == 0
+            && statement.breakStatement() is not null)
         {
             return true;
         }
 
         if (statement.block() is { } block)
         {
-            return block.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth));
+            return block.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
         }
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            return ifStatement.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth));
+            return ifStatement.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
         }
 
         if (statement.switchStatement() is { } switchStatement)
         {
             return switchStatement.switchSection()
                 .SelectMany(static section => section.statement())
-                .Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth));
+                .Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth, nestedSwitchDepth + 1));
         }
 
         if (statement.whileStatement() is { } nestedWhile)
         {
-            return ContainsForbiddenInfiniteLoopExit(nestedWhile.statement(), nestedLoopDepth + 1);
+            return ContainsForbiddenInfiniteLoopExit(nestedWhile.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         if (statement.forStatement() is { } nestedFor)
         {
-            return ContainsForbiddenInfiniteLoopExit(nestedFor.statement(), nestedLoopDepth + 1);
+            return ContainsForbiddenInfiniteLoopExit(nestedFor.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         return false;
     }
 
-    private SourceLocation Location(IToken token) => new(_context.Input.FilePath, token.Line, token.Column + 1);
+    private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);
+
+    private SourceLocation Location(IToken token) => Location(token, token);
+
+    private SourceLocation Location(IToken start, IToken? stop)
+    {
+        var resolvedStop = stop ?? start;
+        var (endLine, endColumn) = GetTokenEndPosition(resolvedStop);
+        return new SourceLocation(_context.Input.FilePath, start.Line, start.Column + 1, endLine, endColumn);
+    }
+
+    private static (int Line, int Column) GetTokenEndPosition(IToken token)
+    {
+        var tokenText = token.Text;
+        if (string.IsNullOrEmpty(tokenText))
+        {
+            return (token.Line, token.Column + 1);
+        }
+
+        var normalizedText = tokenText.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var lines = normalizedText.Split('\n');
+        if (lines.Length == 1)
+        {
+            return (token.Line, token.Column + Math.Max(lines[0].Length, 1));
+        }
+
+        return (token.Line + lines.Length - 1, Math.Max(lines[^1].Length, 1));
+    }
 
     private static LocalStorageClass ParseStorageClass(StarkParser.StorageClassContext context)
     {
@@ -3331,6 +3392,19 @@ internal sealed class SemanticValidator
             symbol = default!;
             return false;
         }
+    }
+
+    private readonly record struct ControlFlowContext(int LoopDepth, int SwitchDepth)
+    {
+        public static ControlFlowContext Root => new(0, 0);
+
+        public bool CanBreak => LoopDepth > 0 || SwitchDepth > 0;
+
+        public bool CanContinue => LoopDepth > 0;
+
+        public ControlFlowContext EnterLoop() => new(LoopDepth + 1, SwitchDepth);
+
+        public ControlFlowContext EnterSwitch() => new(LoopDepth, SwitchDepth + 1);
     }
 
     private sealed record ArgumentEffects(

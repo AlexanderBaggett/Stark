@@ -173,12 +173,16 @@ public static class CompilerLogData
     }
 }
 
-public sealed record SourceLocation(string? FilePath, int Line, int Column)
+public sealed record SourceLocation(string? FilePath, int Line, int Column, int EndLine = 0, int EndColumn = 0)
 {
     public static SourceLocation Synthetic(string? filePath = null)
     {
         return new SourceLocation(filePath, 1, 1);
     }
+
+    public int ResolvedEndLine => EndLine > 0 ? EndLine : Line;
+
+    public int ResolvedEndColumn => EndColumn > 0 ? EndColumn : Column;
 
     public override string ToString()
     {

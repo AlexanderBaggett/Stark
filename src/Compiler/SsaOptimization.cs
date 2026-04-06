@@ -185,6 +185,7 @@ internal sealed class SsaCleanupOptimizer
                     case SsaStoreGlobalInstruction:
                     case SsaLifetimeStartInstruction:
                     case SsaLifetimeEndInstruction:
+                    case SsaDeallocateLocalInstruction:
                         memoryVersion++;
                         break;
                 }
@@ -1338,6 +1339,9 @@ internal sealed class SsaCleanupOptimizer
             case SsaLifetimeEndInstruction lifetimeEnd:
                 localName = lifetimeEnd.LocalName;
                 return true;
+            case SsaDeallocateLocalInstruction deallocateLocal:
+                localName = deallocateLocal.LocalName;
+                return true;
             case SsaStoreLocalInstruction storeLocal:
                 localName = storeLocal.LocalName;
                 return true;
@@ -1393,6 +1397,7 @@ internal sealed class SsaCleanupOptimizer
             SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
             SsaLifetimeStartInstruction => [],
             SsaLifetimeEndInstruction => [],
+            SsaDeallocateLocalInstruction => [],
             SsaStoreLocalInstruction storeLocal => [storeLocal.Value],
             SsaCopyMemoryInstruction copyMemory => [copyMemory.DestinationAddress, copyMemory.SourceAddress],
             SsaStoreIndirectInstruction storeIndirect => [storeIndirect.Address, storeIndirect.Value],
@@ -1919,6 +1924,7 @@ internal sealed class SsaCleanupOptimizer
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
+            SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal,
             SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                 storeLocal.LocalName,
                 storeLocal.LocalType,
@@ -2944,6 +2950,7 @@ internal sealed class SsaConstantPropagator
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
+            SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal,
             SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                 storeLocal.LocalName,
                 storeLocal.LocalType,

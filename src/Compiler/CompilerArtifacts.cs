@@ -101,7 +101,8 @@ public sealed record FunctionModifierSet(
     bool HasExplicitInlinePreference,
     bool IsHot,
     bool IsCold,
-    bool IsFfi);
+    bool IsFfi,
+    bool IsStrictFp);
 
 public enum StarkAsmArchitecture
 {
@@ -236,7 +237,8 @@ public sealed record FunctionEffectProfile(
     bool IsFfi,
     bool IsHot,
     bool IsCold,
-    InlinePreference InlinePreference);
+    InlinePreference InlinePreference,
+    bool IsStrictFp);
 
 public sealed record FunctionEffectModel(
     string ModuleName,
@@ -1576,6 +1578,13 @@ public sealed record SsaLifetimeStartInstruction(
 public sealed record SsaLifetimeEndInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
+    SourceLocation? Location = null)
+    : SsaInstruction;
+
+public sealed record SsaDeallocateLocalInstruction(
+    string LocalName,
+    StarkTypeSymbol LocalType,
+    string StorageClass = "heap",
     SourceLocation? Location = null)
     : SsaInstruction;
 

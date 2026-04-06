@@ -1840,7 +1840,27 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void HeapObjectCreationFallsBackUntilAllocatorLoweringExists()
+    public void StrictFpFunctionsEmitStrictFpAttribute()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            strictfp fn f32 Run(f32 left, f32 right) {
+                return left + right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains(
+            "define fastcc float @Run(float %arg_left, float %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) strictfp inlinehint",
+            llvm);
+    }
+
+    [Fact]
+    public void HeapObjectCreationUsesAllocatorLowering()
     {
         var result = Compile(
             """
@@ -1859,8 +1879,12 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("; LLVM body emission fallback for Run: Local storage class 'heap' is not yet supported for LLVM body emission.", llvm);
-        Assert.Contains("declare fastcc i32 @Run()", llvm);
+        Assert.Contains("declare ptr @malloc(i64)", llvm);
+        Assert.Contains("declare void @free(ptr)", llvm);
+        Assert.Contains("call ptr @malloc(i64", llvm);
+        Assert.Contains("call void @free(ptr %slot_box)", llvm);
+        Assert.DoesNotContain("alloca %Box", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
     }
 
     [Fact]

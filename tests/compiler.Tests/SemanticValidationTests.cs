@@ -360,6 +360,109 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void BreakOutsideLoopOrSwitchIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                break;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4113");
+    }
+
+    [Fact]
+    public void ContinueOutsideLoopIsRejectedEvenInsideSwitch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32 value) {
+                switch (value) {
+                    default:
+                        continue;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4114");
+    }
+
+    [Fact]
+    public void BreakInsideSwitchIsAllowed()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32 value) {
+                switch (value) {
+                    case 0:
+                        break;
+                    default:
+                        break;
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void WillexitLoopDoesNotTreatSwitchBreakAsALoopExit()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32 value) {
+                while willexit (true) {
+                    switch (value) {
+                        default:
+                            break;
+                    }
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4112");
+    }
+
+    [Fact]
+    public void InfiniteLoopAllowsSwitchBreakBecauseItOnlyExitsTheSwitch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32 value) {
+                while infinite (true) {
+                    switch (value) {
+                        default:
+                            break;
+                    }
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
     public void FunctionModifiersRejectConflictingInlinePreferences()
     {
         var result = Compile(

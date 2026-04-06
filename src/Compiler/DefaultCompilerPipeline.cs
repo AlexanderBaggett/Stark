@@ -425,7 +425,8 @@ public static class DefaultCompilerPipeline
                     IsFfi: true,
                     IsHot: false,
                     IsCold: false,
-                    InlinePreference: InlinePreference.InlineHint);
+                    InlinePreference: InlinePreference.InlineHint,
+                    IsStrictFp: false);
             }
 
             var isLaw = function.Kind is StarkFunctionKind.Law or StarkFunctionKind.FiniteLaw;
@@ -446,7 +447,8 @@ public static class DefaultCompilerPipeline
                 IsFfi: function.Modifiers.IsFfi,
                 IsHot: function.Modifiers.IsHot,
                 IsCold: function.Modifiers.IsCold,
-                InlinePreference: function.Modifiers.InlinePreference);
+                InlinePreference: function.Modifiers.InlinePreference,
+                IsStrictFp: function.Modifiers.IsStrictFp);
         }
 
         private static bool IsMemoryBackedType(string typeText)
@@ -1353,6 +1355,13 @@ public static class DefaultCompilerPipeline
             var closedWorldModel = context.Artifacts.GetRequired(CompilerArtifactKeys.ClosedWorldOptimization);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+
+            if (context.Options.EmitLlvmIr
+                && EmitUnsupportedLoweringDiagnostics(context))
+            {
+                return;
+            }
+
             var llvmModule = new LlvmIrEmitter(
                 context.Input,
                 parseResult,
@@ -1369,6 +1378,40 @@ public static class DefaultCompilerPipeline
                 closedWorldModel: closedWorldModel,
                 logs: context.Logs).Emit();
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
+        }
+
+        private static bool EmitUnsupportedLoweringDiagnostics(CompilerPassContext context)
+        {
+            var emittedKeys = new HashSet<(string SymbolName, string Message, SourceLocation Location)>();
+            var emittedAny = false;
+
+            foreach (var log in context.Logs.Items)
+            {
+                if (log.Kind != CompilerLogKind.Gap
+                    || log.Outcome != CompilerLogOutcome.Unsupported
+                    || !string.Equals(log.Category, "lowering", StringComparison.Ordinal)
+                    || !string.Equals(log.EventId, "unsupported-lowering", StringComparison.Ordinal)
+                    || !string.Equals(log.Stage, "lower-mir", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var message = log.Data.TryGetValue("reason", out var reason) && !string.IsNullOrWhiteSpace(reason)
+                    ? reason
+                    : log.Data.TryGetValue("feature", out var feature) && !string.IsNullOrWhiteSpace(feature)
+                        ? $"Code generation does not yet support this construct ({feature})."
+                        : "Code generation does not yet support this construct.";
+
+                if (!emittedKeys.Add((log.SymbolName, message, log.Location)))
+                {
+                    continue;
+                }
+
+                emittedAny = true;
+                context.Diagnostics.Error("STK5000", message, "lower-mir", log.Location);
+            }
+
+            return emittedAny;
         }
     }
 

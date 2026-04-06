@@ -275,6 +275,38 @@ public sealed class DiagnosticRegressionTests
         AssertDiagnostic(result, "STK3020", "Switch coverage becomes exhaustive here for 'bool'.");
     }
 
+    [Fact]
+    public void BreakOutsideLoopOrSwitchProducesAStableSemanticDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                break;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4113", "'break' requires an enclosing loop or switch.");
+    }
+
+    [Fact]
+    public void ContinueOutsideLoopProducesAStableSemanticDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                continue;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4114", "'continue' requires an enclosing loop.");
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

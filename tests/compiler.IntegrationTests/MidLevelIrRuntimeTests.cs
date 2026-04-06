@@ -28,6 +28,55 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task StrictFpFunctionsCompileAndRunAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            strictfp fn f32 Add(f32 left, f32 right) {
+                return left + right;
+            }
+
+            export ffi fn i32 main() {
+                return (i32)Add(1.0, 2.0);
+            }
+            """);
+
+        Assert.Equal(3, exitCode);
+    }
+
+    [Fact]
+    public async Task HeapStorageUsesAllocatorLoweringAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            export ffi fn i32 main() {
+                heap Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
     public async Task ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

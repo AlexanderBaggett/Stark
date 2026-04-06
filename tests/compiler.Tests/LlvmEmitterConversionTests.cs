@@ -110,7 +110,8 @@ public sealed class LlvmEmitterConversionTests
                     IsFfi: false,
                     IsHot: false,
                     IsCold: false,
-                    InlinePreference.NoInline)
+                    InlinePreference.NoInline,
+                    IsStrictFp: false)
             });
         var typeModel = new TypeCheckModel(
             "Demo",
@@ -182,7 +183,8 @@ public sealed class LlvmEmitterConversionTests
                                 HasExplicitInlinePreference: true,
                                 IsHot: false,
                                 IsCold: false,
-                                IsFfi: false),
+                                IsFfi: false,
+                                IsStrictFp: false),
                             HasBody: true))
             ]);
 

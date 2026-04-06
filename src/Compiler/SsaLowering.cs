@@ -206,9 +206,14 @@ internal sealed class SsaLowerer
                         && statement.TargetType is not null
                         && _addressableLocals.Contains(statement.TargetName))
                     {
-                        if (UsesStackLifetime(GetLocalStorageClass(statement.TargetName)))
+                        var storageClass = GetLocalStorageClass(statement.TargetName);
+                        if (UsesStackLifetime(storageClass))
                         {
                             block.Instructions.Add(new SsaLifetimeEndInstruction(statement.TargetName, statement.TargetType, statement.Location ?? _function.Location));
+                        }
+                        else if (storageClass == "heap")
+                        {
+                            block.Instructions.Add(new SsaDeallocateLocalInstruction(statement.TargetName, statement.TargetType, storageClass, statement.Location ?? _function.Location));
                         }
                     }
 
@@ -1294,6 +1299,7 @@ internal sealed class SsaLowerer
                 SsaAllocateLocalInstruction allocateLocal => allocateLocal,
                 SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
                 SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
+                SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal,
                 SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                     storeLocal.LocalName,
                     storeLocal.LocalType,

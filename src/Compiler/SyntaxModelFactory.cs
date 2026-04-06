@@ -805,7 +805,8 @@ internal static class SyntaxModelFactory
                 hasExplicitInlinePreference,
                 modifiers.Contains("hot"),
                 modifiers.Contains("cold"),
-                modifiers.Contains("ffi")),
+                modifiers.Contains("ffi"),
+                modifiers.Contains("strictfp")),
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody));
     }

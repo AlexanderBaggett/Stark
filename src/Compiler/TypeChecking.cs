@@ -439,14 +439,6 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                if (functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "strictfp", StringComparison.Ordinal)))
-                {
-                    ReportError(
-                        "STK3008",
-                        $"Function '{localName}' uses 'strictfp', but strict floating-point lowering is not implemented in the current compiler yet.",
-                        functionSyntax.DeclarationContext);
-                }
-
                 var genericParameters = GetGenericParameterNames(functionSyntax.TypeParameters);
                 var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
                 ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
@@ -5050,10 +5042,35 @@ internal sealed class TypeChecker
         _context.Diagnostics.Info(code, message, "type-check", Location(context));
     }
 
-    private SourceLocation Location(ParserRuleContext context) => Location(context.Start);
+    private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);
 
-    private SourceLocation Location(IToken token) =>
-        new(_context.Input.FilePath, token.Line, token.Column + 1);
+    private SourceLocation Location(IToken token) => Location(token, token);
+
+    private SourceLocation Location(IToken start, IToken? stop)
+    {
+        var resolvedStop = stop ?? start;
+        var (endLine, endColumn) = GetTokenEndPosition(resolvedStop);
+        return new SourceLocation(_context.Input.FilePath, start.Line, start.Column + 1, endLine, endColumn);
+    }
+
+    private static (int Line, int Column) GetTokenEndPosition(IToken token)
+    {
+        var tokenText = token.Text;
+        if (string.IsNullOrEmpty(tokenText))
+        {
+            return (token.Line, token.Column + 1);
+        }
+
+        var normalizedText = tokenText.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var lines = normalizedText.Split('\n');
+        if (lines.Length == 1)
+        {
+            return (token.Line, token.Column + Math.Max(lines[0].Length, 1));
+        }
+
+        return (token.Line + lines.Length - 1, Math.Max(lines[^1].Length, 1));
+    }
 
     private sealed record VariableSymbol(
         string Name,

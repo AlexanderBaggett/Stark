@@ -65,7 +65,7 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
-    public void StrictFpModifierIsRejectedUntilLoweringExists()
+    public void StrictFpModifierTypeChecksNowThatLoweringExists()
     {
         var result = Compile(
             """
@@ -76,11 +76,8 @@ public sealed class TypeCheckingTests
             }
             """);
 
-        Assert.False(result.Succeeded);
-        Assert.Contains(
-            result.Diagnostics,
-            diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("strictfp", StringComparison.Ordinal));
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK3008");
     }
 
     [Fact]

@@ -7160,7 +7160,12 @@ internal sealed class MidLevelIrLowerer(
 
         private static bool ShouldAddressLocal(StarkTypeSymbol type, string storageClass)
         {
-            return storageClass is "heap" or "arena" or "static"
+            if (storageClass == "heap")
+            {
+                return true;
+            }
+
+            return storageClass is "arena" or "static"
                 && type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
         }
 
