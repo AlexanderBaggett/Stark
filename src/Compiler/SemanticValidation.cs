@@ -14,11 +14,13 @@ internal sealed class SemanticValidator
     private readonly FunctionEffectModel _effectModel;
     private readonly TypeCheckModel _typeModel;
     private readonly EnumLayoutModel _enumLayoutModel;
+    private readonly IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> _importedFunctionSemantics;
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<string, TopLevelDeclarationModel> _syntaxDeclarations;
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
+    private ISet<string>? _currentFunctionGenericParameters;
 
     public SemanticValidator(
         CompilerPassContext context,
@@ -38,7 +40,11 @@ internal sealed class SemanticValidator
         _effectModel = effectModel;
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
-        _typeResolver = new StarkTypeResolver(context, "semantic-validate", moduleGraph, typeModel.NamedTypes);
+        _importedFunctionSemantics = loadedModules.ImportedModules
+            .Where(static module => module.PackageImageFacts is not null)
+            .SelectMany(static module => module.PackageImageFacts!.FunctionSemantics)
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+        _typeResolver = new StarkTypeResolver(context, "semantic-validate", moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases);
         _syntaxDeclarations = syntaxModel.Declarations.ToDictionary(
             declaration => declaration.Function is null
                 ? declaration.Name
@@ -78,7 +84,7 @@ internal sealed class SemanticValidator
         {
             if (declaration.globalConstantDeclaration() is { } constantDeclaration)
             {
-                var declaredType = _typeResolver.ResolveType(constantDeclaration.type_());
+                var declaredType = ResolveType(constantDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Global, constantDeclaration.type_(), isFfiBoundary: false);
 
                 foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
@@ -91,7 +97,7 @@ internal sealed class SemanticValidator
 
             if (declaration.globalVariableDeclaration() is { } variableDeclaration)
             {
-                var declaredType = _typeResolver.ResolveType(variableDeclaration.type_());
+                var declaredType = ResolveType(variableDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Global, variableDeclaration.type_(), isFfiBoundary: false);
             }
         }
@@ -280,6 +286,11 @@ internal sealed class SemanticValidator
         }
     }
 
+    private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)
+    {
+        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters);
+    }
+
     private void ValidateFunction(DeclaredFunctionSyntax functionDeclaration)
     {
         var name = functionDeclaration.Name;
@@ -301,20 +312,32 @@ internal sealed class SemanticValidator
             return;
         }
 
-        var scope = ValidationScope.CreateRoot();
-        for (var index = 0; index < signature.Parameters.Count; index++)
-        {
-            var parameter = signature.Parameters[index];
-            scope.Declare(new VariableSymbol(
-                parameter.Name,
-                parameter.Type,
-                SymbolOrigin.Parameter,
-                LocalStorageClass.None,
-                IsMutable: false,
-                IsConstant: false));
-        }
+        var previousGenericParameters = _currentFunctionGenericParameters;
+        _currentFunctionGenericParameters = signature.IsGeneric
+            ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
+            : null;
 
-        CheckBlock(block, scope, syntaxDeclaration.Function, effects, summary, ControlFlowContext.Root);
+        try
+        {
+            var scope = ValidationScope.CreateRoot();
+            for (var index = 0; index < signature.Parameters.Count; index++)
+            {
+                var parameter = signature.Parameters[index];
+                scope.Declare(new VariableSymbol(
+                    parameter.Name,
+                    parameter.Type,
+                    SymbolOrigin.Parameter,
+                    LocalStorageClass.None,
+                    IsMutable: false,
+                    IsConstant: false));
+            }
+
+            CheckBlock(block, scope, syntaxDeclaration.Function, effects, summary, ControlFlowContext.Root);
+        }
+        finally
+        {
+            _currentFunctionGenericParameters = previousGenericParameters;
+        }
     }
 
     private void ValidateFunctionSignature(
@@ -434,7 +457,7 @@ internal sealed class SemanticValidator
 
         if (statement.localConstantDeclaration() is { } constantDeclaration)
         {
-            var declaredType = _typeResolver.ResolveType(constantDeclaration.type_());
+                var declaredType = ResolveType(constantDeclaration.type_());
             ValidateTypeUsage(declaredType, TypeUsage.Local, constantDeclaration.type_(), isFfiBoundary: false);
 
             foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
@@ -459,7 +482,7 @@ internal sealed class SemanticValidator
         if (statement.localVariableDeclaration() is { } localVariable)
         {
             var storageClass = ParseStorageClass(localVariable.storageClass());
-            var declaredType = _typeResolver.ResolveType(localVariable.type_());
+                var declaredType = ResolveType(localVariable.type_());
             ValidateTypeUsage(declaredType, TypeUsage.Local, localVariable.type_(), isFfiBoundary: false);
 
             if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
@@ -571,7 +594,7 @@ internal sealed class SemanticValidator
             if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForDeclaration)
             {
                 var storageClass = ParseStorageClass(localForDeclaration.storageClass());
-                var declaredType = _typeResolver.ResolveType(localForDeclaration.type_());
+                var declaredType = ResolveType(localForDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Local, localForDeclaration.type_(), isFfiBoundary: false);
 
                 if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
@@ -1083,7 +1106,7 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
-        var createdType = _typeResolver.ResolveType(expression.type_());
+        var createdType = ResolveType(expression.type_());
 
         if (expression.argumentList() is { } argumentList)
         {
@@ -1177,7 +1200,7 @@ internal sealed class SemanticValidator
                 return new ValidationValue(StarkTypeSymbols.Error);
             }
 
-            if (targetFunctions.Count == 1)
+            if (targetFunctions.Count == 1 && !targetFunctions[0].IsGeneric)
             {
                 return new ValidationValue(targetFunctions[0].ReturnType, Function: targetFunctions[0]);
             }
@@ -1203,12 +1226,12 @@ internal sealed class SemanticValidator
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
 
-        if (_moduleGraph.HasModule(name))
+        if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, name))
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
 
-        if (_moduleGraph.HasModuleNamespace(name))
+        if (_moduleGraph.CanAccessModuleNamespace(_syntaxModel.ModuleName, name))
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
@@ -1690,12 +1713,12 @@ internal sealed class SemanticValidator
         if (target.NamespaceName is not null)
         {
             var qualifiedName = $"{target.NamespaceName}.{memberName}";
-            if (_moduleGraph.HasModule(qualifiedName))
+            if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, qualifiedName))
             {
                 return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
 
-            if (_moduleGraph.HasModuleNamespace(qualifiedName))
+            if (_moduleGraph.CanAccessModuleNamespace(_syntaxModel.ModuleName, qualifiedName))
             {
                 return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
@@ -1712,7 +1735,7 @@ internal sealed class SemanticValidator
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
-                if (namespaceFunctions.Count == 1)
+                if (namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric)
                 {
                     return new ValidationValue(namespaceFunctions[0].ReturnType, Function: namespaceFunctions[0]);
                 }
@@ -1773,7 +1796,7 @@ internal sealed class SemanticValidator
         if (namedType.Kind == DeclarationKind.Doctrine
             && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {
-            return doctrineMethods.Count == 1
+            return doctrineMethods.Count == 1 && !doctrineMethods[0].IsGeneric
                 ? new ValidationValue(
                     doctrineMethods[0].ReturnType,
                     Function: doctrineMethods[0],
@@ -1783,7 +1806,7 @@ internal sealed class SemanticValidator
 
         if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            if (methods.Count == 1 && methods[0].Parameters.Count != 0)
+            if (methods.Count == 1 && !methods[0].IsGeneric && methods[0].Parameters.Count != 0)
             {
                 return new ValidationValue(
                     methods[0].ReturnType,
@@ -2060,6 +2083,20 @@ internal sealed class SemanticValidator
             return parameter.GetEffectiveEffects(summary.HasBody);
         }
 
+        if (_importedFunctionSemantics.TryGetValue(calleeName, out var importedSummary)
+            && importedSummary.Parameters is not null)
+        {
+            var importedParameter = importedSummary.Parameters.FirstOrDefault(parameter =>
+                string.Equals(parameter.Name, calleeParameterName, StringComparison.Ordinal));
+            if (importedParameter is not null)
+            {
+                return new ArgumentEffects(
+                    importedParameter.Reads,
+                    importedParameter.Writes,
+                    importedParameter.CaptureKind);
+            }
+        }
+
         return fallback;
     }
 
@@ -2091,6 +2128,12 @@ internal sealed class SemanticValidator
         if (_summaries.TryGetValue(call.CalleeName, out var summary))
         {
             return summary.GetCurrentMemoryEffects();
+        }
+
+        if (_importedFunctionSemantics.TryGetValue(call.CalleeName, out var importedSummary)
+            && importedSummary.MemoryEffects is not null)
+        {
+            return importedSummary.MemoryEffects;
         }
 
         if (_effectModel.Functions.TryGetValue(call.CalleeName, out var effects))

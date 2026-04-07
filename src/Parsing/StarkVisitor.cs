@@ -195,6 +195,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitDoctrineDeclaration([NotNull] StarkParser.DoctrineDeclarationContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.typeAliasDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitTypeAliasDeclaration([NotNull] StarkParser.TypeAliasDeclarationContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.primaryConstructorParameters"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

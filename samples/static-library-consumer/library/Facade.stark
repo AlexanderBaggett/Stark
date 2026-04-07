@@ -1,0 +1,10 @@
+import Math
+module Facade
+
+public finite law i32 Double(i32 value) {
+    return Math.Add(value, value);
+}
+
+public finite law i32 Quadruple(i32 value) {
+    return Double(Double(value));
+}

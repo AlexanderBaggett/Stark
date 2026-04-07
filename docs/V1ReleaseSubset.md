@@ -4,7 +4,7 @@ This document defines the minimum Stark surface that must be stable for the firs
 
 It is intentionally narrower than the full language reference. A feature belongs in the `v1.0` subset only when it is already exercised end-to-end by the current compiler, examples, standard-library package flow, and test suite on the primary release platform.
 
-For current unsupported or partial areas, see [UnsupportedFeatures.md](./UnsupportedFeatures.md). For the active release checklist, see [Roadmap.md](./Roadmap.md).
+For current unsupported or partial areas, see [UnsupportedFeatures.md](./UnsupportedFeatures.md). For the active release checklist, see [Roadmap.md](./Roadmap.md). For the first release-line standard-library baseline, see [StandardLibraryBaseline.md](./StandardLibraryBaseline.md).
 
 ## Release Rule
 

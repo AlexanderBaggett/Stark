@@ -22,6 +22,7 @@ internal sealed class LlvmIrEmitter
     private readonly EnumLayoutModel _enumLayoutModel;
     private readonly SemanticValidationModel? _semanticValidation;
     private readonly ClosedWorldOptimizationModel? _closedWorldModel;
+    private readonly SpecializationCodegenStrategyModel? _specializationCodegenStrategy;
     private readonly CompilerLogBag? _logs;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
@@ -31,8 +32,12 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlySet<string> _globalsEligibleForLocalUnnamedAddr;
     private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
+    private readonly IReadOnlyDictionary<string, FunctionEffectProfile> _allFunctionEffects;
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
+    private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
+    private readonly IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> _publishedFunctionSemantics;
+    private readonly IReadOnlyDictionary<string, string> _specializationTemplateNames;
     private readonly IReadOnlyDictionary<string, SourceLocation> _functionLocations;
     private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
     private readonly IReadOnlySet<string> _referencedImportedFunctions;
@@ -52,6 +57,7 @@ internal sealed class LlvmIrEmitter
         bool internalizeModulePrivate = false,
         SemanticValidationModel? semanticValidation = null,
         ClosedWorldOptimizationModel? closedWorldModel = null,
+        SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
         CompilerLogBag? logs = null)
         : this(
             input,
@@ -67,6 +73,7 @@ internal sealed class LlvmIrEmitter
             internalizeModulePrivate,
             semanticValidation,
             closedWorldModel,
+            specializationCodegenStrategy,
             logs)
     {
     }
@@ -85,6 +92,7 @@ internal sealed class LlvmIrEmitter
         bool internalizeModulePrivate = false,
         SemanticValidationModel? semanticValidation = null,
         ClosedWorldOptimizationModel? closedWorldModel = null,
+        SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
         CompilerLogBag? logs = null)
     {
         _input = input;
@@ -96,6 +104,7 @@ internal sealed class LlvmIrEmitter
         _enumLayoutModel = enumLayoutModel;
         _semanticValidation = semanticValidation;
         _closedWorldModel = closedWorldModel;
+        _specializationCodegenStrategy = specializationCodegenStrategy;
         _logs = logs;
         _abiModel = abiModel;
         _ssa = ssa;
@@ -107,8 +116,12 @@ internal sealed class LlvmIrEmitter
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
+        _allFunctionEffects = BuildAllFunctionEffects(effectModel, specializationCodegenStrategy);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa);
-        _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, effectModel, typeModel.NamedTypes, enumLayoutModel.Layouts);
+        _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
+        _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
+        _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules);
+        _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
         _referencedImportedFunctions = CollectReferencedImportedFunctions(ssa, _closedWorldImportedLawClones.Values);
@@ -134,13 +147,14 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine("; Unsupported constructs still fall back to declarations.");
         builder.AppendLine();
 
+        LogSpecializationCodegenStrategies();
         EmitBuiltinTypeDefinitions(builder);
         EmitNamedTypeDefinitions(builder);
         EmitStringConstants(builder);
         EmitGlobals(builder);
         EmitIntrinsicDeclarations(builder);
 
-        var rootFunctionNames = new HashSet<string>(
+        var handledFunctionNames = new HashSet<string>(
             _syntaxModel.Declarations
                 .Where(static declaration => declaration.Function is not null)
                 .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration)),
@@ -151,11 +165,11 @@ internal sealed class LlvmIrEmitter
         {
             var function = declaration.Function!;
             var resolvedName = FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration);
-            var effects = _effectModel.Functions[resolvedName];
+            var effects = _allFunctionEffects[resolvedName];
             var signature = _typeModel.Functions[resolvedName];
             var abiSignature = _abiModel.Functions[resolvedName];
             var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == resolvedName);
-            var parameterEffects = GetRootParameterEffects(resolvedName, function.HasBody && !effects.IsFfi)
+            var parameterEffects = GetParameterEffects(resolvedName, function.HasBody && !effects.IsFfi)
                 ?? GetBuiltinParameterEffects(_syntaxModel.ModuleName, resolvedName, signature);
             var memoryEffects = GetFunctionMemoryEffects(resolvedName, function.HasBody && !effects.IsFfi);
 
@@ -245,8 +259,12 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        EmitMaterializedSpecializationDefinitions(builder, handledFunctionNames, resolveCallAbi);
+
         foreach (var clone in _closedWorldImportedLawClones.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
         {
+            var parameterEffects = GetParameterEffects(clone.FunctionName, hasBody: false);
+            var memoryEffects = GetFunctionMemoryEffects(clone.FunctionName, hasBody: false);
             builder.AppendLine($"; closed-world imported law clone: {clone.FunctionName}");
             EmitFunctionDefinition(
                 builder,
@@ -254,25 +272,27 @@ internal sealed class LlvmIrEmitter
                 clone.Signature,
                 clone.AbiSignature,
                 clone.Effects,
-                memoryEffects: null,
+                memoryEffects,
                 clone.SsaFunction,
-                parameterEffects: null,
+                parameterEffects,
                 resolveCallAbi);
             builder.AppendLine();
         }
 
         foreach (var abiFunction in _abiModel.Functions.Values
-                     .Where(function => !rootFunctionNames.Contains(function.Name)
+                     .Where(function => !handledFunctionNames.Contains(function.Name)
                                         )
                      .OrderBy(static function => function.Name, StringComparer.Ordinal))
         {
-            if (!_typeModel.Functions.TryGetValue(abiFunction.Name, out var signature)
-                || !_effectModel.Functions.TryGetValue(abiFunction.Name, out var effects))
+            if (!_allFunctionSignatures.TryGetValue(abiFunction.Name, out var signature)
+                || !_allFunctionEffects.TryGetValue(abiFunction.Name, out var effects))
             {
                 continue;
             }
 
-            var parameterEffects = GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
+            var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody: false)
+                ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
+            var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody: false);
             if (_referencedImportedFunctions.Contains(abiFunction.Name)
                 && TryEmitBuiltinFunctionDefinition(
                     builder,
@@ -281,7 +301,7 @@ internal sealed class LlvmIrEmitter
                     signature,
                     abiFunction,
                     effects,
-                    memoryEffects: null,
+                    memoryEffects,
                     parameterEffects))
             {
                 builder.AppendLine();
@@ -289,7 +309,7 @@ internal sealed class LlvmIrEmitter
             }
 
             builder.AppendLine($"; imported declaration: {abiFunction.Name}");
-            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, memoryEffects: null, parameterEffects));
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, memoryEffects, parameterEffects));
             builder.AppendLine();
         }
 
@@ -382,12 +402,55 @@ internal sealed class LlvmIrEmitter
         return locations;
     }
 
+    private static IReadOnlyDictionary<string, FunctionEffectProfile> BuildAllFunctionEffects(
+        FunctionEffectModel effectModel,
+        SpecializationCodegenStrategyModel? specializationCodegenStrategy)
+    {
+        var functions = effectModel.Functions.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
+
+        if (specializationCodegenStrategy is null)
+        {
+            return functions;
+        }
+
+        foreach (var strategy in specializationCodegenStrategy.Functions)
+        {
+            if (!functions.TryGetValue(strategy.TemplateName, out var templateEffects))
+            {
+                continue;
+            }
+
+            functions.TryAdd(
+                strategy.SymbolName,
+                templateEffects with { Name = strategy.SymbolName });
+        }
+
+        return functions;
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildSpecializationTemplateNames(
+        SpecializationCodegenStrategyModel? specializationCodegenStrategy)
+    {
+        if (specializationCodegenStrategy is null)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        return specializationCodegenStrategy.Functions.ToDictionary(
+            static function => function.SymbolName,
+            static function => function.TemplateName,
+            StringComparer.Ordinal);
+    }
+
     private Func<string, string, AbiFunctionSignature?> CreateCallAbiResolver()
     {
         return (callerName, functionName) =>
         {
             if (_closedWorldImportedLawClones.TryGetValue(functionName, out var clone)
-                && _effectModel.Functions.TryGetValue(callerName, out var callerEffects)
+                && _allFunctionEffects.TryGetValue(callerName, out var callerEffects)
                 && FunctionKindFacts.IsLaw(callerEffects.Kind))
             {
                 return clone.AbiSignature;
@@ -425,7 +488,7 @@ internal sealed class LlvmIrEmitter
     private static IReadOnlyDictionary<string, AbiFunctionSignature> BuildAllAbiFunctions(
         IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures,
         AbiModel abiModel,
-        FunctionEffectModel effectModel,
+        IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
     {
@@ -441,11 +504,135 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
-            var isFfi = effectModel.Functions.TryGetValue(function.Name, out var effects) && effects.IsFfi;
+            var isFfi = allFunctionEffects.TryGetValue(function.Name, out var effects) && effects.IsFfi;
             functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi, namedTypes, enumLayouts);
         }
 
         return functions;
+    }
+
+    private static IReadOnlyDictionary<string, ConcreteTypeLayout> BuildPublishedConcreteLayouts(LoadedModuleSet loadedModules)
+    {
+        var layouts = new Dictionary<string, ConcreteTypeLayout>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, layout) in packageImageFacts.ConcreteLayouts)
+            {
+                layouts[qualifiedName] = layout;
+            }
+        }
+
+        return layouts;
+    }
+
+    private static IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> BuildPublishedFunctionSemantics(LoadedModuleSet loadedModules)
+    {
+        var semantics = new Dictionary<string, ImportedFunctionSemanticSummary>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, summary) in packageImageFacts.FunctionSemantics)
+            {
+                semantics[qualifiedName] = summary;
+            }
+        }
+
+        return semantics;
+    }
+
+    private void EmitMaterializedSpecializationDefinitions(
+        StringBuilder builder,
+        ISet<string> handledFunctionNames,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+    {
+        if (_specializationCodegenStrategy is null)
+        {
+            return;
+        }
+
+        var ssaByName = _ssa.Functions.ToDictionary(static function => function.Name, StringComparer.Ordinal);
+
+        foreach (var strategy in _specializationCodegenStrategy.Functions.OrderBy(static function => function.SymbolName, StringComparer.Ordinal))
+        {
+            if (handledFunctionNames.Contains(strategy.SymbolName)
+                || !_allFunctionSignatures.TryGetValue(strategy.SymbolName, out var signature)
+                || !_allAbiFunctions.TryGetValue(strategy.SymbolName, out var abiSignature)
+                || !_allFunctionEffects.TryGetValue(strategy.SymbolName, out var effects))
+            {
+                continue;
+            }
+
+            handledFunctionNames.Add(strategy.SymbolName);
+            ssaByName.TryGetValue(strategy.SymbolName, out var ssaFunction);
+            var hasBody = ssaFunction is { HasBody: true };
+            var parameterEffects = GetParameterEffects(strategy.SymbolName, hasBody && !effects.IsFfi);
+            var memoryEffects = GetFunctionMemoryEffects(strategy.SymbolName, hasBody && !effects.IsFfi);
+            var definitionInternalize = strategy.Linkage == MonomorphizationLinkageKind.InternalSingleOwner;
+
+            builder.AppendLine($"; specialization template: {strategy.TemplateName}");
+            builder.AppendLine($"; specialization linkage: {strategy.Linkage}");
+
+            if (hasBody && ssaFunction!.SupportsDirectCodeGeneration)
+            {
+                try
+                {
+                    if (strategy.Linkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
+                    {
+                        builder.AppendLine($"${EscapeIdentifier(strategy.SymbolName)} = comdat any");
+                    }
+
+                    EmitFunctionDefinition(
+                        builder,
+                        definitionInternalize,
+                        signature,
+                        abiSignature,
+                        effects,
+                        memoryEffects,
+                        ssaFunction,
+                        parameterEffects,
+                        resolveCallAbi,
+                        strategy.Linkage);
+                    builder.AppendLine();
+                    continue;
+                }
+                catch (UnsupportedBodyEmissionException exception)
+                {
+                    builder.AppendLine($"; LLVM body emission fallback for {strategy.SymbolName}: {exception.Message}");
+                    LogLlvmFallback(
+                        "llvm-body-fallback",
+                        strategy.SymbolName,
+                        exception.Message,
+                        ssaFunction.BodyLoweringKind,
+                        ssaFunction.SupportsDirectCodeGeneration,
+                        operation: "EmitFunctionDefinition");
+                }
+            }
+            else if (hasBody)
+            {
+                builder.AppendLine($"; LLVM body emission pending for {strategy.SymbolName}");
+                LogLlvmFallback(
+                    "llvm-body-pending",
+                    strategy.SymbolName,
+                    "SSA lowering did not leave this function in a direct-codegen-capable form, so LLVM emitted only a declaration.",
+                    ssaFunction!.BodyLoweringKind,
+                    ssaFunction.SupportsDirectCodeGeneration,
+                    operation: "EmitFunctionDefinition");
+            }
+
+            builder.AppendLine(BuildDeclarationSignature(definitionInternalize, signature, abiSignature, effects, memoryEffects, parameterEffects));
+            builder.AppendLine();
+        }
     }
 
     private IReadOnlyDictionary<string, ImportedLawClonePlan> BuildClosedWorldImportedLawClones()
@@ -582,6 +769,34 @@ internal sealed class LlvmIrEmitter
         }
 
         return optimization.SelectionOrder.Contains(ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone);
+    }
+
+    private void LogSpecializationCodegenStrategies()
+    {
+        if (_logs is null || _specializationCodegenStrategy is null)
+        {
+            return;
+        }
+
+        foreach (var strategy in _specializationCodegenStrategy.Functions)
+        {
+            _logs.Info(
+                "decision",
+                "specialization-codegen-strategy",
+                $"Emit path for specialization '{strategy.SymbolName}' is '{strategy.StrategyKind}'.",
+                stage: "emit-llvm",
+                symbolName: strategy.SymbolName,
+                operation: "specialization-codegen-strategy",
+                location: strategy.FirstUseLocation,
+                data: CompilerLogData.Create(
+                    ("template", strategy.TemplateName),
+                    ("linkage", strategy.Linkage.ToString()),
+                    ("supportsAbiFallback", strategy.SupportsAbiFallback.ToString()),
+                    ("strategy", strategy.StrategyKind.ToString())),
+                kind: CompilerLogKind.Decision,
+                outcome: CompilerLogOutcome.Continued,
+                verbosity: CompilerLogVerbosity.Verbose);
+        }
     }
 
     private static Dictionary<string, HashSet<string>> CollectCallsByFunction(SsaIrModule ssa)
@@ -1817,13 +2032,14 @@ internal sealed class LlvmIrEmitter
         FunctionMemoryEffectSummary? memoryEffects,
         SsaFunction ssaFunction,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
-        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi,
+        MonomorphizationLinkageKind? specializationLinkage = null)
     {
         var functionBuilder = new StringBuilder();
         var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
-            BuildDefinitionSignature(internalize, function, abiFunction, effects, effectiveMemoryEffects, parameterEffects),
+            BuildDefinitionSignature(internalize, function, abiFunction, effects, effectiveMemoryEffects, parameterEffects, specializationLinkage),
             debugFunction));
         functionBuilder.AppendLine("{");
 
@@ -2106,13 +2322,14 @@ internal sealed class LlvmIrEmitter
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
         FunctionMemoryEffectSummary? memoryEffects,
-        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        MonomorphizationLinkageKind? specializationLinkage = null)
     {
         var segments = new List<string> { "define" };
 
-        if (internalize)
+        if (ResolveDefinitionLinkageKeyword(internalize, specializationLinkage) is { } linkageKeyword)
         {
-            segments.Add("internal");
+            segments.Add(linkageKeyword);
         }
 
         if (effects.UseFastCallingConvention)
@@ -2129,7 +2346,26 @@ internal sealed class LlvmIrEmitter
             segments.Add(attributes);
         }
 
+        if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
+        {
+            segments.Add("comdat");
+        }
+
         return string.Join(" ", segments);
+    }
+
+    private static string? ResolveDefinitionLinkageKeyword(
+        bool internalize,
+        MonomorphizationLinkageKind? specializationLinkage)
+    {
+        if (internalize)
+        {
+            return "internal";
+        }
+
+        return specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+            ? "linkonce_odr"
+            : null;
     }
 
     private bool TryEmitBuiltinFunctionDefinition(
@@ -3166,29 +3402,53 @@ internal sealed class LlvmIrEmitter
         return attributes;
     }
 
-    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetRootParameterEffects(string functionName, bool hasBody)
+    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetParameterEffects(string functionName, bool hasBody)
     {
-        if (!hasBody
-            || _semanticValidation is null
-            || !_semanticValidation.Functions.TryGetValue(functionName, out var validation)
-            || validation.Parameters is null)
+        if (hasBody
+            && TryGetRootValidationSummary(functionName, out var validation)
+            && validation.Parameters is not null)
+        {
+            return validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        }
+
+        if (!_publishedFunctionSemantics.TryGetValue(functionName, out var imported)
+            || imported.Parameters is null)
         {
             return null;
         }
 
-        return validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        return imported.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
     }
 
     private FunctionMemoryEffectSummary? GetFunctionMemoryEffects(string functionName, bool hasBody)
     {
-        if (!hasBody
-            || _semanticValidation is null
-            || !_semanticValidation.Functions.TryGetValue(functionName, out var validation))
+        if (hasBody
+            && TryGetRootValidationSummary(functionName, out var validation))
         {
-            return null;
+            return validation.MemoryEffects;
         }
 
-        return validation.MemoryEffects;
+        return _publishedFunctionSemantics.TryGetValue(functionName, out var imported)
+            ? imported.MemoryEffects
+            : null;
+    }
+
+    private bool TryGetRootValidationSummary(string functionName, out FunctionValidationSummary validation)
+    {
+        validation = default!;
+
+        if (_semanticValidation is null)
+        {
+            return false;
+        }
+
+        if (_semanticValidation.Functions.TryGetValue(functionName, out validation!))
+        {
+            return true;
+        }
+
+        return _specializationTemplateNames.TryGetValue(functionName, out var templateName)
+            && _semanticValidation.Functions.TryGetValue(templateName, out validation!);
     }
 
     private static ParameterMemoryEffectSummary? ResolveParameterEffects(
@@ -4274,6 +4534,22 @@ internal sealed class LlvmIrEmitter
 
     private ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type)
     {
+        var normalizedType = type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+
+        if (normalizedType.Kind == StarkTypeKind.Named
+            && normalizedType.NamedType is { } namedType
+            && normalizedType.TypeArguments is not { Count: > 0 }
+            && _publishedConcreteLayouts.TryGetValue(namedType, out var publishedLayout))
+        {
+            return publishedLayout;
+        }
+
         return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
     }
 

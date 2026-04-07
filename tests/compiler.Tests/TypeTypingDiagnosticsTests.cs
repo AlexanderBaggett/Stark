@@ -239,6 +239,49 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void TypeAliasesShareTheUnderlyingOverloadIdentity()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Score = i32;
+
+            fn i32 Parse(i32 value) {
+                return value;
+            }
+
+            fn i32 Parse(Score value) {
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3006", "Function 'Parse' declares overload 'Parse(i32)' more than once");
+    }
+
+    [Fact]
+    public void TypeAliasCyclesAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias A = B;
+            alias B = A;
+
+            fn void Use(A value) {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3023", "participates in a cycle");
+    }
+
+    [Fact]
     public void FfiFunctionsRejectAggregateTypesThatTransitivelyDependOnEnums()
     {
         var result = Compile(
@@ -1003,6 +1046,26 @@ public sealed class TypeTypingDiagnosticsTests
         AssertDiagnostic(result, "STK3021", "No overload of 'Convert' matches argument types (bool)");
         AssertDiagnostic(result, "STK3021", "Convert(i32)");
         AssertDiagnostic(result, "STK3021", "Convert(ascii)");
+    }
+
+    [Fact]
+    public void GenericCallsWithoutInferableTypeArgumentsReportNoMatchingCandidates()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn T Make<T>();
+
+            fn i32 Run() {
+                return Make();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3021", "No overload of 'Make' matches argument types ()");
+        AssertDiagnostic(result, "STK3021", "Make<T>()");
     }
 
     [Fact]

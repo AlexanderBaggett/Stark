@@ -19,6 +19,16 @@ internal sealed class NonLexicalBorrowLifetimeValidator
         _typeModel = typeModel;
         _ownershipModel = ownershipModel;
         _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
+        foreach (var function in mir.Functions)
+        {
+            _signatures.TryAdd(
+                function.Name,
+                new TypedFunctionSignature(
+                    function.Name,
+                    function.ReturnType,
+                    function.Parameters,
+                    SourceName: function.Name));
+        }
     }
 
     public OwnershipValidationModel Validate()

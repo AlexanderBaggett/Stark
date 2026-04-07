@@ -1,0 +1,5 @@
+module Math
+
+public finite law i32 Add(i32 left, i32 right) {
+    return left + right;
+}

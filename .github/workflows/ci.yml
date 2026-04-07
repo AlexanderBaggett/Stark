@@ -32,8 +32,27 @@ jobs:
           ./scripts/regenerate-parser.sh
           git diff --exit-code -- src/Parsing/StarkLexer.cs src/Parsing/StarkParser.cs src/Parsing/StarkVisitor.cs src/Parsing/StarkBaseVisitor.cs
 
+      - name: Prepare CI artifact directories
+        run: mkdir -p .artifacts/logs .artifacts/test-results
+
       - name: Build
-        run: dotnet build Stark.slnx --configuration Release
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build Stark.slnx --configuration Release 2>&1 | tee .artifacts/logs/dotnet-build.log
 
       - name: Test
-        run: dotnet test Stark.slnx --configuration Release --no-build
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet test Stark.slnx --configuration Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory .artifacts/test-results 2>&1 | tee .artifacts/logs/dotnet-test.log
+
+      - name: Upload failure logs and test artifacts
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-artifacts-linux
+          path: |
+            .artifacts/logs
+            .artifacts/test-results
+          if-no-files-found: ignore

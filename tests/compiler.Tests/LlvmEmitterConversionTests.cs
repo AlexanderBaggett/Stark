@@ -116,6 +116,7 @@ public sealed class LlvmEmitterConversionTests
         var typeModel = new TypeCheckModel(
             "Demo",
             NamedTypes: new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal),
+            TypeAliases: new Dictionary<string, TypeAliasSymbol>(StringComparer.Ordinal),
             Functions: new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
             {
                 ["Run"] = new TypedFunctionSignature("Run", targetType, [])

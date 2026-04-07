@@ -93,6 +93,7 @@ public sealed class BorrowLivenessValidationTests
         var typeModel = new TypeCheckModel(
             "Demo",
             NamedTypes: new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal),
+            TypeAliases: new Dictionary<string, TypeAliasSymbol>(StringComparer.Ordinal),
             Functions: new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal)
             {
                 ["Run"] = new TypedFunctionSignature("Run", StarkTypeSymbols.Integer(32), [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)]),

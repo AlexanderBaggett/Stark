@@ -865,15 +865,15 @@ Goal: Stark is not just a compiler experiment, but a coherent language/toolchain
   - [x] feature inclusion matrix
   - [x] platform and toolchain support matrix
   - [x] cut line between release blockers and post-release features
-- [ ] Freeze syntax for that subset
-  - [ ] grammar audit against the language reference
-  - [ ] parser regression lock for accepted and rejected syntax
-  - [ ] remove temporary compatibility aliases and placeholders
-- [ ] Freeze lowering rules for that subset
-  - [ ] ABI and lowering document per supported type family
-  - [ ] emitted LLVM/object invariants for supported constructs
-  - [ ] regression tests keyed to the frozen lowering contract
-- [ ] Document unsupported features explicitly
+- [x] Freeze syntax for that subset
+  - [x] grammar audit against the language reference
+  - [x] parser regression lock for accepted and rejected syntax
+  - [x] remove temporary compatibility aliases and placeholders
+- [x] Freeze lowering rules for that subset
+  - [x] ABI and lowering document per supported type family
+  - [x] emitted LLVM/object invariants for supported constructs
+  - [x] regression tests keyed to the frozen lowering contract
+- [x] Document unsupported features explicitly
   - [x] user-facing unsupported features list
   - [x] stable diagnostic behavior for unsupported paths
   - [x] README and release-note pointers to unsupported areas
@@ -889,49 +889,130 @@ Goal: Stark is not just a compiler experiment, but a coherent language/toolchain
     - [x] indexing gaps: dynamic fixed-array indexing currently requires a local fixed-array source and an integer index; slice/raw-pointer indexing require integer indices; indexing is only supported for fixed arrays, raw pointers, slices, `ascii`, and `unicode`; text slicing currently requires exactly two integer indices
     - [x] runtime-drop gaps: enum/aggregate drop helpers still mark MIR unsupported when tag, field, or comparison temporaries cannot be materialized
   - [x] single-element text indexing and general runtime `ascii`/`unicode` conversion
-- [ ] Provide a versioned standard library baseline
-  - [ ] package versioning scheme
-  - [ ] baseline module list
-  - [ ] compatibility promise for shipped APIs
-- [ ] Add release notes / changelog discipline
-  - [ ] changelog template
-  - [ ] release tagging and version-numbering process
-  - [ ] upgrade-notes section for breaking changes
-- [ ] Add CI for build and tests
+- [x] Provide a versioned standard library baseline
+  - [x] package versioning scheme
+  - [x] baseline module list
+  - [x] compatibility promise for shipped APIs
+- [x] Add release notes / changelog discipline
+  - [x] changelog template
+  - [x] release tagging and version-numbering process
+  - [x] upgrade-notes section for breaking changes
+- [x] Add CI for build and tests
   - [x] Linux build/test workflow
   - [x] parser-regeneration drift check
-  - [ ] test artifact or failure-log upload
-- [ ] Add sample projects that compile end-to-end
-  - [ ] hello-world application
-  - [ ] multi-module application
-  - [ ] static-library plus consumer sample
+  - [x] test artifact or failure-log upload
+- [x] Add sample projects that compile end-to-end
+  - [x] hello-world application
+  - [x] multi-module application
+  - [x] static-library plus consumer sample
 
 ## Milestone v1.1: Post-Release Surface Additions
 
 Goal: add non-essential language surface after the first release without slowing v1.0 completion.
 
-- [ ] Type aliases
-  - [ ] grammar and syntax-model support
-  - [ ] semantic identity and ABI rules
-  - [ ] visibility and export behavior
+- [x] Type aliases
+  - [x] grammar and syntax-model support
+  - [x] semantic identity and ABI rules
+  - [x] visibility and export behavior
 - [ ] Generic function/type instantiation strategy
-  - [ ] function instantiation triggers
-  - [ ] type instantiation triggers
-  - [ ] cross-module instantiation ownership
-  - [ ] caching and deduplication of instantiations
+  - [x] function instantiation triggers
+  - [x] type instantiation triggers
+  - [x] cross-module instantiation ownership
+  - [x] caching and deduplication of instantiations
   - [x] Generic type parameter handling beyond basic shape support in `v1.1`
-  - [ ] bind generic parameters on all declaration kinds that support them
+  - [x] bind generic parameters on all declaration kinds that support them
   - [x] substitute generic parameters through fields, returns, and locals
   - [ ] instantiate generic functions and types at use sites
     - [x] instantiate generic types at use sites for source modules and manifest-backed consumers
-- [ ] Monomorphization planning
-  - [ ] symbol naming scheme
-  - [ ] code-size control heuristics
-  - [ ] linkage and dedup rules across objects and packages
-- [ ] Specialization planning
-  - [ ] overlap and priority rules
-  - [ ] coherence and ambiguity diagnostics
-  - [ ] specialization-driven codegen strategy
+- [x] Monomorphization planning
+  - [x] symbol naming scheme
+  - [x] code-size control heuristics
+  - [x] linkage and dedup rules across objects and packages
+- [x] Specialization planning
+  - [x] overlap and priority rules
+  - [x] coherence and ambiguity diagnostics
+  - [x] specialization-driven codegen strategy
+- [x] Generic body generation
+  - [x] materialize source-backed monomorphized functions into HIR and MIR
+  - [x] rewrite instantiated generic calls to concrete specialization symbols
+  - [x] ABI lowering for monomorphized function symbols
+  - [x] enumerate materialized monomorphized functions during LLVM definition emission
+  - [x] LLVM emission of source-backed monomorphized function bodies
+  - [x] realize `linkonce_odr`/COMDAT linkage for source-backed imported specializations
+  - [x] consumer-owned package-image-backed specialization emission
+  - [x] recursive and nested generic specialization expansion during lowering
+  - [x] end-to-end generic body regression coverage
+- [ ] Compiler-owned package image architecture
+  - [ ] Reframe the current package manifest as a broader package image artifact rather than a lossy package index
+  - [ ] Define the package image principles and invariants
+    - [ ] keep the artifact text-based and diffable in Git
+    - [ ] do not add an embedded format-version field; the compiler and image format evolve together in source control
+    - [ ] make the image sectioned so new compiler data can be added without collapsing into one flat record type
+    - [ ] make direct compiler loading the primary path instead of reconstructing fake Stark source from lossy strings
+  - [ ] Design a Stark-native, near-homoiconic package image syntax
+    - [ ] represent package and module boundaries explicitly
+    - [ ] represent exported and public source surface explicitly
+    - [ ] represent typed compiler-owned sections explicitly rather than hiding them inside string fields
+    - [ ] define which sections are human-authored, compiler-emitted, or compiler-only
+  - [ ] Add structured typed-interface sections
+    - [x] encode types structurally instead of rendering them as plain strings
+    - [x] encode functions, methods, globals, types, and aliases with visibility, generics, modifiers, and symbol names
+    - [x] preserve primary-constructor type shape across package boundaries so imported generic bodies can construct published records without source
+    - [x] encode re-exports and other package-boundary dependency surface directly
+    - [ ] preserve enough surface information that docs, tooling, and diagnostics do not need to recover it from lowered compiler facts
+  - [ ] Add compiler fact sections
+    - [x] carry function effects and calling-convention facts across package boundaries
+    - [x] carry ABI-lowering facts that should survive package publication
+    - [x] carry aggregate and enum layout facts needed for downstream lowering and optimization
+    - [x] carry ownership and borrow-related facts that are required for downstream validation or optimization
+  - [ ] Add generic template body sections
+    - [x] publish compiler-owned generic template body sections for exported or public generic functions and methods as a bridge
+    - [x] publish structured template planning facts needed for imported generic code-size heuristics
+    - [x] publish deferred generic instantiation patterns needed for recursive imported specialization planning
+    - [x] publish deferred generic type-instantiation patterns needed for recursive imported type planning
+    - [x] publish typed object-creation constructor facts needed for imported generic MIR lowering
+    - [x] publish typed object-creation target-type facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed object-initializer member facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed local declaration facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed explicit-conversion target facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed enum-constructor facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed tuple-enum-constructor call facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed unit-enum-case value facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed enum-pattern target facts needed for imported generic switch-pattern type checking and MIR lowering
+    - [x] publish typed enum-pattern member facts needed for imported generic named-field switch-pattern type checking and MIR lowering
+    - [x] publish typed aggregate-pattern target facts needed for imported generic switch-pattern type checking and MIR lowering
+    - [x] publish typed direct-call target facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed field-access facts needed for imported generic type checking and MIR lowering
+    - [x] publish typed member-call target facts needed for imported generic type checking and MIR lowering
+    - [x] publish a first typed template-body subset for simple linear helper bodies such as literal returns, direct returns, object-creation returns, named enum-constructor returns including literal payload members, enum-call returns, enum-value returns, field-access returns, member-call returns, direct-call returns, and local-init-plus-return helpers
+    - [ ] publish typed template bodies for exported or public generic functions and methods
+    - [ ] preserve enough local, type, and effect information to specialize imported generics without reparsing source text
+    - [ ] define explicit rules for which templates are published and which stay package-private
+    - [ ] ensure the template-body representation is suitable for future optimization passes, not just minimal code generation
+  - [ ] Integrate package images into module loading and the compiler pipeline
+    - [x] load package image data directly into compiler artifacts
+    - [x] prefer package-image loading over synthetic source reconstruction whenever rich sections are available
+    - [ ] keep legacy manifest reconstruction only as a temporary bridge while the package-image path is being completed
+    - [ ] remove synthetic-source dependence from manifest-backed generic, alias, doctrine, and trait imports once the package-image path is complete
+  - [ ] Use package images to finish generic code generation across package boundaries
+    - [x] emit consumer-owned specializations from imported generic template bodies
+    - [x] support recursive and nested specialization expansion when templates come from package images
+    - [x] define ownership, linkage, and dedup rules when one package publishes templates and another package owns concrete specializations
+    - [x] ensure the package-boundary generic path stays zero-cost at runtime and does not introduce fallback indirection
+  - [ ] Use package images to improve optimizer capability
+    - [ ] let specialization planning consume imported effect, ABI, and layout facts directly instead of re-deriving them from stringly data
+    - [ ] preserve enough information for future cross-package inlining, law cloning, or other package-aware optimizations
+    - [ ] keep package publication from throwing away facts that are expensive for the compiler to recover later
+  - [ ] Tooling, inspection, and diagnostics for package images
+    - [ ] emit package images from the CLI and standard-library packaging flow
+    - [ ] add a readable dump or inspect mode for package images
+    - [ ] add diagnostics for missing required sections, malformed structured facts, or unsupported package-image content
+    - [ ] document the package image as a compiler-owned source artifact rather than a narrow distribution manifest
+  - [ ] Test coverage for package images
+    - [ ] writer or loader round-trip tests for rich package images
+    - [ ] direct-import tests that no longer synthesize fake source when rich package-image sections are present
+    - [ ] end-to-end tests for imported generic specialization from package images
+    - [ ] compatibility tests for the temporary legacy manifest bridge while both paths coexist
 
 ## Suggested Near-Term Execution Order
 

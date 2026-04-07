@@ -406,6 +406,298 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void GenericTypeUsesRecordConcreteInstantiationTriggers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair<A, B>(A First, B Second) { }
+
+            fn bool Accept(Pair<i32, bool> pair) {
+                return pair.Second;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var trigger = Assert.Single(typeCheckModel.TypeTriggers);
+        Assert.Equal("Pair<i32,bool>", trigger.TypeName);
+        Assert.Equal(["i32", "bool"], trigger.TypeArguments.Select(static type => type.DisplayName));
+    }
+
+    [Fact]
+    public void NestedGenericTypesInsideContainersMonomorphizeAndRecordTriggers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair<A, B>(A First, B Second) { }
+
+            fn i32 Read(rawptr<Pair<i32, bool>> ptr) {
+                if ((*ptr).Second) {
+                    return (*ptr).First;
+                }
+
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("Pair<i32,bool>"));
+        Assert.Contains(typeCheckModel.TypeTriggers, static trigger => trigger.TypeName == "Pair<i32,bool>");
+    }
+
+    [Fact]
+    public void GenericFunctionBodiesCanUseTheirTypeParametersInLocalTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn T Identity<T>(T value) {
+                stack T copy = value;
+                return copy;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.Functions.TryGetValue("Identity", out var signature));
+        Assert.True(signature.IsGeneric);
+        Assert.Equal(["T"], signature.GenericParams);
+        Assert.Equal("T", signature.ReturnType.DisplayName);
+        Assert.Equal("T", Assert.Single(signature.Parameters).Type.DisplayName);
+    }
+
+    [Fact]
+    public void GenericMethodBodiesCanUseTheirTypeParametersInLocalTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                fn T Echo<T>(T value) {
+                    stack T copy = value;
+                    return copy;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.Functions.TryGetValue("Box.Echo", out var signature));
+        Assert.True(signature.IsGeneric);
+        Assert.Equal(["T"], signature.GenericParams);
+        Assert.Equal("T", signature.ReturnType.DisplayName);
+        Assert.Equal("T", Assert.Single(signature.Parameters).Type.DisplayName);
+    }
+
+    [Fact]
+    public void GenericFunctionCallsRecordConcreteInstantiationTriggers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn T Identity<T>(T value) {
+                return value;
+            }
+
+            fn i32 Run() {
+                stack i32 value = 42;
+                return Identity(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var trigger = Assert.Single(typeCheckModel.InstantiationTriggers);
+        Assert.Equal("Identity", trigger.FunctionName);
+        Assert.Equal(["i32"], trigger.TypeArguments.Select(static type => type.DisplayName));
+        Assert.True(trigger.Signature.IsGenericInstantiation);
+        Assert.Equal("i32", trigger.Signature.ReturnType.DisplayName);
+        Assert.Equal("i32", Assert.Single(trigger.Signature.Parameters).Type.DisplayName);
+    }
+
+    [Fact]
+    public void GenericMethodCallsRecordConcreteInstantiationTriggers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                fn T Echo<T>(borrow Box self, T value) {
+                    return value;
+                }
+            }
+
+            fn i32 Run() {
+                stack Box box = new Box();
+                stack i32 value = 42;
+                return box.Echo(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var trigger = Assert.Single(typeCheckModel.InstantiationTriggers);
+        Assert.Equal("Box.Echo", trigger.FunctionName);
+        Assert.Equal(["i32"], trigger.TypeArguments.Select(static type => type.DisplayName));
+        Assert.True(trigger.Signature.IsGenericInstantiation);
+        Assert.Equal("i32", trigger.Signature.ReturnType.DisplayName);
+        Assert.Equal(2, trigger.Signature.Parameters.Count);
+        Assert.Equal("borrow Box", trigger.Signature.Parameters[0].Type.DisplayName);
+        Assert.Equal("i32", trigger.Signature.Parameters[1].Type.DisplayName);
+    }
+
+    [Fact]
+    public void RepeatedGenericFunctionCallsReuseOneCachedInstantiationTrigger()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn T Identity<T>(T value) {
+                return value;
+            }
+
+            fn i32 Run(i32 left, i32 right) {
+                return Identity(left) + Identity(right);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var trigger = Assert.Single(typeCheckModel.InstantiationTriggers);
+        Assert.Equal("Identity", trigger.FunctionName);
+        Assert.Equal(["i32"], trigger.TypeArguments.Select(static type => type.DisplayName));
+    }
+
+    [Fact]
+    public void RepeatedGenericTypeUsesReuseOneCachedInstantiationTrigger()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair<T>(T Value) { }
+
+            fn i32 Add(Pair<i32> left, Pair<i32> right) {
+                return left.Value + right.Value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var trigger = Assert.Single(typeCheckModel.TypeTriggers);
+        Assert.Equal("Pair<i32>", trigger.TypeName);
+        Assert.Equal(["i32"], trigger.TypeArguments.Select(static type => type.DisplayName));
+    }
+
+    [Fact]
+    public void ConcreteOverloadsBeatMatchingGenericInstantiationTriggers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Parse(i32 value) {
+                return value;
+            }
+
+            fn T Parse<T>(T value) {
+                return value;
+            }
+
+            fn i32 Run() {
+                stack i32 value = 42;
+                return Parse(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Empty(typeCheckModel.InstantiationTriggers);
+    }
+
+    [Fact]
+    public void TypeAliasesResolveToTheirUnderlyingTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Byte = i8;
+
+            fn Byte Inc(Byte value) {
+                return value + 1;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.TypeAliases.ContainsKey("Byte"));
+        Assert.True(typeCheckModel.Functions.TryGetValue("Inc", out var signature));
+        Assert.Equal("i8", signature.ReturnType.DisplayName);
+        Assert.Equal("i8", Assert.Single(signature.Parameters).Type.DisplayName);
+    }
+
+    [Fact]
+    public void GenericTypeAliasesSubstituteIntoTheirUnderlyingTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Ptr<T> = rawptr<T>;
+
+            fn i32 Read(Ptr<i32> value) {
+                return *value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.TypeAliases.ContainsKey("Ptr"));
+        var parameter = Assert.Single(typeCheckModel.Functions["Read"].Parameters).Type;
+        Assert.Equal(StarkTypeKind.RawPointer, parameter.Kind);
+        Assert.NotNull(parameter.ElementType);
+        Assert.Equal("i32", parameter.ElementType!.DisplayName);
+    }
+
+    [Fact]
     public void GenericTypeWithWrongArgCountIsAnError()
     {
         var result = Compile(

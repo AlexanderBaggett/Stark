@@ -7,13 +7,13 @@ public sealed class ParserConformanceTests
     public static TheoryData<string, string> ValidPrograms => new()
     {
         {
-            "semicolon terminated imports module and default parameters",
+            "top level imports module and ordinary parameters",
             """
-            import Core.Math;
-            export import Core.Text;
-            module Demo.Api;
+            import Core.Math
+            export import Core.Text
+            module Demo.Api
 
-            public fn i32 Sum(i32 left = 1, i32 right = 2,) {
+            public fn i32 Sum(i32 left, i32 right,) {
                 return left + right;
             }
             """
@@ -46,6 +46,15 @@ public sealed class ParserConformanceTests
                     self.Ptr = null;
                 }
             }
+            """
+        },
+        {
+            "alias declarations parse with visibility and generics",
+            """
+            module Types
+
+            public alias Byte = i8;
+            internal alias BufferView<T> = borrow T[];
             """
         },
         {
@@ -91,7 +100,7 @@ public sealed class ParserConformanceTests
                     break;
                 }
 
-                for nondeterministic (; flag; ) ;
+                for non-deterministic (; flag; ) ;
 
                 for willexit (stack mut i32 i = 0; i < 4; i += 1, i += 2) {
                     continue;
@@ -208,6 +217,39 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "top level imports and module declarations do not end in semicolons",
+            """
+            import Core.Math;
+            module Demo;
+            """
+        },
+        {
+            "function parameters do not support default values",
+            """
+            module Demo
+
+            fn i32 Sum(i32 left = 1, i32 right) {
+                return left + right;
+            }
+            """
+        },
+        {
+            "alias declarations require an equals sign and target type",
+            """
+            module Demo
+
+            alias Bytes;
+            """
+        },
+        {
+            "type is no longer the alias declaration keyword",
+            """
+            module Demo
+
+            type Bytes = i8;
+            """
+        },
+        {
             "doctrine members may not use fn",
             """
             module Demo
@@ -249,6 +291,18 @@ public sealed class ParserConformanceTests
 
             fn void Run(bool flag) {
                 for willexit (stack i32 i = 0) {
+                    ;
+                }
+            }
+            """
+        },
+        {
+            "legacy loop behavior alias spelling is no longer accepted",
+            """
+            module Demo
+
+            fn void Run(bool flag) {
+                for nondeterministic (; flag; ) {
                     ;
                 }
             }

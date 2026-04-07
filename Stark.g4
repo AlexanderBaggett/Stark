@@ -5,11 +5,11 @@ compilationUnit
     ;
 
 importDeclaration
-    : EXPORT? IMPORT qualifiedName SEMI?
+    : EXPORT? IMPORT qualifiedName
     ;
 
 moduleDeclaration
-    : MODULE qualifiedName SEMI?
+    : MODULE qualifiedName
     ;
 
 topLevelDeclaration
@@ -20,6 +20,7 @@ topLevelDeclaration
         | enumDeclaration
         | traitDeclaration
         | doctrineDeclaration
+        | typeAliasDeclaration
         | globalConstantDeclaration
         | globalVariableDeclaration
       )
@@ -62,7 +63,7 @@ parameterList
     ;
 
 parameter
-    : type_ Identifier (ASSIGN expression)?
+    : type_ Identifier
     ;
 
 typeParameterList
@@ -131,6 +132,10 @@ traitDeclaration
 
 doctrineDeclaration
     : DOCTRINE Identifier typeParameterList? doctrineBody
+    ;
+
+typeAliasDeclaration
+    : ALIAS Identifier typeParameterList? ASSIGN type_ SEMI
     ;
 
 primaryConstructorParameters
@@ -669,6 +674,7 @@ RECORD      : 'record';
 ENUM        : 'enum';
 TRAIT       : 'trait';
 DOCTRINE    : 'doctrine';
+ALIAS       : 'alias';
 DROP        : 'drop';
 
 STACK       : 'stack';
@@ -705,7 +711,7 @@ WHERE       : 'where';
 VAR         : 'var';
 
 INFINITE         : 'infinite';
-NONDETERMINISTIC : 'non-deterministic' | 'nondeterministic';
+NONDETERMINISTIC : 'non-deterministic';
 WILLEXIT         : 'willexit';
 
 VOID        : 'void';

@@ -14,6 +14,10 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<FunctionEffectModel> FunctionEffects = new("semantics.function-effects");
     public static readonly ArtifactKey<ClosedWorldOptimizationModel> ClosedWorldOptimization = new("semantics.closed-world-optimization");
     public static readonly ArtifactKey<TypeCheckModel> TypeCheckModel = new("typing.model");
+    public static readonly ArtifactKey<InstantiationOwnershipModel> InstantiationOwnership = new("typing.instantiation-ownership");
+    public static readonly ArtifactKey<MonomorphizationPlanModel> MonomorphizationPlan = new("typing.monomorphization-plan");
+    public static readonly ArtifactKey<SpecializationPlanModel> SpecializationPlan = new("semantics.specialization-plan");
+    public static readonly ArtifactKey<SpecializationCodegenStrategyModel> SpecializationCodegenStrategy = new("codegen.specialization-strategy");
     public static readonly ArtifactKey<EnumLayoutModel> EnumLayoutModel = new("typing.enum-layout");
     public static readonly ArtifactKey<SemanticValidationModel> SemanticValidation = new("semantics.validation");
     public static readonly ArtifactKey<OwnershipValidationModel> OwnershipValidation = new("semantics.ownership");
@@ -33,6 +37,7 @@ public enum DeclarationKind
     Enum,
     Trait,
     Doctrine,
+    TypeAlias,
     GlobalConstant,
     GlobalVariable
 }
@@ -147,17 +152,40 @@ public sealed record FunctionDeclarationModel(
     IReadOnlyList<ParameterModel> Parameters,
     FunctionModifierSet Modifiers,
     bool HasBody,
-    AsmFunctionModel? Asm = null);
+    AsmFunctionModel? Asm = null,
+    IReadOnlyList<string>? GenericParameterNames = null)
+{
+    public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+}
 
 public sealed record DestructorDeclarationModel(
     bool IsMutable);
+
+public sealed record TypeAliasDeclarationModel(
+    string Name,
+    string AliasedType,
+    IReadOnlyList<string> GenericParameters);
+
+public sealed record TypeAliasSymbol(
+    string Name,
+    string ModuleName,
+    StarkVisibility Visibility,
+    StarkTypeSymbol TargetType,
+    IReadOnlyList<string>? GenericParameterNames = null,
+    bool IsExternal = false)
+{
+    public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+}
 
 public sealed record TopLevelDeclarationModel(
     string Name,
     DeclarationKind Kind,
     StarkVisibility Visibility,
     FunctionDeclarationModel? Function,
-    DestructorDeclarationModel? Destructor = null);
+    DestructorDeclarationModel? Destructor = null,
+    TypeAliasDeclarationModel? TypeAlias = null);
 
 public sealed record SyntaxModel(
     string ModuleName,
@@ -198,13 +226,276 @@ public sealed record ModuleGraph(
         return AccessibleModules.Any(module => module.StartsWith(prefix, StringComparison.Ordinal));
     }
 
+    public bool CanAccessModule(string fromModule, string moduleName)
+    {
+        if (string.Equals(fromModule, RootModuleName, StringComparison.Ordinal))
+        {
+            return HasModule(moduleName);
+        }
+
+        if (string.Equals(fromModule, moduleName, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return CollectAccessibleModules(fromModule).Contains(moduleName);
+    }
+
+    public bool CanAccessModuleNamespace(string fromModule, string moduleNamePrefix)
+    {
+        if (string.Equals(fromModule, RootModuleName, StringComparison.Ordinal))
+        {
+            return HasModuleNamespace(moduleNamePrefix);
+        }
+
+        var prefix = $"{moduleNamePrefix}.";
+        return CollectAccessibleModules(fromModule)
+            .Any(module => module.StartsWith(prefix, StringComparison.Ordinal));
+    }
+
+    private IReadOnlySet<string> CollectAccessibleModules(string fromModule)
+    {
+        var accessibleModules = new HashSet<string>(StringComparer.Ordinal);
+        var accessibleQueue = new Queue<string>();
+
+        foreach (var edge in Imports.Where(edge => edge.IsResolved && string.Equals(edge.FromModule, fromModule, StringComparison.Ordinal)))
+        {
+            var targetModule = edge.Target!.ModuleName;
+            if (accessibleModules.Add(targetModule))
+            {
+                accessibleQueue.Enqueue(targetModule);
+            }
+        }
+
+        while (accessibleQueue.Count != 0)
+        {
+            var currentModule = accessibleQueue.Dequeue();
+
+            foreach (var edge in Imports.Where(edge =>
+                         edge.IsResolved
+                         && edge.IsExported
+                         && string.Equals(edge.FromModule, currentModule, StringComparison.Ordinal)))
+            {
+                var targetModule = edge.Target!.ModuleName;
+                if (accessibleModules.Add(targetModule))
+                {
+                    accessibleQueue.Enqueue(targetModule);
+                }
+            }
+        }
+
+        return accessibleModules;
+    }
+
     public bool ContainsLoadedModule(string moduleName) => Modules.ContainsKey(moduleName);
 }
 
 public sealed record LoadedModuleDocument(
     ResolvedModuleReference Reference,
     ParseResult ParseResult,
-    SyntaxModel SyntaxModel);
+    SyntaxModel SyntaxModel,
+    LoadedPackageImageFacts? PackageImageFacts = null);
+
+public sealed record ImportedFunctionTemplateSummary(
+    int? TopLevelStatementCount,
+    ImportedTemplateTypedBodySummary? TypedBodySummary = null,
+    IReadOnlyList<ImportedDeferredFunctionInstantiationSummary>? DeferredFunctionInstantiations = null,
+    IReadOnlyList<ImportedDeferredTypeInstantiationSummary>? DeferredTypeInstantiations = null,
+    IReadOnlyList<ImportedTemplateObjectCreationSummary>? ObjectCreationSummaries = null,
+    IReadOnlyList<ImportedTemplateEnumConstructorSummary>? EnumConstructorSummaries = null,
+    IReadOnlyList<ImportedTemplateEnumCallSummary>? EnumCallSummaries = null,
+    IReadOnlyList<ImportedTemplateEnumValueSummary>? EnumValueSummaries = null,
+    IReadOnlyList<ImportedTemplateEnumPatternSummary>? EnumPatternSummaries = null,
+    IReadOnlyList<ImportedTemplateAggregatePatternSummary>? AggregatePatternSummaries = null,
+    IReadOnlyList<ImportedTemplateLocalDeclarationSummary>? LocalDeclarationSummaries = null,
+    IReadOnlyList<ImportedTemplateConversionSummary>? ConversionSummaries = null,
+    IReadOnlyList<ImportedTemplateDirectCallSummary>? DirectCallSummaries = null,
+    IReadOnlyList<ImportedTemplateFieldAccessSummary>? FieldAccessSummaries = null,
+    IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null)
+{
+    public ImportedTemplateTypedBodySummary? TypedBody => TypedBodySummary;
+
+    public IReadOnlyList<ImportedDeferredFunctionInstantiationSummary> DeferredInstantiations =>
+        DeferredFunctionInstantiations ?? [];
+
+    public IReadOnlyList<ImportedDeferredTypeInstantiationSummary> DeferredTypes =>
+        DeferredTypeInstantiations ?? [];
+
+    public IReadOnlyList<ImportedTemplateObjectCreationSummary> ObjectCreations =>
+        ObjectCreationSummaries ?? [];
+
+    public IReadOnlyList<TypedConstructorShape?> Constructors =>
+        ObjectCreations.Select(static objectCreation => objectCreation.Constructor).ToArray();
+
+    public IReadOnlyList<ImportedTemplateEnumConstructorSummary> EnumConstructors =>
+        EnumConstructorSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateEnumCallSummary> EnumCalls =>
+        EnumCallSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateEnumValueSummary> EnumValues =>
+        EnumValueSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateEnumPatternSummary> EnumPatterns =>
+        EnumPatternSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateAggregatePatternSummary> AggregatePatterns =>
+        AggregatePatternSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateLocalDeclarationSummary> LocalDeclarations =>
+        LocalDeclarationSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateConversionSummary> Conversions =>
+        ConversionSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateDirectCallSummary> DirectCalls =>
+        DirectCallSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateFieldAccessSummary> FieldAccesses =>
+        FieldAccessSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateMemberCallSummary> MemberCalls =>
+        MemberCallSummaries ?? [];
+}
+
+public enum ImportedTemplateTypedBodyStatementKind
+{
+    LocalVariableDeclaration,
+    Return
+}
+
+public enum ImportedTemplateTypedBodyExpressionKind
+{
+    NameReference,
+    Literal,
+    ObjectCreation,
+    EnumConstructor,
+    EnumCall,
+    EnumValue,
+    DirectCall,
+    FieldAccess,
+    MemberCall
+}
+
+public sealed record ImportedTemplateTypedBodyExpressionSummary(
+    ImportedTemplateTypedBodyExpressionKind Kind,
+    string? Name = null,
+    int? Ordinal = null,
+    IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary>? Arguments = null,
+    string? LiteralText = null,
+    StarkTypeSymbol? Type = null)
+{
+    public IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary> Args =>
+        Arguments ?? [];
+}
+
+public sealed record ImportedTemplateTypedBodyStatementSummary(
+    ImportedTemplateTypedBodyStatementKind Kind,
+    ImportedTemplateTypedBodyExpressionSummary Expression,
+    string? Name = null,
+    string? StorageClass = null,
+    bool IsMutable = false,
+    StarkTypeSymbol? Type = null);
+
+public sealed record ImportedTemplateTypedBodySummary(
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Statements);
+
+public sealed record ImportedDeferredFunctionInstantiationSummary(
+    string CalleeTemplateName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments);
+
+public sealed record ImportedDeferredTypeInstantiationSummary(
+    StarkTypeSymbol Type);
+
+public sealed record ImportedTemplateLocalDeclarationSummary(
+    string Kind,
+    int Line,
+    int Column,
+    StarkTypeSymbol Type);
+
+public sealed record ImportedTemplateObjectCreationSummary(
+    StarkTypeSymbol CreatedType,
+    TypedConstructorShape? Constructor,
+    IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? InitializerMemberSummaries = null)
+{
+    public IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary> InitializerMembers =>
+        InitializerMemberSummaries ?? [];
+}
+
+public sealed record ImportedTemplateObjectInitializerMemberSummary(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
+public sealed record ImportedTemplateEnumConstructorSummary(
+    int Ordinal,
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    IReadOnlyList<ImportedTemplateEnumConstructorMemberSummary>? MemberSummaries = null)
+{
+    public IReadOnlyList<ImportedTemplateEnumConstructorMemberSummary> Members =>
+        MemberSummaries ?? [];
+}
+
+public sealed record ImportedTemplateEnumConstructorMemberSummary(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
+public sealed record ImportedTemplateEnumCallSummary(
+    int Ordinal,
+    StarkTypeSymbol EnumType,
+    string VariantName);
+
+public sealed record ImportedTemplateEnumValueSummary(
+    int Ordinal,
+    StarkTypeSymbol EnumType,
+    string VariantName);
+
+public sealed record ImportedTemplateEnumPatternSummary(
+    int Ordinal,
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    IReadOnlyList<ImportedTemplateEnumPatternMemberSummary>? MemberSummaries = null)
+{
+    public IReadOnlyList<ImportedTemplateEnumPatternMemberSummary> Members =>
+        MemberSummaries ?? [];
+}
+
+public sealed record ImportedTemplateEnumPatternMemberSummary(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
+public sealed record ImportedTemplateAggregatePatternSummary(
+    int Ordinal,
+    StarkTypeSymbol Type);
+
+public sealed record ImportedTemplateDirectCallSummary(
+    int Ordinal,
+    TypedFunctionSignature Signature);
+
+public sealed record ImportedTemplateFieldAccessSummary(
+    int Ordinal,
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
+public sealed record ImportedTemplateMemberCallSummary(
+    int Ordinal,
+    TypedFunctionSignature Signature);
+
+public sealed record ImportedTemplateConversionSummary(
+    int Ordinal,
+    StarkTypeSymbol TargetType);
+
+public sealed record LoadedPackageImageFacts(
+    IReadOnlyDictionary<string, FunctionEffectProfile> FunctionEffects,
+    IReadOnlyDictionary<string, AbiFunctionSignature> AbiFunctions,
+    IReadOnlyDictionary<string, ConcreteTypeLayout> ConcreteLayouts,
+    IReadOnlyDictionary<string, EnumLayoutSymbol> EnumLayouts,
+    IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> FunctionSemantics,
+    IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates);
 
 public sealed record LoadedModuleSet(
     string RootModuleName,
@@ -540,6 +831,8 @@ public static class StarkTypeSymbols
             StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
+            StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
+                => GenericInstantiation(GetGenericBaseName(type.NamedType), type.TypeArguments),
             StarkTypeKind.Named when type.NamedType is not null => Named(type.NamedType),
             _ => type
         };
@@ -680,9 +973,15 @@ public sealed record TypedFunctionSignature(
     string Name,
     StarkTypeSymbol ReturnType,
     IReadOnlyList<TypedParameterSymbol> Parameters,
-    string? SourceName = null)
+    string? SourceName = null,
+    IReadOnlyList<string>? GenericParameterNames = null,
+    string? TemplateName = null,
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
+    public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
 }
 
 public enum GlobalBindingKind
@@ -707,19 +1006,144 @@ public sealed record LiteralTypingRecord(
     StarkTypeSymbol Type,
     SourceLocation Location);
 
+public sealed record LocalDeclarationTypingRecord(
+    string Kind,
+    StarkTypeSymbol Type,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record DirectCallTypingRecord(
+    TypedFunctionSignature Signature,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record ConversionTypingRecord(
+    StarkTypeSymbol TargetType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record FieldAccessTypingRecord(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record MemberCallTypingRecord(
+    TypedFunctionSignature Signature,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record ObjectInitializerMemberTypingRecord(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
+public sealed record EnumConstructorMemberTypingRecord(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
 public sealed record ObjectCreationTypingRecord(
     string ExpressionText,
+    StarkTypeSymbol CreatedType,
     TypedConstructorShape? Constructor,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers = null)
+{
+    public IReadOnlyList<ObjectInitializerMemberTypingRecord> Members =>
+        InitializerMembers ?? [];
+}
+
+public sealed record EnumConstructorTypingRecord(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<EnumConstructorMemberTypingRecord>? MemberRecords = null)
+{
+    public IReadOnlyList<EnumConstructorMemberTypingRecord> Members =>
+        MemberRecords ?? [];
+}
+
+public sealed record EnumCallTypingRecord(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record EnumValueTypingRecord(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record EnumPatternTypingRecord(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<EnumPatternMemberTypingRecord>? MemberRecords = null)
+{
+    public IReadOnlyList<EnumPatternMemberTypingRecord> Members =>
+        MemberRecords ?? [];
+}
+
+public sealed record EnumPatternMemberTypingRecord(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
+
+public sealed record AggregatePatternTypingRecord(
+    StarkTypeSymbol Type,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record FunctionInstantiationTriggerRecord(
+    string FunctionName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    TypedFunctionSignature Signature,
+    SourceLocation Location);
+
+public sealed record DeferredFunctionInstantiationTriggerRecord(
+    string EnclosingFunctionName,
+    TypedFunctionSignature Signature,
+    SourceLocation Location);
+
+public sealed record DeferredTypeInstantiationTriggerRecord(
+    string EnclosingFunctionName,
+    StarkTypeSymbol Type,
+    SourceLocation Location);
+
+public sealed record TypeInstantiationTriggerRecord(
+    string TypeName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
     SourceLocation Location);
 
 public sealed record TypeCheckModel(
     string ModuleName,
     IReadOnlyDictionary<string, NamedTypeSymbol> NamedTypes,
+    IReadOnlyDictionary<string, TypeAliasSymbol> TypeAliases,
     IReadOnlyDictionary<string, TypedFunctionSignature> Functions,
     IReadOnlyDictionary<string, TypedGlobalSymbol> Globals,
     IReadOnlyList<LiteralTypingRecord> Literals,
     IReadOnlyList<ObjectCreationTypingRecord> ObjectCreations,
-    IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>>? FunctionOverloads = null)
+    IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>>? FunctionOverloads = null,
+    IReadOnlyList<FunctionInstantiationTriggerRecord>? FunctionInstantiationTriggers = null,
+    IReadOnlyList<DeferredFunctionInstantiationTriggerRecord>? DeferredFunctionInstantiationTriggers = null,
+    IReadOnlyList<DeferredTypeInstantiationTriggerRecord>? DeferredTypeInstantiationTriggers = null,
+    IReadOnlyList<TypeInstantiationTriggerRecord>? TypeInstantiationTriggers = null,
+    IReadOnlyList<EnumConstructorTypingRecord>? EnumConstructorRecords = null,
+    IReadOnlyList<EnumCallTypingRecord>? EnumCallRecords = null,
+    IReadOnlyList<EnumValueTypingRecord>? EnumValueRecords = null,
+    IReadOnlyList<EnumPatternTypingRecord>? EnumPatternRecords = null,
+    IReadOnlyList<AggregatePatternTypingRecord>? AggregatePatternRecords = null,
+    IReadOnlyList<LocalDeclarationTypingRecord>? LocalDeclarationRecords = null,
+    IReadOnlyList<ConversionTypingRecord>? ConversionRecords = null,
+    IReadOnlyList<DirectCallTypingRecord>? DirectCallRecords = null,
+    IReadOnlyList<FieldAccessTypingRecord>? FieldAccessRecords = null,
+    IReadOnlyList<MemberCallTypingRecord>? MemberCallRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -729,6 +1153,214 @@ public sealed record TypeCheckModel(
                 static group => group.Key,
                 static group => (IReadOnlyList<TypedFunctionSignature>)group.ToArray(),
                 StringComparer.Ordinal);
+
+    public IReadOnlyList<FunctionInstantiationTriggerRecord> InstantiationTriggers =>
+        FunctionInstantiationTriggers ?? [];
+
+    public IReadOnlyList<DeferredFunctionInstantiationTriggerRecord> DeferredInstantiationTriggers =>
+        DeferredFunctionInstantiationTriggers ?? [];
+
+    public IReadOnlyList<DeferredTypeInstantiationTriggerRecord> DeferredTypeTriggers =>
+        DeferredTypeInstantiationTriggers ?? [];
+
+    public IReadOnlyList<TypeInstantiationTriggerRecord> TypeTriggers =>
+        TypeInstantiationTriggers ?? [];
+
+    public IReadOnlyList<EnumConstructorTypingRecord> EnumConstructors =>
+        EnumConstructorRecords ?? [];
+
+    public IReadOnlyList<EnumCallTypingRecord> EnumCalls =>
+        EnumCallRecords ?? [];
+
+    public IReadOnlyList<EnumValueTypingRecord> EnumValues =>
+        EnumValueRecords ?? [];
+
+    public IReadOnlyList<EnumPatternTypingRecord> EnumPatterns =>
+        EnumPatternRecords ?? [];
+
+    public IReadOnlyList<AggregatePatternTypingRecord> AggregatePatterns =>
+        AggregatePatternRecords ?? [];
+
+    public IReadOnlyList<LocalDeclarationTypingRecord> LocalDeclarations =>
+        LocalDeclarationRecords ?? [];
+
+    public IReadOnlyList<ConversionTypingRecord> Conversions =>
+        ConversionRecords ?? [];
+
+    public IReadOnlyList<DirectCallTypingRecord> DirectCalls =>
+        DirectCallRecords ?? [];
+
+    public IReadOnlyList<FieldAccessTypingRecord> FieldAccesses =>
+        FieldAccessRecords ?? [];
+
+    public IReadOnlyList<MemberCallTypingRecord> MemberCalls =>
+        MemberCallRecords ?? [];
+}
+
+internal static class TemplateLocalDeclarationFacts
+{
+    public const string ConstantKind = "const";
+    public const string VariableKind = "var";
+    public const string ForVariableKind = "forvar";
+
+    public static string BuildLookupKey(string kind, int line, int column)
+    {
+        return $"{kind}|{line}:{column}";
+    }
+
+    public static string BuildLookupKey(string kind, SourceLocation location)
+    {
+        return BuildLookupKey(kind, location.Line, location.Column);
+    }
+}
+
+internal static class TemplateDirectCallFacts
+{
+    public static string BuildLookupKey(int line, int column)
+    {
+        return $"{line}:{column}";
+    }
+
+    public static string BuildLookupKey(SourceLocation location)
+    {
+        return BuildLookupKey(location.Line, location.Column);
+    }
+}
+
+internal static class TemplateFieldAccessFacts
+{
+    public static string BuildLookupKey(int line, int column)
+    {
+        return $"{line}:{column}";
+    }
+
+    public static string BuildLookupKey(SourceLocation location)
+    {
+        return BuildLookupKey(location.Line, location.Column);
+    }
+}
+
+public sealed record FunctionInstantiationOwnership(
+    string TemplateName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    TypedFunctionSignature Signature,
+    string DeclaringModuleName,
+    string OwnerModuleName,
+    bool IsDeclaringModuleSourceBacked,
+    SourceLocation FirstUseLocation)
+{
+    public bool RequiresConsumerOwnership =>
+        !string.Equals(DeclaringModuleName, OwnerModuleName, StringComparison.Ordinal);
+}
+
+public sealed record TypeInstantiationOwnership(
+    string TemplateName,
+    string InstantiatedTypeName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    string DeclaringModuleName,
+    string OwnerModuleName,
+    bool IsDeclaringModuleSourceBacked,
+    SourceLocation FirstUseLocation)
+{
+    public bool RequiresConsumerOwnership =>
+        !string.Equals(DeclaringModuleName, OwnerModuleName, StringComparison.Ordinal);
+}
+
+public sealed record InstantiationOwnershipModel(
+    string RootModuleName,
+    IReadOnlyList<FunctionInstantiationOwnership> Functions,
+    IReadOnlyList<TypeInstantiationOwnership> Types);
+
+public sealed record MonomorphizedFunctionPlan(
+    string TemplateName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    string DeclaringModuleName,
+    string OwnerModuleName,
+    bool IsDeclaringModuleSourceBacked,
+    MonomorphizationCodeSizeHeuristic CodeSizeHeuristic,
+    int? EstimatedTopLevelStatementCount,
+    MonomorphizationLinkageKind Linkage,
+    string SymbolName,
+    SourceLocation FirstUseLocation);
+
+public sealed record MonomorphizedTypePlan(
+    string TemplateName,
+    string InstantiatedTypeName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    string DeclaringModuleName,
+    string OwnerModuleName,
+    bool IsDeclaringModuleSourceBacked,
+    MonomorphizationLinkageKind Linkage,
+    string SymbolName,
+    SourceLocation FirstUseLocation);
+
+public sealed record MonomorphizationPlanModel(
+    string RootModuleName,
+    IReadOnlyList<MonomorphizedFunctionPlan> Functions,
+    IReadOnlyList<MonomorphizedTypePlan> Types);
+
+public enum FunctionSpecializationStrategy
+{
+    OwnedConcreteBody,
+    LawCallerSpecializedClone,
+    DirectAbiBoundaryFallback
+}
+
+public enum FunctionSpecializationCodeGenerationMode
+{
+    AbiBoundaryOnly,
+    SingleOwnerConcreteBody,
+    CallerSpecializedClone
+}
+
+public sealed record FunctionSpecializationPlan(
+    string TemplateName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    string DeclaringModuleName,
+    string OwnerModuleName,
+    string SymbolName,
+    IReadOnlyList<FunctionSpecializationStrategy> SelectionOrder,
+    FunctionSpecializationCodeGenerationMode CodeGenerationMode,
+    SourceLocation FirstUseLocation);
+
+public sealed record SpecializationPlanModel(
+    string RootModuleName,
+    IReadOnlyList<FunctionSpecializationPlan> Functions);
+
+public enum FunctionSpecializationCodegenStrategyKind
+{
+    AbiFallbackOnly,
+    EmitOwnedConcreteBody,
+    EmitOwnedConcreteBodyAndPreferLawCallerClone
+}
+
+public sealed record FunctionSpecializationCodegenStrategy(
+    string TemplateName,
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    string DeclaringModuleName,
+    string OwnerModuleName,
+    string SymbolName,
+    MonomorphizationLinkageKind Linkage,
+    FunctionSpecializationCodegenStrategyKind StrategyKind,
+    bool SupportsAbiFallback,
+    SourceLocation FirstUseLocation);
+
+public sealed record SpecializationCodegenStrategyModel(
+    string RootModuleName,
+    IReadOnlyList<FunctionSpecializationCodegenStrategy> Functions);
+
+public enum MonomorphizationCodeSizeHeuristic
+{
+    DeclarationOnly,
+    InlineSmallBody,
+    SpecializeDefault,
+    ReduceCodeSize
+}
+
+public enum MonomorphizationLinkageKind
+{
+    InternalSingleOwner,
+    LinkOnceOdrComdat
 }
 
 public sealed record EnumLayoutModel(
@@ -795,7 +1427,7 @@ public sealed record ParameterMemoryEffectSummary(
     bool Writes,
     ParameterCaptureKind CaptureKind);
 
-internal sealed record ConcreteTypeLayout(int SizeBytes, int AlignmentBytes);
+public sealed record ConcreteTypeLayout(int SizeBytes, int AlignmentBytes);
 
 internal static class ConcreteTypeLayoutHelper
 {
@@ -1025,6 +1657,12 @@ public sealed record FunctionValidationSummary(
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
 }
 
+public sealed record ImportedFunctionSemanticSummary(
+    string Name,
+    IReadOnlyList<string> CalledFunctions,
+    FunctionMemoryEffectSummary? MemoryEffects = null,
+    IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null);
+
 public sealed record SemanticValidationModel(
     string ModuleName,
     IReadOnlyDictionary<string, FunctionValidationSummary> Functions);
@@ -1051,7 +1689,9 @@ public sealed record HighLevelIrFunction(
     TypedFunctionSignature Signature,
     bool HasBody,
     FunctionBodyLoweringKind BodyLoweringKind,
-    FunctionEffectProfile Effects);
+    FunctionEffectProfile Effects,
+    string? BodyTemplateName = null,
+    IReadOnlyDictionary<string, StarkTypeSymbol>? GenericTypeSubstitution = null);
 
 public sealed record HighLevelIrModule(
     string ModuleName,

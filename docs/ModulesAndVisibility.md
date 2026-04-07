@@ -202,10 +202,9 @@ Visibility keywords apply to top-level module declarations of the following kind
 - `record` declarations
 - `trait` declarations
 - `doctrine` declarations
+- type alias declarations
 
 These keywords may also apply to submodule declarations if Stark later adds explicit nested submodule declarations in source.
-
-Type aliases are deferred to roadmap milestone `v1.1`. They are not part of the current Stark surface.
 
 ## What Visibility Keywords May Not Apply To
 
@@ -291,6 +290,149 @@ The intended lowering strategy is:
 - group associated generated data in the same comdat when required
 
 This is required to preserve safe inlining and correct deduplication behavior.
+
+Within one compilation, Stark should assign each generic instantiation to a
+single owning module:
+
+- source-backed templates are owned by their defining module
+- manifest-backed imported templates are owned by the root consumer module
+
+This keeps ownership deterministic for later monomorphization without forcing
+runtime indirection or duplicate local-specialization planning inside one build.
+
+Identical concrete instantiations for the same owner module should also be
+deduplicated before later lowering so the compiler does not plan or emit the
+same specialization work more than once per build.
+
+For `v1.1` planning, these owned instantiations should use deterministic,
+fully-spelled internal symbol names derived from owner module, template name,
+and concrete type arguments rather than sequence numbers or hash-only names.
+
+The current code-size planning heuristics are intentionally simple:
+
+- declaration-only generics stay declaration-only in the plan
+- `cold` or `noinline` generics prefer reduced cloning
+- tiny or explicitly inline generics prefer inline-friendly specialization
+- everything else stays on the default specialization path
+
+The current linkage planning rules are also intentionally simple:
+
+- root-owned instantiations prefer single-owner internal linkage
+- manifest-consumer-owned instantiations also stay single-owner internal
+- source-backed imported instantiations prefer ODR-style deduplicable linkage with comdat-compatible grouping
+
+When a package image publishes public or export generic template bodies, a
+manifest-backed consumer may materialize and emit its owned concrete
+specialization without needing the original source module on disk.
+
+Those package-image template sections now also preserve published code-size
+planning facts such as `cold`/`noinline` intent, top-level statement count,
+and typed primary-constructor facts for object creation lowering, so imported
+generic planning and MIR lowering do not need to recover all of that from
+reconstructed source text.
+
+They also preserve typed local declaration facts, so imported generic bodies
+do not need to recover local `const`, local variable, or `for` initializer
+types from bridge source text during type checking and MIR lowering.
+
+They also preserve typed direct-call target facts, so imported generic bodies
+can keep resolving direct helper calls even when the bridge body text is no
+longer the source of truth for callee lookup.
+
+They also preserve typed explicit-conversion target facts, so imported generic
+bodies can keep lowering explicit casts even when the bridge conversion type
+text is no longer trustworthy.
+
+They also preserve typed enum-constructor facts, so imported generic bodies can
+keep lowering named-field enum constructors even when the bridge enum case
+target or member names are no longer trustworthy.
+
+They also preserve typed tuple-enum-constructor call facts, so imported generic
+bodies can keep lowering positional enum constructor calls even when the bridge
+enum case target is no longer trustworthy.
+
+They also preserve typed unit-enum-case value facts, so imported generic bodies
+can keep lowering unit enum cases even when the bridge enum case target is no
+longer trustworthy.
+
+They also preserve typed enum-pattern target facts, so imported generic bodies
+can keep type-checking and lowering enum switch patterns even when the bridge
+enum case target is no longer trustworthy.
+
+They also preserve typed enum-pattern member facts, so imported generic bodies
+can keep type-checking and lowering named-field enum switch patterns even when
+the bridge member names are no longer trustworthy.
+
+They also preserve typed aggregate-pattern target facts, so imported generic
+bodies can keep type-checking and lowering aggregate switch patterns even when
+the bridge aggregate type text is no longer trustworthy.
+
+They also preserve typed field-access facts, so imported generic bodies can
+keep lowering projected field reads without rediscovering field layout or
+projected field types from the bridge body text.
+
+They also preserve typed object-creation target types, so imported generic
+bodies can keep resolving `new TypeName(...)` aggregate targets even when the
+bridge type text is no longer trustworthy.
+
+They also preserve typed object-initializer member facts, so imported generic
+bodies can keep lowering `new T() { ... }` field assignments even when bridge
+field names are no longer the source of truth.
+
+They also preserve typed member-call target facts, so imported generic bodies
+can keep lowering receiver-style helper calls even when the bridge body text is
+no longer trustworthy for member lookup.
+
+They also preserve a first typed template-body subset for simple linear helper
+bodies such as `return value;`, `return 1;`, `return new Box<T>(value);`,
+`return Boxed<T>.Value { Data: value, Tag: tag };`,
+`return Boxed<T>.Value { Data: value, Tag: 1 };`,
+`return Option<T>.Some(value);`, `return Option<T>.None;`,
+`return box.Value;`, `return box.Echo(value);`, `return Callee(value);`, and
+`stack T copy = value; return copy;`, so imported generic MIR lowering can
+prefer structured body facts over reconstructed bridge text for those helper
+shapes.
+
+Package-image modules also preserve plain imports in addition to `export
+import` re-exports, so imported generic bodies can continue to resolve
+transitive module dependencies after package publication.
+
+Published package-image record types also preserve their primary-constructor
+shape, so imported generic bodies can construct those records directly rather
+than depending on a field-only approximation at the package boundary.
+
+They also preserve deferred nested-generic instantiation patterns, so
+recursive package-boundary specialization planning can follow generic callees
+without rediscovering that structure from the imported body text first.
+
+They now also preserve deferred nested generic type-instantiation patterns, so
+package-boundary monomorphization planning can keep concrete imported helper
+types aligned with the concrete generic bodies that need them.
+
+That specialization materialization is now recursive for discovered generic
+callee dependencies, so one owned concrete body may cause additional owned
+concrete bodies to be emitted in the same build.
+
+Within that build, repeated requests for the same concrete instantiation stay
+deduplicated under one single-owner internal symbol, and call sites target
+that concrete symbol directly instead of an ABI fallback or template symbol.
+
+The current specialization-priority rules are also intentionally simple:
+
+- declaration-only instantiations stay on the direct ABI fallback path
+- source-backed generic instantiations prefer an owned concrete body before any ABI fallback
+- eligible imported `law` instantiations may add a caller-specialized clone path ahead of the owned body
+- `cold` or `noinline` planning suppresses that clone path to keep code-size-oriented instantiations on the owned-body or ABI path
+
+If two different generic templates would map to the same fully spelled internal
+specialization symbol, Stark now reports that conflict during specialization
+planning rather than silently picking one.
+
+The current codegen-strategy bridge is also intentionally simple:
+
+- ABI-only specializations keep using the existing Stark ABI surface
+- owned specializations plan one concrete emitted body under the monomorphized symbol
+- eligible imported `law` specializations may additionally expose a law-caller clone path while keeping the owned body as the general fallback
 
 ## Constants and Global Data
 

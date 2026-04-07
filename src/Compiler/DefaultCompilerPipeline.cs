@@ -15,9 +15,13 @@ public static class DefaultCompilerPipeline
             .Add(new BuildSymbolCatalogPass())
             .Add(new DeriveFunctionEffectsPass())
             .Add(new TypeCheckPass())
+            .Add(new InstantiationOwnershipPass())
+            .Add(new MonomorphizationPlanPass())
             .Add(new EnumLayoutPass())
             .Add(new SemanticValidationPass())
             .Add(new RefineFunctionEffectsPass())
+            .Add(new SpecializationPlanPass())
+            .Add(new SpecializationCodegenStrategyPass())
             .Add(new OwnershipValidationPass())
             .Add(new LowerToHighLevelIrPass())
             .Add(new LowerToMidLevelIrPass())
@@ -228,25 +232,46 @@ public static class DefaultCompilerPipeline
                         Target: resolved,
                         IsExported: import.IsExported));
 
-                    if (exploredModules.Add(resolved.ModuleName)
-                        && resolver is IModuleSourceResolver sourceResolver
-                        && sourceResolver.TryLoadModuleSource(resolved, out var sourceText, out var filePath))
+                    if (exploredModules.Add(resolved.ModuleName))
                     {
-                        var parseResult = StarkSyntax.ParseCompilationUnit(sourceText);
-                        var importedSyntax = SyntaxModelFactory.Create(parseResult);
-
-                        if (!string.Equals(importedSyntax.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
+                        if (resolver is IModuleDocumentResolver documentResolver
+                            && documentResolver.TryLoadModuleDocument(resolved, context.Options.TargetInfo, out var importedDocument))
                         {
-                            context.Diagnostics.Error(
-                                "STK2002",
-                                $"Resolved module '{resolved.ModuleName}' declares itself as '{importedSyntax.ModuleName}'.",
-                                Id,
-                                new SourceLocation(filePath ?? resolved.FilePath, 1, 1));
+                            var importedSyntax = importedDocument.SyntaxModel;
+
+                            if (!string.Equals(importedSyntax.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
+                            {
+                                context.Diagnostics.Error(
+                                    "STK2002",
+                                    $"Resolved module '{resolved.ModuleName}' declares itself as '{importedSyntax.ModuleName}'.",
+                                    Id,
+                                    new SourceLocation(importedDocument.Reference.FilePath ?? resolved.FilePath, 1, 1));
+                            }
+
+                            foreach (var nestedImport in importedSyntax.Imports)
+                            {
+                                pendingImports.Enqueue((resolved.ModuleName, nestedImport));
+                            }
                         }
-
-                        foreach (var nestedImport in importedSyntax.Imports)
+                        else if (resolver is IModuleSourceResolver sourceResolver
+                                 && sourceResolver.TryLoadModuleSource(resolved, out var sourceText, out var filePath))
                         {
-                            pendingImports.Enqueue((resolved.ModuleName, nestedImport));
+                            var parseResult = StarkSyntax.ParseCompilationUnit(sourceText);
+                            var importedSyntax = SyntaxModelFactory.Create(parseResult);
+
+                            if (!string.Equals(importedSyntax.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
+                            {
+                                context.Diagnostics.Error(
+                                    "STK2002",
+                                    $"Resolved module '{resolved.ModuleName}' declares itself as '{importedSyntax.ModuleName}'.",
+                                    Id,
+                                    new SourceLocation(filePath ?? resolved.FilePath, 1, 1));
+                            }
+
+                            foreach (var nestedImport in importedSyntax.Imports)
+                            {
+                                pendingImports.Enqueue((resolved.ModuleName, nestedImport));
+                            }
                         }
                     }
                 }
@@ -330,6 +355,31 @@ public static class DefaultCompilerPipeline
             {
                 foreach (var module in moduleGraph.Modules.Values.Where(static module => !module.IsRoot))
                 {
+                    if (resolver is IModuleDocumentResolver documentResolver
+                        && documentResolver.TryLoadModuleDocument(module, context.Options.TargetInfo, out var importedDocument))
+                    {
+                        foreach (var diagnostic in importedDocument.ParseResult.Diagnostics)
+                        {
+                            context.Diagnostics.Error(
+                                "STK1000",
+                                diagnostic.Message,
+                                Id,
+                                new SourceLocation(importedDocument.Reference.FilePath ?? module.FilePath, diagnostic.Line, diagnostic.Column));
+                        }
+
+                        if (!string.Equals(importedDocument.SyntaxModel.ModuleName, module.ModuleName, StringComparison.Ordinal))
+                        {
+                            context.Diagnostics.Error(
+                                "STK2002",
+                                $"Resolved module '{module.ModuleName}' declares itself as '{importedDocument.SyntaxModel.ModuleName}'.",
+                                Id,
+                                new SourceLocation(importedDocument.Reference.FilePath ?? module.FilePath, 1, 1));
+                        }
+
+                        modules[module.ModuleName] = importedDocument;
+                        continue;
+                    }
+
                     if (!resolver.TryLoadModuleSource(module, out var sourceText, out var filePath))
                     {
                         continue;
@@ -386,8 +436,6 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.Modules.Values)
             {
-                var isRoot = module.Reference.IsRoot;
-
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
                 {
                     var function = declaration.Function!;
@@ -395,6 +443,22 @@ public static class DefaultCompilerPipeline
                         module,
                         FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                     effects[qualifiedName] = CreateEffectProfile(qualifiedName, function);
+                }
+            }
+
+            foreach (var module in loadedModules.ImportedModules)
+            {
+                if (module.PackageImageFacts is not { } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var (qualifiedName, functionEffects) in packageImageFacts.FunctionEffects)
+                {
+                    if (effects.ContainsKey(qualifiedName))
+                    {
+                        effects[qualifiedName] = functionEffects;
+                    }
                 }
             }
 
@@ -484,6 +548,616 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class InstantiationOwnershipPass : ICompilerPass
+    {
+        public string Id => "instantiation-ownership";
+
+        public CompilerPhase Phase => CompilerPhase.Typing;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["type-check", "load-modules"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+
+            context.Artifacts.Set(
+                CompilerArtifactKeys.InstantiationOwnership,
+                BuildInstantiationOwnershipModel(loadedModules, typeModel));
+        }
+
+        private static InstantiationOwnershipModel BuildInstantiationOwnershipModel(
+            LoadedModuleSet loadedModules,
+            TypeCheckModel typeModel)
+        {
+            var moduleNames = loadedModules.Modules.Keys
+                .OrderByDescending(static moduleName => moduleName.Length)
+                .ThenBy(static moduleName => moduleName, StringComparer.Ordinal)
+                .ToArray();
+            var functionOwnership = new Dictionary<string, FunctionInstantiationOwnership>(StringComparer.Ordinal);
+            var typeOwnership = new Dictionary<string, TypeInstantiationOwnership>(StringComparer.Ordinal);
+            var expandedFunctionTriggers = ExpandFunctionInstantiationTriggers(typeModel, loadedModules);
+
+            foreach (var trigger in expandedFunctionTriggers)
+            {
+                var templateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
+                var declaringModuleName = ResolveDeclaringModuleName(templateName, loadedModules.RootModuleName, moduleNames);
+                var ownerModuleName = ResolveOwnerModuleName(declaringModuleName, loadedModules);
+                var key = $"{ownerModuleName}|{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments)}";
+                if (functionOwnership.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                functionOwnership[key] = new FunctionInstantiationOwnership(
+                    templateName,
+                    trigger.TypeArguments.ToArray(),
+                    trigger.Signature,
+                    declaringModuleName,
+                    ownerModuleName,
+                    IsSourceBackedModule(declaringModuleName, loadedModules),
+                    trigger.Location);
+            }
+
+            foreach (var trigger in ExpandTypeInstantiationTriggers(typeModel, loadedModules, expandedFunctionTriggers))
+            {
+                var templateName = StarkTypeSymbols.GetGenericBaseName(trigger.TypeName);
+                var declaringModuleName = ResolveDeclaringModuleName(templateName, loadedModules.RootModuleName, moduleNames);
+                var ownerModuleName = ResolveOwnerModuleName(declaringModuleName, loadedModules);
+                var key = $"{ownerModuleName}|{trigger.TypeName}";
+                if (typeOwnership.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                typeOwnership[key] = new TypeInstantiationOwnership(
+                    templateName,
+                    trigger.TypeName,
+                    trigger.TypeArguments.ToArray(),
+                    declaringModuleName,
+                    ownerModuleName,
+                    IsSourceBackedModule(declaringModuleName, loadedModules),
+                    trigger.Location);
+            }
+
+            return new InstantiationOwnershipModel(
+                loadedModules.RootModuleName,
+                functionOwnership.Values
+                    .OrderBy(static ownership => ownership.OwnerModuleName, StringComparer.Ordinal)
+                    .ThenBy(static ownership => ownership.TemplateName, StringComparer.Ordinal)
+                    .ThenBy(static ownership => FunctionOverloadFacts.BuildTypeArgumentKey(ownership.TypeArguments), StringComparer.Ordinal)
+                    .ToArray(),
+                typeOwnership.Values
+                    .OrderBy(static ownership => ownership.OwnerModuleName, StringComparer.Ordinal)
+                    .ThenBy(static ownership => ownership.TemplateName, StringComparer.Ordinal)
+                    .ThenBy(static ownership => ownership.InstantiatedTypeName, StringComparer.Ordinal)
+                    .ToArray());
+        }
+
+        private static IReadOnlyList<FunctionInstantiationTriggerRecord> ExpandFunctionInstantiationTriggers(
+            TypeCheckModel typeModel,
+            LoadedModuleSet loadedModules)
+        {
+            var expanded = new List<FunctionInstantiationTriggerRecord>();
+            var pending = new Queue<FunctionInstantiationTriggerRecord>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var deferredByEnclosingFunction = typeModel.DeferredInstantiationTriggers
+                .GroupBy(static trigger => trigger.EnclosingFunctionName, StringComparer.Ordinal)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => (IReadOnlyList<DeferredFunctionInstantiationTriggerRecord>)group.ToArray(),
+                    StringComparer.Ordinal);
+            var importedDeferredByTemplate = loadedModules.ImportedModules
+                .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
+                .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
+                .ToDictionary(
+                    static entry => entry.Key,
+                    static entry => entry.Value,
+                    StringComparer.Ordinal);
+
+            foreach (var trigger in typeModel.InstantiationTriggers)
+            {
+                if (TryAddExpandedTrigger(trigger, seen, expanded))
+                {
+                    pending.Enqueue(trigger);
+                }
+            }
+
+            while (pending.Count != 0)
+            {
+                var trigger = pending.Dequeue();
+                var enclosingTemplateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
+                if (!typeModel.Functions.TryGetValue(enclosingTemplateName, out var enclosingTemplateSignature))
+                {
+                    continue;
+                }
+
+                var substitution = FunctionOverloadFacts.BuildGenericSubstitution(enclosingTemplateSignature, trigger.TypeArguments);
+                if (importedDeferredByTemplate.TryGetValue(enclosingTemplateName, out var importedTemplate))
+                {
+                    foreach (var deferredTrigger in importedTemplate.DeferredInstantiations)
+                    {
+                        if (!typeModel.Functions.TryGetValue(deferredTrigger.CalleeTemplateName, out var calleeTemplateSignature))
+                        {
+                            continue;
+                        }
+
+                        var concreteTypeArguments = deferredTrigger.TypeArguments
+                            .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                            .ToArray();
+                        if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+                        {
+                            continue;
+                        }
+
+                        var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                            calleeTemplateSignature,
+                            concreteTypeArguments,
+                            calleeTemplateSignature.Name);
+                        var expandedTrigger = new FunctionInstantiationTriggerRecord(
+                            calleeTemplateSignature.DisplaySourceName,
+                            concreteTypeArguments,
+                            instantiatedSignature,
+                            trigger.Location);
+                        if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
+                        {
+                            pending.Enqueue(expandedTrigger);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (!deferredByEnclosingFunction.TryGetValue(enclosingTemplateName, out var deferredTriggers))
+                {
+                    continue;
+                }
+
+                foreach (var deferredTrigger in deferredTriggers)
+                {
+                    if (deferredTrigger.Signature.TemplateName is not { } calleeTemplateName
+                        || deferredTrigger.Signature.TypeArguments is not { Count: > 0 } openTypeArguments
+                        || !typeModel.Functions.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
+                    {
+                        continue;
+                    }
+
+                    var concreteTypeArguments = openTypeArguments
+                        .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                        .ToArray();
+                    if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+                    {
+                        continue;
+                    }
+
+                    var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                        calleeTemplateSignature,
+                        concreteTypeArguments,
+                        calleeTemplateSignature.Name);
+                    var expandedTrigger = new FunctionInstantiationTriggerRecord(
+                        calleeTemplateSignature.DisplaySourceName,
+                        concreteTypeArguments,
+                        instantiatedSignature,
+                        deferredTrigger.Location);
+                    if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
+                    {
+                        pending.Enqueue(expandedTrigger);
+                    }
+                }
+            }
+
+            return expanded
+                .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private static IReadOnlyList<TypeInstantiationTriggerRecord> ExpandTypeInstantiationTriggers(
+            TypeCheckModel typeModel,
+            LoadedModuleSet loadedModules,
+            IReadOnlyList<FunctionInstantiationTriggerRecord> expandedFunctionTriggers)
+        {
+            var expanded = new List<TypeInstantiationTriggerRecord>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var deferredByEnclosingFunction = typeModel.DeferredTypeTriggers
+                .GroupBy(static trigger => trigger.EnclosingFunctionName, StringComparer.Ordinal)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => (IReadOnlyList<DeferredTypeInstantiationTriggerRecord>)group.ToArray(),
+                    StringComparer.Ordinal);
+            var importedDeferredByTemplate = loadedModules.ImportedModules
+                .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
+                .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
+                .ToDictionary(
+                    static entry => entry.Key,
+                    static entry => entry.Value,
+                    StringComparer.Ordinal);
+
+            foreach (var trigger in typeModel.TypeTriggers)
+            {
+                AddExpandedTypeTriggers(
+                    StarkTypeSymbols.GenericInstantiation(
+                        StarkTypeSymbols.GetGenericBaseName(trigger.TypeName),
+                        trigger.TypeArguments),
+                    trigger.Location,
+                    typeModel,
+                    seen,
+                    expanded);
+            }
+
+            foreach (var functionTrigger in expandedFunctionTriggers)
+            {
+                var enclosingTemplateName = functionTrigger.Signature.TemplateName ?? functionTrigger.FunctionName;
+                if (!typeModel.Functions.TryGetValue(enclosingTemplateName, out var enclosingTemplateSignature))
+                {
+                    continue;
+                }
+
+                var substitution = FunctionOverloadFacts.BuildGenericSubstitution(enclosingTemplateSignature, functionTrigger.TypeArguments);
+                if (importedDeferredByTemplate.TryGetValue(enclosingTemplateName, out var importedTemplate))
+                {
+                    foreach (var deferredType in importedTemplate.DeferredTypes)
+                    {
+                        var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                        if (ContainsUnboundGenericParameter(concreteType, typeModel))
+                        {
+                            continue;
+                        }
+
+                        AddExpandedTypeTriggers(concreteType, functionTrigger.Location, typeModel, seen, expanded);
+                    }
+
+                    continue;
+                }
+
+                if (!deferredByEnclosingFunction.TryGetValue(enclosingTemplateName, out var deferredTypes))
+                {
+                    continue;
+                }
+
+                foreach (var deferredType in deferredTypes)
+                {
+                    var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                    if (ContainsUnboundGenericParameter(concreteType, typeModel))
+                    {
+                        continue;
+                    }
+
+                    AddExpandedTypeTriggers(concreteType, deferredType.Location, typeModel, seen, expanded);
+                }
+            }
+
+            return expanded
+                .OrderBy(static trigger => trigger.TypeName, StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private static bool TryAddExpandedTrigger(
+            FunctionInstantiationTriggerRecord trigger,
+            ISet<string> seen,
+            ICollection<FunctionInstantiationTriggerRecord> expanded)
+        {
+            var templateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
+            var key = $"{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments)}";
+            if (!seen.Add(key))
+            {
+                return false;
+            }
+
+            expanded.Add(trigger);
+            return true;
+        }
+
+        private static void AddExpandedTypeTriggers(
+            StarkTypeSymbol type,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded)
+        {
+            var coreType = StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+
+            if (coreType.TypeArguments is { Count: > 0 })
+            {
+                foreach (var typeArgument in coreType.TypeArguments)
+                {
+                    AddExpandedTypeTriggers(typeArgument, location, typeModel, seen, expanded);
+                }
+            }
+
+            if (coreType.ElementType is not null)
+            {
+                AddExpandedTypeTriggers(coreType.ElementType, location, typeModel, seen, expanded);
+            }
+
+            if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
+                || coreType.NamedType is null
+                || coreType.TypeArguments is not { Count: > 0 }
+                || ContainsUnboundGenericParameter(coreType, typeModel))
+            {
+                return;
+            }
+
+            var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildTypeArgumentKey(coreType.TypeArguments)}";
+            if (!seen.Add(key))
+            {
+                return;
+            }
+
+            expanded.Add(new TypeInstantiationTriggerRecord(
+                coreType.NamedType,
+                coreType.TypeArguments.ToArray(),
+                location));
+        }
+
+        private static bool ContainsUnboundGenericParameter(StarkTypeSymbol type, TypeCheckModel typeModel)
+        {
+            var coreType = StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+
+            if (coreType.Kind == StarkTypeKind.Named
+                && coreType.NamedType is not null
+                && coreType.TypeArguments is not { Count: > 0 }
+                && !coreType.NamedType.Contains('.', StringComparison.Ordinal)
+                && !typeModel.NamedTypes.ContainsKey(coreType.NamedType)
+                && !typeModel.TypeAliases.ContainsKey(coreType.NamedType))
+            {
+                return true;
+            }
+
+            if (coreType.TypeArguments is { Count: > 0 }
+                && coreType.TypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+            {
+                return true;
+            }
+
+            return coreType.ElementType is not null
+                && ContainsUnboundGenericParameter(coreType.ElementType, typeModel);
+        }
+
+        private static string ResolveDeclaringModuleName(
+            string symbolName,
+            string rootModuleName,
+            IReadOnlyList<string> moduleNames)
+        {
+            var baseName = StripGenericSuffix(symbolName);
+            foreach (var moduleName in moduleNames)
+            {
+                if (string.Equals(baseName, moduleName, StringComparison.Ordinal)
+                    || baseName.StartsWith($"{moduleName}.", StringComparison.Ordinal))
+                {
+                    return moduleName;
+                }
+            }
+
+            return rootModuleName;
+        }
+
+        private static string ResolveOwnerModuleName(
+            string declaringModuleName,
+            LoadedModuleSet loadedModules)
+        {
+            return IsSourceBackedModule(declaringModuleName, loadedModules)
+                ? declaringModuleName
+                : loadedModules.RootModuleName;
+        }
+
+        private static bool IsSourceBackedModule(
+            string moduleName,
+            LoadedModuleSet loadedModules)
+        {
+            if (!loadedModules.TryGet(moduleName, out var module) || module is null)
+            {
+                return string.Equals(moduleName, loadedModules.RootModuleName, StringComparison.Ordinal);
+            }
+
+            return !module.Reference.IsExternal
+                && module.Reference.ManifestPath is null
+                && module.Reference.LibraryPath is null;
+        }
+
+        private static string StripGenericSuffix(string symbolName)
+        {
+            var angleIndex = symbolName.IndexOf('<');
+            return angleIndex >= 0 ? symbolName[..angleIndex] : symbolName;
+        }
+
+    }
+
+    private sealed class MonomorphizationPlanPass : ICompilerPass
+    {
+        private sealed record FunctionTemplatePlanInfo(
+            bool HasBody,
+            bool IsHot,
+            bool IsCold,
+            InlinePreference InlinePreference,
+            int? TopLevelStatementCount);
+
+        public string Id => "monomorphization-plan";
+
+        public CompilerPhase Phase => CompilerPhase.Typing;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["instantiation-ownership", "load-modules"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ownership = context.Artifacts.GetRequired(CompilerArtifactKeys.InstantiationOwnership);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            context.Artifacts.Set(
+                CompilerArtifactKeys.MonomorphizationPlan,
+                BuildMonomorphizationPlan(ownership, loadedModules));
+        }
+
+        private static MonomorphizationPlanModel BuildMonomorphizationPlan(
+            InstantiationOwnershipModel ownership,
+            LoadedModuleSet loadedModules)
+        {
+            var functionInfos = CollectFunctionTemplatePlanInfos(loadedModules);
+            var functions = ownership.Functions
+                .Select(function =>
+                {
+                    functionInfos.TryGetValue(function.TemplateName, out var info);
+                    return new MonomorphizedFunctionPlan(
+                    function.TemplateName,
+                    function.TypeArguments.ToArray(),
+                    function.DeclaringModuleName,
+                    function.OwnerModuleName,
+                    function.IsDeclaringModuleSourceBacked,
+                    DetermineCodeSizeHeuristic(info),
+                    info?.TopLevelStatementCount,
+                    DetermineLinkageKind(function, ownership.RootModuleName),
+                    GlobalSymbolNaming.ComputeMonomorphizedFunctionSymbolName(
+                        function.OwnerModuleName,
+                        function.TemplateName,
+                        function.TypeArguments),
+                    function.FirstUseLocation);
+                })
+                .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
+                .ToArray();
+
+            var types = ownership.Types
+                .Select(type => new MonomorphizedTypePlan(
+                    type.TemplateName,
+                    type.InstantiatedTypeName,
+                    type.TypeArguments.ToArray(),
+                    type.DeclaringModuleName,
+                    type.OwnerModuleName,
+                    type.IsDeclaringModuleSourceBacked,
+                    DetermineLinkageKind(type, ownership.RootModuleName),
+                    GlobalSymbolNaming.ComputeMonomorphizedTypeSymbolName(
+                        type.OwnerModuleName,
+                        type.TemplateName,
+                        type.TypeArguments),
+                    type.FirstUseLocation))
+                .OrderBy(static type => type.SymbolName, StringComparer.Ordinal)
+                .ToArray();
+
+            return new MonomorphizationPlanModel(
+                ownership.RootModuleName,
+                functions,
+                types);
+        }
+
+        private static Dictionary<string, FunctionTemplatePlanInfo> CollectFunctionTemplatePlanInfos(
+            LoadedModuleSet loadedModules)
+        {
+            var infos = new Dictionary<string, FunctionTemplatePlanInfo>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules)
+            {
+                if (module.PackageImageFacts is not { FunctionTemplates.Count: > 0 } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var (resolvedName, template) in packageImageFacts.FunctionTemplates)
+                {
+                    packageImageFacts.FunctionEffects.TryGetValue(resolvedName, out var effects);
+                    infos[resolvedName] = new FunctionTemplatePlanInfo(
+                        HasBody: true,
+                        IsHot: effects?.IsHot ?? false,
+                        IsCold: effects?.IsCold ?? false,
+                        InlinePreference: effects?.InlinePreference ?? InlinePreference.InlineHint,
+                        TopLevelStatementCount: template.TopLevelStatementCount);
+                }
+            }
+
+            foreach (var module in loadedModules.Modules.Values)
+            {
+                foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+                {
+                    var overloadKey = FunctionOverloadFacts.BuildOverloadKey(functionSyntax.ParameterList);
+                    if (!FunctionOverloadFacts.TryFindFunctionDeclaration(
+                            module.SyntaxModel,
+                            functionSyntax.DisplaySourceName,
+                            overloadKey,
+                            out var declaration)
+                        || declaration.Function is null)
+                    {
+                        continue;
+                    }
+
+                    var resolvedName = FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(
+                            module.SyntaxModel,
+                            functionSyntax.DisplaySourceName,
+                            overloadKey));
+
+                    infos.TryAdd(
+                        resolvedName,
+                        new FunctionTemplatePlanInfo(
+                            declaration.Function.HasBody,
+                            declaration.Function.Modifiers.IsHot,
+                            declaration.Function.Modifiers.IsCold,
+                            declaration.Function.Modifiers.InlinePreference,
+                            functionSyntax.Body.block()?.statement().Length));
+                }
+            }
+
+            return infos;
+        }
+
+        private static MonomorphizationCodeSizeHeuristic DetermineCodeSizeHeuristic(
+            FunctionTemplatePlanInfo? info)
+        {
+            if (info is null || !info.HasBody)
+            {
+                return MonomorphizationCodeSizeHeuristic.DeclarationOnly;
+            }
+
+            if (info.IsCold || info.InlinePreference == InlinePreference.NoInline)
+            {
+                return MonomorphizationCodeSizeHeuristic.ReduceCodeSize;
+            }
+
+            if (info.InlinePreference == InlinePreference.Inline
+                || (info.TopLevelStatementCount is { } topLevelStatementCount
+                    && topLevelStatementCount <= (info.IsHot ? 4 : 2)))
+            {
+                return MonomorphizationCodeSizeHeuristic.InlineSmallBody;
+            }
+
+            return MonomorphizationCodeSizeHeuristic.SpecializeDefault;
+        }
+
+        private static MonomorphizationLinkageKind DetermineLinkageKind(
+            FunctionInstantiationOwnership function,
+            string rootModuleName)
+        {
+            return function.IsDeclaringModuleSourceBacked
+                   && string.Equals(function.DeclaringModuleName, function.OwnerModuleName, StringComparison.Ordinal)
+                   && !string.Equals(function.OwnerModuleName, rootModuleName, StringComparison.Ordinal)
+                ? MonomorphizationLinkageKind.LinkOnceOdrComdat
+                : MonomorphizationLinkageKind.InternalSingleOwner;
+        }
+
+        private static MonomorphizationLinkageKind DetermineLinkageKind(
+            TypeInstantiationOwnership type,
+            string rootModuleName)
+        {
+            return type.IsDeclaringModuleSourceBacked
+                   && string.Equals(type.DeclaringModuleName, type.OwnerModuleName, StringComparison.Ordinal)
+                   && !string.Equals(type.OwnerModuleName, rootModuleName, StringComparison.Ordinal)
+                ? MonomorphizationLinkageKind.LinkOnceOdrComdat
+                : MonomorphizationLinkageKind.InternalSingleOwner;
+        }
+    }
+
     private sealed class SemanticValidationPass : ICompilerPass
     {
         public string Id => "semantic-validate";
@@ -509,6 +1183,163 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class SpecializationPlanPass : ICompilerPass
+    {
+        public string Id => "specialization-plan";
+
+        public CompilerPhase Phase => CompilerPhase.Semantics;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["monomorphization-plan", "refine-function-effects"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var monomorphization = context.Artifacts.GetRequired(CompilerArtifactKeys.MonomorphizationPlan);
+            var closedWorld = context.Artifacts.GetRequired(CompilerArtifactKeys.ClosedWorldOptimization);
+            var plan = BuildSpecializationPlan(monomorphization, closedWorld);
+            ValidatePlan(context, plan);
+            context.Artifacts.Set(
+                CompilerArtifactKeys.SpecializationPlan,
+                plan);
+        }
+
+        private static SpecializationPlanModel BuildSpecializationPlan(
+            MonomorphizationPlanModel monomorphization,
+            ClosedWorldOptimizationModel closedWorld)
+        {
+            var functions = monomorphization.Functions
+                .Select(function => BuildFunctionPlan(function, monomorphization.RootModuleName, closedWorld))
+                .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
+                .ToArray();
+
+            return new SpecializationPlanModel(
+                monomorphization.RootModuleName,
+                functions);
+        }
+
+        private static FunctionSpecializationPlan BuildFunctionPlan(
+            MonomorphizedFunctionPlan function,
+            string rootModuleName,
+            ClosedWorldOptimizationModel closedWorld)
+        {
+            var selectionOrder = new List<FunctionSpecializationStrategy>();
+
+            if (CanUseLawCallerSpecializedClone(function, rootModuleName, closedWorld))
+            {
+                selectionOrder.Add(FunctionSpecializationStrategy.LawCallerSpecializedClone);
+            }
+
+            if (function.CodeSizeHeuristic != MonomorphizationCodeSizeHeuristic.DeclarationOnly)
+            {
+                selectionOrder.Add(FunctionSpecializationStrategy.OwnedConcreteBody);
+            }
+
+            if (ShouldIncludeAbiFallback(function, rootModuleName) || selectionOrder.Count == 0)
+            {
+                selectionOrder.Add(FunctionSpecializationStrategy.DirectAbiBoundaryFallback);
+            }
+
+            var codeGenerationMode = selectionOrder[0] switch
+            {
+                FunctionSpecializationStrategy.LawCallerSpecializedClone => FunctionSpecializationCodeGenerationMode.CallerSpecializedClone,
+                FunctionSpecializationStrategy.OwnedConcreteBody => FunctionSpecializationCodeGenerationMode.SingleOwnerConcreteBody,
+                _ => FunctionSpecializationCodeGenerationMode.AbiBoundaryOnly
+            };
+
+            return new FunctionSpecializationPlan(
+                function.TemplateName,
+                function.TypeArguments.ToArray(),
+                function.DeclaringModuleName,
+                function.OwnerModuleName,
+                function.SymbolName,
+                selectionOrder.ToArray(),
+                codeGenerationMode,
+                function.FirstUseLocation);
+        }
+
+        private static void ValidatePlan(
+            CompilerPassContext context,
+            SpecializationPlanModel plan)
+        {
+            foreach (var collision in plan.Functions
+                         .GroupBy(static function => function.SymbolName, StringComparer.Ordinal)
+                         .Where(static group => group.Count() > 1))
+            {
+                var candidates = collision
+                    .OrderBy(static function => function.TemplateName, StringComparer.Ordinal)
+                    .ThenBy(static function => FormatConcreteTypeArguments(function.TypeArguments), StringComparer.Ordinal)
+                    .ToArray();
+                var first = candidates[0];
+
+                for (var index = 1; index < candidates.Length; index++)
+                {
+                    var conflicting = candidates[index];
+                    var message = HaveConflictingPriority(first, conflicting)
+                        ? $"Specialization symbol '{collision.Key}' is ambiguous between '{FormatFunctionInstance(first)}' and '{FormatFunctionInstance(conflicting)}' because they require different specialization priority orders ({FormatSelectionOrder(first.SelectionOrder)} vs {FormatSelectionOrder(conflicting.SelectionOrder)})."
+                        : $"Specialization symbol '{collision.Key}' is ambiguous between '{FormatFunctionInstance(first)}' and '{FormatFunctionInstance(conflicting)}'. Rename one of the generic templates so the fully spelled internal specialization symbol remains unique.";
+                    context.Diagnostics.Error("STK4115", message, "specialization-plan", conflicting.FirstUseLocation);
+                    context.Diagnostics.Info(
+                        "STK4116",
+                        $"The first conflicting specialization candidate '{FormatFunctionInstance(first)}' is planned here.",
+                        "specialization-plan",
+                        first.FirstUseLocation);
+                }
+            }
+        }
+
+        private static bool CanUseLawCallerSpecializedClone(
+            MonomorphizedFunctionPlan function,
+            string rootModuleName,
+            ClosedWorldOptimizationModel closedWorld)
+        {
+            if (function.CodeSizeHeuristic is MonomorphizationCodeSizeHeuristic.DeclarationOnly
+                or MonomorphizationCodeSizeHeuristic.ReduceCodeSize)
+            {
+                return false;
+            }
+
+            if (string.Equals(function.DeclaringModuleName, rootModuleName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return closedWorld.Functions.TryGetValue(function.TemplateName, out var optimization)
+                && optimization.SelectionOrder.Contains(ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone);
+        }
+
+        private static bool ShouldIncludeAbiFallback(
+            MonomorphizedFunctionPlan function,
+            string rootModuleName)
+        {
+            return function.CodeSizeHeuristic == MonomorphizationCodeSizeHeuristic.DeclarationOnly
+                || !string.Equals(function.DeclaringModuleName, rootModuleName, StringComparison.Ordinal);
+        }
+
+        private static bool HaveConflictingPriority(
+            FunctionSpecializationPlan left,
+            FunctionSpecializationPlan right)
+        {
+            return !left.SelectionOrder.SequenceEqual(right.SelectionOrder)
+                   || left.CodeGenerationMode != right.CodeGenerationMode;
+        }
+
+        private static string FormatFunctionInstance(FunctionSpecializationPlan plan)
+        {
+            return $"{plan.TemplateName}<{FormatConcreteTypeArguments(plan.TypeArguments)}>";
+        }
+
+        private static string FormatConcreteTypeArguments(IReadOnlyList<StarkTypeSymbol> typeArguments)
+        {
+            return string.Join(", ", typeArguments.Select(static argument => argument.DisplayName));
+        }
+
+        private static string FormatSelectionOrder(IReadOnlyList<FunctionSpecializationStrategy> selectionOrder)
+        {
+            return string.Join(" -> ", selectionOrder);
+        }
+    }
+
     private sealed class OwnershipValidationPass : ICompilerPass
     {
         public string Id => "ownership-validate";
@@ -528,6 +1359,93 @@ public static class DefaultCompilerPipeline
 
             var ownershipModel = new OwnershipValidator(context, parseResult, syntaxModel, moduleGraph, typeModel).Validate();
             context.Artifacts.Set(CompilerArtifactKeys.OwnershipValidation, ownershipModel);
+        }
+    }
+
+    private sealed class SpecializationCodegenStrategyPass : ICompilerPass
+    {
+        public string Id => "specialization-codegen-strategy";
+
+        public CompilerPhase Phase => CompilerPhase.Semantics;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["monomorphization-plan", "specialization-plan"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var monomorphization = context.Artifacts.GetRequired(CompilerArtifactKeys.MonomorphizationPlan);
+            var specialization = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationPlan);
+            var strategy = BuildStrategy(monomorphization, specialization);
+            context.Artifacts.Set(CompilerArtifactKeys.SpecializationCodegenStrategy, strategy);
+            LogStrategy(context, strategy);
+        }
+
+        private static SpecializationCodegenStrategyModel BuildStrategy(
+            MonomorphizationPlanModel monomorphization,
+            SpecializationPlanModel specialization)
+        {
+            var monomorphizedFunctionsBySymbol = monomorphization.Functions.ToDictionary(
+                static function => function.SymbolName,
+                StringComparer.Ordinal);
+            var functions = specialization.Functions
+                .Select(function =>
+                {
+                    var monomorphized = monomorphizedFunctionsBySymbol[function.SymbolName];
+                    return new FunctionSpecializationCodegenStrategy(
+                        function.TemplateName,
+                        function.TypeArguments.ToArray(),
+                        function.DeclaringModuleName,
+                        function.OwnerModuleName,
+                        function.SymbolName,
+                        monomorphized.Linkage,
+                        DetermineStrategyKind(function),
+                        function.SelectionOrder.Contains(FunctionSpecializationStrategy.DirectAbiBoundaryFallback),
+                        function.FirstUseLocation);
+                })
+                .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
+                .ToArray();
+
+            return new SpecializationCodegenStrategyModel(
+                specialization.RootModuleName,
+                functions);
+        }
+
+        private static FunctionSpecializationCodegenStrategyKind DetermineStrategyKind(
+            FunctionSpecializationPlan function)
+        {
+            return function.CodeGenerationMode switch
+            {
+                FunctionSpecializationCodeGenerationMode.AbiBoundaryOnly => FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly,
+                FunctionSpecializationCodeGenerationMode.SingleOwnerConcreteBody => FunctionSpecializationCodegenStrategyKind.EmitOwnedConcreteBody,
+                FunctionSpecializationCodeGenerationMode.CallerSpecializedClone => FunctionSpecializationCodegenStrategyKind.EmitOwnedConcreteBodyAndPreferLawCallerClone,
+                _ => throw new InvalidOperationException($"Unsupported specialization code generation mode '{function.CodeGenerationMode}'.")
+            };
+        }
+
+        private static void LogStrategy(
+            CompilerPassContext context,
+            SpecializationCodegenStrategyModel strategy)
+        {
+            foreach (var function in strategy.Functions)
+            {
+                context.Logs.Info(
+                    "decision",
+                    "specialization-codegen-strategy",
+                    $"Planned code generation strategy '{function.StrategyKind}' for specialization '{function.SymbolName}'.",
+                    stage: "specialization-codegen-strategy",
+                    symbolName: function.SymbolName,
+                    operation: "plan-specialization-codegen",
+                    location: function.FirstUseLocation,
+                    data: CompilerLogData.Create(
+                        ("template", function.TemplateName),
+                        ("linkage", function.Linkage.ToString()),
+                        ("supportsAbiFallback", function.SupportsAbiFallback.ToString()),
+                        ("strategy", function.StrategyKind.ToString())),
+                    kind: CompilerLogKind.Decision,
+                    outcome: CompilerLogOutcome.Continued,
+                    verbosity: CompilerLogVerbosity.Verbose);
+            }
         }
     }
 
@@ -876,6 +1794,14 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
             {
+                if (module.PackageImageFacts is { FunctionSemantics.Count: > 0 } packageImageFacts)
+                {
+                    foreach (var (qualifiedName, summary) in packageImageFacts.FunctionSemantics)
+                    {
+                        callGraph[qualifiedName] = summary.CalledFunctions.ToHashSet(StringComparer.Ordinal);
+                    }
+                }
+
                 var localFunctionsBySourceName = module.SyntaxModel.Declarations
                     .Where(static declaration => declaration.Function is not null)
                     .GroupBy(static declaration => declaration.Function!.Name, StringComparer.Ordinal)
@@ -891,6 +1817,11 @@ public static class DefaultCompilerPipeline
                 foreach (var function in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                    if (callGraph.ContainsKey(qualifiedName))
+                    {
+                        continue;
+                    }
+
                     var callees = new HashSet<string>(StringComparer.Ordinal);
 
                     if (function.Body.block() is { } body)
@@ -1201,7 +2132,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "load-modules", "module-graph", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "load-modules", "module-graph", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -1209,9 +2140,10 @@ public static class DefaultCompilerPipeline
             var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
             var effects = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var types = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
-            var fallbackSignatures = CollectFallbackFunctionSignatures(context, moduleGraph, types.NamedTypes, loadedModules);
+            var specializationStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var fallbackSignatures = CollectFallbackFunctionSignatures(context, moduleGraph, types.NamedTypes, types.TypeAliases, loadedModules);
 
-            var functions = loadedModules.Modules.Values
+            var declaredFunctions = loadedModules.Modules.Values
                 .OrderBy(static module => module.Reference.IsRoot ? 0 : 1)
                 .ThenBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal)
                 .SelectMany(module => module.SyntaxModel.Declarations
@@ -1240,10 +2172,85 @@ public static class DefaultCompilerPipeline
                     .Where(static function => function is not null)
                     .Select(static function => function!))
                 .ToArray();
+            var declarationsByQualifiedName = CollectFunctionDeclarationsByQualifiedName(loadedModules);
+            var specializedFunctions = MaterializeSpecializedFunctions(
+                specializationStrategy,
+                declarationsByQualifiedName,
+                effects,
+                types.Functions,
+                fallbackSignatures);
+            var functions = declaredFunctions
+                .Concat(specializedFunctions)
+                .ToArray();
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.HighLevelIr,
                 new HighLevelIrModule(loadedModules.RootModuleName, functions));
+        }
+
+        private static IReadOnlyDictionary<string, FunctionDeclarationModel> CollectFunctionDeclarationsByQualifiedName(
+            LoadedModuleSet loadedModules)
+        {
+            var declarations = new Dictionary<string, FunctionDeclarationModel>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.Modules.Values)
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                {
+                    var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                    declarations[qualifiedName] = declaration.Function!;
+                }
+            }
+
+            return declarations;
+        }
+
+        private static IReadOnlyList<HighLevelIrFunction> MaterializeSpecializedFunctions(
+            SpecializationCodegenStrategyModel specializationStrategy,
+            IReadOnlyDictionary<string, FunctionDeclarationModel> declarationsByQualifiedName,
+            FunctionEffectModel effects,
+            IReadOnlyDictionary<string, TypedFunctionSignature> signatures,
+            IReadOnlyDictionary<string, TypedFunctionSignature> fallbackSignatures)
+        {
+            var functions = new List<HighLevelIrFunction>();
+
+            foreach (var strategy in specializationStrategy.Functions)
+            {
+                if (strategy.StrategyKind == FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly
+                    || !declarationsByQualifiedName.TryGetValue(strategy.TemplateName, out var declaration)
+                    || !declaration.HasBody)
+                {
+                    continue;
+                }
+
+                if (!signatures.TryGetValue(strategy.TemplateName, out var templateSignature)
+                    && !fallbackSignatures.TryGetValue(strategy.TemplateName, out templateSignature!))
+                {
+                    continue;
+                }
+
+                if (!effects.Functions.TryGetValue(strategy.TemplateName, out var templateEffects))
+                {
+                    continue;
+                }
+
+                var substitution = FunctionOverloadFacts.BuildGenericSubstitution(templateSignature, strategy.TypeArguments);
+                var specializedSignature = FunctionOverloadFacts.InstantiateSignature(templateSignature, strategy.TypeArguments, strategy.SymbolName);
+                functions.Add(new HighLevelIrFunction(
+                    strategy.SymbolName,
+                    specializedSignature,
+                    declaration.HasBody,
+                    DetermineBodyLoweringKind(declaration),
+                    templateEffects with { Name = strategy.SymbolName },
+                    BodyTemplateName: strategy.TemplateName,
+                    GenericTypeSubstitution: substitution));
+            }
+
+            return functions
+                .OrderBy(static function => function.Name, StringComparer.Ordinal)
+                .ToArray();
         }
 
         private static FunctionBodyLoweringKind DetermineBodyLoweringKind(FunctionDeclarationModel function)
@@ -1262,9 +2269,10 @@ public static class DefaultCompilerPipeline
             CompilerPassContext context,
             ModuleGraph moduleGraph,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            IReadOnlyDictionary<string, TypeAliasSymbol> typeAliases,
             LoadedModuleSet loadedModules)
         {
-            var resolver = new StarkTypeResolver(context, "lower-hir", moduleGraph, namedTypes);
+            var resolver = new StarkTypeResolver(context, "lower-hir", moduleGraph, namedTypes, typeAliases);
             var functions = new Dictionary<string, TypedFunctionSignature>(StringComparer.Ordinal);
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
@@ -1282,7 +2290,8 @@ public static class DefaultCompilerPipeline
                         qualifiedName,
                         resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
                         parameters,
-                        SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName));
+                        SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
+                        GenericParameterNames: genericParameters?.ToArray());
                 }
             }
 
@@ -1341,7 +2350,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "semantic-validate", "const-prop", "lower-abi"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "semantic-validate", "const-prop", "lower-abi", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -1353,6 +2362,7 @@ public static class DefaultCompilerPipeline
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var validationModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
             var closedWorldModel = context.Artifacts.GetRequired(CompilerArtifactKeys.ClosedWorldOptimization);
+            var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
 
@@ -1376,6 +2386,7 @@ public static class DefaultCompilerPipeline
                 internalizeModulePrivate: context.Options.QualifyModuleSymbols,
                 semanticValidation: validationModel,
                 closedWorldModel: closedWorldModel,
+                specializationCodegenStrategy: specializationCodegenStrategy,
                 logs: context.Logs).Emit();
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
         }
@@ -1482,7 +2493,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "enum-layout", "refine-function-effects"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "enum-layout", "refine-function-effects", "lower-hir"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -1491,7 +2502,8 @@ public static class DefaultCompilerPipeline
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
-            var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, enumLayoutModel, effectModel, context.Options).Lower();
+            var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
+            var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, enumLayoutModel, effectModel, hir, context.Options).Lower();
             context.Artifacts.Set(CompilerArtifactKeys.AbiModel, abiModel);
         }
     }
@@ -1504,12 +2516,29 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["type-check"];
+        public IReadOnlyList<string> Dependencies => ["type-check", "load-modules"];
 
         public void Execute(CompilerPassContext context)
         {
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
-            context.Artifacts.Set(CompilerArtifactKeys.EnumLayoutModel, EnumLayoutBuilder.Build(typeModel));
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var layouts = EnumLayoutBuilder.Build(typeModel).Layouts
+                .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules)
+            {
+                if (module.PackageImageFacts is not { } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var (qualifiedName, enumLayout) in packageImageFacts.EnumLayouts)
+                {
+                    layouts[qualifiedName] = enumLayout;
+                }
+            }
+
+            context.Artifacts.Set(CompilerArtifactKeys.EnumLayoutModel, new EnumLayoutModel(typeModel.ModuleName, layouts));
         }
     }
 }

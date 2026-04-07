@@ -40,6 +40,7 @@ The rules are:
 - imports appear before the module declaration
 - the module declaration appears exactly once
 - one source file corresponds to one module
+- `import` and `module` declarations do not end in semicolons
 - wildcard imports are forbidden
 - `export import` is the only re-export form
 
@@ -142,6 +143,10 @@ Function declarations may appear with either:
 
 Semicolon form is used for declarations such as FFI functions or forward declarations.
 
+Function parameters are written as `T name`.
+
+Default-argument syntax such as `fn i32 Add(i32 left = 1)` is not part of the `v1.0` source surface.
+
 ## 6. Types
 
 ### 6.1 Builtin Types
@@ -223,11 +228,149 @@ Generic parameters participate in name resolution and type substitution.
 
 Generic instantiation is monomorphized by default.
 
+Within one compilation, source-backed imported instantiations are owned by the
+defining module, while manifest-backed imported instantiations are owned by the
+root consumer module.
+
+Identical concrete instantiations inside one compilation are cached and
+deduplicated before later ownership and code-generation planning.
+
+The current planning model treats tiny or explicitly inline generic bodies as
+inline-friendly, and treats cold, `noinline`, or declaration-only generics as
+code-size-constrained.
+
+For linkage planning, source-backed imported instantiations prefer ODR-style
+deduplicable linkage, while root-owned or manifest-consumer-owned
+instantiations stay single-owner internal to the current build.
+
+When a package image publishes public or export generic template bodies,
+manifest-backed consumer-owned instantiations may also emit owned concrete
+bodies without requiring the original source file to still be present.
+
+Those package-image template sections also preserve the imported generic's
+published effect profile, top-level statement count, and typed primary
+constructor facts for object creation lowering, so `cold`, `noinline`,
+tiny-body heuristics, and primary-constructor lowering do not depend entirely
+on reconstructed source declarations.
+
+They also preserve typed local declaration facts for generic bodies, so local
+`const`, local variable, and `for` initializer types do not need to be
+recovered from bridge source text during imported generic type checking and MIR
+lowering.
+
+They also preserve typed explicit-conversion target facts, so imported generic
+bodies do not need to trust the bridge `(Type)value` text when resolving cast
+targets during type checking and MIR lowering.
+
+They also preserve typed enum-constructor facts, so imported generic bodies can
+keep resolving named-field enum constructors without trusting the bridge enum
+case target or member names.
+
+They also preserve typed tuple-enum-constructor call facts, so imported generic
+bodies can keep resolving positional enum constructor calls without trusting
+the bridge enum case target.
+
+They also preserve typed unit-enum-case value facts, so imported generic bodies
+can keep resolving unit enum cases without trusting the bridge enum case
+target.
+
+They also preserve typed enum-pattern target facts, so imported generic bodies
+can keep type-checking and lowering enum switch patterns without trusting the
+bridge enum case target text.
+
+They also preserve typed enum-pattern member facts, so imported generic bodies
+can keep type-checking and lowering named-field enum switch patterns without
+trusting the bridge member names.
+
+They also preserve typed aggregate-pattern target facts, so imported generic
+bodies can keep type-checking and lowering aggregate switch patterns without
+trusting the bridge aggregate type text.
+
+They also preserve typed direct-call target facts for generic bodies, so
+imported generic helpers may keep resolving direct helper calls without
+rediscovering every callee from the reconstructed bridge body text.
+
+They also preserve typed field-access facts, so imported generic bodies do not
+need to rediscover projected field types and field ordinals from the bridge
+body text during type checking and MIR lowering.
+
+They also preserve typed object-creation target types, so imported generic
+bodies do not need to trust the bridge `new TypeName(...)` text when resolving
+the constructed generic aggregate type.
+
+They also preserve typed object-initializer member facts, so imported generic
+bodies can keep lowering `new T() { ... }` member assignments without trusting
+the bridge-body field names.
+
+They also preserve typed member-call target facts, so imported generic bodies
+can keep resolving receiver-style helper calls without depending on bridge-body
+member names or call-site text reconstruction.
+
+They also preserve a first typed template-body subset for simple linear helper
+bodies such as `return value;`, `return 1;`, `return new Box<T>(value);`,
+`return Boxed<T>.Value { Data: value, Tag: tag };`,
+`return Boxed<T>.Value { Data: value, Tag: 1 };`,
+`return Option<T>.Some(value);`, `return Option<T>.None;`,
+`return box.Value;`, `return box.Echo(value);`, `return Callee(value);`, and
+`stack T copy = value; return copy;`, so imported generic MIR lowering can
+prefer structured body facts over reconstructed bridge text for those helper
+shapes.
+
+Package-image modules also preserve ordinary imports, not just `export import`
+re-exports, so imported generic bodies can keep resolving transitive package
+dependencies after the original source files are removed.
+
+Published package-image types also preserve record primary-constructor shape,
+so imported generic bodies can construct published records with `new Type(...)`
+without depending on flattened field-only reconstruction.
+
+They also publish deferred generic-instantiation patterns for nested generic
+callees, so recursive specialization planning does not need to rediscover that
+information from reconstructed imported bodies.
+
+The same package-image template sections now also preserve deferred generic
+type-instantiation patterns such as `Pair<T, bool>` inside generic bodies, so
+recursive imported type planning does not have to rediscover those concrete
+type uses from the imported body text either.
+
+That body materialization now expands transitively, so a concrete generic body
+may pull in the concrete generic callees that it depends on during the same
+compilation.
+
+Repeated requests for the same manifest-backed concrete instantiation are
+deduplicated within the build, and the resulting calls target the owned
+concrete body directly rather than a runtime generic fallback surface.
+
+For specialization planning, source-backed generic instantiations prefer an
+owned concrete body, eligible imported `law` instantiations may add a
+caller-specialized clone path ahead of that body, and declaration-only or
+code-size-constrained instantiations suppress clone paths and fall back toward
+direct ABI use.
+
+If two generic templates would collapse to the same internal specialization
+symbol after this planning, the compiler reports that ambiguity instead of
+guessing.
+
+The current backend-facing strategy layer then maps each planned
+specialization to one of three code-generation paths: ABI fallback only,
+owned concrete body emission, or owned concrete body emission with an optional
+law-caller-specialized clone path.
+
 Constrained generics, `where`-clause semantics, and specialization are deferred to `v2.0`.
 
 Type aliases introduce alternate names for existing types.
 
+The source form is:
+
+```stark
+alias Byte = i8;
+alias BufferView<T> = borrow T[];
+```
+
 A type alias does not by itself create a distinct runtime type or ABI identity.
+The declaration keyword is `alias`.
+Like other top-level declarations, aliases may be module-private, `internal`, `public`, or `export`.
+`public` and `export` aliases are published as part of the package-facing Stark surface.
 
 ## 7. Ownership, Borrowing, and Lifetime Rules
 

@@ -18,7 +18,7 @@ The current pass system supports:
 
 ## Default Stages
 
-The current default compilation pipeline contains 20 passes and is dependency-ordered rather than hard-coded as one giant method:
+The current default compilation pipeline is dependency-ordered rather than hard-coded as one giant method. The list below focuses on the major stages and their current responsibilities:
 
 1. `parse`
    Reads source text and produces the ANTLR parse result plus syntax diagnostics.
@@ -85,7 +85,7 @@ The current pass skeleton still leaves room for the next substantial compiler wo
 - richer aggregate copy/move lowering
 - allocator-backed `arena` lowering
 - debug-info and source-span propagation through MIR, SSA, and LLVM
-- monomorphization or specialization planning
+- package-image-native typed-template lowering that consumes the existing monomorphization and specialization planning artifacts
 
 These should fit naturally as additional passes between `symbol-catalog` and `emit-llvm`.
 

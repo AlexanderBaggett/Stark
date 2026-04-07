@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 internal sealed class SsaLowerer
 {
-    private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
+    private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
 
     public SsaLowerer()
@@ -22,6 +22,17 @@ internal sealed class SsaLowerer
 
     public SsaIrModule Lower(MidLevelIrModule mir)
     {
+        foreach (var function in mir.Functions)
+        {
+            _signatures.TryAdd(
+                function.Name,
+                new TypedFunctionSignature(
+                    function.Name,
+                    function.ReturnType,
+                    function.Parameters,
+                    SourceName: function.Name));
+        }
+
         var functions = mir.Functions
             .Select(LowerFunction)
             .ToArray();

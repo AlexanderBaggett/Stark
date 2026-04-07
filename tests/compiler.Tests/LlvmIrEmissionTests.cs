@@ -2047,6 +2047,34 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void TypeAliasesPreserveTheUnderlyingAggregateAbi()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i64 Left;
+                i64 Right;
+            }
+
+            alias PairAlias = Pair;
+
+            fn PairAlias Step(PairAlias value) {
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Pair = type { i64, i64 }", llvm);
+        Assert.Contains("define fastcc %Pair @Step(%Pair %arg_value)", llvm);
+        Assert.DoesNotContain("sret(%Pair)", llvm);
+        Assert.DoesNotContain("byval(%Pair)", llvm);
+    }
+
+    [Fact]
     public void SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStores()
     {
         var result = Compile(
@@ -3361,6 +3389,370 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void SourceBackedGenericCallsEmitConcreteMonomorphizedSymbols()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn T Identity<T>(T value) {
+                return value;
+            }
+
+            fn i32 Run(i32 value) {
+                return Identity(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.DoesNotContain("declare internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.DoesNotContain("call fastcc i32 @Identity(", llvm);
+    }
+
+    [Fact]
+    public void NestedSourceBackedGenericCallsEmitTransitiveConcreteMonomorphizedSymbols()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn T Identity<T>(T value) {
+                return value;
+            }
+
+            fn T Forward<T>(T value) {
+                return Identity(value);
+            }
+
+            fn i32 Run(i32 value) {
+                return Forward(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Forward__i32(", llvm);
+        Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Forward__i32(", llvm);
+        Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.DoesNotContain("call fastcc i32 @Forward(", llvm);
+        Assert.DoesNotContain("call fastcc i32 @Identity(", llvm);
+    }
+
+    [Fact]
+    public void ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitions()
+    {
+        var result = Compile(
+            """
+            import Facade
+            module Demo
+
+            fn i32 Run(i32 value) {
+                return Facade.Identity(value);
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Facade", "/virtual/Facade.stark", IsExternal: false),
+                        """
+                        module Facade
+
+                        public fn T Identity<T>(T value) {
+                            return value;
+                        }
+                        """,
+                        "/virtual/Facade.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("$__stark_mono_fn_Facade__Facade_Identity__i32 = comdat any", llvm);
+        Assert.Contains("define linkonce_odr fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
+        Assert.Contains("comdat", llvm);
+        Assert.Contains("call fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
+        Assert.DoesNotContain("define internal fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
+    }
+
+    [Fact]
+    public void ManifestBackedGenericCallsEmitConcreteMonomorphizedSymbolsFromPackageImageTemplates()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-template-llvm-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn T Identity<T>(T value) {
+                    return value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 value) {
+                        return Facade.Identity(value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+
+            Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedNestedGenericCallsEmitTransitiveConcreteMonomorphizedSymbolsFromPackageImageTemplates()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-nested-generic-template-llvm-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn T Identity<T>(T value) {
+                    return value;
+                }
+
+                public fn T Forward<T>(T value) {
+                    return Identity(value);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 value) {
+                        return Facade.Forward(value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+
+            Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("call fastcc i32 @Facade_Forward(", llvm);
+            Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmission()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-nested-generic-dedup-llvm-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn T Identity<T>(T value) {
+                    return value;
+                }
+
+                public fn T Forward<T>(T value) {
+                    return Identity(value);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageManifestBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 left, i32 right) {
+                        stack i32 first = Facade.Forward(left);
+                        stack i32 second = Facade.Forward(right);
+                        return first + second;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+
+            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.Equal(0, CountOccurrences(llvm, "declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(0, CountOccurrences(llvm, "declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.Equal(2, CountOccurrences(llvm, "call fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(1, CountOccurrences(llvm, "call fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("call fastcc i32 @Facade_Forward(", llvm);
+            Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void LocalFixedArrayCanBeCoercedToSliceForCalls()
     {
         var result = Compile(
@@ -3506,7 +3898,7 @@ public sealed class LlvmIrEmissionTests
             var llvm = GetLlvm(consumerResult);
 
             Assert.Contains(
-                "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias dereferenceable(4) align 4)",
+                "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4)",
                 llvm);
             Assert.DoesNotContain(
                 "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias readonly",

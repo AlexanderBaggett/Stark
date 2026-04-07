@@ -7,6 +7,7 @@ internal sealed class AbiLowerer
     private readonly TypeCheckModel _typeModel;
     private readonly EnumLayoutModel _enumLayoutModel;
     private readonly FunctionEffectModel _effectModel;
+    private readonly HighLevelIrModule _hir;
     private readonly CompilerOptions _options;
 
     public AbiLowerer(
@@ -15,6 +16,7 @@ internal sealed class AbiLowerer
         TypeCheckModel typeModel,
         EnumLayoutModel enumLayoutModel,
         FunctionEffectModel effectModel,
+        HighLevelIrModule hir,
         CompilerOptions options)
     {
         _syntaxModel = syntaxModel;
@@ -22,6 +24,7 @@ internal sealed class AbiLowerer
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
         _effectModel = effectModel;
+        _hir = hir;
         _options = options;
     }
 
@@ -37,6 +40,29 @@ internal sealed class AbiLowerer
             }
 
             functions[function.Name] = LowerFunction(function, effects);
+        }
+
+        foreach (var function in _hir.Functions.OrderBy(static function => function.Name, StringComparer.Ordinal))
+        {
+            if (functions.ContainsKey(function.Name))
+            {
+                continue;
+            }
+
+            functions[function.Name] = LowerFunction(function.Signature, function.Effects);
+        }
+
+        foreach (var module in _loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, abiSignature) in packageImageFacts.AbiFunctions)
+            {
+                functions[qualifiedName] = abiSignature;
+            }
         }
 
         return new AbiModel(_typeModel.ModuleName, functions);
@@ -151,6 +177,11 @@ internal sealed class AbiLowerer
         if (isFfi)
         {
             return sourceName;
+        }
+
+        if (qualifiedName.StartsWith("__stark_", StringComparison.Ordinal))
+        {
+            return qualifiedName;
         }
 
         if (isOverloaded)

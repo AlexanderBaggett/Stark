@@ -15,6 +15,7 @@ internal sealed class OwnershipValidator
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
+    private ISet<string>? _currentFunctionGenericParameters;
 
     public OwnershipValidator(
         CompilerPassContext context,
@@ -28,7 +29,7 @@ internal sealed class OwnershipValidator
         _syntaxModel = syntaxModel;
         _moduleGraph = moduleGraph;
         _typeModel = typeModel;
-        _typeResolver = new StarkTypeResolver(context, "ownership-validate", moduleGraph, typeModel.NamedTypes);
+        _typeResolver = new StarkTypeResolver(context, "ownership-validate", moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases);
         _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult, syntaxModel)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
@@ -63,34 +64,45 @@ internal sealed class OwnershipValidator
         var state = new FlowState(_typeModel.NamedTypes);
         var functionScope = state.EnterScope();
         var parameterDeclarations = functionDeclaration.ParameterList.parameter();
+        var previousGenericParameters = _currentFunctionGenericParameters;
+        _currentFunctionGenericParameters = signature.IsGeneric
+            ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
+            : null;
 
-        for (var index = 0; index < signature.Parameters.Count; index++)
+        try
         {
-            var parameter = signature.Parameters[index];
-            var declarationLocation = index < parameterDeclarations.Length
-                ? Location(parameterDeclarations[index].Identifier().Symbol)
-                : null;
-            state.Declare(new VariableInfo(
-                parameter.Name,
-                parameter.Type,
-                StorageClass.None,
-                VariableOrigin.Parameter,
-                IsMutable: false,
-                IsConstant: false,
-                BorrowLifetime: parameter.Type.BorrowKind == StarkBorrowKind.None
-                    ? BorrowLifetime.None
-                    : BorrowLifetime.External,
-                DeclarationLocation: declarationLocation),
-                isInitialized: true);
-        }
+            for (var index = 0; index < signature.Parameters.Count; index++)
+            {
+                var parameter = signature.Parameters[index];
+                var declarationLocation = index < parameterDeclarations.Length
+                    ? Location(parameterDeclarations[index].Identifier().Symbol)
+                    : null;
+                state.Declare(new VariableInfo(
+                    parameter.Name,
+                    parameter.Type,
+                    StorageClass.None,
+                    VariableOrigin.Parameter,
+                    IsMutable: false,
+                    IsConstant: false,
+                    BorrowLifetime: parameter.Type.BorrowKind == StarkBorrowKind.None
+                        ? BorrowLifetime.None
+                        : BorrowLifetime.External,
+                    DeclarationLocation: declarationLocation),
+                    isInitialized: true);
+            }
 
-        if (functionDeclaration.Body.block() is { } body)
+            if (functionDeclaration.Body.block() is { } body)
+            {
+                CheckBlock(body, state, signature, summary, openScope: true);
+            }
+
+            state.ExitScope(functionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
+            return summary.Build();
+        }
+        finally
         {
-            CheckBlock(body, state, signature, summary, openScope: true);
+            _currentFunctionGenericParameters = previousGenericParameters;
         }
-
-        state.ExitScope(functionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
-        return summary.Build();
     }
 
     private void CheckBlock(
@@ -321,7 +333,7 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature,
         FunctionOwnershipBuilder summary)
     {
-        var declaredType = _typeResolver.ResolveType(typeContext);
+        var declaredType = ResolveType(typeContext);
 
         foreach (var declarator in declarators)
         {
@@ -787,7 +799,7 @@ internal sealed class OwnershipValidator
         if (expression.conversionType() is { } conversionType)
         {
             var convertedOperand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
-            var targetType = _typeResolver.ResolveConversionType(conversionType);
+            var targetType = ResolveConversionType(conversionType);
             return ApplyUse(new ExpressionInfo(targetType), state, summary, use, expression);
         }
 
@@ -924,7 +936,7 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature,
         FunctionOwnershipBuilder summary)
     {
-        var type = _typeResolver.ResolveType(expression.type_());
+        var type = ResolveType(expression.type_());
 
         if (expression.argumentList() is { } argumentList)
         {
@@ -1074,7 +1086,7 @@ internal sealed class OwnershipValidator
                 return new ExpressionInfo(StarkTypeSymbols.Error);
             }
 
-            return functions.Count == 1
+            return functions.Count == 1 && !functions[0].IsGeneric
                 ? new ExpressionInfo(functions[0].ReturnType, Function: functions[0])
                 : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: name);
         }
@@ -1116,12 +1128,12 @@ internal sealed class OwnershipValidator
             }
         }
 
-        if (_moduleGraph.HasModule(name))
+        if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, name))
         {
             return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
         }
 
-        if (_moduleGraph.HasModuleNamespace(name))
+        if (_moduleGraph.CanAccessModuleNamespace(_syntaxModel.ModuleName, name))
         {
             return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
         }
@@ -1417,7 +1429,17 @@ internal sealed class OwnershipValidator
 
     private StarkTypeSymbol ResolvePatternSimpleType(StarkParser.SimpleTypeContext simpleType)
     {
-        return _typeResolver.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName);
+        return _typeResolver.ResolveSimpleType(simpleType, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
+    }
+
+    private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)
+    {
+        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters);
+    }
+
+    private StarkTypeSymbol ResolveConversionType(StarkParser.ConversionTypeContext type)
+    {
+        return _typeResolver.ResolveConversionType(type, _currentFunctionGenericParameters);
     }
 
     private static bool SupportsAggregateFieldSubpattern(StarkTypeSymbol type)
@@ -1590,12 +1612,12 @@ internal sealed class OwnershipValidator
         if (target.NamespaceName is not null)
         {
             var qualifiedName = $"{target.NamespaceName}.{memberName}";
-            if (_moduleGraph.HasModule(qualifiedName))
+            if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, qualifiedName))
             {
                 return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
 
-            if (_moduleGraph.HasModuleNamespace(qualifiedName))
+            if (_moduleGraph.CanAccessModuleNamespace(_syntaxModel.ModuleName, qualifiedName))
             {
                 return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
@@ -1621,7 +1643,7 @@ internal sealed class OwnershipValidator
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
-                return namespaceFunctions.Count == 1
+                return namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric
                     ? new ExpressionInfo(namespaceFunctions[0].ReturnType, Function: namespaceFunctions[0])
                     : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: qualifiedName);
             }
@@ -1690,7 +1712,7 @@ internal sealed class OwnershipValidator
         if (namedType.Kind == DeclarationKind.Doctrine
             && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {
-            return doctrineMethods.Count == 1
+            return doctrineMethods.Count == 1 && !doctrineMethods[0].IsGeneric
                 ? new ExpressionInfo(
                     doctrineMethods[0].ReturnType,
                     Function: doctrineMethods[0],
@@ -1700,7 +1722,7 @@ internal sealed class OwnershipValidator
 
         if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            if (methods.Count == 1 && methods[0].Parameters.Count != 0)
+            if (methods.Count == 1 && !methods[0].IsGeneric && methods[0].Parameters.Count != 0)
             {
                 return new ExpressionInfo(
                     methods[0].ReturnType,

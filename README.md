@@ -30,7 +30,11 @@ Known unsupported or partial language, lowering, runtime, and standard-library a
 
 The current `v1.0` release baseline is defined in [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md).
 
+The current standard-library release baseline is defined in [docs/StandardLibraryBaseline.md](./docs/StandardLibraryBaseline.md).
+
 Pre-release notes currently live in [docs/ReleaseNotes.md](./docs/ReleaseNotes.md).
+
+Release tagging, changelog, and upgrade-note expectations live in [docs/ReleaseProcess.md](./docs/ReleaseProcess.md).
 
 ## Build
 
@@ -137,5 +141,9 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 - [docs/StandardLibrary.md](./docs/StandardLibrary.md)
 - [docs/UnsupportedFeatures.md](./docs/UnsupportedFeatures.md)
 - [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md)
+- [docs/V1LoweringContract.md](./docs/V1LoweringContract.md)
+- [docs/StandardLibraryBaseline.md](./docs/StandardLibraryBaseline.md)
 - [docs/ReleaseNotes.md](./docs/ReleaseNotes.md)
+- [docs/ReleaseProcess.md](./docs/ReleaseProcess.md)
 - [docs/Roadmap.md](./docs/Roadmap.md)
+- [samples/README.md](./samples/README.md)

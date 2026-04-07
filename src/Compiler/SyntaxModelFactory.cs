@@ -605,6 +605,7 @@ internal static class SyntaxModelFactory
                     function.Identifier().GetText(),
                     ParseFunctionKind(function.functionKind()),
                     function.returnType(),
+                    function.typeParameterList(),
                     function.parameterList(),
                     function.asmSpecifier(),
                     function.asmClauseList(),
@@ -637,6 +638,7 @@ internal static class SyntaxModelFactory
                         $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                         ParseFunctionKind(method.functionKind()),
                         method.returnType(),
+                        method.typeParameterList(),
                         method.parameterList(),
                         null,
                         null,
@@ -671,6 +673,7 @@ internal static class SyntaxModelFactory
                         $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                         ParseFunctionKind(method.functionKind()),
                         method.returnType(),
+                        method.typeParameterList(),
                         method.parameterList(),
                         null,
                         null,
@@ -711,6 +714,7 @@ internal static class SyntaxModelFactory
                         $"{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                         ParseFunctionKind(method.functionKind()),
                         method.returnType(),
+                        method.typeParameterList(),
                         method.parameterList(),
                         null,
                         null,
@@ -741,6 +745,7 @@ internal static class SyntaxModelFactory
                         $"{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                         ParseDoctrineFunctionKind(method.doctrineFunctionKind()),
                         method.returnType(),
+                        method.typeParameterList(),
                         method.parameterList(),
                         null,
                         null,
@@ -748,6 +753,17 @@ internal static class SyntaxModelFactory
                         method.functionBody())));
             }
 
+            return;
+        }
+
+        if (declaration.typeAliasDeclaration() is { } typeAliasDeclaration)
+        {
+            declarations.Add(new TopLevelDeclarationModel(
+                typeAliasDeclaration.Identifier().GetText(),
+                DeclarationKind.TypeAlias,
+                visibility,
+                null,
+                TypeAlias: CreateTypeAliasModel(typeAliasDeclaration)));
             return;
         }
 
@@ -771,10 +787,25 @@ internal static class SyntaxModelFactory
             null));
     }
 
+    private static TypeAliasDeclarationModel CreateTypeAliasModel(StarkParser.TypeAliasDeclarationContext typeAliasDeclaration)
+    {
+        var genericParameters = typeAliasDeclaration.typeParameterList() is { } typeParameterList
+            ? typeParameterList.typeParameter()
+                .Select(static parameter => parameter.Identifier().GetText())
+                .ToArray()
+            : [];
+
+        return new TypeAliasDeclarationModel(
+            typeAliasDeclaration.Identifier().GetText(),
+            typeAliasDeclaration.type_().GetText(),
+            genericParameters);
+    }
+
     private static FunctionDeclarationModel CreateFunctionModel(
         string name,
         StarkFunctionKind functionKind,
         StarkParser.ReturnTypeContext returnType,
+        StarkParser.TypeParameterListContext? typeParameterList,
         StarkParser.ParameterListContext parameterList,
         StarkParser.AsmSpecifierContext? asmSpecifier,
         StarkParser.AsmClauseListContext? asmClauseList,
@@ -790,6 +821,11 @@ internal static class SyntaxModelFactory
             : modifiers.Contains("noinline")
                 ? InlinePreference.NoInline
                 : InlinePreference.InlineHint;
+        var genericParameters = typeParameterList is null
+            ? []
+            : typeParameterList.typeParameter()
+                .Select(static parameter => parameter.Identifier().GetText())
+                .ToArray();
 
         return new FunctionDeclarationModel(
             Name: name,
@@ -808,7 +844,8 @@ internal static class SyntaxModelFactory
                 modifiers.Contains("ffi"),
                 modifiers.Contains("strictfp")),
             HasBody: functionBody.block() is not null,
-            Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody));
+            Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody),
+            GenericParameterNames: genericParameters);
     }
 
     private static DestructorDeclarationModel? CreateDestructorModel(

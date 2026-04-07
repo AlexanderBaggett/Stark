@@ -44,7 +44,7 @@ public sealed class ParserEdgeCaseTests
 
             fn void Run(bool flag) {
                 while infinite (flag) {
-                    for nondeterministic (stack i32 i = 0; i < 1; i += 1) {
+                    for non-deterministic (stack i32 i = 0; i < 1; i += 1) {
                         continue;
                     }
                 }

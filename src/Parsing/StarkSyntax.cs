@@ -4,7 +4,10 @@ namespace Stark.Parsing;
 
 public sealed record ParseDiagnostic(int Line, int Column, string Message);
 
-public sealed record ParseResult(StarkParser.CompilationUnitContext Root, IReadOnlyList<ParseDiagnostic> Diagnostics)
+public sealed record ParseResult(
+    StarkParser.CompilationUnitContext Root,
+    IReadOnlyList<ParseDiagnostic> Diagnostics,
+    string SourceText)
 {
     public int SyntaxErrorCount => Diagnostics.Count;
     public bool Succeeded => SyntaxErrorCount == 0;
@@ -29,7 +32,7 @@ public static class StarkSyntax
         var root = parser.compilationUnit();
         tokens.Fill();
         ValidateTextLiterals(tokens, errors);
-        return new ParseResult(root, errors.Diagnostics);
+        return new ParseResult(root, errors.Diagnostics, source);
     }
 
     private static void ValidateTextLiterals(CommonTokenStream tokens, CountingErrorListener errors)

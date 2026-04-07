@@ -10,6 +10,11 @@ public interface IModuleSourceResolver : IModuleResolver
     bool TryLoadModuleSource(ResolvedModuleReference module, out string sourceText, out string? filePath);
 }
 
+public interface IModuleDocumentResolver : IModuleResolver
+{
+    bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document);
+}
+
 public sealed class EmptyModuleResolver : IModuleResolver
 {
     public static EmptyModuleResolver Instance { get; } = new();
@@ -65,7 +70,7 @@ public sealed class InMemoryModuleResolver : IModuleSourceResolver
     }
 }
 
-public sealed class FileSystemModuleResolver : IModuleSourceResolver
+public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private readonly IReadOnlyList<string> _searchDirectories;
     private Dictionary<string, ResolvedPackageModule>? _manifestModules;
@@ -135,6 +140,25 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver
         return true;
     }
 
+    public bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document)
+    {
+        _ = targetInfo;
+
+        if (module.ManifestPath is not null
+            && TryResolveManifestModule(module.ModuleName) is { } manifestModule
+            && PackageManifestLoader.TryBuildModuleDocument(manifestModule, out var manifestDocument))
+        {
+            document = manifestDocument with
+            {
+                Reference = module with { FilePath = manifestModule.ManifestPath }
+            };
+            return true;
+        }
+
+        document = default!;
+        return false;
+    }
+
     private static string ResolvePath(string baseDirectory, string moduleName)
     {
         var relativePath = moduleName.Replace(".", Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) + ".stark";
@@ -185,7 +209,7 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver
     }
 }
 
-public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
+public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private const string PlatformModuleName = "System.Runtime.Platform";
     private const string LinuxDispatchTemplateRelativePath = "templates/System.Runtime.Platform.LinuxDispatch.stark";
@@ -231,6 +255,23 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver
         }
 
         return _inner.TryLoadModuleSource(module, out sourceText, out filePath);
+    }
+
+    public bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document)
+    {
+        if (ShouldOverridePlatformModule(module.ModuleName))
+        {
+            document = default!;
+            return false;
+        }
+
+        if (_inner is IModuleDocumentResolver documentResolver)
+        {
+            return documentResolver.TryLoadModuleDocument(module, targetInfo, out document);
+        }
+
+        document = default!;
+        return false;
     }
 
     private bool ShouldOverridePlatformModule(string moduleName)
