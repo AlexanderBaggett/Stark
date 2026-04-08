@@ -1015,9 +1015,9 @@ Goal: add non-essential language surface after the first release without slowing
     - [ ] preserve enough information for future cross-package inlining, law cloning, or other package-aware optimizations
     - [ ] keep package publication from throwing away facts that are expensive for the compiler to recover later
   - [ ] Tooling, inspection, and diagnostics for package images
-    - [ ] emit package images from the CLI and standard-library packaging flow
-    - [ ] add a readable dump or inspect mode for package images
-    - [ ] add diagnostics for missing required sections, malformed structured facts, or unsupported package-image content
+    - [x] emit package images from the CLI and standard-library packaging flow
+    - [x] add a readable dump or inspect mode for package images
+    - [x] add diagnostics for missing required sections, malformed structured facts, or unsupported package-image content
     - [ ] document the package image as a compiler-owned source artifact rather than a narrow distribution manifest
   - [ ] Test coverage for package images
     - [ ] writer or loader round-trip tests for rich package images
@@ -1230,6 +1230,10 @@ Everything before this point is frozen
   - [ ] instantiate solved obligations into lowered calls
 - [ ] `where`-clause semantic binding and validation
 - [ ] define specialization interaction with constrained generic instantiation
+- [ ] Template string literals via (ascii/unicode) via `$`
+- [ ] C# style triple """ strings and @"  strings
+- [ ] Rust style rumtime dynamic heap allocation with dynamic sizing via `List` like rusts `vec` C# function names, but with rust semantics
+
 
 ### Trait/Doctrine Runtime Dispatch, If Ever Added
 

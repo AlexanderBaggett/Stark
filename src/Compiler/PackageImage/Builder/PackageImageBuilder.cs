@@ -213,7 +213,8 @@ internal static partial class PackageImageBuilder
                         typedFunctions,
                         typedTypes,
                         typedGlobals,
-                        TypeAliases: typedTypeAliases),
+                        TypeAliases: typedTypeAliases,
+                        Imports: imports),
                     CompilerFacts: new StarkPackageCompilerFactsSection(
                         functionEffects,
                         AbiFunctions: abiFunctions,

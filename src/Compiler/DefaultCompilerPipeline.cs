@@ -677,35 +677,30 @@ public static class DefaultCompilerPipeline
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(enclosingTemplateSignature, trigger.TypeArguments);
                 if (importedDeferredByTemplate.TryGetValue(enclosingTemplateName, out var importedTemplate))
                 {
-                    foreach (var deferredTrigger in importedTemplate.DeferredInstantiations)
-                    {
-                        if (!typeModel.Functions.TryGetValue(deferredTrigger.CalleeTemplateName, out var calleeTemplateSignature))
-                        {
-                            continue;
-                        }
-
-                        var concreteTypeArguments = deferredTrigger.TypeArguments
-                            .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
-                            .ToArray();
-                        if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
-                        {
-                            continue;
-                        }
-
-                        var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
-                            calleeTemplateSignature,
-                            concreteTypeArguments,
-                            calleeTemplateSignature.Name);
-                        var expandedTrigger = new FunctionInstantiationTriggerRecord(
-                            calleeTemplateSignature.DisplaySourceName,
-                            concreteTypeArguments,
-                            instantiatedSignature,
-                            trigger.Location);
-                        if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
-                        {
-                            pending.Enqueue(expandedTrigger);
-                        }
-                    }
+                    ExpandImportedDeferredFunctionTriggers(
+                        importedTemplate,
+                        substitution,
+                        trigger.Location,
+                        typeModel,
+                        seen,
+                        expanded,
+                        pending);
+                    ExpandImportedTemplateCallSummaryTriggers(
+                        importedTemplate.DirectCalls.Select(static call => call.Signature),
+                        substitution,
+                        trigger.Location,
+                        typeModel,
+                        seen,
+                        expanded,
+                        pending);
+                    ExpandImportedTemplateCallSummaryTriggers(
+                        importedTemplate.MemberCalls.Select(static call => call.Signature),
+                        substitution,
+                        trigger.Location,
+                        typeModel,
+                        seen,
+                        expanded,
+                        pending);
 
                     continue;
                 }
@@ -796,18 +791,20 @@ public static class DefaultCompilerPipeline
                 }
 
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(enclosingTemplateSignature, functionTrigger.TypeArguments);
+                foreach (var typeArgument in functionTrigger.TypeArguments)
+                {
+                    AddExpandedTypeTriggers(typeArgument, functionTrigger.Location, typeModel, seen, expanded);
+                }
+
                 if (importedDeferredByTemplate.TryGetValue(enclosingTemplateName, out var importedTemplate))
                 {
-                    foreach (var deferredType in importedTemplate.DeferredTypes)
-                    {
-                        var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
-                        if (ContainsUnboundGenericParameter(concreteType, typeModel))
-                        {
-                            continue;
-                        }
-
-                        AddExpandedTypeTriggers(concreteType, functionTrigger.Location, typeModel, seen, expanded);
-                    }
+                    AddTypeTriggersFromImportedTemplateFacts(
+                        importedTemplate,
+                        substitution,
+                        functionTrigger.Location,
+                        typeModel,
+                        seen,
+                        expanded);
 
                     continue;
                 }
@@ -833,6 +830,223 @@ public static class DefaultCompilerPipeline
                 .OrderBy(static trigger => trigger.TypeName, StringComparer.Ordinal)
                 .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
                 .ToArray();
+        }
+
+        private static void ExpandImportedDeferredFunctionTriggers(
+            ImportedFunctionTemplateSummary importedTemplate,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<FunctionInstantiationTriggerRecord> expanded,
+            Queue<FunctionInstantiationTriggerRecord> pending)
+        {
+            foreach (var deferredTrigger in importedTemplate.DeferredInstantiations)
+            {
+                if (!typeModel.Functions.TryGetValue(deferredTrigger.CalleeTemplateName, out var calleeTemplateSignature))
+                {
+                    continue;
+                }
+
+                TryEnqueueFunctionTriggerFromOpenTypeArguments(
+                    calleeTemplateSignature,
+                    deferredTrigger.TypeArguments,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded,
+                    pending);
+            }
+        }
+
+        private static void ExpandImportedTemplateCallSummaryTriggers(
+            IEnumerable<TypedFunctionSignature> callSignatures,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<FunctionInstantiationTriggerRecord> expanded,
+            Queue<FunctionInstantiationTriggerRecord> pending)
+        {
+            foreach (var callSignature in callSignatures)
+            {
+                if (callSignature.TemplateName is not { } calleeTemplateName
+                    || callSignature.TypeArguments is not { Count: > 0 } openTypeArguments
+                    || !typeModel.Functions.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
+                {
+                    continue;
+                }
+
+                TryEnqueueFunctionTriggerFromOpenTypeArguments(
+                    calleeTemplateSignature,
+                    openTypeArguments,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded,
+                    pending);
+            }
+        }
+
+        private static void TryEnqueueFunctionTriggerFromOpenTypeArguments(
+            TypedFunctionSignature calleeTemplateSignature,
+            IReadOnlyList<StarkTypeSymbol> openTypeArguments,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<FunctionInstantiationTriggerRecord> expanded,
+            Queue<FunctionInstantiationTriggerRecord> pending)
+        {
+            var concreteTypeArguments = openTypeArguments
+                .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                .ToArray();
+            if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+            {
+                return;
+            }
+
+            var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                calleeTemplateSignature,
+                concreteTypeArguments,
+                calleeTemplateSignature.Name);
+            var expandedTrigger = new FunctionInstantiationTriggerRecord(
+                calleeTemplateSignature.DisplaySourceName,
+                concreteTypeArguments,
+                instantiatedSignature,
+                location);
+            if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
+            {
+                pending.Enqueue(expandedTrigger);
+            }
+        }
+
+        private static void AddTypeTriggersFromImportedTemplateFacts(
+            ImportedFunctionTemplateSummary importedTemplate,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded)
+        {
+            foreach (var deferredType in importedTemplate.DeferredTypes)
+            {
+                var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                if (ContainsUnboundGenericParameter(concreteType, typeModel))
+                {
+                    continue;
+                }
+
+                AddExpandedTypeTriggers(concreteType, location, typeModel, seen, expanded);
+            }
+
+            foreach (var objectCreation in importedTemplate.ObjectCreations)
+            {
+                var concreteCreatedType = FunctionOverloadFacts.SubstituteType(objectCreation.CreatedType, substitution);
+                if (!ContainsUnboundGenericParameter(concreteCreatedType, typeModel))
+                {
+                    AddExpandedTypeTriggers(concreteCreatedType, location, typeModel, seen, expanded);
+                }
+
+                if (objectCreation.Constructor is not { } constructor)
+                {
+                    continue;
+                }
+
+                foreach (var parameter in constructor.Parameters)
+                {
+                    var concreteParameterType = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution);
+                    if (ContainsUnboundGenericParameter(concreteParameterType, typeModel))
+                    {
+                        continue;
+                    }
+
+                    AddExpandedTypeTriggers(concreteParameterType, location, typeModel, seen, expanded);
+                }
+            }
+
+            foreach (var localDeclaration in importedTemplate.LocalDeclarations)
+            {
+                var concreteLocalType = FunctionOverloadFacts.SubstituteType(localDeclaration.Type, substitution);
+                if (ContainsUnboundGenericParameter(concreteLocalType, typeModel))
+                {
+                    continue;
+                }
+
+                AddExpandedTypeTriggers(concreteLocalType, location, typeModel, seen, expanded);
+            }
+
+            foreach (var conversion in importedTemplate.Conversions)
+            {
+                var concreteTargetType = FunctionOverloadFacts.SubstituteType(conversion.TargetType, substitution);
+                if (ContainsUnboundGenericParameter(concreteTargetType, typeModel))
+                {
+                    continue;
+                }
+
+                AddExpandedTypeTriggers(concreteTargetType, location, typeModel, seen, expanded);
+            }
+
+            foreach (var callSignature in importedTemplate.DirectCalls.Select(static call => call.Signature))
+            {
+                AddTypeTriggersFromCallSignature(
+                    callSignature,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded);
+            }
+
+            foreach (var callSignature in importedTemplate.MemberCalls.Select(static call => call.Signature))
+            {
+                AddTypeTriggersFromCallSignature(
+                    callSignature,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded);
+            }
+        }
+
+        private static void AddTypeTriggersFromCallSignature(
+            TypedFunctionSignature signature,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded)
+        {
+            foreach (var typeArgument in signature.TypeArguments ?? [])
+            {
+                var concreteTypeArgument = FunctionOverloadFacts.SubstituteType(typeArgument, substitution);
+                if (ContainsUnboundGenericParameter(concreteTypeArgument, typeModel))
+                {
+                    continue;
+                }
+
+                AddExpandedTypeTriggers(concreteTypeArgument, location, typeModel, seen, expanded);
+            }
+
+            var concreteReturnType = FunctionOverloadFacts.SubstituteType(signature.ReturnType, substitution);
+            if (!ContainsUnboundGenericParameter(concreteReturnType, typeModel))
+            {
+                AddExpandedTypeTriggers(concreteReturnType, location, typeModel, seen, expanded);
+            }
+
+            foreach (var parameter in signature.Parameters)
+            {
+                var concreteParameterType = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution);
+                if (ContainsUnboundGenericParameter(concreteParameterType, typeModel))
+                {
+                    continue;
+                }
+
+                AddExpandedTypeTriggers(concreteParameterType, location, typeModel, seen, expanded);
+            }
         }
 
         private static bool TryAddExpandedTrigger(

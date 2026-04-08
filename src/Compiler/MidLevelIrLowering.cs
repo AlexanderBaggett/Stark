@@ -616,7 +616,9 @@ internal sealed class MidLevelIrLowerer(
             bool IsDefault,
             bool IsMatchAll,
             string? CaptureName,
-            LowerableAggregatePattern? AggregatePattern);
+            LowerableAggregatePattern? AggregatePattern,
+            ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression = null,
+            ImportedTemplateTypedBodyExpressionSummary? ImportedGuardExpression = null);
 
         private sealed record LowerableSwitchSection(
             StarkParser.SwitchSectionContext Section,
@@ -1142,6 +1144,11 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
+            if (TryLowerImportedTypedTemplateConditionalCallStatement(expression))
+            {
+                return true;
+            }
+
             var operand = LowerImportedTypedTemplateExpression(expression, expectedType: null);
             if (operand is null)
             {
@@ -1155,73 +1162,438 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
-        private bool TryLowerImportedTypedTemplateAssignment(ImportedTemplateTypedBodyStatementSummary statement)
+        private bool TryLowerImportedTypedTemplateConditionalCallStatement(
+            ImportedTemplateTypedBodyExpressionSummary expression)
         {
-            if (statement.Name is not { } name
-                || !_localsByName.TryGetValue(name, out var local)
-                || !local.IsMutable
-                || statement.Expression is null)
+            if (expression.Kind != ImportedTemplateTypedBodyExpressionKind.Conditional
+                || expression.Args.Count != 3
+                || !CanLowerImportedTypedTemplateConditionalCallStatementBranch(expression.Args[1])
+                || !CanLowerImportedTypedTemplateConditionalCallStatementBranch(expression.Args[2]))
             {
                 return false;
             }
 
-            var assignedValue = LowerImportedTypedTemplateExpression(statement.Expression, local.Type);
-            if (assignedValue is null)
+            var condition = LowerImportedTypedTemplateExpression(expression.Args[0], StarkTypeSymbols.Bool);
+            if (condition is null)
             {
                 return false;
             }
 
-            var assignment = BuildAssignment(
-                new PlaceTarget(
-                    name,
-                    RootAddress: null,
-                    local.Type,
-                    local.Type,
-                    Path: [],
-                    UsesAddressModel: false,
-                    IsAddressMutable: true),
-                assignedValue,
-                $"{name} = {RenderImportedTypedTemplateExpression(statement.Expression)}");
-            EmitAssignment(assignment);
+            var thenBlock = CreateBlock("typed_cond_true");
+            var elseBlock = CreateBlock("typed_cond_false");
+            var joinBlock = CreateBlock("typed_cond_join");
+
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [thenBlock.Id, elseBlock.Id],
+                ConditionText: RenderImportedTypedTemplateExpression(expression.Args[0]),
+                Condition: condition);
+
+            CurrentBlock = thenBlock;
+            if (!TryLowerImportedTypedTemplateConditionalCallStatementBranch(expression.Args[1]))
+            {
+                return false;
+            }
+
+            EnsureGoto(joinBlock.Id);
+
+            CurrentBlock = elseBlock;
+            if (!TryLowerImportedTypedTemplateConditionalCallStatementBranch(expression.Args[2]))
+            {
+                return false;
+            }
+
+            EnsureGoto(joinBlock.Id);
+
+            CurrentBlock = joinBlock;
             return true;
         }
 
-        private bool TryLowerImportedTypedTemplateSwitch(ImportedTemplateTypedBodyStatementSummary statement)
+        private bool TryLowerImportedTypedTemplateConditionalCallStatementBranch(
+            ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.DirectCall)
+            {
+                if (!TryBuildImportedTypedTemplateDirectCall(expression, out var directCall))
+                {
+                    return false;
+                }
+
+                Emit(MidLevelIrStatementKind.Evaluate, RenderImportedTypedTemplateExpression(expression), value: directCall);
+                return true;
+            }
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.MemberCall)
+            {
+                if (!TryBuildImportedTypedTemplateMemberCall(expression, out var memberCall))
+                {
+                    return false;
+                }
+
+                Emit(MidLevelIrStatementKind.Evaluate, RenderImportedTypedTemplateExpression(expression), value: memberCall);
+                return true;
+            }
+
+            return TryLowerImportedTypedTemplateConditionalCallStatement(expression);
+        }
+
+        private static bool CanLowerImportedTypedTemplateConditionalCallStatementBranch(
+            ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Kind is ImportedTemplateTypedBodyExpressionKind.DirectCall or ImportedTemplateTypedBodyExpressionKind.MemberCall)
+            {
+                return true;
+            }
+
+            return expression.Kind == ImportedTemplateTypedBodyExpressionKind.Conditional
+                && expression.Args.Count == 3
+                && CanLowerImportedTypedTemplateConditionalCallStatementBranch(expression.Args[1])
+                && CanLowerImportedTypedTemplateConditionalCallStatementBranch(expression.Args[2]);
+        }
+
+        private bool TryLowerImportedTypedTemplateAssignment(ImportedTemplateTypedBodyStatementSummary statement)
         {
             if (statement.Expression is null)
             {
                 return false;
             }
 
-            var switchValue = LowerImportedTypedTemplateExpression(statement.Expression, expectedType: null);
-            if (switchValue is null || switchValue.Type.Kind != StarkTypeKind.Named)
+            var assignmentOperator = string.IsNullOrEmpty(statement.AssignmentOperator)
+                ? "="
+                : statement.AssignmentOperator;
+            PlaceTarget target;
+            string assignmentTargetText;
+
+            if (statement.TargetExpression is not null)
+            {
+                if (!TryResolveImportedTypedTemplateAssignmentTarget(statement.TargetExpression, out target))
+                {
+                    return false;
+                }
+
+                assignmentTargetText = RenderImportedTypedTemplateExpression(statement.TargetExpression);
+            }
+            else
+            {
+                if (statement.Name is not { } name
+                    || !_localsByName.TryGetValue(name, out var local)
+                    || !local.IsMutable)
+                {
+                    return false;
+                }
+
+                target = new PlaceTarget(
+                    name,
+                    RootAddress: null,
+                    local.Type,
+                    local.Type,
+                    Path: [],
+                    UsesAddressModel: false,
+                    IsAddressMutable: true);
+                assignmentTargetText = name;
+            }
+
+            if (target.RootName is { } rootName
+                && _localsByName.TryGetValue(rootName, out var localBinding)
+                && !localBinding.IsMutable)
             {
                 return false;
             }
 
-            var sections = new (ImportedTemplateTypedSwitchCaseSummary Case, LowerableAggregatePattern Pattern, BasicBlockBuilder EntryBlock, BasicBlockBuilder BodyBlock)[statement.SwitchCases.Count];
+            var assignmentText = $"{assignmentTargetText} {assignmentOperator} {RenderImportedTypedTemplateExpression(statement.Expression)}";
+            MidLevelIrOperand assignedValue;
+            if (assignmentOperator == "=")
+            {
+                var loweredAssignedValue = LowerImportedTypedTemplateExpression(statement.Expression, target.Type);
+                if (loweredAssignedValue is null)
+                {
+                    return false;
+                }
+
+                assignedValue = loweredAssignedValue;
+            }
+            else
+            {
+                var currentValue = ReadPlace(target);
+                var right = LowerImportedTypedTemplateExpression(statement.Expression, currentValue.Type);
+                if (right is null)
+                {
+                    return false;
+                }
+
+                var commonType = FindCommonType(currentValue.Type, right.Type);
+                var leftValue = CoerceOperand(currentValue, commonType);
+                var rightValue = CoerceOperand(right, commonType);
+                if (leftValue is null || rightValue is null)
+                {
+                    return false;
+                }
+
+                var temp = EmitTemporary(
+                    new MidLevelIrBinaryRValue(
+                        MapAssignmentOperator(assignmentOperator),
+                        leftValue,
+                        rightValue,
+                        commonType,
+                        assignmentText),
+                    "compound");
+                if (temp is null)
+                {
+                    return false;
+                }
+
+                assignedValue = CoerceOperand(temp, target.Type) ?? temp;
+            }
+
+            var assignment = BuildAssignment(target, assignedValue, assignmentText);
+            EmitAssignment(assignment);
+            return true;
+        }
+
+        private bool TryResolveImportedTypedTemplateAssignmentTarget(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out PlaceTarget target)
+        {
+            target = default!;
+
+            if (!TryResolveImportedTypedTemplateAssignmentTargetCore(
+                    expression,
+                    out var root,
+                    out var targetType,
+                    out var path,
+                    out _,
+                    out var usesAddressModel))
+            {
+                return false;
+            }
+
+            if (IsBorrowParameterRoot(root))
+            {
+                usesAddressModel = true;
+            }
+
+            target = new PlaceTarget(
+                root.Text,
+                RootAddress: null,
+                root.Type,
+                targetType,
+                path,
+                usesAddressModel,
+                GetAddressMutability(root));
+            return true;
+        }
+
+        private bool TryResolveImportedTypedTemplateAssignmentTargetCore(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out MidLevelIrOperand root,
+            out StarkTypeSymbol targetType,
+            out List<PlacePathSegment> path,
+            out bool supportsAddressModel,
+            out bool usesAddressModel)
+        {
+            root = default!;
+            targetType = StarkTypeSymbols.Error;
+            path = [];
+            supportsAddressModel = false;
+            usesAddressModel = false;
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.NameReference)
+            {
+                if (expression.Name is null)
+                {
+                    return false;
+                }
+
+                var operand = ResolveNamedOperand(expression.Name);
+                if (operand is null)
+                {
+                    return false;
+                }
+
+                root = operand;
+                targetType = operand.Type;
+                supportsAddressModel = SupportsAddressModel(operand);
+                return true;
+            }
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.FieldAccess)
+            {
+                if (expression.Ordinal is not { } ordinal
+                    || expression.Args.Count != 1
+                    || !_importedTemplateFieldAccesses.TryGetValue(ordinal, out var publishedFieldAccess)
+                    || !TryResolveImportedTypedTemplateAssignmentTargetCore(
+                        expression.Args[0],
+                        out root,
+                        out targetType,
+                        out path,
+                        out supportsAddressModel,
+                        out usesAddressModel))
+                {
+                    return false;
+                }
+
+                var fieldType = ProjectFrozenView(targetType, ApplyGenericSubstitution(publishedFieldAccess.FieldType));
+                path.Add(new PlacePathSegment(
+                    PlacePathKind.Field,
+                    publishedFieldAccess.FieldName,
+                    publishedFieldAccess.FieldIndex,
+                    IndexOperand: null,
+                    ParentType: targetType,
+                    SegmentType: fieldType));
+                targetType = fieldType;
+                supportsAddressModel = supportsAddressModel || usesAddressModel;
+                return true;
+            }
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.IndexAccess)
+            {
+                if (expression.Args.Count < 2
+                    || !TryResolveImportedTypedTemplateAssignmentTargetCore(
+                        expression.Args[0],
+                        out root,
+                        out targetType,
+                        out path,
+                        out supportsAddressModel,
+                        out usesAddressModel))
+                {
+                    return false;
+                }
+
+                var currentType = targetType;
+                for (var argumentIndex = 1; argumentIndex < expression.Args.Count; argumentIndex++)
+                {
+                    var index = LowerImportedTypedTemplateExpression(expression.Args[argumentIndex], expectedType: null);
+                    if (index is null || index.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        return false;
+                    }
+
+                    if (currentType.Kind == StarkTypeKind.FixedArray && currentType.ElementType is not null)
+                    {
+                        if (TryResolveImportedTypedTemplateConstantIndex(index, out var constantIndex))
+                        {
+                            var constantElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.ConstantArrayIndex,
+                                FieldName: null,
+                                ConstantIndex: constantIndex,
+                                IndexOperand: null,
+                                ParentType: currentType,
+                                SegmentType: constantElementType));
+                            currentType = constantElementType;
+                            continue;
+                        }
+
+                        if (!supportsAddressModel)
+                        {
+                            return false;
+                        }
+
+                        var dynamicElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                        path.Add(new PlacePathSegment(
+                            PlacePathKind.DynamicArrayIndex,
+                            FieldName: null,
+                            ConstantIndex: null,
+                            IndexOperand: index,
+                            ParentType: currentType,
+                            SegmentType: dynamicElementType));
+                        currentType = dynamicElementType;
+                        usesAddressModel = true;
+                        supportsAddressModel = true;
+                        continue;
+                    }
+
+                    if (currentType.Kind == StarkTypeKind.Slice && currentType.ElementType is not null)
+                    {
+                        var sliceElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                        path.Add(new PlacePathSegment(
+                            PlacePathKind.SliceIndex,
+                            FieldName: null,
+                            ConstantIndex: null,
+                            IndexOperand: index,
+                            ParentType: currentType,
+                            SegmentType: sliceElementType));
+                        currentType = sliceElementType;
+                        usesAddressModel = true;
+                        supportsAddressModel = true;
+                        continue;
+                    }
+
+                    if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
+                    {
+                        path.Add(new PlacePathSegment(
+                            PlacePathKind.RawPointerIndex,
+                            FieldName: null,
+                            ConstantIndex: null,
+                            IndexOperand: index,
+                            ParentType: currentType,
+                            SegmentType: currentType.ElementType));
+                        currentType = currentType.ElementType;
+                        usesAddressModel = true;
+                        supportsAddressModel = true;
+                        continue;
+                    }
+
+                    return false;
+                }
+
+                targetType = currentType;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryLowerImportedTypedTemplateSwitch(ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            if (statement.Expression is null
+                || statement.SwitchCases is not { Count: > 0 })
+            {
+                return false;
+            }
+
+            var switchValue = LowerImportedTypedTemplateExpression(statement.Expression, expectedType: null);
+            if (switchValue is null || !CanLowerSwitchType(switchValue.Type))
+            {
+                return false;
+            }
+
+            var defaultSectionCount = statement.SwitchCases.Count(static switchCase => switchCase.Kind == ImportedTemplateTypedSwitchCaseKind.Default);
+            if (defaultSectionCount > 1)
+            {
+                return false;
+            }
+
+            var sections = new (ImportedTemplateTypedSwitchCaseSummary Case, IReadOnlyList<LowerableSwitchLabel> Labels, BasicBlockBuilder EntryBlock, BasicBlockBuilder BodyBlock)[statement.SwitchCases.Count];
             for (var index = 0; index < statement.SwitchCases.Count; index++)
             {
                 var switchCase = statement.SwitchCases[index];
-                if (!TryBuildImportedTypedTemplateSwitchPattern(switchCase, out var aggregatePattern)
-                    || aggregatePattern is null
-                    || aggregatePattern.WholeCaptureName is not null
-                    || !TryRegisterAggregatePatternCaptureLocals(aggregatePattern))
+                if (!TryBuildImportedTypedTemplateSwitchLabel(switchCase, out var label))
                 {
                     return false;
                 }
 
                 sections[index] = (
                     switchCase,
-                    aggregatePattern,
+                    [label],
                     CreateBlock($"typed_switch_test_{index}"),
                     CreateBlock($"typed_switch_case_{index}"));
             }
 
             var exitBlock = CreateBlock("typed_switch_exit");
+            var defaultTarget = sections
+                .Where(static section => section.Labels.Any(static label => label.IsDefault && label.GuardExpression is null && label.ImportedGuardExpression is null && label.CaptureName is null))
+                .Select(static section => section.BodyBlock.Id)
+                .FirstOrDefault(exitBlock.Id);
+
+            if (!TryRegisterSwitchCaptureLocals(sections.Select(static section => section.Labels), switchValue.Type))
+            {
+                return false;
+            }
+
             if (sections.Length == 0)
             {
-                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [exitBlock.Id]);
+                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [defaultTarget]);
             }
             else
             {
@@ -1232,22 +1604,14 @@ internal sealed class MidLevelIrLowerer(
                     CurrentBlock = sections[index].EntryBlock;
                     var nextTarget = index + 1 < sections.Length
                         ? sections[index + 1].EntryBlock.Id
-                        : exitBlock.Id;
-                    if (!EmitAggregateSwitchPatternTransition(
-                            new LowerableSwitchLabel(
-                                LabelText: "typed-switch-pattern",
-                                Literal: null,
-                                GuardExpression: null,
-                                IsDefault: false,
-                                IsMatchAll: false,
-                                CaptureName: null,
-                                AggregatePattern: sections[index].Pattern),
-                            sections[index].Pattern,
+                        : defaultTarget;
+                    if (!EmitSwitchSectionDecision(
+                            sections[index].Labels,
                             switchValue,
                             sections[index].BodyBlock.Id,
                             nextTarget,
-                            index,
-                            0))
+                            RenderImportedTypedTemplateExpression(statement.Expression),
+                            index))
                     {
                         return false;
                     }
@@ -1280,6 +1644,89 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
+        private bool TryBuildImportedTypedTemplateSwitchLabel(
+            ImportedTemplateTypedSwitchCaseSummary switchCase,
+            out LowerableSwitchLabel label)
+        {
+            label = null!;
+
+            switch (switchCase.Kind)
+            {
+                case ImportedTemplateTypedSwitchCaseKind.Literal:
+                    if (switchCase.Expression is null)
+                    {
+                        return false;
+                    }
+
+                    label = new LowerableSwitchLabel(
+                        RenderImportedTypedTemplateExpression(switchCase.Expression),
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: false,
+                        IsMatchAll: false,
+                        CaptureName: null,
+                        AggregatePattern: null,
+                        ImportedLiteralExpression: switchCase.Expression,
+                        ImportedGuardExpression: switchCase.GuardExpression);
+                    return true;
+
+                case ImportedTemplateTypedSwitchCaseKind.MatchAll:
+                    label = new LowerableSwitchLabel(
+                        switchCase.Name is null ? "_" : $"var {switchCase.Name}",
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: false,
+                        IsMatchAll: true,
+                        CaptureName: switchCase.Name,
+                        AggregatePattern: null,
+                        ImportedLiteralExpression: null,
+                        ImportedGuardExpression: switchCase.GuardExpression);
+                    return true;
+
+                case ImportedTemplateTypedSwitchCaseKind.Default:
+                    if (switchCase.Name is not null
+                        || switchCase.Expression is not null
+                        || switchCase.GuardExpression is not null)
+                    {
+                        return false;
+                    }
+
+                    label = new LowerableSwitchLabel(
+                        "default",
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: true,
+                        IsMatchAll: true,
+                        CaptureName: null,
+                        AggregatePattern: null);
+                    return true;
+
+                case ImportedTemplateTypedSwitchCaseKind.EnumPattern:
+                case ImportedTemplateTypedSwitchCaseKind.AggregatePattern:
+                    if (!TryBuildImportedTypedTemplateSwitchPattern(switchCase, out var aggregatePattern)
+                        || aggregatePattern is null
+                        || aggregatePattern.WholeCaptureName is not null)
+                    {
+                        return false;
+                    }
+
+                    label = new LowerableSwitchLabel(
+                        "typed-switch-pattern",
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: false,
+                        IsMatchAll: false,
+                        CaptureName: null,
+                        AggregatePattern: aggregatePattern,
+                        ImportedLiteralExpression: null,
+                        ImportedGuardExpression: switchCase.GuardExpression);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         private bool TryBuildImportedTypedTemplateSwitchPattern(
             ImportedTemplateTypedSwitchCaseSummary switchCase,
             out LowerableAggregatePattern? aggregatePattern)
@@ -1303,7 +1750,8 @@ internal sealed class MidLevelIrLowerer(
         {
             aggregatePattern = null;
 
-            if (!_importedTemplateEnumPatterns.TryGetValue(switchCase.Ordinal, out var publishedEnumPattern))
+            if (switchCase.Ordinal is not { } ordinal
+                || !_importedTemplateEnumPatterns.TryGetValue(ordinal, out var publishedEnumPattern))
             {
                 return false;
             }
@@ -1390,7 +1838,8 @@ internal sealed class MidLevelIrLowerer(
         {
             aggregatePattern = null;
 
-            if (!_importedTemplateAggregatePatterns.TryGetValue(switchCase.Ordinal, out var publishedAggregatePattern))
+            if (switchCase.Ordinal is not { } ordinal
+                || !_importedTemplateAggregatePatterns.TryGetValue(ordinal, out var publishedAggregatePattern))
             {
                 return false;
             }
@@ -1852,7 +2301,7 @@ internal sealed class MidLevelIrLowerer(
                         publishedFieldAccess.FieldIndex,
                         ApplyGenericSubstitution(publishedFieldAccess.FieldType),
                         publishedFieldAccess.FieldName);
-                    return result is null || expectedType is null
+                    return expectedType is null
                         ? result
                         : CoerceOperand(result, expectedType);
                 }
@@ -1896,37 +2345,42 @@ internal sealed class MidLevelIrLowerer(
 
             if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
             {
-                if (expression.Args.Count != 3)
+                if (expression.Args.Count == 2)
                 {
-                    MarkUnsupported(reason: "Imported typed template-body text slicing currently requires exactly two integer indices.");
-                    return null;
-                }
+                    var start = LowerImportedTypedTemplateExpression(expression.Args[1], expectedType: null);
+                    if (start is null || start.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        return null;
+                    }
 
-                var start = LowerImportedTypedTemplateExpression(expression.Args[1], expectedType: null);
-                var length = LowerImportedTypedTemplateExpression(expression.Args[2], expectedType: null);
-                if (start is null
-                    || length is null
-                    || start.Type.Kind != StarkTypeKind.Integer
-                    || length.Type.Kind != StarkTypeKind.Integer)
-                {
-                    return null;
-                }
-
-                start = CoerceOperand(start, StarkTypeSymbols.Integer(64));
-                length = CoerceOperand(length, StarkTypeSymbols.Integer(64));
-                if (start is null || length is null)
-                {
-                    return null;
-                }
-
-                return EmitTemporary(
-                    new MidLevelIrTextSliceRValue(
+                    return LowerTextSlice(
                         target,
                         start,
-                        length,
-                        target.Type,
-                        $"{target.Text}[{start.Text}, {length.Text}]"),
-                    "slice");
+                        new MidLevelIrIntegerConstantOperand(BigInteger.One, StarkTypeSymbols.Integer(64)),
+                        $"{target.Text}[{RenderImportedTypedTemplateExpression(expression.Args[1])}]");
+                }
+
+                if (expression.Args.Count != 3)
+                {
+                    MarkUnsupported(reason: "Imported typed template-body text indexing currently requires exactly one integer index or two integer indices.");
+                    return null;
+                }
+
+                var sliceStart = LowerImportedTypedTemplateExpression(expression.Args[1], expectedType: null);
+                var sliceLength = LowerImportedTypedTemplateExpression(expression.Args[2], expectedType: null);
+                if (sliceStart is null
+                    || sliceLength is null
+                    || sliceStart.Type.Kind != StarkTypeKind.Integer
+                    || sliceLength.Type.Kind != StarkTypeKind.Integer)
+                {
+                    return null;
+                }
+
+                return LowerTextSlice(
+                    target,
+                    sliceStart,
+                    sliceLength,
+                    $"{target.Text}[{RenderImportedTypedTemplateExpression(expression.Args[1])}, {RenderImportedTypedTemplateExpression(expression.Args[2])}]");
             }
 
             var current = target;
@@ -1960,15 +2414,10 @@ internal sealed class MidLevelIrLowerer(
                     }
 
                     var projectedElementType = ProjectFrozenView(current.Type, current.Type.ElementType);
-                    var baseAddress = current switch
-                    {
-                        MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, local.Type),
-                        MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, parameter.Type),
-                        _ => null
-                    };
+                    var baseAddress = TryCreateDynamicFixedArrayBaseAddress(current);
                     if (baseAddress is null)
                     {
-                        MarkUnsupported(reason: "Dynamic fixed-array indexing from imported typed template bodies currently requires a local or parameter fixed-array source.");
+                        MarkUnsupported(reason: "Dynamic fixed-array indexing from imported typed template bodies currently requires an addressable fixed-array source.");
                         return null;
                     }
 
@@ -2085,6 +2534,33 @@ internal sealed class MidLevelIrLowerer(
 
             constantIndex = (int)integerConstant.Value;
             return true;
+        }
+
+        private MidLevelIrOperand? TryCreateDynamicFixedArrayBaseAddress(MidLevelIrOperand source)
+        {
+            if (source.Type.Kind != StarkTypeKind.FixedArray)
+            {
+                return null;
+            }
+
+            var directAddress = source switch
+            {
+                MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, local.Type),
+                MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, parameter.Type),
+                MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, global.Type),
+                _ => null
+            };
+            if (directAddress is not null)
+            {
+                return directAddress;
+            }
+
+            // Spill non-addressable fixed-array temporaries so dynamic indexing can still
+            // lower through address-based element access.
+            var spilled = EmitTemporary(new MidLevelIrUseRValue(source), "indexbase");
+            return spilled is MidLevelIrLocalOperand localSpill
+                ? CreateAddressOfLocal(localSpill.Name, localSpill.Type)
+                : null;
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateLiteral(
@@ -2984,26 +3460,128 @@ internal sealed class MidLevelIrLowerer(
 
         private void LowerExpressionStatement(StarkParser.ExpressionContext expression)
         {
-            if (TryLowerAssignmentExpression(expression.assignmentExpression(), out var assignment))
+            if (TryLowerExpressionStatementCore(expression))
             {
-                EmitAssignment(assignment);
-                return;
-            }
-
-            if (TryLowerExpressionAsRValue(expression, out var value))
-            {
-                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
-                return;
-            }
-
-            if (LowerExpressionToOperand(expression) is { } operand)
-            {
-                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: new MidLevelIrUseRValue(operand));
                 return;
             }
 
             MarkUnsupported(expression, "Expression statement could not be lowered to an assignment, rvalue, or operand.");
             Emit(MidLevelIrStatementKind.Evaluate, expression.GetText());
+        }
+
+        private bool TryLowerExpressionStatementCore(StarkParser.ExpressionContext expression)
+        {
+            if (TryLowerAssignmentExpression(expression.assignmentExpression(), out var assignment))
+            {
+                EmitAssignment(assignment);
+                return true;
+            }
+
+            if (TryLowerConditionalCallStatement(expression))
+            {
+                return true;
+            }
+
+            if (TryLowerExpressionAsRValue(expression, out var value))
+            {
+                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
+                return true;
+            }
+
+            if (LowerExpressionToOperand(expression) is { } operand)
+            {
+                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: new MidLevelIrUseRValue(operand));
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryLowerConditionalCallStatement(StarkParser.ExpressionContext expression)
+        {
+            if (!TryGetTernaryConditionalExpression(expression, out var conditionalExpression)
+                || !CanLowerConditionalCallStatementBranch(conditionalExpression.expression(0))
+                || !CanLowerConditionalCallStatementBranch(conditionalExpression.expression(1)))
+            {
+                return false;
+            }
+
+            var condition = LowerLogicalOrExpression(conditionalExpression.logicalOrExpression(), StarkTypeSymbols.Bool);
+            if (condition is null)
+            {
+                return false;
+            }
+
+            var thenBlock = CreateBlock("cond_true");
+            var elseBlock = CreateBlock("cond_false");
+            var joinBlock = CreateBlock("cond_join");
+
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [thenBlock.Id, elseBlock.Id],
+                ConditionText: conditionalExpression.logicalOrExpression().GetText(),
+                Condition: condition);
+
+            CurrentBlock = thenBlock;
+            if (!TryLowerConditionalCallStatementBranch(conditionalExpression.expression(0)))
+            {
+                return false;
+            }
+
+            EnsureGoto(joinBlock.Id);
+
+            CurrentBlock = elseBlock;
+            if (!TryLowerConditionalCallStatementBranch(conditionalExpression.expression(1)))
+            {
+                return false;
+            }
+
+            EnsureGoto(joinBlock.Id);
+
+            CurrentBlock = joinBlock;
+            return true;
+        }
+
+        private bool TryLowerConditionalCallStatementBranch(StarkParser.ExpressionContext expression)
+        {
+            if (TryLowerExpressionAsRValue(expression, out var value))
+            {
+                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
+                return true;
+            }
+
+            return TryLowerConditionalCallStatement(expression);
+        }
+
+        private static bool CanLowerConditionalCallStatementBranch(StarkParser.ExpressionContext expression)
+        {
+            if (TryGetSimplePostfixExpression(expression) is { } postfixExpression
+                && postfixExpression.postfixPart().Length > 0
+                && postfixExpression.postfixPart()[^1].argumentList() is not null)
+            {
+                return true;
+            }
+
+            return TryGetTernaryConditionalExpression(expression, out var conditionalExpression)
+                && CanLowerConditionalCallStatementBranch(conditionalExpression.expression(0))
+                && CanLowerConditionalCallStatementBranch(conditionalExpression.expression(1));
+        }
+
+        private static bool TryGetTernaryConditionalExpression(
+            StarkParser.ExpressionContext expression,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out StarkParser.ConditionalExpressionContext? conditionalExpression)
+        {
+            conditionalExpression = null;
+            var assignmentExpression = expression.assignmentExpression();
+            if (assignmentExpression.assignmentOperator() is not null
+                || assignmentExpression.conditionalExpression() is not { } conditional
+                || conditional.expression().Length != 2)
+            {
+                return false;
+            }
+
+            conditionalExpression = conditional;
+            return true;
         }
 
         private bool TryLowerAssignmentExpression(
@@ -3540,11 +4118,11 @@ internal sealed class MidLevelIrLowerer(
                 .ToArray();
             var exitBlock = CreateBlock("switch_exit");
             var defaultTarget = sections
-                .Where(static section => section.Labels.Any(static label => label.IsDefault && label.GuardExpression is null && label.CaptureName is null))
+                .Where(static section => section.Labels.Any(static label => label.IsDefault && label.GuardExpression is null && label.ImportedGuardExpression is null && label.CaptureName is null))
                 .Select(static section => section.BodyBlock.Id)
                 .FirstOrDefault(exitBlock.Id);
 
-            if (!TryRegisterSwitchCaptureLocals(sections, switchValue.Type))
+            if (!TryRegisterSwitchCaptureLocals(sections.Select(static section => section.Labels), switchValue.Type))
             {
                 return false;
             }
@@ -3647,16 +4225,32 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                var condition = EmitSwitchLiteralComparison(
-                    switchValue,
-                    label.Literal!,
-                    $"switch {switchText} == {label.LabelText}");
+                MidLevelIrOperand? condition;
+                if (label.Literal is not null)
+                {
+                    condition = EmitSwitchLiteralComparison(
+                        switchValue,
+                        label.Literal,
+                        $"switch {switchText} == {label.LabelText}");
+                }
+                else if (label.ImportedLiteralExpression is not null)
+                {
+                    condition = EmitImportedTypedTemplateSwitchLiteralComparison(
+                        switchValue,
+                        label.ImportedLiteralExpression,
+                        $"switch {switchText} == {label.LabelText}");
+                }
+                else
+                {
+                    return false;
+                }
+
                 if (condition is null)
                 {
                     return false;
                 }
 
-                if (label.GuardExpression is null && label.CaptureName is null)
+                if (label.GuardExpression is null && label.ImportedGuardExpression is null && label.CaptureName is null)
                 {
                     CurrentBlock.Terminator = new MidLevelIrTerminator(
                         MidLevelIrTerminatorKind.Branch,
@@ -4349,15 +4943,15 @@ internal sealed class MidLevelIrLowerer(
         }
 
         private bool TryRegisterSwitchCaptureLocals(
-            IEnumerable<(StarkParser.SwitchSectionContext Section, IReadOnlyList<LowerableSwitchLabel> Labels, BasicBlockBuilder EntryBlock, BasicBlockBuilder BodyBlock)> sections,
+            IEnumerable<IReadOnlyList<LowerableSwitchLabel>> sectionLabels,
             StarkTypeSymbol switchType)
         {
-            foreach (var section in sections)
+            foreach (var labels in sectionLabels)
             {
-                var aggregateLabels = section.Labels.Where(static label => label.AggregatePattern is not null).ToArray();
+                var aggregateLabels = labels.Where(static label => label.AggregatePattern is not null).ToArray();
                 if (aggregateLabels.Length != 0)
                 {
-                    if (aggregateLabels.Length != 1 || section.Labels.Count != 1)
+                    if (aggregateLabels.Length != 1 || labels.Count != 1)
                     {
                         return false;
                     }
@@ -4376,13 +4970,13 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                var captureLabels = section.Labels.Where(static label => label.CaptureName is not null).ToArray();
+                var captureLabels = labels.Where(static label => label.CaptureName is not null).ToArray();
                 if (captureLabels.Length == 0)
                 {
                     continue;
                 }
 
-                if (captureLabels.Length != 1 || section.Labels.Count != 1)
+                if (captureLabels.Length != 1 || labels.Count != 1)
                 {
                     return false;
                 }
@@ -4436,7 +5030,7 @@ internal sealed class MidLevelIrLowerer(
                 ? []
                 : [new PendingSwitchBinding(label.CaptureName, switchValue)];
 
-            return EmitSwitchBindingsAndGuard(label.GuardExpression, bindings, targetBlockId, nextTarget);
+            return EmitSwitchBindingsAndGuard(label.GuardExpression, label.ImportedGuardExpression, bindings, targetBlockId, nextTarget);
         }
 
         private bool EmitAggregateSwitchPatternTransition(
@@ -4474,7 +5068,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             CurrentBlock = matchBlock;
-            return EmitSwitchBindingsAndGuard(label.GuardExpression, bindings, targetBlockId, nextTarget);
+            return EmitSwitchBindingsAndGuard(label.GuardExpression, label.ImportedGuardExpression, bindings, targetBlockId, nextTarget);
         }
 
         private bool EmitAggregatePatternDecision(
@@ -4503,17 +5097,8 @@ internal sealed class MidLevelIrLowerer(
                 }
 
                 var tagValue = LowerKnownFieldAccess(switchValue, enumLayout.TagField.Name, fieldIndex: 0, enumLayout.TagField.Type, "$tag");
-                if (tagValue is null)
-                {
-                    return false;
-                }
-
                 var expectedTag = new MidLevelIrIntegerConstantOperand(new BigInteger(enumVariant.TagValue), enumLayout.TagField.Type);
-                var condition = EmitEqualityComparison(tagValue, expectedTag, $"switch {switchValue.Text} is {aggregatePattern.TypeName}.{enumVariantName}");
-                if (condition is null)
-                {
-                    return false;
-                }
+                var condition = EmitResolvedEqualityComparison(tagValue, expectedTag, $"switch {switchValue.Text} is {aggregatePattern.TypeName}.{enumVariantName}");
 
                 CurrentBlock.Terminator = new MidLevelIrTerminator(
                     MidLevelIrTerminatorKind.Branch,
@@ -4555,11 +5140,6 @@ internal sealed class MidLevelIrLowerer(
                 }
 
                 var fieldValue = LowerKnownFieldAccess(switchValue, fieldPattern.StorageFieldName, fieldPattern.FieldIndex, fieldPattern.FieldType, fieldPattern.FieldName);
-                if (fieldValue is null)
-                {
-                    return false;
-                }
-
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
                 {
                     bindings.Add(new PendingSwitchBinding(fieldPattern.CaptureName!, fieldValue));
@@ -4605,11 +5185,12 @@ internal sealed class MidLevelIrLowerer(
 
         private bool EmitSwitchBindingsAndGuard(
             StarkParser.ExpressionContext? guardExpression,
+            ImportedTemplateTypedBodyExpressionSummary? importedGuardExpression,
             IReadOnlyList<PendingSwitchBinding> bindings,
             int targetBlockId,
             int nextTarget)
         {
-            if (bindings.Count != 0 && guardExpression is not null)
+            if (bindings.Count != 0 && (guardExpression is not null || importedGuardExpression is not null))
             {
                 var bindBlock = CreateBlock("switch_bind");
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bindBlock.Id]);
@@ -4622,13 +5203,25 @@ internal sealed class MidLevelIrLowerer(
                 EmitOperandAssignment(capture, binding.Source, binding.Source.Text);
             }
 
-            if (guardExpression is null)
+            if (guardExpression is null && importedGuardExpression is null)
             {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
                 return true;
             }
 
-            var guard = LowerExpressionToOperand(guardExpression, StarkTypeSymbols.Bool);
+            MidLevelIrOperand? guard;
+            string conditionText;
+            if (guardExpression is not null)
+            {
+                guard = LowerExpressionToOperand(guardExpression, StarkTypeSymbols.Bool);
+                conditionText = guardExpression.GetText();
+            }
+            else
+            {
+                guard = LowerImportedTypedTemplateExpression(importedGuardExpression!, StarkTypeSymbols.Bool);
+                conditionText = RenderImportedTypedTemplateExpression(importedGuardExpression!);
+            }
+
             if (guard is null)
             {
                 return false;
@@ -4637,7 +5230,7 @@ internal sealed class MidLevelIrLowerer(
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Branch,
                 [targetBlockId, nextTarget],
-                ConditionText: guardExpression.GetText(),
+                ConditionText: conditionText,
                 Condition: guard);
             return true;
         }
@@ -6421,7 +7014,7 @@ internal sealed class MidLevelIrLowerer(
                 "field");
         }
 
-        private MidLevelIrOperand? LowerKnownFieldAccess(
+        private MidLevelIrOperand LowerKnownFieldAccess(
             MidLevelIrOperand target,
             string fieldName,
             int fieldIndex,
@@ -6429,7 +7022,7 @@ internal sealed class MidLevelIrLowerer(
             string displayFieldName)
         {
             var projectedType = ProjectFrozenView(target.Type, fieldType);
-            return EmitTemporary(
+            return EmitRequiredTemporary(
                 new MidLevelIrExtractFieldRValue(
                     target,
                     fieldName,
@@ -6443,7 +7036,7 @@ internal sealed class MidLevelIrLowerer(
         {
             if (CanUsePartitionedTextSwitchType(target.Type))
             {
-                return LowerTextSliceAccess(target, indexes);
+                return LowerTextAccess(target, indexes);
             }
 
             var current = target;
@@ -6471,15 +7064,13 @@ internal sealed class MidLevelIrLowerer(
                         continue;
                     }
 
-                    if (current is not MidLevelIrLocalOperand local || current.Type.ElementType is null)
+                    if (current.Type.ElementType is null)
                     {
-                        MarkUnsupported(indexes, "Dynamic fixed-array indexing currently requires a local fixed array source.");
+                        MarkUnsupported(indexes, "Dynamic fixed-array indexing currently requires an addressable fixed-array source.");
                         return null;
                     }
 
                     var projectedElementType = ProjectFrozenView(current.Type, current.Type.ElementType);
-                    EnsureAddressableLocal(local.Name);
-
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
                     {
@@ -6487,9 +7078,10 @@ internal sealed class MidLevelIrLowerer(
                         return null;
                     }
 
-                    var baseAddress = CreateAddressOfLocal(local.Name, local.Type);
+                    var baseAddress = TryCreateDynamicFixedArrayBaseAddress(current);
                     if (baseAddress is null)
                     {
+                        MarkUnsupported(indexes, "Dynamic fixed-array indexing currently requires an addressable fixed-array source.");
                         return null;
                     }
 
@@ -6500,7 +7092,7 @@ internal sealed class MidLevelIrLowerer(
                             index,
                             ConstantIndex: null,
                             AddressType(projectedElementType, isMutable: CanMutateThroughType(current.Type)),
-                            $"{local.Name}[{indexExpression.GetText()}]"),
+                            $"{current.Text}[{indexExpression.GetText()}]"),
                         "addr");
                     if (elementAddress is null)
                     {
@@ -6511,7 +7103,7 @@ internal sealed class MidLevelIrLowerer(
                         new MidLevelIrLoadIndirectRValue(
                             elementAddress,
                             projectedElementType,
-                            $"{local.Name}[{indexExpression.GetText()}]"),
+                            $"{current.Text}[{indexExpression.GetText()}]"),
                         "load");
                     if (loaded is null)
                     {
@@ -6605,26 +7197,58 @@ internal sealed class MidLevelIrLowerer(
             return current;
         }
 
-        private MidLevelIrOperand? LowerTextSliceAccess(MidLevelIrOperand target, StarkParser.ExpressionListContext indexes)
+        private MidLevelIrOperand? LowerTextAccess(MidLevelIrOperand target, StarkParser.ExpressionListContext indexes)
         {
             var indexExpressions = indexes.expression();
+            if (indexExpressions.Length == 1)
+            {
+                var start = LowerExpressionToOperand(indexExpressions[0]);
+                if (start is null || start.Type.Kind != StarkTypeKind.Integer)
+                {
+                    MarkUnsupported(indexes, "Text indexing currently requires an integer index operand.");
+                    return null;
+                }
+
+                return LowerTextSlice(
+                    target,
+                    start,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.One, StarkTypeSymbols.Integer(64)),
+                    $"{target.Text}[{indexExpressions[0].GetText()}]");
+            }
+
             if (indexExpressions.Length != 2)
             {
-                MarkUnsupported(indexes, "Text slicing currently requires exactly two integer indices.");
+                MarkUnsupported(indexes, "Text indexing currently requires exactly one integer index or two integer indices.");
                 return null;
             }
 
-            var start = LowerExpressionToOperand(indexExpressions[0]);
-            var length = LowerExpressionToOperand(indexExpressions[1]);
-            if (start is null || length is null || start.Type.Kind != StarkTypeKind.Integer || length.Type.Kind != StarkTypeKind.Integer)
+            var sliceStart = LowerExpressionToOperand(indexExpressions[0]);
+            var sliceLength = LowerExpressionToOperand(indexExpressions[1]);
+            if (sliceStart is null
+                || sliceLength is null
+                || sliceStart.Type.Kind != StarkTypeKind.Integer
+                || sliceLength.Type.Kind != StarkTypeKind.Integer)
             {
                 MarkUnsupported(indexes, "Text slicing currently requires integer start and length operands.");
                 return null;
             }
 
-            start = CoerceOperand(start, StarkTypeSymbols.Integer(64));
-            length = CoerceOperand(length, StarkTypeSymbols.Integer(64));
-            if (start is null || length is null)
+            return LowerTextSlice(
+                target,
+                sliceStart,
+                sliceLength,
+                $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]");
+        }
+
+        private MidLevelIrOperand? LowerTextSlice(
+            MidLevelIrOperand target,
+            MidLevelIrOperand start,
+            MidLevelIrOperand length,
+            string text)
+        {
+            var coercedStart = CoerceOperand(start, StarkTypeSymbols.Integer(64));
+            var coercedLength = CoerceOperand(length, StarkTypeSymbols.Integer(64));
+            if (coercedStart is null || coercedLength is null)
             {
                 return null;
             }
@@ -6632,10 +7256,10 @@ internal sealed class MidLevelIrLowerer(
             return EmitTemporary(
                 new MidLevelIrTextSliceRValue(
                     target,
-                    start,
-                    length,
+                    coercedStart,
+                    coercedLength,
                     target.Type,
-                    $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]"),
+                    text),
                 "slice");
         }
 
@@ -8643,12 +9267,49 @@ internal sealed class MidLevelIrLowerer(
                 "cmp");
         }
 
+        private MidLevelIrOperand EmitResolvedEqualityComparison(MidLevelIrOperand left, MidLevelIrOperand right, string text)
+        {
+            return EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Equal,
+                    left,
+                    right,
+                    StarkTypeSymbols.Bool,
+                    text),
+                "cmp");
+        }
+
         private MidLevelIrOperand? EmitSwitchLiteralComparison(
             MidLevelIrOperand switchValue,
             StarkParser.LiteralContext literal,
             string text)
         {
             var literalOperand = LowerSwitchCaseLiteral(literal, switchValue.Type);
+            if (literalOperand is null)
+            {
+                return null;
+            }
+
+            if (switchValue.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+            {
+                if (literalOperand is not MidLevelIrStringConstantOperand stringLiteral)
+                {
+                    MarkUnsupported();
+                    return null;
+                }
+
+                return EmitTextLiteralComparison(switchValue, stringLiteral, text);
+            }
+
+            return EmitEqualityComparison(switchValue, literalOperand, text);
+        }
+
+        private MidLevelIrOperand? EmitImportedTypedTemplateSwitchLiteralComparison(
+            MidLevelIrOperand switchValue,
+            ImportedTemplateTypedBodyExpressionSummary literalExpression,
+            string text)
+        {
+            var literalOperand = LowerImportedTypedTemplateExpression(literalExpression, switchValue.Type);
             if (literalOperand is null)
             {
                 return null;
@@ -8966,6 +9627,11 @@ internal sealed class MidLevelIrLowerer(
             RegisterLocal(name, value.Type, storageClass: "temp", isMutable: false, isConstant: false);
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {value.Text}", name, value.Type, value);
             return new MidLevelIrLocalOperand(name, value.Type);
+        }
+
+        private MidLevelIrOperand EmitRequiredTemporary(MidLevelIrRValue value, string hint)
+        {
+            return EmitTemporary(value, hint)!;
         }
 
         private MidLevelIrLocalOperand CreateTemporaryLocal(StarkTypeSymbol type, string hint)
@@ -9336,13 +10002,7 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                var fieldValue = LowerFieldAccess(aggregate, field.Name);
-                if (fieldValue is null)
-                {
-                    MarkUnsupported();
-                    continue;
-                }
-
+                var fieldValue = LowerKnownFieldAccess(aggregate, field.Name, index, field.Type, field.Name);
                 EmitRuntimeDropFromOperand(fieldValue, field.Type);
             }
 
@@ -9377,12 +10037,6 @@ internal sealed class MidLevelIrLowerer(
                 }
 
                 var tagValue = LowerKnownFieldAccess(aggregate, layout.TagField.Name, 0, layout.TagField.Type, "$tag");
-                if (tagValue is null)
-                {
-                    MarkUnsupported();
-                    return;
-                }
-
                 var joinBlock = CreateBlock("enum_drop_join");
                 BasicBlockBuilder? nextDecisionBlock = CurrentBlock;
 
@@ -9401,14 +10055,7 @@ internal sealed class MidLevelIrLowerer(
                         ? null
                         : CreateBlock($"enum_drop_next_{variantIndex}");
                     var expectedTag = new MidLevelIrIntegerConstantOperand(new BigInteger(variant.TagValue), layout.TagField.Type);
-                    var condition = EmitEqualityComparison(tagValue, expectedTag, $"{aggregate.Text}.$tag == {variant.TagValue}");
-                    if (condition is null)
-                    {
-                        MarkUnsupported();
-                        EnsureGoto(joinBlock.Id);
-                        CurrentBlock = joinBlock;
-                        return;
-                    }
+                    var condition = EmitResolvedEqualityComparison(tagValue, expectedTag, $"{aggregate.Text}.$tag == {variant.TagValue}");
 
                     CurrentBlock.Terminator = new MidLevelIrTerminator(
                         MidLevelIrTerminatorKind.Branch,
@@ -9427,12 +10074,6 @@ internal sealed class MidLevelIrLowerer(
                             field.StorageFieldIndex,
                             field.Type,
                             displayName);
-                        if (fieldValue is null)
-                        {
-                            MarkUnsupported();
-                            continue;
-                        }
-
                         EmitRuntimeDropFromOperand(fieldValue, field.Type);
                     }
 

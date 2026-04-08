@@ -166,7 +166,8 @@ internal sealed record StarkPackageTypedInterfaceSection(
     IReadOnlyList<StarkPackageTypedFunctionManifest> Functions,
     IReadOnlyList<StarkPackageTypedTypeManifest> Types,
     IReadOnlyList<StarkPackageTypedGlobalManifest> Globals,
-    IReadOnlyList<StarkPackageTypedTypeAliasManifest>? TypeAliases = null);
+    IReadOnlyList<StarkPackageTypedTypeAliasManifest>? TypeAliases = null,
+    IReadOnlyList<StarkPackageImportManifest>? Imports = null);
 
 internal sealed record StarkPackageTypeReference(
     string Kind,
@@ -331,6 +332,9 @@ internal sealed record StarkPackageTypedTemplatePatternManifest(
 internal sealed record StarkPackageTypedTemplateSwitchCaseManifest(
     string Kind,
     int? Ordinal = null,
+    string? Name = null,
+    StarkPackageTypedTemplateExpressionManifest? Expression = null,
+    StarkPackageTypedTemplateExpressionManifest? GuardExpression = null,
     IReadOnlyList<StarkPackageTypedTemplatePatternManifest>? Members = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? Statements = null);
 
@@ -338,6 +342,7 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     string Kind,
     StarkPackageTypedTemplateExpressionManifest Expression = null!,
     string? Name = null,
+    string? AssignmentOperator = null,
     string? StorageClass = null,
     bool IsMutable = false,
     bool IsConstant = false,
@@ -347,7 +352,8 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? IteratorStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? BodyStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ThenStatements = null,
-    IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ElseStatements = null);
+    IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ElseStatements = null,
+    StarkPackageTypedTemplateExpressionManifest? TargetExpression = null);
 
 internal sealed record StarkPackageTypedTemplateBodyManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest> Statements);

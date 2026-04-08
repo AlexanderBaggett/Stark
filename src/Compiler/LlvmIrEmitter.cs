@@ -10,6 +10,10 @@ internal sealed class LlvmIrEmitter
 {
     private const string AsciiStringTypeName = "stark_ascii";
     private const string UnicodeStringTypeName = "stark_unicode";
+    private const string AsciiEqualityHelperName = "__stark_ascii_equal";
+    private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
+    private const string AsciiCompareHelperName = "__stark_ascii_compare";
+    private const string UnicodeCompareHelperName = "__stark_unicode_compare";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
     private const int AggregateMemcpyThresholdBytes = 32;
@@ -153,6 +157,7 @@ internal sealed class LlvmIrEmitter
         EmitStringConstants(builder);
         EmitGlobals(builder);
         EmitIntrinsicDeclarations(builder);
+        EmitInternalHelperDefinitions(builder);
 
         var handledFunctionNames = new HashSet<string>(
             _syntaxModel.Declarations
@@ -1858,6 +1863,130 @@ internal sealed class LlvmIrEmitter
         }
     }
 
+    private void EmitInternalHelperDefinitions(StringBuilder builder)
+    {
+        EmitTextEqualityHelperDefinition(builder, StarkTypeSymbols.Ascii, AsciiEqualityHelperName);
+        builder.AppendLine();
+        EmitTextEqualityHelperDefinition(builder, StarkTypeSymbols.Unicode, UnicodeEqualityHelperName);
+        builder.AppendLine();
+        EmitTextComparisonHelperDefinition(builder, StarkTypeSymbols.Ascii, AsciiCompareHelperName);
+        builder.AppendLine();
+        EmitTextComparisonHelperDefinition(builder, StarkTypeSymbols.Unicode, UnicodeCompareHelperName);
+        builder.AppendLine();
+    }
+
+    private void EmitTextEqualityHelperDefinition(
+        StringBuilder builder,
+        StarkTypeSymbol textType,
+        string helperName)
+    {
+        var textLlvmType = MapType(textType);
+        var unitType = textType.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+            StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+            _ => throw new InvalidOperationException($"Text equality helper requires an ascii/unicode type, but found '{textType.DisplayName}'.")
+        };
+        var unitLlvmType = MapType(unitType);
+
+        builder.AppendLine($"define internal i1 @{EscapeIdentifier(helperName)}({textLlvmType} %left, {textLlvmType} %right) {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %left_data = extractvalue {textLlvmType} %left, 0");
+        builder.AppendLine($"  %left_length = extractvalue {textLlvmType} %left, 1");
+        builder.AppendLine($"  %right_data = extractvalue {textLlvmType} %right, 0");
+        builder.AppendLine($"  %right_length = extractvalue {textLlvmType} %right, 1");
+        builder.AppendLine("  %length_equal = icmp eq i64 %left_length, %right_length");
+        builder.AppendLine("  br i1 %length_equal, label %loop_header, label %return_false");
+        builder.AppendLine();
+        builder.AppendLine("loop_header:");
+        builder.AppendLine("  %textcmp_index = phi i64 [ 0, %entry ], [ %textcmp_next, %loop_continue ]");
+        builder.AppendLine("  %textcmp_done = icmp eq i64 %textcmp_index, %left_length");
+        builder.AppendLine("  br i1 %textcmp_done, label %return_true, label %loop_body");
+        builder.AppendLine();
+        builder.AppendLine("loop_body:");
+        builder.AppendLine($"  %left_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %left_data, i64 %textcmp_index");
+        builder.AppendLine($"  %right_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %right_data, i64 %textcmp_index");
+        builder.AppendLine($"  %left_unit = load {unitLlvmType}, ptr %left_unit_ptr");
+        builder.AppendLine($"  %right_unit = load {unitLlvmType}, ptr %right_unit_ptr");
+        builder.AppendLine($"  %unit_equal = icmp eq {unitLlvmType} %left_unit, %right_unit");
+        builder.AppendLine("  br i1 %unit_equal, label %loop_continue, label %return_false");
+        builder.AppendLine();
+        builder.AppendLine("loop_continue:");
+        builder.AppendLine("  %textcmp_next = add i64 %textcmp_index, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("return_false:");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine();
+        builder.AppendLine("return_true:");
+        builder.AppendLine("  ret i1 true");
+        builder.AppendLine("}");
+    }
+
+    private void EmitTextComparisonHelperDefinition(
+        StringBuilder builder,
+        StarkTypeSymbol textType,
+        string helperName)
+    {
+        var textLlvmType = MapType(textType);
+        var unitType = textType.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+            StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+            _ => throw new InvalidOperationException($"Text comparison helper requires an ascii/unicode type, but found '{textType.DisplayName}'.")
+        };
+        var unitLlvmType = MapType(unitType);
+
+        builder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({textLlvmType} %left, {textLlvmType} %right) {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %left_data = extractvalue {textLlvmType} %left, 0");
+        builder.AppendLine($"  %left_length = extractvalue {textLlvmType} %left, 1");
+        builder.AppendLine($"  %right_data = extractvalue {textLlvmType} %right, 0");
+        builder.AppendLine($"  %right_length = extractvalue {textLlvmType} %right, 1");
+        builder.AppendLine("  %left_shorter = icmp ult i64 %left_length, %right_length");
+        builder.AppendLine("  %min_length = select i1 %left_shorter, i64 %left_length, i64 %right_length");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("loop_header:");
+        builder.AppendLine("  %textord_index = phi i64 [ 0, %entry ], [ %textord_next, %loop_continue ]");
+        builder.AppendLine("  %textord_done = icmp eq i64 %textord_index, %min_length");
+        builder.AppendLine("  br i1 %textord_done, label %length_compare, label %loop_body");
+        builder.AppendLine();
+        builder.AppendLine("loop_body:");
+        builder.AppendLine($"  %left_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %left_data, i64 %textord_index");
+        builder.AppendLine($"  %right_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %right_data, i64 %textord_index");
+        builder.AppendLine($"  %left_unit = load {unitLlvmType}, ptr %left_unit_ptr");
+        builder.AppendLine($"  %right_unit = load {unitLlvmType}, ptr %right_unit_ptr");
+        builder.AppendLine($"  %unit_less = icmp ult {unitLlvmType} %left_unit, %right_unit");
+        builder.AppendLine("  br i1 %unit_less, label %return_less, label %check_greater");
+        builder.AppendLine();
+        builder.AppendLine("check_greater:");
+        builder.AppendLine($"  %unit_greater = icmp ugt {unitLlvmType} %left_unit, %right_unit");
+        builder.AppendLine("  br i1 %unit_greater, label %return_greater, label %loop_continue");
+        builder.AppendLine();
+        builder.AppendLine("loop_continue:");
+        builder.AppendLine("  %textord_next = add i64 %textord_index, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("length_compare:");
+        builder.AppendLine("  %length_equal = icmp eq i64 %left_length, %right_length");
+        builder.AppendLine("  br i1 %length_equal, label %return_equal, label %length_decide");
+        builder.AppendLine();
+        builder.AppendLine("length_decide:");
+        builder.AppendLine("  %length_less = icmp ult i64 %left_length, %right_length");
+        builder.AppendLine("  br i1 %length_less, label %return_less, label %return_greater");
+        builder.AppendLine();
+        builder.AppendLine("return_less:");
+        builder.AppendLine("  ret i32 -1");
+        builder.AppendLine();
+        builder.AppendLine("return_greater:");
+        builder.AppendLine("  ret i32 1");
+        builder.AppendLine();
+        builder.AppendLine("return_equal:");
+        builder.AppendLine("  ret i32 0");
+        builder.AppendLine("}");
+    }
+
     private string BuildSystemMathIntrinsicDeclaration(
         TypedFunctionSignature function,
         SystemMathBuiltinKind builtinKind)
@@ -2054,6 +2183,7 @@ internal sealed class LlvmIrEmitter
             MapType,
             TryGetConcreteTypeLayout,
             ResolveNamedTypeSymbol,
+            _enumLayoutModel.Layouts,
             GetAllocatorSizeType(),
             debugFunction);
         bodyEmitter.Emit();
@@ -4550,6 +4680,11 @@ internal sealed class LlvmIrEmitter
             return publishedLayout;
         }
 
+        if (TryGetTargetAwareTypeLayout(normalizedType, new HashSet<string>(StringComparer.Ordinal)) is { } targetAwareLayout)
+        {
+            return targetAwareLayout;
+        }
+
         return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
     }
 
@@ -4572,6 +4707,7 @@ internal sealed class LlvmIrEmitter
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
+        private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _enumLayouts;
         private readonly string _allocatorSizeType;
         private readonly DebugFunctionContext? _debugFunction;
         private readonly HashSet<string> _referencedValueNames;
@@ -4592,6 +4728,7 @@ internal sealed class LlvmIrEmitter
             Func<StarkTypeSymbol, string> mapType,
             Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
             Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedTypeSymbol,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
             string allocatorSizeType,
             DebugFunctionContext? debugFunction)
         {
@@ -4605,6 +4742,7 @@ internal sealed class LlvmIrEmitter
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
             _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
+            _enumLayouts = enumLayouts;
             _allocatorSizeType = allocatorSizeType;
             _debugFunction = debugFunction;
             _referencedValueNames = CollectReferencedValueNames(ssaFunction);
@@ -4919,10 +5057,10 @@ internal sealed class LlvmIrEmitter
                     {
                         SsaBinaryOperator.Equal => "eq",
                         SsaBinaryOperator.NotEqual => "ne",
-                        SsaBinaryOperator.LessThan => "slt",
-                        SsaBinaryOperator.LessThanOrEqual => "sle",
-                        SsaBinaryOperator.GreaterThan => "sgt",
-                        SsaBinaryOperator.GreaterThanOrEqual => "sge",
+                        SsaBinaryOperator.LessThan => binary.Left.Type.Kind == StarkTypeKind.Bool ? "ult" : "slt",
+                        SsaBinaryOperator.LessThanOrEqual => binary.Left.Type.Kind == StarkTypeKind.Bool ? "ule" : "sle",
+                        SsaBinaryOperator.GreaterThan => binary.Left.Type.Kind == StarkTypeKind.Bool ? "ugt" : "sgt",
+                        SsaBinaryOperator.GreaterThanOrEqual => binary.Left.Type.Kind == StarkTypeKind.Bool ? "uge" : "sge",
                         _ => string.Empty
                     };
 
@@ -4959,6 +5097,10 @@ internal sealed class LlvmIrEmitter
                     {
                         SsaBinaryOperator.Equal => "eq",
                         SsaBinaryOperator.NotEqual => "ne",
+                        SsaBinaryOperator.LessThan => "ult",
+                        SsaBinaryOperator.LessThanOrEqual => "ule",
+                        SsaBinaryOperator.GreaterThan => "ugt",
+                        SsaBinaryOperator.GreaterThanOrEqual => "uge",
                         _ => string.Empty
                     };
 
@@ -4968,10 +5110,366 @@ internal sealed class LlvmIrEmitter
                         return;
                     }
                 }
+
+                if (TryEmitTextEquality(result, binary))
+                {
+                    return;
+                }
+
+                if (TryEmitTextOrderedComparison(result, binary))
+                {
+                    return;
+                }
+
+                if (TryEmitSliceEquality(
+                        result,
+                        binary.Operator,
+                        binary.Left.Type,
+                        FormatValue(binary.Left),
+                        FormatValue(binary.Right)))
+                {
+                    return;
+                }
+
+                if (TryEmitScalarizedAggregateEquality(result, binary))
+                {
+                    return;
+                }
             }
 
             throw new UnsupportedBodyEmissionException(
                 $"Unsupported SSA binary operator '{binary.Operator}' for '{binary.Left.Type.DisplayName}'.");
+        }
+
+        private bool TryEmitScalarizedAggregateEquality(string result, SsaBinaryRValue binary)
+        {
+            if (binary.Operator is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+            {
+                return false;
+            }
+
+            var rootType = NormalizeAggregateType(binary.Left.Type);
+            if (!SupportsScalarizedAggregateEquality(rootType))
+            {
+                return false;
+            }
+
+            if (!TryGetScalarizableAggregateLeaves(
+                    rootType,
+                    requireRepresentationPreserving: false,
+                    ignoreScalarizationThresholds: true,
+                    allowTextLeaves: true,
+                    allowSliceLeaves: true,
+                    out var leaves))
+            {
+                return false;
+            }
+
+            if (leaves.Count == 1)
+            {
+                return TryEmitScalarizedAggregateLeafComparison(
+                    result,
+                    binary.Operator,
+                    binary.Left,
+                    binary.Right,
+                    rootType,
+                    leaves[0],
+                    out _);
+            }
+
+            string accumulator;
+            if (!TryEmitScalarizedAggregateLeafComparison(
+                    $"%{EscapeIdentifier(CreateAbiTempName("aggcmp_leaf"))}",
+                    binary.Operator,
+                    binary.Left,
+                    binary.Right,
+                    rootType,
+                    leaves[0],
+                    out accumulator))
+            {
+                return false;
+            }
+
+            for (var index = 1; index < leaves.Count; index++)
+            {
+                if (!TryEmitScalarizedAggregateLeafComparison(
+                        $"%{EscapeIdentifier(CreateAbiTempName("aggcmp_leaf"))}",
+                        binary.Operator,
+                        binary.Left,
+                        binary.Right,
+                        rootType,
+                        leaves[index],
+                        out var leafComparison))
+                {
+                    return false;
+                }
+
+                var merged = index == leaves.Count - 1
+                    ? result
+                    : $"%{EscapeIdentifier(CreateAbiTempName("aggcmp_merge"))}";
+                var opcode = binary.Operator == SsaBinaryOperator.Equal ? "and" : "or";
+                AppendLine($"  {merged} = {opcode} i1 {accumulator}, {leafComparison}");
+                accumulator = merged;
+            }
+
+            return true;
+        }
+
+        private bool TryEmitTextEquality(string result, SsaBinaryRValue binary)
+        {
+            if (binary.Operator is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+            {
+                return false;
+            }
+
+            var operandType = NormalizeAggregateType(binary.Left.Type);
+            var rightType = NormalizeAggregateType(binary.Right.Type);
+            if (operandType.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                || rightType.Kind != operandType.Kind)
+            {
+                return false;
+            }
+
+            return TryEmitTextEqualityHelperCall(
+                result,
+                binary.Operator,
+                operandType,
+                FormatValue(binary.Left),
+                FormatValue(binary.Right));
+        }
+
+        private bool TryEmitTextOrderedComparison(string result, SsaBinaryRValue binary)
+        {
+            if (binary.Operator is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                return false;
+            }
+
+            var operandType = NormalizeAggregateType(binary.Left.Type);
+            var rightType = NormalizeAggregateType(binary.Right.Type);
+            if (operandType.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                || rightType.Kind != operandType.Kind)
+            {
+                return false;
+            }
+
+            return TryEmitTextOrderedComparisonHelperCall(
+                result,
+                binary.Operator,
+                operandType,
+                FormatValue(binary.Left),
+                FormatValue(binary.Right));
+        }
+
+        private bool SupportsScalarizedAggregateEquality(StarkTypeSymbol rootType)
+        {
+            return rootType.Kind switch
+            {
+                StarkTypeKind.FixedArray => true,
+                StarkTypeKind.Named => _resolveNamedTypeSymbol(rootType) is { } namedType
+                    && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                        || (namedType.Kind == DeclarationKind.Enum && _enumLayouts.ContainsKey(namedType.Name))),
+                _ => false
+            };
+        }
+
+        private bool TryEmitScalarizedAggregateLeafComparison(
+            string result,
+            SsaBinaryOperator operatorKind,
+            SsaValue left,
+            SsaValue right,
+            StarkTypeSymbol rootType,
+            AggregateScalarLeaf leaf,
+            out string emittedResult)
+        {
+            var leftValue = EmitScalarizedAggregateLeafValue(left, rootType, leaf.Indices, leaf.Type);
+            var rightValue = EmitScalarizedAggregateLeafValue(right, rootType, leaf.Indices, leaf.Type);
+            emittedResult = result;
+            return TryEmitLeafEqualityComparison(result, operatorKind, leaf.Type, leftValue, rightValue);
+        }
+
+        private bool TryEmitLeafEqualityComparison(
+            string result,
+            SsaBinaryOperator operatorKind,
+            StarkTypeSymbol operandType,
+            string left,
+            string right)
+        {
+            operandType = NormalizeAggregateType(operandType);
+            switch (operandType.Kind)
+            {
+                case StarkTypeKind.Integer:
+                case StarkTypeKind.Bool:
+                {
+                    var predicate = operatorKind switch
+                    {
+                        SsaBinaryOperator.Equal => "eq",
+                        SsaBinaryOperator.NotEqual => "ne",
+                        _ => string.Empty
+                    };
+
+                    if (predicate.Length == 0)
+                    {
+                        return false;
+                    }
+
+                    AppendLine($"  {result} = icmp {predicate} {MapType(operandType)} {left}, {right}");
+                    return true;
+                }
+                case StarkTypeKind.Float:
+                {
+                    var predicate = operatorKind switch
+                    {
+                        SsaBinaryOperator.Equal => "oeq",
+                        SsaBinaryOperator.NotEqual => "one",
+                        _ => string.Empty
+                    };
+
+                    if (predicate.Length == 0)
+                    {
+                        return false;
+                    }
+
+                    AppendLine($"  {result} = fcmp {predicate} {MapType(operandType)} {left}, {right}");
+                    return true;
+                }
+                case StarkTypeKind.RawPointer:
+                {
+                    var predicate = operatorKind switch
+                    {
+                        SsaBinaryOperator.Equal => "eq",
+                        SsaBinaryOperator.NotEqual => "ne",
+                        _ => string.Empty
+                    };
+
+                    if (predicate.Length == 0)
+                    {
+                        return false;
+                    }
+
+                    AppendLine($"  {result} = icmp {predicate} ptr {left}, {right}");
+                    return true;
+                }
+                case StarkTypeKind.Ascii:
+                case StarkTypeKind.Unicode:
+                    return TryEmitTextEqualityHelperCall(result, operatorKind, operandType, left, right);
+                case StarkTypeKind.Slice:
+                    return TryEmitSliceEquality(result, operatorKind, operandType, left, right);
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryEmitTextEqualityHelperCall(
+            string result,
+            SsaBinaryOperator operatorKind,
+            StarkTypeSymbol operandType,
+            string left,
+            string right)
+        {
+            operandType = NormalizeAggregateType(operandType);
+            if (operandType.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                || operatorKind is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+            {
+                return false;
+            }
+
+            var helperName = operandType.Kind == StarkTypeKind.Ascii
+                ? AsciiEqualityHelperName
+                : UnicodeEqualityHelperName;
+            var equalityResult = operatorKind == SsaBinaryOperator.Equal
+                ? result
+                : $"%{EscapeIdentifier(CreateAbiTempName("textcmp_eq"))}";
+
+            AppendLine(
+                $"  {equalityResult} = call i1 @{EscapeIdentifier(helperName)}({MapType(operandType)} {left}, {MapType(operandType)} {right})");
+
+            if (operatorKind == SsaBinaryOperator.NotEqual)
+            {
+                AppendLine($"  {result} = xor i1 {equalityResult}, true");
+            }
+
+            return true;
+        }
+
+        private bool TryEmitTextOrderedComparisonHelperCall(
+            string result,
+            SsaBinaryOperator operatorKind,
+            StarkTypeSymbol operandType,
+            string left,
+            string right)
+        {
+            operandType = NormalizeAggregateType(operandType);
+            if (operandType.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                || operatorKind is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                return false;
+            }
+
+            var helperName = operandType.Kind == StarkTypeKind.Ascii
+                ? AsciiCompareHelperName
+                : UnicodeCompareHelperName;
+            var compareResult = $"%{EscapeIdentifier(CreateAbiTempName("textcmp_order"))}";
+            var predicate = operatorKind switch
+            {
+                SsaBinaryOperator.LessThan => "slt",
+                SsaBinaryOperator.LessThanOrEqual => "sle",
+                SsaBinaryOperator.GreaterThan => "sgt",
+                SsaBinaryOperator.GreaterThanOrEqual => "sge",
+                _ => string.Empty
+            };
+
+            if (predicate.Length == 0)
+            {
+                return false;
+            }
+
+            AppendLine(
+                $"  {compareResult} = call i32 @{EscapeIdentifier(helperName)}({MapType(operandType)} {left}, {MapType(operandType)} {right})");
+            AppendLine($"  {result} = icmp {predicate} i32 {compareResult}, 0");
+            return true;
+        }
+
+        private bool TryEmitSliceEquality(
+            string result,
+            SsaBinaryOperator operatorKind,
+            StarkTypeSymbol operandType,
+            string left,
+            string right)
+        {
+            operandType = NormalizeAggregateType(operandType);
+            if (operandType.Kind != StarkTypeKind.Slice
+                || operatorKind is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+            {
+                return false;
+            }
+
+            var sliceType = MapType(operandType);
+            var predicate = operatorKind == SsaBinaryOperator.Equal ? "eq" : "ne";
+            var mergeOpcode = operatorKind == SsaBinaryOperator.Equal ? "and" : "or";
+            var leftPointer = $"%{EscapeIdentifier(CreateAbiTempName("slicecmp_left_ptr"))}";
+            var rightPointer = $"%{EscapeIdentifier(CreateAbiTempName("slicecmp_right_ptr"))}";
+            var leftLength = $"%{EscapeIdentifier(CreateAbiTempName("slicecmp_left_len"))}";
+            var rightLength = $"%{EscapeIdentifier(CreateAbiTempName("slicecmp_right_len"))}";
+            var pointerComparison = $"%{EscapeIdentifier(CreateAbiTempName("slicecmp_ptr"))}";
+            var lengthComparison = $"%{EscapeIdentifier(CreateAbiTempName("slicecmp_len"))}";
+
+            AppendLine($"  {leftPointer} = extractvalue {sliceType} {left}, 0");
+            AppendLine($"  {rightPointer} = extractvalue {sliceType} {right}, 0");
+            AppendLine($"  {leftLength} = extractvalue {sliceType} {left}, 1");
+            AppendLine($"  {rightLength} = extractvalue {sliceType} {right}, 1");
+            AppendLine($"  {pointerComparison} = icmp {predicate} ptr {leftPointer}, {rightPointer}");
+            AppendLine($"  {lengthComparison} = icmp {predicate} i64 {leftLength}, {rightLength}");
+            AppendLine($"  {result} = {mergeOpcode} i1 {pointerComparison}, {lengthComparison}");
+            return true;
         }
 
         private void EmitSaturatingIntegerBinary(string result, SsaBinaryRValue binary)
@@ -5240,7 +5738,13 @@ internal sealed class LlvmIrEmitter
 
         private bool TryEmitScalarizedAggregateCopy(SsaValue destinationAddress, SsaValue sourceAddress, StarkTypeSymbol copyType)
         {
-            if (!TryGetScalarizableAggregateLeaves(copyType, requireRepresentationPreserving: true, out var leaves))
+            if (!TryGetScalarizableAggregateLeaves(
+                    copyType,
+                    requireRepresentationPreserving: true,
+                    ignoreScalarizationThresholds: false,
+                    allowTextLeaves: false,
+                    allowSliceLeaves: false,
+                    out var leaves))
             {
                 return false;
             }
@@ -5259,7 +5763,13 @@ internal sealed class LlvmIrEmitter
 
         private bool TryEmitScalarizedAggregateStore(string destinationAddress, StarkTypeSymbol valueType, SsaValue value)
         {
-            if (!TryGetScalarizableAggregateLeaves(valueType, requireRepresentationPreserving: true, out var leaves))
+            if (!TryGetScalarizableAggregateLeaves(
+                    valueType,
+                    requireRepresentationPreserving: true,
+                    ignoreScalarizationThresholds: false,
+                    allowTextLeaves: false,
+                    allowSliceLeaves: false,
+                    out var leaves))
             {
                 return false;
             }
@@ -5277,13 +5787,16 @@ internal sealed class LlvmIrEmitter
         private bool TryGetScalarizableAggregateLeaves(
             StarkTypeSymbol type,
             bool requireRepresentationPreserving,
+            bool ignoreScalarizationThresholds,
+            bool allowTextLeaves,
+            bool allowSliceLeaves,
             out IReadOnlyList<AggregateScalarLeaf> leaves)
         {
             leaves = Array.Empty<AggregateScalarLeaf>();
 
             if (_tryGetConcreteTypeLayout(NormalizeAggregateType(type)) is not { } layout
                 || layout.SizeBytes <= 0
-                || layout.SizeBytes > AggregateScalarizationThresholdBytes)
+                || (!ignoreScalarizationThresholds && layout.SizeBytes > AggregateScalarizationThresholdBytes))
             {
                 return false;
             }
@@ -5292,13 +5805,16 @@ internal sealed class LlvmIrEmitter
             if (!TryCollectScalarizableAggregateLeaves(
                     NormalizeAggregateType(type),
                     requireRepresentationPreserving,
+                    allowTextLeaves,
+                    allowSliceLeaves,
                     [],
                     collectedLeaves))
             {
                 return false;
             }
 
-            if (collectedLeaves.Count == 0 || collectedLeaves.Count > AggregateScalarizationMaxLeafCount)
+            if (collectedLeaves.Count == 0
+                || (!ignoreScalarizationThresholds && collectedLeaves.Count > AggregateScalarizationMaxLeafCount))
             {
                 return false;
             }
@@ -5310,6 +5826,8 @@ internal sealed class LlvmIrEmitter
         private bool TryCollectScalarizableAggregateLeaves(
             StarkTypeSymbol type,
             bool requireRepresentationPreserving,
+            bool allowTextLeaves,
+            bool allowSliceLeaves,
             List<int> path,
             List<AggregateScalarLeaf> leaves)
         {
@@ -5322,11 +5840,24 @@ internal sealed class LlvmIrEmitter
                 case StarkTypeKind.RawPointer:
                     leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
                     return true;
+                case StarkTypeKind.Ascii when allowTextLeaves:
+                case StarkTypeKind.Unicode when allowTextLeaves:
+                    leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
+                    return true;
+                case StarkTypeKind.Slice when allowSliceLeaves:
+                    leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
+                    return true;
                 case StarkTypeKind.FixedArray when normalizedType.ElementType is not null && normalizedType.FixedLength is int fixedLength:
                     for (var index = 0; index < fixedLength; index++)
                     {
                         path.Add(index);
-                        if (!TryCollectScalarizableAggregateLeaves(normalizedType.ElementType, requireRepresentationPreserving, path, leaves))
+                        if (!TryCollectScalarizableAggregateLeaves(
+                                normalizedType.ElementType,
+                                requireRepresentationPreserving,
+                                allowTextLeaves,
+                                allowSliceLeaves,
+                                path,
+                                leaves))
                         {
                             path.RemoveAt(path.Count - 1);
                             return false;
@@ -5339,16 +5870,17 @@ internal sealed class LlvmIrEmitter
                 case StarkTypeKind.Named:
                 {
                     var namedType = _resolveNamedTypeSymbol(normalizedType);
-                    if (namedType is null || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+                    if (namedType is null
+                        || !TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields))
                     {
                         return false;
                     }
 
                     var sizeBytes = 0;
                     var alignmentBytes = 1;
-                    for (var index = 0; index < namedType.OrderedFields.Count; index++)
+                    for (var index = 0; index < orderedFields.Count; index++)
                     {
-                        var field = namedType.OrderedFields[index];
+                        var field = orderedFields[index];
                         var fieldLayout = _tryGetConcreteTypeLayout(NormalizeAggregateType(field.Type));
                         if (fieldLayout is null)
                         {
@@ -5362,7 +5894,13 @@ internal sealed class LlvmIrEmitter
                         }
 
                         path.Add(index);
-                        if (!TryCollectScalarizableAggregateLeaves(field.Type, requireRepresentationPreserving, path, leaves))
+                        if (!TryCollectScalarizableAggregateLeaves(
+                                field.Type,
+                                requireRepresentationPreserving,
+                                allowTextLeaves,
+                                allowSliceLeaves,
+                                path,
+                                leaves))
                         {
                             path.RemoveAt(path.Count - 1);
                             return false;
@@ -5451,12 +5989,33 @@ internal sealed class LlvmIrEmitter
             {
                 StarkTypeKind.FixedArray when normalizedType.ElementType is not null => normalizedType.ElementType,
                 StarkTypeKind.Named when _resolveNamedTypeSymbol(normalizedType) is { } namedType
-                                           && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                           && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
                                            && index >= 0
-                                           && index < namedType.OrderedFields.Count
-                    => namedType.OrderedFields[index].Type,
+                                           && index < orderedFields.Count
+                    => orderedFields[index].Type,
                 _ => null
             };
+        }
+
+        private bool TryGetScalarizableNamedAggregateFields(
+            NamedTypeSymbol namedType,
+            out IReadOnlyList<FieldSymbol> orderedFields)
+        {
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+            {
+                orderedFields = namedType.OrderedFields;
+                return true;
+            }
+
+            if (namedType.Kind == DeclarationKind.Enum
+                && _enumLayouts.TryGetValue(namedType.Name, out var enumLayout))
+            {
+                orderedFields = enumLayout.OrderedFields;
+                return true;
+            }
+
+            orderedFields = Array.Empty<FieldSymbol>();
+            return false;
         }
 
         private static StarkTypeSymbol NormalizeAggregateType(StarkTypeSymbol type)

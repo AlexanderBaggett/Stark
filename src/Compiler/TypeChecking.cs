@@ -2620,7 +2620,7 @@ internal sealed class TypeChecker
             {
                 ReportError(
                     "STK3008",
-                    $"Enum case payload field '{fieldName}' of type '{field.Type.DisplayName}' cannot currently be matched with a literal in an enum switch pattern. Enum field subpatterns currently support only scalar, non-owning field types.",
+                    $"Enum case payload field '{fieldName}' of type '{field.Type.DisplayName}' cannot currently be matched with a literal in an enum switch pattern. Enum field subpatterns currently support only scalar and text-view field types.",
                     pattern);
                 return;
             }
@@ -2687,7 +2687,7 @@ internal sealed class TypeChecker
             {
                 ReportError(
                     "STK3008",
-                    $"Field '{field.Name}' of type '{field.Type.DisplayName}' cannot currently be captured in an aggregate switch pattern. Aggregate field subpatterns currently support only scalar, non-owning field types.",
+                    $"Field '{field.Name}' of type '{field.Type.DisplayName}' cannot currently be captured in an aggregate switch pattern. Aggregate field subpatterns currently support only scalar and text-view field types.",
                     pattern);
                 return;
             }
@@ -2702,7 +2702,7 @@ internal sealed class TypeChecker
             {
                 ReportError(
                     "STK3008",
-                    $"Field '{field.Name}' of type '{field.Type.DisplayName}' cannot currently be matched with a literal in an aggregate switch pattern. Aggregate field subpatterns currently support only scalar, non-owning field types.",
+                    $"Field '{field.Name}' of type '{field.Type.DisplayName}' cannot currently be matched with a literal in an aggregate switch pattern. Aggregate field subpatterns currently support only scalar and text-view field types.",
                     pattern);
                 return;
             }
@@ -2797,7 +2797,9 @@ internal sealed class TypeChecker
         return type.Kind is StarkTypeKind.Bool
             or StarkTypeKind.Integer
             or StarkTypeKind.Float
-            or StarkTypeKind.RawPointer;
+            or StarkTypeKind.RawPointer
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode;
     }
 
     private void CheckVariableDeclaration(
@@ -3752,11 +3754,11 @@ internal sealed class TypeChecker
 
         for (var index = 1; index < operands.Length; index++)
         {
-            if (!IsNumeric(operands[index - 1].Type) || !IsNumeric(operands[index].Type))
+            if (!IsOrderedComparable(operands[index - 1].Type, operands[index].Type))
             {
                 ReportError(
                     "STK3002",
-                    $"Operator '{operators[index - 1]}' requires numeric operands.",
+                    $"Operator '{operators[index - 1]}' requires ordered-comparable operands.",
                     expression);
             }
         }
@@ -4165,7 +4167,6 @@ internal sealed class TypeChecker
             }
 
             var resolvedFunction = CacheFunctionInstantiation(resolution.Match!);
-            RecordFunctionInstantiationTrigger(resolvedFunction, arguments);
             target = target with
             {
                 Function = resolvedFunction,
@@ -4181,6 +4182,11 @@ internal sealed class TypeChecker
             ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
+
+        // Record use-site generic calls even when the call target did not flow through
+        // overload resolution in this invocation (for example, imported typed-template
+        // direct/member call facts that already carry a resolved signature).
+        RecordFunctionInstantiationTrigger(target.Function, arguments);
 
         var receiverOffset = target.Receiver is null ? 0 : 1;
         var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
@@ -4276,9 +4282,27 @@ internal sealed class TypeChecker
         if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
         {
             var indexExpressions = indexes.expression();
+            if (indexExpressions.Length == 1)
+            {
+                var indexType = EvaluateExpression(indexExpressions[0], scope, allowFunctionReference: false).Type;
+                if (indexType.Kind != StarkTypeKind.Integer)
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Text indexing on {DescribeExpressionTarget(target)} expects an integer index operand but found '{indexType.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(32), indexType)}",
+                        indexExpressions[0]);
+                }
+
+                return new ExpressionBinding(
+                    target.Type,
+                    IsAssignable: false,
+                    NamedType: ResolveNamedTypeSymbol(target.Type),
+                    DiagnosticName: target.DiagnosticName is null ? "text element" : $"text element of {target.DiagnosticName}");
+            }
+
             if (indexExpressions.Length != 2)
             {
-                ReportError("STK3008", "Text slicing currently requires exactly two integer expressions: start and length.", context);
+                ReportError("STK3008", "Text indexing currently supports exactly one integer index or two integer expressions: start and length.", context);
                 return new ExpressionBinding(StarkTypeSymbols.Error, DiagnosticName: "text slice");
             }
 
@@ -6083,6 +6107,17 @@ internal sealed class TypeChecker
     private static bool IsNumeric(StarkTypeSymbol type)
     {
         return type.Kind is StarkTypeKind.Integer or StarkTypeKind.Float;
+    }
+
+    private static bool IsOrderedComparable(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        var commonType = FindCommonType(left, right);
+        return commonType.Kind is StarkTypeKind.Integer
+            or StarkTypeKind.Float
+            or StarkTypeKind.Bool
+            or StarkTypeKind.RawPointer
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode;
     }
 
     private static bool IsBitwiseAssignmentOperator(string assignmentOperator)

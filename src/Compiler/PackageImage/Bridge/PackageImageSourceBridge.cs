@@ -19,7 +19,7 @@ internal static partial class PackageImageLoader
         var types = GetTypes(module.Module);
         var globals = GetGlobals(module.Module);
         var functions = GetFunctions(module.Module);
-        var imports = GetImports(module.Module);
+        var imports = GetImports(module.Module, includeSourceSurfaceImports: RequiresSourceSurfaceImports(module.Module));
 
         foreach (var import in imports
                      .OrderBy(static item => item.ModuleName, StringComparer.Ordinal)
@@ -245,23 +245,78 @@ internal static partial class PackageImageLoader
         return true;
     }
 
-    private static IReadOnlyList<StarkPackageImportManifest> GetImports(StarkPackageModuleManifest module)
+    private static IReadOnlyList<StarkPackageImportManifest> GetImports(
+        StarkPackageModuleManifest module,
+        bool includeSourceSurfaceImports)
     {
-        var sourceSurface = module.EffectiveSourceSurface;
-
-        if (sourceSurface.Imports is not null)
+        var typedInterface = module.EffectiveTypedInterface;
+        if (typedInterface?.Imports is { } typedInterfaceImports)
         {
-            return sourceSurface.Imports;
+            return typedInterfaceImports;
         }
 
-        if (sourceSurface.ReExports is { Count: > 0 })
+        if (includeSourceSurfaceImports
+            && module.SourceSurface is { } explicitSourceSurface
+            && explicitSourceSurface.Imports is { } explicitSourceSurfaceImports)
         {
-            return sourceSurface.ReExports
-                .Select(static reExport => new StarkPackageImportManifest(reExport.ModuleName, IsExported: true))
-                .ToArray();
+            return MergeImportsAndReExports(explicitSourceSurfaceImports, explicitSourceSurface.ReExports);
+        }
+
+        if (module.Imports is { } legacyFlatImports)
+        {
+            return MergeImportsAndReExports(legacyFlatImports, module.ReExports);
+        }
+
+        if (module.SourceSurface?.ReExports is { } explicitSourceSurfaceReExports)
+        {
+            return ConvertReExports(explicitSourceSurfaceReExports);
+        }
+
+        if (module.ReExports.Count > 0)
+        {
+            return ConvertReExports(module.ReExports);
         }
 
         return [];
+    }
+
+    private static IReadOnlyList<StarkPackageImportManifest> MergeImportsAndReExports(
+        IReadOnlyList<StarkPackageImportManifest> imports,
+        IReadOnlyList<StarkPackageReExportManifest>? reExports)
+    {
+        if (reExports is null || reExports.Count == 0)
+        {
+            return imports;
+        }
+
+        var exportByModuleName = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var import in imports)
+        {
+            exportByModuleName[import.ModuleName] = import.IsExported;
+        }
+
+        foreach (var reExport in reExports)
+        {
+            exportByModuleName[reExport.ModuleName] = true;
+        }
+
+        return exportByModuleName
+            .Select(static entry => new StarkPackageImportManifest(entry.Key, entry.Value))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageImportManifest> ConvertReExports(
+        IReadOnlyList<StarkPackageReExportManifest> reExports)
+    {
+        return reExports
+            .Select(static reExport => new StarkPackageImportManifest(reExport.ModuleName, IsExported: true))
+            .ToArray();
+    }
+
+    private static bool RequiresSourceSurfaceImports(StarkPackageModuleManifest module)
+    {
+        return module.EffectiveTypedInterface is null
+            || BuildRenderableGenericTemplateBodyLookup(module).Count != 0;
     }
 
     private static IReadOnlyList<StarkPackageTypeAliasManifest> GetTypeAliases(StarkPackageModuleManifest module)
@@ -525,6 +580,12 @@ internal static partial class PackageImageLoader
     {
         if (statement.Expression is not null
             && !CanOmitBridgeBodyText(statement.Expression))
+        {
+            return false;
+        }
+
+        if (statement.TargetExpression is not null
+            && !CanOmitBridgeBodyText(statement.TargetExpression))
         {
             return false;
         }

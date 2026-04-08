@@ -5,7 +5,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
@@ -26,6 +26,7 @@ internal static class CompilerCli
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
+        string? packageLibraryFile = null;
         var diagnosticFormat = DiagnosticOutputFormat.Text;
         var logLevel = DiagnosticSeverity.Warning;
         var logVerbosity = CompilerLogVerbosity.Normal;
@@ -159,6 +160,19 @@ internal static class CompilerCli
             if (TryReadOptionValue(argument, "--save-temps", args, ref index, out var saveTempsValue))
             {
                 saveTempsDirectory = saveTempsValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--package-library-file", args, ref index, out var packageLibraryValue))
+            {
+                if (string.IsNullOrWhiteSpace(packageLibraryValue))
+                {
+                    await stderr.WriteLineAsync("Package library file name must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                packageLibraryFile = packageLibraryValue.Trim();
                 continue;
             }
 
@@ -297,6 +311,11 @@ internal static class CompilerCli
             return 0;
         }
 
+        if (mode == CliMode.InspectPackage)
+        {
+            return await InspectPackageImageAsync(inputPath, outputPath, stdin, stdout, stderr, diagnosticFormat);
+        }
+
         var requiresTargetInfo = mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable;
         var targetInfo = ResolveTargetInfo(
             requiresTargetInfo,
@@ -357,6 +376,8 @@ internal static class CompilerCli
                 return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
             case CliMode.EmitExecutable:
                 return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
+            case CliMode.EmitPackage:
+                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, diagnosticFormat);
             default:
                 var executedPasses = result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed);
                 await stdout.WriteLineAsync($"Compilation pipeline succeeded. Executed {executedPasses} passes.");
@@ -640,6 +661,121 @@ internal static class CompilerCli
         return 0;
     }
 
+    private static async Task<int> EmitPackageImageAsync(
+        string? outputPath,
+        string? inputPath,
+        TextWriter stdout,
+        TextWriter stderr,
+        CompilationResult result,
+        string? packageLibraryFile,
+        DiagnosticOutputFormat diagnosticFormat)
+    {
+        var packageLibraryFileName = ResolvePackageLibraryFileName(packageLibraryFile, inputPath, result);
+        var packageImage = PackageImageBuilder.Create(result, packageLibraryFileName);
+        var diagnostics = PackageImageLoader.ValidateManifest(packageImage, inputPath);
+        if (diagnostics.Count > 0)
+        {
+            await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+            if (diagnostics.Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            {
+                return 1;
+            }
+        }
+
+        var resolvedOutputPath = Path.GetFullPath(outputPath ?? DerivePackageImageOutputPath(inputPath, result, packageLibraryFileName));
+        await File.WriteAllTextAsync(resolvedOutputPath, packageImage.ToJson());
+        await stdout.WriteLineAsync($"Emitted package image: {resolvedOutputPath}");
+        await stdout.WriteLineAsync($"Package library file: {packageImage.LibraryFileName}");
+        return 0;
+    }
+
+    private static async Task<int> InspectPackageImageAsync(
+        string? inputPath,
+        string? outputPath,
+        TextReader stdin,
+        TextWriter stdout,
+        TextWriter stderr,
+        DiagnosticOutputFormat diagnosticFormat)
+    {
+        string json;
+        string sourceName;
+
+        if (inputPath is not null)
+        {
+            var fullPath = Path.GetFullPath(inputPath);
+            if (!File.Exists(fullPath))
+            {
+                await stderr.WriteLineAsync($"Package image file '{fullPath}' does not exist.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            json = await File.ReadAllTextAsync(fullPath);
+            sourceName = fullPath;
+        }
+        else
+        {
+            json = await stdin.ReadToEndAsync();
+            sourceName = "<stdin>";
+        }
+
+        if (!PackageImageLoader.TryParseManifestJson(json, sourceName, out var manifest, out var diagnostics))
+        {
+            await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+            return 1;
+        }
+
+        if (diagnostics.Count > 0)
+        {
+            await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+            if (diagnostics.Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            {
+                return 1;
+            }
+        }
+
+        var inspection = RenderPackageImageInspection(sourceName, manifest);
+        if (outputPath is not null)
+        {
+            await File.WriteAllTextAsync(Path.GetFullPath(outputPath), inspection);
+        }
+        else
+        {
+            await stdout.WriteLineAsync(inspection);
+        }
+
+        return 0;
+    }
+
+    private static string RenderPackageImageInspection(string sourceName, StarkPackageManifest manifest)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"package image: {sourceName}");
+        builder.AppendLine($"root module: {manifest.RootModule}");
+        builder.AppendLine($"library file: {manifest.LibraryFileName}");
+        builder.AppendLine($"module count: {manifest.Modules.Count}");
+
+        foreach (var module in manifest.Modules.OrderBy(static module => module.ModuleName, StringComparer.Ordinal))
+        {
+            var sourceSurface = module.EffectiveSourceSurface;
+            var typedInterface = module.EffectiveTypedInterface;
+            var compilerFacts = module.EffectiveCompilerFacts;
+            var genericTemplates = module.EffectiveGenericTemplates;
+
+            builder.AppendLine($"module {module.ModuleName}:");
+            builder.AppendLine(
+                $"  source-surface imports={sourceSurface.Imports?.Count ?? 0}, reexports={sourceSurface.ReExports?.Count ?? 0}, functions={sourceSurface.Functions?.Count ?? 0}, types={sourceSurface.Types?.Count ?? 0}, globals={sourceSurface.Globals?.Count ?? 0}, aliases={sourceSurface.TypeAliases?.Count ?? 0}");
+            builder.AppendLine(
+                $"  typed-interface functions={typedInterface?.Functions.Count ?? 0}, types={typedInterface?.Types.Count ?? 0}, globals={typedInterface?.Globals.Count ?? 0}, aliases={typedInterface?.TypeAliases?.Count ?? 0}");
+            builder.AppendLine(
+                $"  compiler-facts effects={compilerFacts?.FunctionEffects?.Count ?? 0}, abi={compilerFacts?.AbiFunctions?.Count ?? 0}, layouts={compilerFacts?.ConcreteLayouts?.Count ?? 0}, enum-layouts={compilerFacts?.EnumLayouts?.Count ?? 0}, semantics={compilerFacts?.FunctionSemantics?.Count ?? 0}");
+            builder.AppendLine(
+                $"  generic-templates functions={genericTemplates?.Functions.Count ?? 0}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private static IModuleResolver? ResolveModuleResolver(string? inputPath, IReadOnlyList<string> searchDirectories, LlvmTargetInfo? targetInfo)
     {
         var resolvedDirectories = new List<string>();
@@ -761,7 +897,7 @@ internal static class CompilerCli
         {
             if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
             {
-                return new DependencyCompileResult(false, null, [], null, null, RequiresMathLibrary: false);
+                return new DependencyCompileResult(false, null, [], [], null, RequiresMathLibrary: false);
             }
 
             sourceText = File.ReadAllText(module.Reference.FilePath);
@@ -836,12 +972,17 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-obj    Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --compile-only Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package manifest");
+        await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps");
+        await stdout.WriteLineAsync("  --emit-package Emit a Stark package image without linker/archive steps");
+        await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image");
+        await stdout.WriteLineAsync("  --inspect-package Inspect and validate a Stark package image");
         await stdout.WriteLineAsync("  --emit-exe    Build a native executable");
         await stdout.WriteLineAsync("  --link-only   Build a native executable from the current compilation output");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Inputs and Outputs:");
         await stdout.WriteLineAsync("  [path]                 Read a Stark source file instead of stdin");
         await stdout.WriteLineAsync("  -o <path>              Write the selected output artifact to <path>");
+        await stdout.WriteLineAsync("  --package-library-file <name>  Library file name stored in emitted package images");
         await stdout.WriteLineAsync("  -I, --search-dir <dir> Add a Stark module/package search directory");
         await stdout.WriteLineAsync("  -L, --library-dir <dir> Add a native library search directory for linking");
         await stdout.WriteLineAsync();
@@ -870,6 +1011,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
         await stdout.WriteLineAsync("  --emit-lib and --emit-exe perform link/archive steps.");
+        await stdout.WriteLineAsync("  --emit-pkg validates and emits package image JSON only.");
+        await stdout.WriteLineAsync("  --inspect-pkg accepts a .starkpkg.json file path or JSON from stdin.");
         await stdout.WriteLineAsync("  With no workflow flag, the compiler runs the full pipeline and prints a success summary.");
         await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
         await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable.");
@@ -878,6 +1021,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  compiler app.stark --check");
         await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
         await stdout.WriteLineAsync("  compiler app.stark --emit-exe -o app");
+        await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg.json");
+        await stdout.WriteLineAsync("  compiler libFacade.starkpkg.json --inspect-pkg");
         await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
     }
 
@@ -917,6 +1062,8 @@ internal static class CompilerCli
             "--emit-obj" or "--compile-only" => CliMode.EmitObject,
             "--emit-lib" => CliMode.EmitLibrary,
             "--emit-exe" or "--link-only" => CliMode.EmitExecutable,
+            "--emit-pkg" or "--emit-package" => CliMode.EmitPackage,
+            "--inspect-pkg" or "--inspect-package" => CliMode.InspectPackage,
             _ => CliMode.Default
         };
 
@@ -1011,6 +1158,7 @@ internal static class CompilerCli
             CliMode.Check => "ownership-validate",
             CliMode.EmitMir => "lower-mir",
             CliMode.EmitSsa => "const-prop",
+            CliMode.EmitPackage => "lower-abi",
             _ => null
         };
     }
@@ -1137,6 +1285,30 @@ internal static class CompilerCli
         return Path.Combine(directory, $"{baseName}.starkpkg.json");
     }
 
+    private static string ResolvePackageLibraryFileName(string? requestedLibraryFile, string? inputPath, CompilationResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedLibraryFile))
+        {
+            return Path.GetFileName(requestedLibraryFile.Trim());
+        }
+
+        return Path.GetFileName(DeriveLibraryOutputPath(inputPath, result));
+    }
+
+    private static string DerivePackageImageOutputPath(string? inputPath, CompilationResult result, string packageLibraryFileName)
+    {
+        var packageImageFileName = $"{Path.GetFileNameWithoutExtension(packageLibraryFileName)}.starkpkg.json";
+
+        if (inputPath is not null)
+        {
+            var fullInputPath = Path.GetFullPath(inputPath);
+            var directory = Path.GetDirectoryName(fullInputPath) ?? Environment.CurrentDirectory;
+            return Path.Combine(directory, packageImageFileName);
+        }
+
+        return Path.GetFullPath(packageImageFileName);
+    }
+
     private static bool TryParseLogLevel(string text, out DiagnosticSeverity severity)
     {
         severity = text.Trim().ToLowerInvariant() switch
@@ -1246,7 +1418,9 @@ internal static class CompilerCli
         EmitLlvmIr,
         EmitObject,
         EmitLibrary,
-        EmitExecutable
+        EmitExecutable,
+        EmitPackage,
+        InspectPackage
     }
 
     private sealed record DependencyCompileResult(
