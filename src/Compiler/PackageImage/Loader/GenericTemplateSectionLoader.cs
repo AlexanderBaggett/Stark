@@ -41,6 +41,13 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        ImportedTemplateTypedBodyExpressionSummary? targetExpression = null;
+        if (manifest.TargetExpression is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.TargetExpression, out targetExpression))
+        {
+            return false;
+        }
+
         if (string.Equals(manifest.Kind, "local-variable", StringComparison.Ordinal))
         {
             if (manifest.Name is null || manifest.StorageClass is null || manifest.Type is null || expression is null)
@@ -74,7 +81,7 @@ internal static partial class PackageImageLoader
 
         if (string.Equals(manifest.Kind, "assignment", StringComparison.Ordinal))
         {
-            if (manifest.Name is null || expression is null)
+            if ((manifest.Name is null && targetExpression is null) || expression is null)
             {
                 return false;
             }
@@ -82,7 +89,9 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.Assignment,
                 expression,
-                Name: manifest.Name);
+                Name: manifest.Name,
+                AssignmentOperator: manifest.AssignmentOperator,
+                TargetExpression: targetExpression);
             return true;
         }
 
@@ -265,7 +274,19 @@ internal static partial class PackageImageLoader
         summary = null!;
 
         ImportedTemplateTypedSwitchCaseKind kind;
-        if (string.Equals(manifest.Kind, "enum-pattern", StringComparison.Ordinal))
+        if (string.Equals(manifest.Kind, "literal", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.Literal;
+        }
+        else if (string.Equals(manifest.Kind, "match-all", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.MatchAll;
+        }
+        else if (string.Equals(manifest.Kind, "default", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.Default;
+        }
+        else if (string.Equals(manifest.Kind, "enum-pattern", StringComparison.Ordinal))
         {
             kind = ImportedTemplateTypedSwitchCaseKind.EnumPattern;
         }
@@ -278,7 +299,32 @@ internal static partial class PackageImageLoader
             return false;
         }
 
-        if (manifest.Ordinal is not { } ordinal || manifest.Statements is not { Count: > 0 })
+        if (manifest.Statements is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        ImportedTemplateTypedBodyExpressionSummary? expression = null;
+        if (manifest.Expression is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.Expression, out expression))
+        {
+            return false;
+        }
+
+        ImportedTemplateTypedBodyExpressionSummary? guardExpression = null;
+        if (manifest.GuardExpression is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.GuardExpression, out guardExpression))
+        {
+            return false;
+        }
+
+        if (kind is ImportedTemplateTypedSwitchCaseKind.EnumPattern or ImportedTemplateTypedSwitchCaseKind.AggregatePattern
+            && manifest.Ordinal is not { })
+        {
+            return false;
+        }
+
+        if (kind == ImportedTemplateTypedSwitchCaseKind.Literal && expression is null)
         {
             return false;
         }
@@ -307,7 +353,10 @@ internal static partial class PackageImageLoader
 
         summary = new ImportedTemplateTypedSwitchCaseSummary(
             kind,
-            ordinal,
+            manifest.Ordinal,
+            manifest.Name,
+            expression,
+            guardExpression,
             MemberPatterns: members,
             StatementSummaries: statements);
         return true;

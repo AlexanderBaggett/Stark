@@ -17,6 +17,19 @@ internal fn i32 WriteStderrUnicode(unicode text) {
     return System.Runtime.Platform.Windows.WriteStderrUnicode(text);
 }
 
+internal fn rawptr<i8> OpenStdin() {
+    return System.Runtime.Platform.Windows.OpenStdin();
+}
+
+internal fn void CloseStdin(rawptr<i8> handle) {
+    System.Runtime.Platform.Windows.CloseStdin(handle);
+    return;
+}
+
+internal fn i64 ReadStdin(rawmutptr<i8> buffer, i64 capacity) {
+    return System.Runtime.Platform.Windows.ReadStdin(buffer, capacity);
+}
+
 internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
     return System.Runtime.Platform.Windows.WriteAscii(handle, text);
 }

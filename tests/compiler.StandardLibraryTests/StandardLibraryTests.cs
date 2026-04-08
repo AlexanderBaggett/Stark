@@ -177,6 +177,112 @@ internal sealed class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
+    public void StdLibSourceConsoleSupportsUnicodeInputSurface()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibConsoleInputSurface.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System
+                module Demo
+
+                fn void Use() {
+                    stack Unicode line = System.Console.ReadLine();
+                    stack Unicode unit = System.Console.Read();
+                    System.Console.WriteLine(System.Text.UnicodeView(line));
+                    System.Console.WriteLine(System.Text.UnicodeView(unit));
+                    return;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+    public async Task StdLibSourceUnicodeConsoleInputWorksAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-console-input-source-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                module App
+
+                export ffi fn i32 main() {
+                    stack Unicode line = System.Console.ReadLine();
+                    stack Unicode unit = System.Console.Read();
+
+                    if (line.Length != 5) {
+                        return 1;
+                    }
+
+                    if (unit.Length != 1) {
+                        return 2;
+                    }
+
+                    if (line.Data == null || *line.Data != 104) {
+                        return 3;
+                    }
+
+                    if (*(&line.Data[1]) != 101) {
+                        return 4;
+                    }
+
+                    if (unit.Data == null || *unit.Data != 945) {
+                        return 5;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, "hello\nα");
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
     public void StdLibSourceRawFileHandlesSupportAsciiAndUnicodeWriteOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -1474,6 +1580,104 @@ internal sealed class StandardLibraryTestSuite
             }
         }
     }
+    public async Task PackagedStdLibUnicodeConsoleInputWorksWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-console-input-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                module App
+
+                export ffi fn i32 main() {
+                    stack Unicode line = System.Console.ReadLine();
+                    stack Unicode unit = System.Console.Read();
+
+                    if (line.Length != 5) {
+                        return 1;
+                    }
+
+                    if (unit.Length != 1) {
+                        return 2;
+                    }
+
+                    if (line.Data == null || *line.Data != 104) {
+                        return 3;
+                    }
+
+                    if (*(&line.Data[1]) != 101) {
+                        return 4;
+                    }
+
+                    if (unit.Data == null || *unit.Data != 945) {
+                        return 5;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, "hello\nα");
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
     public async Task PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1934,6 +2138,142 @@ internal sealed class StandardLibraryTestSuite
             Assert.Equal("Full\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "full.txt")));
             Assert.Equal("Line\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "line.txt")));
             Assert.Equal("None", await File.ReadAllTextAsync(Path.Combine(appDirectory, "none.txt")));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+    public async Task PackagedStdLibOwnedFileWritesHonorExplicitTextEncodings()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-file-encodings-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                module App
+
+                export ffi fn i32 main() {
+                    stack mut i32[1] gothicBuffer = { 66376 };
+                    stack mut Unicode gothic = new Unicode() {
+                        Data = &gothicBuffer[0],
+                        Length = 1,
+                        Capacity = 1
+                    };
+
+                    stack mut System.IO.File.File utf8 = System.IO.File.Open("utf8.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8);
+                    utf8.WriteText("Hi ");
+                    utf8.WriteLine((unicode)"α");
+                    if (utf8.Close() != 0) {
+                        return 1;
+                    }
+
+                    stack mut System.IO.File.File utf16 = System.IO.File.Open("utf16.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16);
+                    utf16.WriteText("A");
+                    utf16.WriteText(System.Text.UnicodeView(gothic));
+                    utf16.WriteLine((unicode)"β");
+                    if (utf16.Close() != 0) {
+                        return 2;
+                    }
+
+                    gothic = new Unicode() {
+                        Data = &gothicBuffer[0],
+                        Length = 1,
+                        Capacity = 1
+                    };
+
+                    stack mut System.IO.File.File utf32 = System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32);
+                    utf32.WriteText("Z");
+                    utf32.WriteText(System.Text.UnicodeView(gothic));
+                    utf32.WriteLine((unicode)"γ");
+                    if (utf32.Close() != 0) {
+                        return 3;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = appDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+
+            var gothic = char.ConvertFromUtf32(66376);
+            Assert.Equal(
+                System.Text.Encoding.UTF8.GetBytes("Hi α\n"),
+                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf8.txt")));
+            Assert.Equal(
+                System.Text.Encoding.Unicode.GetBytes("A" + gothic + "β\n"),
+                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16.txt")));
+            Assert.Equal(
+                System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "γ\n"),
+                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf32.txt")));
         }
         finally
         {
@@ -3013,6 +3353,34 @@ internal sealed class StandardLibraryTestSuite
     private static void AssertCompilerLogsEmitted(string text)
     {
         Assert.Equal(string.Empty, text);
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessWithUtf8StdinAsync(
+        string fileName,
+        string workingDirectory,
+        string stdinText)
+    {
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+
+        Assert.NotNull(process);
+        var stdinBytes = System.Text.Encoding.UTF8.GetBytes(stdinText);
+        await process!.StandardInput.BaseStream.WriteAsync(stdinBytes);
+        await process.StandardInput.BaseStream.FlushAsync();
+        process.StandardInput.Close();
+
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, stdout, stderr);
     }
 
     private static bool SupportsSystemMathHardwareAsmTarget(string triple)

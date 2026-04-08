@@ -1,3 +1,4 @@
+using System.Numerics;
 using Stark.Compiler;
 using System.Text;
 using Xunit.Abstractions;
@@ -678,6 +679,126 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void FloatLiteralSwitchLowersToBranchBasedCfg()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(f32 value, bool allow) {
+                switch (value) {
+                    case 1.5:
+                        return 1;
+                    case 2.5 when allow:
+                        return 2;
+                    default:
+                        return 3;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.True(function.Blocks.Count(static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch) >= 2);
+    }
+
+    [Fact]
+    public void RawPointerNullSwitchLowersToBranchBasedCfg()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(rawptr<i32> value) {
+                switch (value) {
+                    case null:
+                        return 1;
+                    default:
+                        return 2;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.DoesNotContain(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Switch);
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Equal });
+    }
+
+    [Fact]
+    public void AggregateSwitchPatternsCanMatchAndCaptureTextLeaves()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Label(ascii Tag, unicode Word) { }
+
+            fn i32 Run(Label value) {
+                switch (value) {
+                    case Label("ab", var word):
+                        return word == (unicode)"cat" ? 7 : 3;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "word");
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Tag" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Word" });
+        Assert.Contains(function.Blocks, block => block.Label.Contains("textcmp_byte_0", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, static block => block.Statements.Any(static statement => statement.TargetName == "word"));
+    }
+
+    [Fact]
+    public void EnumSwitchPatternsCanMatchAndCaptureTextLeaves()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                Empty,
+                Text { Tag: ascii, Word: unicode },
+            }
+
+            fn i32 Run(Token value) {
+                switch (value) {
+                    case Token.Text { Tag: "ab", Word: var word }:
+                        return word == (unicode)"cat" ? 7 : 3;
+                    case Token.Empty:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "word");
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$tag" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$Text_Tag" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "$Text_Word" });
+        Assert.Contains(function.Blocks, static block => block.Label.Contains("switch_enum_match", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("textcmp_byte_0", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ShortCircuitOrLowersToMultipleBlocksAndDirectCodegen()
     {
         var result = Compile(
@@ -718,6 +839,38 @@ public sealed class MidLevelIrLoweringTests
         Assert.Contains(function.Blocks, block => block.Label.Contains("cond_true", StringComparison.Ordinal));
         Assert.Contains(function.Blocks, block => block.Label.Contains("cond_false", StringComparison.Ordinal));
         Assert.Contains(function.Blocks, block => block.Label.Contains("cond_join", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VoidConditionalCallStatementsLowerToJoinableBlocks()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Reset(rawmutptr<i32> value, i32 next) {
+                *value = next;
+                return;
+            }
+
+            fn void Run(bool flag, rawmutptr<i32> left, rawmutptr<i32> right) {
+                flag ? Reset(left, 7) : Reset(right, 9);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Blocks, block => block.Label.Contains("cond_true", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("cond_false", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, block => block.Label.Contains("cond_join", StringComparison.Ordinal));
+
+        var trueBlock = Assert.Single(function.Blocks, static block => block.Label.Contains("cond_true", StringComparison.Ordinal));
+        var falseBlock = Assert.Single(function.Blocks, static block => block.Label.Contains("cond_false", StringComparison.Ordinal));
+        Assert.Contains(trueBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && statement.Value is MidLevelIrCallRValue call && call.FunctionName == "Reset");
+        Assert.Contains(falseBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && statement.Value is MidLevelIrCallRValue call && call.FunctionName == "Reset");
     }
 
     [Fact]
@@ -1336,6 +1489,42 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void SingleElementTextIndexingLowersToUnitLengthTextViews()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii PickAscii(ascii text, i32 index) {
+                return text[index];
+            }
+
+            fn unicode PickUnicode(unicode text, i32 index) {
+                return text[index];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var functions = GetMir(result).Functions.ToArray();
+
+        Assert.Equal(2, functions.Length);
+        Assert.All(functions, function => Assert.True(function.SupportsDirectCodeGeneration));
+        Assert.All(
+            functions,
+            function =>
+            {
+                var textSlice = Assert.Single(
+                    function.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value).OfType<MidLevelIrTextSliceRValue>());
+                var length = Assert.IsType<MidLevelIrIntegerConstantOperand>(textSlice.Length);
+                Assert.Equal(StarkTypeKind.Integer, textSlice.Start.Type.Kind);
+                Assert.Equal(64, textSlice.Start.Type.BitWidth);
+                Assert.Equal(StarkTypeKind.Integer, length.Type.Kind);
+                Assert.Equal(64, length.Type.BitWidth);
+                Assert.Equal(BigInteger.One, length.Value);
+            });
+    }
+
+    [Fact]
     public void DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccess()
     {
         var result = Compile(
@@ -1358,6 +1547,28 @@ public sealed class MidLevelIrLoweringTests
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue);
         Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+    }
+
+    [Fact]
+    public void FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32[3] values, i32 index) {
+                return values[index];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfParameterRValue);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
     }
 

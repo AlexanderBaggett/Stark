@@ -8,5 +8,14 @@ public sealed class SystemConsoleStandardLibraryTests
     public void StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads() => _suite.StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads();
 
     [Fact]
+    public void StdLibSourceConsoleSupportsUnicodeInputSurface() => _suite.StdLibSourceConsoleSupportsUnicodeInputSurface();
+
+    [Fact]
+    public Task StdLibSourceUnicodeConsoleInputWorksAtRuntime() => _suite.StdLibSourceUnicodeConsoleInputWorksAtRuntime();
+
+    [Fact]
     public Task PackagedStdLibConsoleReturnsIoStatusWithoutSource() => _suite.PackagedStdLibConsoleReturnsIoStatusWithoutSource();
+
+    [Fact]
+    public Task PackagedStdLibUnicodeConsoleInputWorksWithoutSource() => _suite.PackagedStdLibUnicodeConsoleInputWorksWithoutSource();
 }

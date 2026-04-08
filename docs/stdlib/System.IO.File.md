@@ -72,4 +72,5 @@ fn void WriteOwned() {
 - Raw-handle text helpers support both `ascii` and `unicode`.
 - Owned file writes now support `None`, `Line`, and `Full` userspace buffering with an internal fixed-size buffer.
 - The owned public file surface now supports both `ascii` and `unicode` text writes.
-- Broader per-encoding file conversions and text-reading APIs remain future shared text-IO work.
+- Owned files now honor explicit `UTF8`, `UTF16`, and `UTF32` encodings for text writes.
+- Text-reading APIs remain future work.

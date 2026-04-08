@@ -51,6 +51,31 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void SingleElementTextIndexingReturnsUnitLengthViewsThroughTheWholePipeline()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            fn ascii PickAscii(ascii text, i32 index) {
+                return text[index];
+            }
+
+            fn unicode PickUnicode(unicode text, i32 index) {
+                return text[index];
+            }
+            """);
+
+        Assert.Contains("define fastcc %stark_ascii @PickAscii(%stark_ascii %arg_text, i32 %arg_index)", llvm);
+        Assert.Contains("define fastcc %stark_unicode @PickUnicode(%stark_unicode %arg_text, i32 %arg_index)", llvm);
+        Assert.Contains("getelementptr inbounds i8, ptr", llvm);
+        Assert.Contains("getelementptr inbounds i32, ptr", llvm);
+        Assert.Contains("insertvalue %stark_ascii", llvm);
+        Assert.Contains("insertvalue %stark_unicode", llvm);
+        Assert.Contains(", i64 1, 1", llvm);
+    }
+
+    [Fact]
     public void ExplicitAsciiLiteralToUnicodeConversionUsesUnicodeStaticDataThroughTheWholePipeline()
     {
         var llvm = CompileToLlvm(

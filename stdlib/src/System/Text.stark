@@ -14,5 +14,647 @@ public finite law i64 AsciiLength(ascii source);
 public finite law rawptr<i32> UnicodeData(unicode source);
 public finite law i64 UnicodeLength(unicode source);
 
+fn i32 UnsignedByte(i8 value) {
+    if (value < 0) {
+        return ((i32)value) + 256;
+    }
+
+    return (i32)value;
+}
+
+fn i32 UnsignedWide(i16 value) {
+    if (value < 0) {
+        return ((i32)value) + 65536;
+    }
+
+    return (i32)value;
+}
+
+fn bool IsUtf8ContinuationByte(i8 value) {
+    stack i32 unit = UnsignedByte(value);
+    return 128 <= unit && unit <= 191;
+}
+
+fn bool TryDecodeUtf8CodePoint(rawptr<i8> data, i64 length, rawmutptr<i64> index, rawmutptr<i32> codePoint) {
+    if (data == null || index == null || codePoint == null) {
+        return false;
+    }
+
+    stack i64 readIndex = *index;
+    if (readIndex < 0 || readIndex >= length) {
+        return false;
+    }
+
+    stack i32 first = UnsignedByte(*(&data[readIndex]));
+    if (first <= 127) {
+        *index = readIndex + 1;
+        *codePoint = first;
+        return true;
+    }
+
+    if (194 <= first && first <= 223) {
+        if (readIndex + 1 >= length) {
+            return false;
+        }
+
+        stack i8 secondRaw = *(&data[readIndex + 1]);
+        if (!IsUtf8ContinuationByte(secondRaw)) {
+            return false;
+        }
+
+        stack i32 second = UnsignedByte(secondRaw);
+        *index = readIndex + 2;
+        *codePoint = ((first & 31) << 6) | (second & 63);
+        return true;
+    }
+
+    if (224 <= first && first <= 239) {
+        if (readIndex + 2 >= length) {
+            return false;
+        }
+
+        stack i8 secondRaw = *(&data[readIndex + 1]);
+        stack i8 thirdRaw = *(&data[readIndex + 2]);
+        if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw)) {
+            return false;
+        }
+
+        stack i32 second = UnsignedByte(secondRaw);
+        stack i32 third = UnsignedByte(thirdRaw);
+        if (first == 224 && second < 160) {
+            return false;
+        }
+
+        if (first == 237 && second >= 160) {
+            return false;
+        }
+
+        *index = readIndex + 3;
+        *codePoint = ((first & 15) << 12)
+            | ((second & 63) << 6)
+            | (third & 63);
+        return true;
+    }
+
+    if (240 <= first && first <= 244) {
+        if (readIndex + 3 >= length) {
+            return false;
+        }
+
+        stack i8 secondRaw = *(&data[readIndex + 1]);
+        stack i8 thirdRaw = *(&data[readIndex + 2]);
+        stack i8 fourthRaw = *(&data[readIndex + 3]);
+        if (!IsUtf8ContinuationByte(secondRaw)
+            || !IsUtf8ContinuationByte(thirdRaw)
+            || !IsUtf8ContinuationByte(fourthRaw)) {
+            return false;
+        }
+
+        stack i32 second = UnsignedByte(secondRaw);
+        stack i32 third = UnsignedByte(thirdRaw);
+        stack i32 fourth = UnsignedByte(fourthRaw);
+        if (first == 240 && second < 144) {
+            return false;
+        }
+
+        if (first == 244 && second > 143) {
+            return false;
+        }
+
+        *index = readIndex + 4;
+        *codePoint = ((first & 7) << 18)
+            | ((second & 63) << 12)
+            | ((third & 63) << 6)
+            | (fourth & 63);
+        return true;
+    }
+
+    return false;
+}
+
+fn i32 NormalizeUnicodeCodePoint(i32 codePoint) {
+    if (codePoint < 0) {
+        return 65533;
+    }
+
+    if (55296 <= codePoint && codePoint <= 57343) {
+        return 65533;
+    }
+
+    if (codePoint > 1114111) {
+        return 65533;
+    }
+
+    return codePoint;
+}
+
+fn i64 Utf8EncodedLength(i32 codePoint) {
+    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+
+    if (scalar <= 127) {
+        return 1;
+    }
+
+    if (scalar <= 2047) {
+        return 2;
+    }
+
+    if (scalar <= 65535) {
+        return 3;
+    }
+
+    return 4;
+}
+
+fn void WriteUtf8CodePoint(rawmutptr<i8> destination, rawmutptr<i64> writeIndex, i32 codePoint) {
+    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64 index = *writeIndex;
+
+    if (scalar <= 127) {
+        *(&destination[index]) = (i8)scalar;
+        *writeIndex = index + 1;
+        return;
+    }
+
+    if (scalar <= 2047) {
+        *(&destination[index]) = (i8)((scalar >> 6) | 192);
+        *(&destination[index + 1]) = (i8)((scalar & 63) | 128);
+        *writeIndex = index + 2;
+        return;
+    }
+
+    if (scalar <= 65535) {
+        *(&destination[index]) = (i8)((scalar >> 12) | 224);
+        *(&destination[index + 1]) = (i8)(((scalar >> 6) & 63) | 128);
+        *(&destination[index + 2]) = (i8)((scalar & 63) | 128);
+        *writeIndex = index + 3;
+        return;
+    }
+
+    *(&destination[index]) = (i8)((scalar >> 18) | 240);
+    *(&destination[index + 1]) = (i8)(((scalar >> 12) & 63) | 128);
+    *(&destination[index + 2]) = (i8)(((scalar >> 6) & 63) | 128);
+    *(&destination[index + 3]) = (i8)((scalar & 63) | 128);
+    *writeIndex = index + 4;
+}
+
+fn i64 Utf16EncodedLength(i32 codePoint) {
+    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+    if (scalar <= 65535) {
+        return 1;
+    }
+
+    return 2;
+}
+
+fn void WriteUtf16CodePoint(rawmutptr<i16> destination, rawmutptr<i64> writeIndex, i32 codePoint) {
+    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64 index = *writeIndex;
+
+    if (scalar <= 65535) {
+        *(&destination[index]) = (i16)scalar;
+        *writeIndex = index + 1;
+        return;
+    }
+
+    stack i32 adjusted = scalar - 65536;
+    *(&destination[index]) = (i16)((adjusted >> 10) + 55296);
+    *(&destination[index + 1]) = (i16)((adjusted & 1023) + 56320);
+    *writeIndex = index + 2;
+}
+
+fn bool TryDecodeUtf16CodePoint(rawptr<i16> data, i64 length, rawmutptr<i64> index, rawmutptr<i32> codePoint) {
+    if (data == null || index == null || codePoint == null) {
+        return false;
+    }
+
+    stack i64 readIndex = *index;
+    if (readIndex < 0 || readIndex >= length) {
+        return false;
+    }
+
+    stack i32 first = UnsignedWide(*(&data[readIndex]));
+    if (55296 <= first && first <= 56319) {
+        if (readIndex + 1 < length) {
+            stack i32 second = UnsignedWide(*(&data[readIndex + 1]));
+            *index = readIndex + 2;
+            if (56320 <= second && second <= 57343) {
+                *codePoint = (((first - 55296) << 10) | (second - 56320)) + 65536;
+                return true;
+            }
+
+            *codePoint = 65533;
+            return true;
+        }
+
+        *index = readIndex + 1;
+        *codePoint = 65533;
+        return true;
+    }
+
+    *index = readIndex + 1;
+    if (56320 <= first && first <= 57343) {
+        *codePoint = 65533;
+        return true;
+    }
+
+    *codePoint = first;
+    return true;
+}
+
 public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source) {
+    if (destination == null) {
+        return false;
+    }
+
+    stack rawmutptr<i32> data = (*destination).Data;
+    stack i64 capacity = (*destination).Capacity;
+    if (capacity < 0) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack i64 sourceLength = AsciiLength(source);
+    if (sourceLength < 0) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack ascii view = source[0, sourceLength];
+    if (sourceLength > 0 && data == null) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64 writeIndex = 0;
+    stack mut i64 readIndex = 0;
+    while willexit (readIndex < sourceLength) {
+        if (writeIndex >= capacity) {
+            *destination = new Unicode() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+
+        stack i64 start = readIndex;
+        stack i32 codePoint = 65533;
+        stack rawptr<i8> sourceData = AsciiData(view);
+        if (!TryDecodeUtf8CodePoint(sourceData, sourceLength, &readIndex, &codePoint)) {
+            readIndex = start + 1;
+        }
+
+        *(&data[writeIndex]) = NormalizeUnicodeCodePoint(codePoint);
+        writeIndex += 1;
+    }
+
+    *destination = new Unicode() {
+        Data = data,
+        Length = writeIndex,
+        Capacity = capacity
+    };
+    return true;
+}
+
+public fn bool TryConvertAsciiToUtf16(rawmutptr<i16> destination, i64 capacity, ascii source, rawmutptr<i64> writtenLength) {
+    if (writtenLength == null) {
+        return false;
+    }
+
+    *writtenLength = 0;
+    if (capacity < 0) {
+        return false;
+    }
+
+    stack i64 sourceLength = AsciiLength(source);
+    if (sourceLength < 0) {
+        return false;
+    }
+
+    stack ascii view = source[0, sourceLength];
+    stack rawptr<i8> data = AsciiData(view);
+    if (sourceLength > 0 && data == null) {
+        return false;
+    }
+
+    stack mut i64 readIndex = 0;
+    stack mut i64 writeIndex = 0;
+    while willexit (readIndex < sourceLength) {
+        stack i64 start = readIndex;
+        stack i32 codePoint = 65533;
+        if (!TryDecodeUtf8CodePoint(data, sourceLength, &readIndex, &codePoint)) {
+            readIndex = start + 1;
+        }
+
+        stack i64 required = Utf16EncodedLength(codePoint);
+        if (writeIndex + required > capacity || (required > 0 && destination == null)) {
+            *writtenLength = 0;
+            return false;
+        }
+
+        WriteUtf16CodePoint(destination, &writeIndex, codePoint);
+    }
+
+    *writtenLength = writeIndex;
+    return true;
+}
+
+public fn bool TryConvertUtf16ToUnicode(rawmutptr<Unicode> destination, rawptr<i16> source, i64 sourceLength) {
+    if (destination == null) {
+        return false;
+    }
+
+    stack rawmutptr<i32> data = (*destination).Data;
+    stack i64 capacity = (*destination).Capacity;
+    if (capacity < 0 || sourceLength < 0) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    if (sourceLength > 0 && source == null) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64 readIndex = 0;
+    stack mut i64 required = 0;
+    stack mut i32 codePoint = 65533;
+    while willexit (readIndex < sourceLength) {
+        codePoint = 65533;
+        if (!TryDecodeUtf16CodePoint(source, sourceLength, &readIndex, &codePoint)) {
+            *destination = new Unicode() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+
+        required += 1;
+        if (required > capacity) {
+            *destination = new Unicode() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+    }
+
+    if (required > 0 && data == null) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64 writeIndex = 0;
+    readIndex = 0;
+    while willexit (readIndex < sourceLength) {
+        codePoint = 65533;
+        if (!TryDecodeUtf16CodePoint(source, sourceLength, &readIndex, &codePoint)) {
+            *destination = new Unicode() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+
+        *(&data[writeIndex]) = NormalizeUnicodeCodePoint(codePoint);
+        writeIndex += 1;
+    }
+
+    *destination = new Unicode() {
+        Data = data,
+        Length = writeIndex,
+        Capacity = capacity
+    };
+    return true;
+}
+
+public fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source) {
+    if (destination == null) {
+        return false;
+    }
+
+    stack rawmutptr<i8> data = (*destination).Data;
+    stack i64 capacity = (*destination).Capacity;
+    if (capacity < 0) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack i64 sourceLength = UnicodeLength(source);
+    if (sourceLength < 0) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack unicode view = source[0, sourceLength];
+    stack mut i64 readIndex = 0;
+    stack mut i64 required = 0;
+    while willexit (readIndex < sourceLength) {
+        stack unicode unit = view[readIndex, 1];
+        stack rawptr<i32> unitData = UnicodeData(unit);
+        required += Utf8EncodedLength(*unitData);
+        if (required > capacity) {
+            *destination = new Ascii() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+
+        readIndex += 1;
+    }
+
+    if (required > 0 && data == null) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64 writeIndex = 0;
+    stack mut i64 sourceIndex = 0;
+    while willexit (sourceIndex < sourceLength) {
+        stack unicode unit = view[sourceIndex, 1];
+        stack rawptr<i32> unitData = UnicodeData(unit);
+        WriteUtf8CodePoint(data, &writeIndex, *unitData);
+        sourceIndex += 1;
+    }
+
+    *destination = new Ascii() {
+        Data = data,
+        Length = writeIndex,
+        Capacity = capacity
+    };
+    return true;
+}
+
+public fn bool TryConvertUnicodeToUtf16(rawmutptr<i16> destination, i64 capacity, unicode source, rawmutptr<i64> writtenLength) {
+    if (writtenLength == null) {
+        return false;
+    }
+
+    *writtenLength = 0;
+    if (capacity < 0) {
+        return false;
+    }
+
+    stack i64 sourceLength = UnicodeLength(source);
+    if (sourceLength < 0) {
+        return false;
+    }
+
+    stack unicode view = source[0, sourceLength];
+    stack mut i64 readIndex = 0;
+    stack mut i64 required = 0;
+    while willexit (readIndex < sourceLength) {
+        stack unicode unit = view[readIndex, 1];
+        stack rawptr<i32> unitData = UnicodeData(unit);
+        required += Utf16EncodedLength(*unitData);
+        if (required > capacity) {
+            return false;
+        }
+
+        readIndex += 1;
+    }
+
+    if (required > 0 && destination == null) {
+        return false;
+    }
+
+    stack mut i64 writeIndex = 0;
+    stack mut i64 sourceIndex = 0;
+    while willexit (sourceIndex < sourceLength) {
+        stack unicode unit = view[sourceIndex, 1];
+        stack rawptr<i32> unitData = UnicodeData(unit);
+        WriteUtf16CodePoint(destination, &writeIndex, *unitData);
+        sourceIndex += 1;
+    }
+
+    *writtenLength = writeIndex;
+    return true;
+}
+
+public fn bool TryConvertUtf16ToAscii(rawmutptr<Ascii> destination, rawptr<i16> source, i64 sourceLength) {
+    if (destination == null) {
+        return false;
+    }
+
+    stack rawmutptr<i8> data = (*destination).Data;
+    stack i64 capacity = (*destination).Capacity;
+    if (capacity < 0 || sourceLength < 0) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    if (sourceLength > 0 && source == null) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64 readIndex = 0;
+    stack mut i64 required = 0;
+    stack mut i32 codePoint = 65533;
+    while willexit (readIndex < sourceLength) {
+        codePoint = 65533;
+        if (!TryDecodeUtf16CodePoint(source, sourceLength, &readIndex, &codePoint)) {
+            *destination = new Ascii() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+
+        required += Utf8EncodedLength(codePoint);
+        if (required > capacity) {
+            *destination = new Ascii() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+    }
+
+    if (required > 0 && data == null) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64 writeIndex = 0;
+    readIndex = 0;
+    while willexit (readIndex < sourceLength) {
+        codePoint = 65533;
+        if (!TryDecodeUtf16CodePoint(source, sourceLength, &readIndex, &codePoint)) {
+            *destination = new Ascii() {
+                Data = data,
+                Length = 0,
+                Capacity = capacity
+            };
+            return false;
+        }
+
+        WriteUtf8CodePoint(data, &writeIndex, codePoint);
+    }
+
+    *destination = new Ascii() {
+        Data = data,
+        Length = writeIndex,
+        Capacity = capacity
+    };
+    return true;
+}

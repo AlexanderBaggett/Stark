@@ -818,20 +818,20 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
-    public void TextSlicingRequiresStartAndLength()
+    public void TextAccessRejectsMoreThanTwoIndices()
     {
         var result = Compile(
             """
             module Demo
 
             fn ascii Run(ascii text) {
-                return text[1];
+                return text[1, 2, 3];
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Text slicing currently requires exactly two integer expressions: start and length");
+        AssertDiagnostic(result, "STK3008", "Text indexing currently supports exactly one integer index or two integer expressions: start and length");
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 # `System.Console`
 
-`System.Console` provides the current terminal output API.
+`System.Console` provides the current terminal input and output API.
 
 ## Surface
 
@@ -13,6 +13,8 @@ public fn System.IO.IOStatus WriteError(ascii text);
 public fn System.IO.IOStatus WriteError(unicode text);
 public fn System.IO.IOStatus WriteErrorLine(ascii text);
 public fn System.IO.IOStatus WriteErrorLine(unicode text);
+public fn Unicode ReadLine();
+public fn Unicode Read();
 ```
 
 ## Behavior
@@ -21,6 +23,10 @@ public fn System.IO.IOStatus WriteErrorLine(unicode text);
 - `WriteError` writes to stderr.
 - `WriteLine` and `WriteErrorLine` append `\n`.
 - The current surface returns `System.IO.IOStatus` instead of `void`.
+- `ReadLine` returns the next stdin line as `Unicode` without the trailing newline.
+- `Read` returns the next stdin code point as a one-element `Unicode`.
+- `ReadLine` and `Read` currently return empty `Unicode` on EOF or input failure.
+- The current input implementation reuses fixed internal `Unicode` backing buffers instead of allocating fresh storage for each call.
 
 ## Error Model
 
@@ -46,6 +52,6 @@ export ffi fn i32 main() {
 ## Current Status
 
 - Output is implemented.
-- Input APIs are not implemented yet.
-- On Linux, the current `ascii` stdout/stderr path is syscall-backed through the internal platform layer.
-- The `unicode` Linux console path is still transitional until the text-encoding boundary is finished.
+- Basic `ReadLine` and `Read` input are implemented.
+- On Linux, the `ascii` and `unicode` stdout/stderr paths are syscall-backed through the internal platform layer, with `unicode` text encoded as UTF-8 before write.
+- `ReadLine` and `Read` decode UTF-8 stdin through a shared buffered console-input handle.

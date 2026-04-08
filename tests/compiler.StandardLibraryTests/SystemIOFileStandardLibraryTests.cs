@@ -20,5 +20,8 @@ public sealed class SystemIOFileStandardLibraryTests
     public Task PackagedStdLibFileBufferingModesBehaveAsExpected() => _suite.PackagedStdLibFileBufferingModesBehaveAsExpected();
 
     [Fact]
+    public Task PackagedStdLibOwnedFileWritesHonorExplicitTextEncodings() => _suite.PackagedStdLibOwnedFileWritesHonorExplicitTextEncodings();
+
+    [Fact]
     public Task PackagedStdLibFileMoveDeleteAndExistsRoundTrip() => _suite.PackagedStdLibFileMoveDeleteAndExistsRoundTrip();
 }

@@ -20,14 +20,14 @@ For current unsupported or partial areas, see [UnsupportedFeatures.md](./Unsuppo
 | Functions and effects | Included | `fn`, `finite`, `law`, `finite law`; block bodies and declaration-only forms; `inline`, `noinline`, `inlinehint`, `hot`, `cold`, `ffi`, `strictfp` | Additional effect-system expansion beyond the current frontend-derived guarantees |
 | Data declarations | Included | `struct`, `record`, `enum`, destructor blocks, current object/enum construction forms that already lower | Future representation controls and unsupported construction shapes listed in [UnsupportedFeatures.md](./UnsupportedFeatures.md) |
 | Compile-time abstraction surface | Out of `v1.0` | None required for the first release | Type aliases, generic instantiation strategy, runtime trait/doctrine features, constrained generics, specialization |
-| Core types | Included | `bool`, `iN`, `fN`, range-constrained integers, `ascii`, `unicode`, `Ascii`, `Unicode`, fixed arrays, slices, raw pointers, current borrow qualifiers | Single-element text indexing and general runtime `ascii`/`unicode` conversion |
+| Core types | Included | `bool`, `iN`, `fN`, range-constrained integers, `ascii`, `unicode`, `Ascii`, `Unicode`, fixed arrays, slices, raw pointers, current borrow qualifiers, single-element text indexing | No additional core-type exclusions beyond the unsupported lowering gaps listed elsewhere |
 | Globals and local storage | Included | Top-level `const`, `static`, `static mut`; local `stack`, `register`, and `heap` storage | Local `arena` and local `static` code generation |
 | Ownership and lifetime rules | Included | Move semantics, automatic drop, borrow/`retborrow`/`storeborrow`, non-null safe borrows, raw-pointer nullability, borrow-liveness enforcement | Escape hatches that weaken ownership guarantees |
 | Control flow | Included | Blocks, local declarations, `if`/`else`, `while` with explicit loop behavior, `return`, `break`, `continue`, current lowerable `switch` subset | `for` loops and richer switch shapes outside the current lowered subset |
 | Expressions and operators | Included | Current lowered scalar arithmetic, comparisons, assignments, aggregate field access, current array/slice/indexing subset, direct calls, object initializers, enum case construction | MIR lowering gaps documented in [UnsupportedFeatures.md](./UnsupportedFeatures.md) |
 | Interop and packaging | Included | `ffi`, executable/object/static-library emission, package manifests, manifest-backed Stark imports | `ffi asm` as a release requirement, broader cross-target ABI guarantees |
 | CLI and diagnostics | Included | `--check`, `--emit-mir`, `--emit-ssa`, `--emit-llvm`, `--emit-obj`, `--emit-lib`, `--emit-exe`, stable unsupported-lowering diagnostics for codegen modes | Richer release tooling beyond the current CLI surface |
-| Standard library baseline | Included | `System`, `System.BitOperations`, `System.Console` output, `System.IO`, `System.IO.File`, `System.IO.Path`, `System.Math`, `System.Text` current slice | Console input, richer encoding conversion, allocation-backed text convenience APIs beyond the current helpers |
+| Standard library baseline | Included | `System`, `System.BitOperations`, `System.Console` current input/output slice, `System.IO`, `System.IO.File`, `System.IO.Path`, `System.Math`, `System.Text` current slice | Text-reading APIs and allocation-backed text convenience APIs beyond the current helpers |
 
 ## Platform And Toolchain Support Matrix
 
@@ -59,6 +59,6 @@ Post-release work:
 
 - Any feature already listed as out of `v1.0` in the inclusion matrix.
 - Remaining unsupported MIR lowering gaps and non-baseline lowering work such as local `arena` and local `static` code generation.
-- Single-element text indexing, general runtime `ascii`/`unicode` conversion, console input, and richer text or file convenience APIs.
+- Text-reading APIs and richer allocation-backed text convenience APIs.
 - Type aliases, broader generics and monomorphization strategy, and runtime trait/doctrine design.
 - Windows, macOS, and `aarch64` host or target release guarantees.

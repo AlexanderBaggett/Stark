@@ -3,9 +3,7 @@ It's a language focused on peformance. Ideally performance matching or beating C
 
 The language is syntactically semilar to C#, but more restrictive than Rust. 
 
-
 Read the the documents in the docs folder, and the tests. Be careful about the compiler.StandardLibraryTests, they take a look time to run.
-
 
 Try not to read all of the Compiler C# files in the repo, there's too much and you have only so much context.  Focus on high-level stuff.  You can read the file list to get the general picture of what is going on, that paired with the tests should give you a pretty good idea.
 
@@ -31,6 +29,8 @@ Also, Please remember this is a speed focused language, so don't skip out on any
 And remember:
 Avoid over-engineering
 Avoid scope expansion
+And Don't shy away from large work chunks
+Ideally complete a full vertical slice in the compiler pipeline all the way through code gen.
 Keep it simple
 If you happen discover incomplete, incorrect, or unperformant implementations in the compiler or standard library while working, let me know.
 If you ever are unsure about how something should be done, provide options with examples in stark code, and explain the tradeoffs

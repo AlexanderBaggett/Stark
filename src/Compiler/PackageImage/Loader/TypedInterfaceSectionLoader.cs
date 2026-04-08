@@ -11,7 +11,7 @@ internal static partial class PackageImageLoader
             return false;
         }
 
-        var imports = GetImports(module.Module)
+        var imports = GetImports(module.Module, includeSourceSurfaceImports: RequiresSourceSurfaceImports(module.Module))
             .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
             .ThenByDescending(static import => import.IsExported)
             .Select(static import => new ImportDeclarationModel(import.ModuleName, import.IsExported))

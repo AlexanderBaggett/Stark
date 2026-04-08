@@ -627,6 +627,16 @@ This is the required surface for conversions that Stark keeps explicit, includin
 - fixed-array to slice view conversions
 - ascii/unicode text conversions for compile-time text constants
 
+Runtime conversion between `ascii`, UTF-16 buffers, and `unicode` values uses
+the explicit `System.Text` helper APIs such as
+`TryConvertAsciiToUnicode`,
+`TryConvertAsciiToUtf16`,
+`TryConvertUtf16ToUnicode`,
+`TryConvertUnicodeToAscii`,
+`TryConvertUnicodeToUtf16`, and
+`TryConvertUtf16ToAscii`,
+all with caller-owned destination storage.
+
 These conversions may not strengthen mutability. In particular, safe code may not use explicit conversions to turn a readonly raw pointer into `rawmutptr<T>`, and may not erase readonly or frozen provenance from a raw pointer in order to regain mutation later.
 
 ### 11.2 Precedence
@@ -745,9 +755,9 @@ The text runtime contract is:
 - `ascii` is a UTF-8 text view
 - `unicode` is a UTF-32 text view
 - `Ascii` and `Unicode` are the owning text container forms
+- `text[index]` returns a same-kind one-element text view
 - `text[start, length]` returns another zero-copy text view of the same text kind
 - explicit text conversion is required where widening, narrowing, or ownership changes are involved
-- single-element text indexing is not part of the language surface
 
 ## 13. FFI and Raw Boundaries
 

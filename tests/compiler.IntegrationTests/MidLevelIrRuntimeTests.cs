@@ -77,6 +77,397 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task FixedArrayParameterDynamicIndexReadsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            fn i32 Read(i32[3] values, i32 index) {
+                return values[index];
+            }
+
+            export ffi fn i32 main() {
+                stack i32[3] values = { 4, 7, 9 };
+                return Read(values, 1);
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task SingleElementAsciiTextIndexReadsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            fn i32 Pick(ascii text, i32 index) {
+                switch (text[index]) {
+                    case 'b':
+                        return 7;
+                    default:
+                        return 0;
+                }
+            }
+
+            export ffi fn i32 main() {
+                return Pick("abc", 1);
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task RecordEqualityAndInequalityCompareScalarFieldsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn bool Same(Pair left, Pair right) {
+                return left == right;
+            }
+
+            fn bool Different(Pair left, Pair right) {
+                return left != right;
+            }
+
+            export ffi fn i32 main() {
+                stack Pair sameLeft = new Pair() { Left = 1, Right = 2 };
+                stack Pair sameRight = new Pair() { Left = 1, Right = 2 };
+                stack Pair differentLeft = new Pair() { Left = 1, Right = 2 };
+                stack Pair differentRight = new Pair() { Left = 2, Right = 1 };
+
+                if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight)) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task FixedArrayEqualityAndInequalityCompareScalarElementsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            fn bool Same(i32[2] left, i32[2] right) {
+                return left == right;
+            }
+
+            fn bool Different(i32[2] left, i32[2] right) {
+                return left != right;
+            }
+
+            export ffi fn i32 main() {
+                stack i32[2] sameLeft = { 1, 2 };
+                stack i32[2] sameRight = { 1, 2 };
+                stack i32[2] differentLeft = { 1, 2 };
+                stack i32[2] differentRight = { 2, 1 };
+
+                if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight)) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task VoidConditionalMemberCallStatementsExecuteAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Counter {
+                i32 Value;
+
+                fn void Set(borrow mut Counter self, i32 next) {
+                    self.Value = next;
+                    return;
+                }
+            }
+
+            export ffi fn i32 main() {
+                stack mut Counter left = new Counter() { Value = 0 };
+                stack mut Counter right = new Counter() { Value = 0 };
+                true ? left.Set(7) : right.Set(9);
+                return left.Value + right.Value;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task EnumEqualityAndInequalityCompareTagAndPayloadAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            enum Token {
+                None,
+                Number(i32),
+            }
+
+            fn bool Same(Token left, Token right) {
+                return left == right;
+            }
+
+            fn bool Different(Token left, Token right) {
+                return left != right;
+            }
+
+            export ffi fn i32 main() {
+                stack Token sameLeft = Token.Number(7);
+                stack Token sameRight = Token.Number(7);
+                stack Token differentPayloadLeft = Token.Number(7);
+                stack Token differentPayloadRight = Token.Number(9);
+                stack Token differentVariantLeft = Token.Number(7);
+                stack Token differentVariantRight = Token.None;
+
+                if (Same(sameLeft, sameRight)
+                    && Different(differentPayloadLeft, differentPayloadRight)
+                    && Different(differentVariantLeft, differentVariantRight)) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task LargerScalarizableAggregatesCompareAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+
+            enum Token {
+                None,
+                Many(i32, i32, i32, i32, i32),
+            }
+
+            fn bool SameRecord(Many left, Many right) {
+                return left == right;
+            }
+
+            fn bool DifferentRecord(Many left, Many right) {
+                return left != right;
+            }
+
+            fn bool SameArray(i32[5] left, i32[5] right) {
+                return left == right;
+            }
+
+            fn bool DifferentArray(i32[5] left, i32[5] right) {
+                return left != right;
+            }
+
+            fn bool SameToken(Token left, Token right) {
+                return left == right;
+            }
+
+            fn bool DifferentToken(Token left, Token right) {
+                return left != right;
+            }
+
+            export ffi fn i32 main() {
+                stack Many sameRecordLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many sameRecordRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many differentRecordLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many differentRecordRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
+
+                stack i32[5] sameArrayLeft = { 1, 2, 3, 4, 5 };
+                stack i32[5] sameArrayRight = { 1, 2, 3, 4, 5 };
+                stack i32[5] differentArrayLeft = { 1, 2, 3, 4, 5 };
+                stack i32[5] differentArrayRight = { 1, 2, 3, 4, 6 };
+
+                stack Token sameTokenLeft = Token.Many(1, 2, 3, 4, 5);
+                stack Token sameTokenRight = Token.Many(1, 2, 3, 4, 5);
+                stack Token differentTokenLeft = Token.Many(1, 2, 3, 4, 5);
+                stack Token differentTokenRight = Token.Many(1, 2, 3, 4, 6);
+
+                if (SameRecord(sameRecordLeft, sameRecordRight)
+                    && DifferentRecord(differentRecordLeft, differentRecordRight)
+                    && SameArray(sameArrayLeft, sameArrayRight)
+                    && DifferentArray(differentArrayLeft, differentArrayRight)
+                    && SameToken(sameTokenLeft, sameTokenRight)
+                    && DifferentToken(differentTokenLeft, differentTokenRight)) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task TextAndAggregateTextEqualityCompareContentsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            record Label(ascii Tag, unicode Word) { }
+
+            fn bool SameAscii(ascii left, ascii right) {
+                return left == right;
+            }
+
+            fn bool DifferentUnicode(unicode left, unicode right) {
+                return left != right;
+            }
+
+            fn bool SameLabel(Label left, Label right) {
+                return left == right;
+            }
+
+            fn bool DifferentLabel(Label left, Label right) {
+                return left != right;
+            }
+
+            export ffi fn i32 main() {
+                if (SameAscii("cab!"[1, 2], "zab?"[1, 2])
+                    && DifferentUnicode(((unicode)"caf\u00E9!")[0, 4], ((unicode)"cafe?")[0, 4])
+                    && SameLabel(
+                        new Label() { Tag = "cab!"[1, 2], Word = ((unicode)"caf\u00E9!")[0, 4] },
+                        new Label() { Tag = "zab?"[1, 2], Word = ((unicode)"caf\u00E9?")[0, 4] })
+                    && DifferentLabel(
+                        new Label() { Tag = "cab!"[1, 2], Word = ((unicode)"caf\u00E9!")[0, 4] },
+                        new Label() { Tag = "zbx?"[1, 2], Word = ((unicode)"cafe?")[0, 4] })) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task SliceAndAggregateSliceEqualityCompareViewIdentityAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            record Window(i32[] Items, i32 Count) { }
+
+            fn bool SameSliceSelf(i32[] value) {
+                return value == value;
+            }
+
+            fn bool DifferentSlice(i32[] left, i32[] right) {
+                return left != right;
+            }
+
+            fn bool SameWindowSelf(Window value) {
+                return value == value;
+            }
+
+            fn bool DifferentWindow(Window left, Window right) {
+                return left != right;
+            }
+
+            export ffi fn i32 main() {
+                stack i32[3] selfValues = { 1, 2, 3 };
+                stack i32[] selfView = selfValues;
+
+                stack i32[3] leftValues = { 1, 2, 3 };
+                stack i32[3] rightValues = { 1, 2, 3 };
+                stack i32[] leftView = leftValues;
+                stack i32[] rightView = rightValues;
+
+                stack i32[3] selfWindowValues = { 1, 2, 3 };
+                stack i32[3] leftWindowValues = { 1, 2, 3 };
+                stack i32[3] rightWindowValues = { 1, 2, 3 };
+
+                if (SameSliceSelf(selfView)
+                    && DifferentSlice(leftView, rightView)
+                    && SameWindowSelf(new Window() { Items = selfWindowValues, Count = 3 })
+                    && DifferentWindow(
+                        new Window() { Items = leftWindowValues, Count = 3 },
+                        new Window() { Items = rightWindowValues, Count = 3 })) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
     public async Task ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -116,6 +507,58 @@ public sealed class MidLevelIrRuntimeTests
             """);
 
         Assert.Equal(1, exitCode);
+    }
+
+    [Fact]
+    public async Task NestedAggregateDropsCascadeThroughStructFieldsAndEnumPayloadsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            static mut i32 Counter = 0;
+
+            fn void Bump(i32 value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32 Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Token {
+                End,
+                Text(Resource),
+            }
+
+            struct Holder {
+                Token Token;
+                Resource Backup;
+            }
+
+            export ffi fn i32 main() {
+                {
+                    stack Holder holder = new Holder() {
+                        Token = Token.Text(new Resource() { Value = 3 }),
+                        Backup = new Resource() { Value = 4 }
+                    };
+                }
+
+                return Counter;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
     }
 
     [Fact]
@@ -194,6 +637,60 @@ public sealed class MidLevelIrRuntimeTests
             """);
 
         Assert.Equal(1, exitCode);
+    }
+
+    [Fact]
+    public async Task AggregateAndEnumSwitchPatternsMatchTextLeavesAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            record Label(ascii Tag, unicode Word) { }
+
+            enum Token {
+                Empty,
+                Text { Tag: ascii, Word: unicode },
+            }
+
+            fn bool MatchLabel(Label value) {
+                switch (value) {
+                    case Label("ab", var word):
+                        return word == (unicode)"cat";
+                    default:
+                        return false;
+                }
+            }
+
+            fn bool MatchToken(Token value) {
+                switch (value) {
+                    case Token.Text { Tag: "ab", Word: var word }:
+                        return word == (unicode)"cat";
+                    case Token.Empty:
+                        return false;
+                    default:
+                        return false;
+                }
+            }
+
+            export ffi fn i32 main() {
+                if (MatchLabel(new Label() { Tag = "ab", Word = (unicode)"cat" })
+                    && MatchToken(Token.Text { Tag: "ab", Word: (unicode)"cat" })
+                    && !MatchLabel(new Label() { Tag = "zz", Word = (unicode)"cat" })
+                    && !MatchToken(Token.Text { Tag: "zz", Word: (unicode)"cat" })) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
     }
 
     [Fact]

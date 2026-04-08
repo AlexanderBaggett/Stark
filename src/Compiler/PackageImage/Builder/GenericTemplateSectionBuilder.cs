@@ -292,7 +292,7 @@ internal static partial class PackageImageBuilder
             }
         }
         else if (!(returnType.Kind == StarkTypeKind.Void
-                   && string.Equals(lastStatementKind, "expression", StringComparison.Ordinal))
+                   && CanUsePublishedTypedTemplateImplicitVoidReturnStatement(lastStatement))
                  && !CanUseTypedTemplateSwitchAsTerminal(lastStatement, returnType))
         {
             return null;
@@ -314,6 +314,18 @@ internal static partial class PackageImageBuilder
         }
 
         return new StarkPackageTypedTemplateBodyManifest(publishedStatements);
+    }
+
+    private static bool CanUsePublishedTypedTemplateImplicitVoidReturnStatement(
+        StarkPackageTypedTemplateStatementManifest statement)
+    {
+        return string.Equals(statement.Kind, "local-variable", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "expression", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "assignment", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "switch", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "for", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "while", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "if", StringComparison.Ordinal);
     }
 
     private static bool TryBuildPublishedTypedTemplateStatementList(
@@ -451,8 +463,7 @@ internal static partial class PackageImageBuilder
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var expressionStatementValue)
-            && (string.Equals(expressionStatementValue.Kind, "direct-call", StringComparison.Ordinal)
-                || string.Equals(expressionStatementValue.Kind, "member-call", StringComparison.Ordinal)))
+            && CanUsePublishedTypedTemplateExpressionStatement(expressionStatementValue))
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "expression",
@@ -667,8 +678,20 @@ internal static partial class PackageImageBuilder
 
         if (statement.expressionStatement()?.expression().assignmentExpression() is { } assignmentExpression
             && assignmentExpression.assignmentOperator() is not null
-            && string.Equals(assignmentExpression.assignmentOperator().GetText(), "=", StringComparison.Ordinal)
-            && TryBuildPublishedTypedTemplateAssignmentTarget(assignmentExpression.unaryExpression(), out var assignmentTargetName)
+            && TryBuildPublishedTypedTemplateAssignmentTarget(
+                module,
+                assignmentExpression.unaryExpression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var assignmentTargetName,
+                out var assignmentTarget)
             && TryBuildPublishedTypedTemplateAssignmentExpression(
                 module,
                 assignmentExpression.assignmentExpression(),
@@ -686,7 +709,9 @@ internal static partial class PackageImageBuilder
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "assignment",
                 Expression: assignmentValue,
-                Name: assignmentTargetName);
+                Name: assignmentTargetName,
+                AssignmentOperator: assignmentExpression.assignmentOperator().GetText(),
+                TargetExpression: assignmentTarget);
             return true;
         }
 
@@ -722,6 +747,36 @@ internal static partial class PackageImageBuilder
         }
 
         return false;
+    }
+
+    private static bool CanUsePublishedTypedTemplateExpressionStatement(
+        StarkPackageTypedTemplateExpressionManifest expression)
+    {
+        if (string.Equals(expression.Kind, "direct-call", StringComparison.Ordinal)
+            || string.Equals(expression.Kind, "member-call", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return string.Equals(expression.Kind, "conditional", StringComparison.Ordinal)
+            && expression.Arguments is { Count: 3 } arguments
+            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[1])
+            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[2]);
+    }
+
+    private static bool CanUsePublishedTypedTemplateConditionalCallStatementBranch(
+        StarkPackageTypedTemplateExpressionManifest expression)
+    {
+        if (string.Equals(expression.Kind, "direct-call", StringComparison.Ordinal)
+            || string.Equals(expression.Kind, "member-call", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return string.Equals(expression.Kind, "conditional", StringComparison.Ordinal)
+            && expression.Arguments is { Count: 3 } arguments
+            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[1])
+            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[2]);
     }
 
     private static bool CanUseTypedTemplateSwitchAsTerminal(
@@ -774,13 +829,10 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest> switchCases)
     {
-        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(sections.Count);
+        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(sections.Sum(static section => section.switchLabel().Length));
         foreach (var section in sections)
         {
-            if (section.switchLabel().Length != 1
-                || section.switchLabel()[0].pattern() is not { } pattern
-                || section.switchLabel()[0].DEFAULT() is not null
-                || section.switchLabel()[0].whenClause() is not null
+            if (section.switchLabel().Length == 0
                 || section.statement().Length == 0
                 || !TryBuildPublishedTypedTemplateStatementList(
                     module,
@@ -797,19 +849,37 @@ internal static partial class PackageImageBuilder
                     directCallOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
-                    out var statements)
-                || !TryBuildPublishedTypedTemplateSwitchCase(
-                    pattern,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    statements,
-                    out var builtCase))
+                    out var statements))
             {
                 switchCases = [];
                 return false;
             }
 
-            builtCases.Add(builtCase);
+            foreach (var label in section.switchLabel())
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchCase(
+                        module,
+                        label,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        directCallOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        statements,
+                        out var builtCase))
+                {
+                    switchCases = [];
+                    return false;
+                }
+
+                builtCases.Add(builtCase);
+            }
         }
 
         switchCases = builtCases;
@@ -817,13 +887,95 @@ internal static partial class PackageImageBuilder
     }
 
     private static bool TryBuildPublishedTypedTemplateSwitchCase(
-        StarkParser.PatternContext pattern,
+        LoadedModuleDocument module,
+        StarkParser.SwitchLabelContext label,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
         IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
         IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         IReadOnlyList<StarkPackageTypedTemplateStatementManifest> statements,
         out StarkPackageTypedTemplateSwitchCaseManifest switchCase)
     {
         switchCase = null!;
+
+        StarkPackageTypedTemplateExpressionManifest? guardExpression = null;
+        if (label.whenClause()?.expression() is { } guard
+            && !TryBuildPublishedTypedTemplateExpression(
+                module,
+                guard,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out guardExpression))
+        {
+            return false;
+        }
+
+        if (label.DEFAULT() is not null)
+        {
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: "default",
+                Statements: statements);
+            return true;
+        }
+
+        if (label.pattern() is not { } pattern)
+        {
+            return false;
+        }
+
+        if (pattern.DISCARD() is not null)
+        {
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: guardExpression is null ? "default" : "match-all",
+                GuardExpression: guardExpression,
+                Statements: statements);
+            return true;
+        }
+
+        if (pattern.VAR() is not null)
+        {
+            var captureName = pattern.Identifier()?.GetText();
+            if (captureName is null)
+            {
+                return false;
+            }
+
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: "match-all",
+                Name: captureName,
+                GuardExpression: guardExpression,
+                Statements: statements);
+            return true;
+        }
+
+        if (pattern.literal() is { } literal)
+        {
+            if (!TryBuildPublishedTypedTemplateLiteralExpression(module, literal, literalsByLocation, out var literalExpression))
+            {
+                return false;
+            }
+
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: "literal",
+                Expression: literalExpression,
+                GuardExpression: guardExpression,
+                Statements: statements);
+            return true;
+        }
 
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
@@ -839,6 +991,7 @@ internal static partial class PackageImageBuilder
                 Kind: "enum-pattern",
                 Ordinal: ordinal,
                 Members: members,
+                GuardExpression: guardExpression,
                 Statements: statements);
             return true;
         }
@@ -857,6 +1010,7 @@ internal static partial class PackageImageBuilder
                 Kind: "enum-pattern",
                 Ordinal: ordinal,
                 Members: members,
+                GuardExpression: guardExpression,
                 Statements: statements);
             return true;
         }
@@ -876,6 +1030,7 @@ internal static partial class PackageImageBuilder
                     Kind: "enum-pattern",
                     Ordinal: enumOrdinal,
                     Members: enumMembers,
+                    GuardExpression: guardExpression,
                     Statements: statements);
                 return true;
             }
@@ -892,11 +1047,34 @@ internal static partial class PackageImageBuilder
                 Kind: "aggregate-pattern",
                 Ordinal: aggregateOrdinal,
                 Members: aggregateMembers,
+                GuardExpression: guardExpression,
                 Statements: statements);
             return true;
         }
 
         return false;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateLiteralExpression(
+        LoadedModuleDocument module,
+        StarkParser.LiteralContext literal,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (!literalsByLocation.TryGetValue(
+                BuildTemplateLiteralLookupKey(literal.Start.Line, literal.Start.Column + 1),
+                out var literalRecord))
+        {
+            return false;
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "literal",
+            LiteralText: literal.GetText(),
+            Type: BuildPublishedAbiTypeReference(literalRecord.Type, module));
+        return true;
     }
 
     private static bool TryBuildPublishedTypedTemplateSwitchFieldPatterns(
@@ -1159,8 +1337,20 @@ internal static partial class PackageImageBuilder
         {
             if (expression.assignmentExpression() is not { } assignmentExpression
                 || assignmentExpression.assignmentOperator() is null
-                || !string.Equals(assignmentExpression.assignmentOperator().GetText(), "=", StringComparison.Ordinal)
-                || !TryBuildPublishedTypedTemplateAssignmentTarget(assignmentExpression.unaryExpression(), out var assignmentTargetName)
+                || !TryBuildPublishedTypedTemplateAssignmentTarget(
+                    module,
+                    assignmentExpression.unaryExpression(),
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var assignmentTargetName,
+                    out var assignmentTarget)
                 || !TryBuildPublishedTypedTemplateAssignmentExpression(
                     module,
                     assignmentExpression.assignmentExpression(),
@@ -1182,7 +1372,9 @@ internal static partial class PackageImageBuilder
             builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
                 Kind: "assignment",
                 Expression: assignmentValue,
-                Name: assignmentTargetName));
+                Name: assignmentTargetName,
+                AssignmentOperator: assignmentExpression.assignmentOperator().GetText(),
+                TargetExpression: assignmentTarget));
         }
 
         assignmentStatements = builtStatements;
@@ -1314,21 +1506,66 @@ internal static partial class PackageImageBuilder
     }
 
     private static bool TryBuildPublishedTypedTemplateAssignmentTarget(
+        LoadedModuleDocument module,
         StarkParser.UnaryExpressionContext unaryExpression,
-        out string targetName)
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out string? targetName,
+        out StarkPackageTypedTemplateExpressionManifest targetExpression)
     {
-        targetName = string.Empty;
+        targetName = null;
+        targetExpression = null!;
 
         if (unaryExpression.powerExpression() is not { } powerExpression
             || powerExpression.unaryExpression() is not null
-            || powerExpression.postfixExpression() is not { } postfixExpression
-            || postfixExpression.postfixPart().Length != 0
-            || postfixExpression.primaryExpression().Identifier() is not { } identifier)
+            || powerExpression.postfixExpression() is not { } postfixExpression)
         {
             return false;
         }
 
-        targetName = identifier.GetText();
+        var rootName = postfixExpression.primaryExpression().Identifier()?.GetText()
+            ?? postfixExpression.primaryExpression().qualifiedName()?.GetText();
+        if (rootName is null || postfixExpression.postfixPart().Any(static part => part.argumentList() is not null))
+        {
+            return false;
+        }
+
+        var baseExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "name",
+            Name: rootName);
+
+        if (postfixExpression.postfixPart().Length == 0)
+        {
+            targetName = rootName;
+            targetExpression = baseExpression;
+            return true;
+        }
+
+        if (!TryBuildPublishedTypedTemplatePostfixChain(
+                module,
+                baseExpression,
+                postfixExpression.postfixPart(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out targetExpression))
+        {
+            return false;
+        }
+
         return true;
     }
 

@@ -485,8 +485,12 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run(i32[2] values, i32 index) {
-                    return values[index];
+                fn void A() {
+                    return;
+                }
+
+                fn bool Run(bool flag) {
+                    return (flag ? A() : A()) == (flag ? A() : A());
                 }
                 """),
             stdout,
@@ -496,11 +500,11 @@ public sealed class CompilerCliTests
         Assert.Contains("mir module Demo", stdout.ToString());
 
         var text = stderr.ToString();
-        Assert.Contains("Dynamic fixed-array indexing currently requires a local fixed array source.", text, StringComparison.Ordinal);
+        Assert.Contains("Direct MIR lowering stopped in 'LowerPostfixExpression'.", text, StringComparison.Ordinal);
         Assert.Contains("[warn gap lowering stage=lower-mir symbol=Run", text, StringComparison.Ordinal);
-        Assert.Contains("op=LowerIndexAccess", text, StringComparison.Ordinal);
+        Assert.Contains("op=LowerPostfixExpression", text, StringComparison.Ordinal);
         Assert.Contains("outcome=unsupported", text, StringComparison.Ordinal);
-        Assert.Contains("feature=lower-index-access", text, StringComparison.Ordinal);
+        Assert.Contains("feature=lower-postfix-expression", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Starting pass", text, StringComparison.Ordinal);
     }
 
@@ -516,8 +520,12 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run(i32[2] values, i32 index) {
-                    return values[index];
+                fn void A() {
+                    return;
+                }
+
+                fn bool Run(bool flag) {
+                    return (flag ? A() : A()) == (flag ? A() : A());
                 }
                 """),
             stdout,
@@ -527,7 +535,7 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("error STK5000 [lower-mir]", text, StringComparison.Ordinal);
-        Assert.Contains("Dynamic fixed-array indexing currently requires a local fixed array source.", text, StringComparison.Ordinal);
+        Assert.Contains("Code generation does not yet support this construct (lower-postfix-expression).", text, StringComparison.Ordinal);
         Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
     }
 

@@ -1,8 +1,5 @@
-import System.IO
-import System.Runtime.Buffer
-import System.Runtime.Platform
-import System.Text
-module System.Console
+import System.IO.File
+module System.Runtime.ConsoleInput
 
 const i64 ConsoleInputUnicodeCapacity = 8192;
 const i64 ConsoleInputByteCapacity = 8192;
@@ -29,20 +26,6 @@ internal struct UnicodeConsoleUnitStorage {
 
 static mut UnicodeConsoleLineStorage ConsoleReadLineStorage = new UnicodeConsoleLineStorage();
 static mut UnicodeConsoleUnitStorage ConsoleReadUnitStorage = new UnicodeConsoleUnitStorage();
-static mut ConsoleByteStorage ConsoleInputStorage = new ConsoleByteStorage();
-static mut i64 ConsoleInputReadPos = 0;
-static mut i64 ConsoleInputWritePos = 0;
-static mut rawptr<i8> ConsoleInputHandle = null;
-static mut bool ConsoleInputHandleInitialized = false;
-static mut bool ConsoleInputEndOfInput = false;
-
-fn System.IO.IOStatus StatusFromWriteResult(i32 result) {
-    if (result < 0) {
-        return System.IO.IOStatus.Err(System.IO.IOError.Unknown(result));
-    }
-
-    return System.IO.IOStatus.Ok;
-}
 
 fn i32 UnsignedByte(i8 value) {
     if (value < 0) {
@@ -191,66 +174,19 @@ fn i64 Utf8ExpectedByteCount(i8 firstByte) {
     return 0;
 }
 
-fn rawptr<i8> EnsureConsoleInputHandle() {
-    if (ConsoleInputEndOfInput) {
-        return null;
-    }
-
-    if (ConsoleInputHandleInitialized) {
-        return ConsoleInputHandle;
-    }
-
-    ConsoleInputHandle = System.Runtime.Platform.OpenStdin();
-    ConsoleInputHandleInitialized = true;
-    return ConsoleInputHandle;
-}
-
-fn void CloseConsoleInputHandle() {
-    if (ConsoleInputHandle != null) {
-        System.Runtime.Platform.CloseStdin(ConsoleInputHandle);
-        ConsoleInputHandle = null;
-    }
-
-    ConsoleInputReadPos = 0;
-    ConsoleInputWritePos = 0;
-    ConsoleInputEndOfInput = true;
-    return;
-}
-
-fn bool RefillConsoleInput() {
-    stack rawptr<i8> handle = EnsureConsoleInputHandle();
-    if (handle == null) {
-        CloseConsoleInputHandle();
-        return false;
-    }
-
-    stack i64 readCount = System.Runtime.Platform.ReadStdin(
-        &ConsoleInputStorage.Storage[0],
-        ConsoleInputByteCapacity);
-    if (readCount <= 0) {
-        CloseConsoleInputHandle();
-        return false;
-    }
-
-    ConsoleInputReadPos = 0;
-    ConsoleInputWritePos = readCount;
-    return true;
-}
-
 fn bool TryReadInputByte(rawmutptr<i8> destination) {
     if (destination == null) {
         return false;
     }
 
-    if (ConsoleInputReadPos >= ConsoleInputWritePos) {
-        if (!RefillConsoleInput()) {
-            return false;
-        }
+    stack rawptr<i8> handle = System.IO.File.OpenRead("/dev/stdin");
+    if (handle == null) {
+        return false;
     }
 
-    *destination = *(&ConsoleInputStorage.Storage[ConsoleInputReadPos]);
-    ConsoleInputReadPos += 1;
-    return true;
+    stack i64 readCount = System.IO.File.ReadBytes((rawptr<i8>)destination, 1, 1, handle);
+    System.IO.File.Close(handle);
+    return readCount == 1;
 }
 
 fn i64 DecodeUtf8BytesToUnicode(rawptr<i8> data, i64 length, rawmutptr<i32> destination, i64 capacity) {
@@ -260,11 +196,7 @@ fn i64 DecodeUtf8BytesToUnicode(rawptr<i8> data, i64 length, rawmutptr<i32> dest
 
     stack mut i64 readIndex = 0;
     stack mut i64 writeIndex = 0;
-    while willexit (readIndex < length) {
-        if (writeIndex >= capacity) {
-            break;
-        }
-
+    while willexit (readIndex < length && writeIndex < capacity) {
         stack i64 start = readIndex;
         stack i32 codePoint = 65533;
         if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint)) {
@@ -298,101 +230,7 @@ fn Unicode BuildConsoleReadUnitResult(i32 codePoint, i64 length) {
     };
 }
 
-public fn System.IO.IOStatus Write(ascii text) {
-    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAscii(text));
-}
-
-public fn System.IO.IOStatus Write(unicode text) {
-    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutUnicode(text));
-}
-
-public fn System.IO.IOStatus WriteLine(ascii text) {
-    stack mut System.Runtime.Buffer.ByteBuffer512 lineBuffer = new System.Runtime.Buffer.ByteBuffer512();
-    stack mut Ascii owned = new Ascii() {
-        Data = lineBuffer.WritePointer(),
-        Length = 0,
-        Capacity = lineBuffer.Writable()
-    };
-    stack i64 textLength = System.Text.AsciiLength(text);
-    stack i64 required = textLength + 1;
-
-    if (owned.Data != null && required <= owned.Capacity) {
-        stack ascii fullText = text[0, textLength];
-        if (System.Text.TryConcatAscii(&owned, fullText, "\n")) {
-            return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAscii(System.Text.AsciiView(owned)));
-        }
-
-        return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
-    }
-
-    stack ascii fullText = text[0, textLength];
-    stack System.IO.IOStatus status = StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAscii(fullText));
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write("\n");
-    }
-}
-
-public fn System.IO.IOStatus WriteLine(unicode text) {
-    stack System.IO.IOStatus status = Write(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write((unicode)"\n");
-    }
-}
-
-public fn System.IO.IOStatus WriteError(ascii text) {
-    return StatusFromWriteResult(System.Runtime.Platform.WriteStderrAscii(text));
-}
-
-public fn System.IO.IOStatus WriteError(unicode text) {
-    return StatusFromWriteResult(System.Runtime.Platform.WriteStderrUnicode(text));
-}
-
-public fn System.IO.IOStatus WriteErrorLine(ascii text) {
-    stack mut System.Runtime.Buffer.ByteBuffer512 lineBuffer = new System.Runtime.Buffer.ByteBuffer512();
-    stack mut Ascii owned = new Ascii() {
-        Data = lineBuffer.WritePointer(),
-        Length = 0,
-        Capacity = lineBuffer.Writable()
-    };
-    stack i64 textLength = System.Text.AsciiLength(text);
-    stack i64 required = textLength + 1;
-
-    if (owned.Data != null && required <= owned.Capacity) {
-        stack ascii fullText = text[0, textLength];
-        if (System.Text.TryConcatAscii(&owned, fullText, "\n")) {
-            return StatusFromWriteResult(System.Runtime.Platform.WriteStderrAscii(System.Text.AsciiView(owned)));
-        }
-
-        return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
-    }
-
-    stack ascii fullText = text[0, textLength];
-    stack System.IO.IOStatus status = StatusFromWriteResult(System.Runtime.Platform.WriteStderrAscii(fullText));
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError("\n");
-    }
-}
-
-public fn System.IO.IOStatus WriteErrorLine(unicode text) {
-    stack System.IO.IOStatus status = WriteError(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError((unicode)"\n");
-    }
-}
-
-public fn Unicode ReadLine() {
+internal fn Unicode ReadLineUnicode() {
     stack mut ConsoleByteStorage lineBytes = new ConsoleByteStorage();
     stack mut ConsoleSingleByteStorage nextByte = new ConsoleSingleByteStorage();
     stack mut i64 byteLength = 0;
@@ -403,14 +241,14 @@ public fn Unicode ReadLine() {
         }
 
         if (nextByte.Storage[0] == (i8)10) {
-            if (byteLength > 0 && *(&lineBytes.Storage[byteLength - 1]) == (i8)13) {
+            if (byteLength > 0 && lineBytes.Storage[byteLength - 1] == (i8)13) {
                 byteLength -= 1;
             }
 
             break;
         }
 
-        *(&lineBytes.Storage[byteLength]) = nextByte.Storage[0];
+        lineBytes.Storage[byteLength] = nextByte.Storage[0];
         byteLength += 1;
     }
 
@@ -427,7 +265,7 @@ public fn Unicode ReadLine() {
     return BuildConsoleReadLineResult(lineLength);
 }
 
-public fn Unicode Read() {
+internal fn Unicode ReadUnicode() {
     stack mut ConsoleCodePointByteStorage utf8Bytes = new ConsoleCodePointByteStorage();
     if (!TryReadInputByte(&utf8Bytes.Storage[0])) {
         return BuildConsoleReadUnitResult(0, 0);

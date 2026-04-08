@@ -1888,6 +1888,328 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void SmallRecordEqualityAndInequalityEmitScalarLeafComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32 Left, i32 Right) { }
+
+            fn bool Equal(Pair left, Pair right) {
+                return left == right;
+            }
+
+            fn bool NotEqual(Pair left, Pair right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i1 @Equal(%Pair %arg_left, %Pair %arg_right)", llvm);
+        Assert.Contains("define fastcc i1 @NotEqual(%Pair %arg_left, %Pair %arg_right)", llvm);
+        Assert.Contains("extractvalue %Pair %arg_left, 0", llvm);
+        Assert.Contains("extractvalue %Pair %arg_right, 1", llvm);
+        Assert.Contains("icmp eq i32", llvm);
+        Assert.Contains("icmp ne i32", llvm);
+        Assert.Contains("and i1", llvm);
+        Assert.Contains("or i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Equal", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for NotEqual", llvm);
+    }
+
+    [Fact]
+    public void SmallFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Equal(i32[2] left, i32[2] right) {
+                return left == right;
+            }
+
+            fn bool NotEqual(i32[2] left, i32[2] right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i1 @Equal([2 x i32] %arg_left, [2 x i32] %arg_right)", llvm);
+        Assert.Contains("define fastcc i1 @NotEqual([2 x i32] %arg_left, [2 x i32] %arg_right)", llvm);
+        Assert.Contains("extractvalue [2 x i32] %arg_left, 0", llvm);
+        Assert.Contains("extractvalue [2 x i32] %arg_right, 1", llvm);
+        Assert.Contains("icmp eq i32", llvm);
+        Assert.Contains("icmp ne i32", llvm);
+        Assert.Contains("and i1", llvm);
+        Assert.Contains("or i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Equal", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for NotEqual", llvm);
+    }
+
+    [Fact]
+    public void SmallEnumEqualityAndInequalityEmitScalarLeafComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                None,
+                Number(i32),
+            }
+
+            fn bool Equal(Token left, Token right) {
+                return left == right;
+            }
+
+            fn bool NotEqual(Token left, Token right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Token = type { i8, i32 }", llvm);
+        Assert.Contains("define fastcc i1 @Equal(%Token %arg_left, %Token %arg_right)", llvm);
+        Assert.Contains("define fastcc i1 @NotEqual(%Token %arg_left, %Token %arg_right)", llvm);
+        Assert.Contains("extractvalue %Token %arg_left, 0", llvm);
+        Assert.Contains("extractvalue %Token %arg_right, 1", llvm);
+        Assert.Contains("icmp eq i8", llvm);
+        Assert.Contains("icmp eq i32", llvm);
+        Assert.Contains("icmp ne i8", llvm);
+        Assert.Contains("icmp ne i32", llvm);
+        Assert.Contains("and i1", llvm);
+        Assert.Contains("or i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Equal", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for NotEqual", llvm);
+    }
+
+    [Fact]
+    public void LargerRecordEqualityAndInequalityEmitScalarLeafComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+
+            fn bool Equal(Many left, Many right) {
+                return left == right;
+            }
+
+            fn bool NotEqual(Many left, Many right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, CountOccurrences(llvm, "define fastcc i1 @Equal("));
+        Assert.Equal(1, CountOccurrences(llvm, "define fastcc i1 @NotEqual("));
+        Assert.True(CountOccurrences(llvm, "icmp eq i32") >= 5);
+        Assert.True(CountOccurrences(llvm, "icmp ne i32") >= 5);
+        Assert.True(CountOccurrences(llvm, "and i1") >= 4);
+        Assert.True(CountOccurrences(llvm, "or i1") >= 4);
+        Assert.DoesNotContain("; LLVM body emission fallback for Equal", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for NotEqual", llvm);
+    }
+
+    [Fact]
+    public void LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Equal(i32[5] left, i32[5] right) {
+                return left == right;
+            }
+
+            fn bool NotEqual(i32[5] left, i32[5] right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, CountOccurrences(llvm, "define fastcc i1 @Equal("));
+        Assert.Equal(1, CountOccurrences(llvm, "define fastcc i1 @NotEqual("));
+        Assert.True(CountOccurrences(llvm, "icmp eq i32") >= 5);
+        Assert.True(CountOccurrences(llvm, "icmp ne i32") >= 5);
+        Assert.True(CountOccurrences(llvm, "and i1") >= 4);
+        Assert.True(CountOccurrences(llvm, "or i1") >= 4);
+        Assert.DoesNotContain("; LLVM body emission fallback for Equal", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for NotEqual", llvm);
+    }
+
+    [Fact]
+    public void LargerEnumEqualityAndInequalityEmitScalarLeafComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                None,
+                Many(i32, i32, i32, i32, i32),
+            }
+
+            fn bool Equal(Token left, Token right) {
+                return left == right;
+            }
+
+            fn bool NotEqual(Token left, Token right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Equal(1, CountOccurrences(llvm, "define fastcc i1 @Equal("));
+        Assert.Equal(1, CountOccurrences(llvm, "define fastcc i1 @NotEqual("));
+        Assert.Contains("icmp eq i8", llvm);
+        Assert.Contains("icmp ne i8", llvm);
+        Assert.True(CountOccurrences(llvm, "icmp eq i32") >= 5);
+        Assert.True(CountOccurrences(llvm, "icmp ne i32") >= 5);
+        Assert.True(CountOccurrences(llvm, "and i1") >= 5);
+        Assert.True(CountOccurrences(llvm, "or i1") >= 5);
+        Assert.DoesNotContain("; LLVM body emission fallback for Equal", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for NotEqual", llvm);
+    }
+
+    [Fact]
+    public void TextEqualityAndInequalityEmitHelperCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool SameAscii(ascii left, ascii right) {
+                return left == right;
+            }
+
+            fn bool DifferentUnicode(unicode left, unicode right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", llvm);
+        Assert.Contains("define internal i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", llvm);
+        Assert.Contains("call i1 @__stark_ascii_equal(%stark_ascii %arg_left, %stark_ascii %arg_right)", llvm);
+        Assert.Contains("call i1 @__stark_unicode_equal(%stark_unicode %arg_left, %stark_unicode %arg_right)", llvm);
+        Assert.Contains("xor i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for SameAscii", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for DifferentUnicode", llvm);
+    }
+
+    [Fact]
+    public void AggregatesWithTextFieldsEmitScalarLeafTextComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Label(ascii Tag, unicode Word) { }
+
+            fn bool Same(Label left, Label right) {
+                return left == right;
+            }
+
+            fn bool Different(Label left, Label right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("call i1 @__stark_ascii_equal(", llvm);
+        Assert.Contains("call i1 @__stark_unicode_equal(", llvm);
+        Assert.Contains("and i1", llvm);
+        Assert.Contains("or i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Same", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Different", llvm);
+    }
+
+    [Fact]
+    public void SliceEqualityAndInequalityEmitPointerAndLengthComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Same(i32[] left, i32[] right) {
+                return left == right;
+            }
+
+            fn bool Different(i32[] left, i32[] right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i1 @Same({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)", llvm);
+        Assert.Contains("define fastcc i1 @Different({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)", llvm);
+        Assert.Contains("extractvalue { ptr, i64 } %arg_left, 0", llvm);
+        Assert.Contains("extractvalue { ptr, i64 } %arg_right, 1", llvm);
+        Assert.Contains("icmp eq ptr", llvm);
+        Assert.Contains("icmp eq i64", llvm);
+        Assert.Contains("icmp ne ptr", llvm);
+        Assert.Contains("icmp ne i64", llvm);
+        Assert.Contains("and i1", llvm);
+        Assert.Contains("or i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Same", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Different", llvm);
+    }
+
+    [Fact]
+    public void AggregatesWithSliceFieldsEmitScalarLeafSliceComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Window(i32[] Items, i32 Count) { }
+
+            fn bool Same(Window left, Window right) {
+                return left == right;
+            }
+
+            fn bool Different(Window left, Window right) {
+                return left != right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("icmp eq ptr", llvm);
+        Assert.Contains("icmp eq i64", llvm);
+        Assert.Contains("icmp eq i32", llvm);
+        Assert.Contains("icmp ne ptr", llvm);
+        Assert.Contains("icmp ne i64", llvm);
+        Assert.Contains("icmp ne i32", llvm);
+        Assert.Contains("and i1", llvm);
+        Assert.Contains("or i1", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Same", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Different", llvm);
+    }
+
+    [Fact]
     public void MixedCallMemberAndIndexPostfixChainsEmitCallAndExtracts()
     {
         var result = Compile(
@@ -2759,6 +3081,29 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("extractvalue [2 x i32] %arg_values, 0", llvm);
         Assert.Contains("extractvalue [2 x i32] %arg_values, 1", llvm);
         Assert.Contains("call fastcc i32 @Read([2 x i32]", llvm);
+    }
+
+    [Fact]
+    public void FixedArrayParameterDynamicIndexUsesParameterSlotAddressing()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Read(i32[3] values, i32 index) {
+                return values[index];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i32 @Read([3 x i32] %arg_values, i32 %arg_index)", llvm);
+        Assert.Contains("%slot_param_values = alloca [3 x i32]", llvm);
+        Assert.Contains("store [3 x i32] %arg_values, ptr %slot_param_values", llvm);
+        Assert.Contains("getelementptr inbounds [3 x i32], ptr %slot_param_values, i32 0", llvm);
+        Assert.Contains("getelementptr inbounds [3 x i32], ptr", llvm);
+        Assert.Contains("load i32, ptr", llvm);
     }
 
     [Fact]

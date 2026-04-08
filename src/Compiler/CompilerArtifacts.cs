@@ -375,6 +375,9 @@ public enum ImportedTemplateTypedBodyStatementKind
 
 public enum ImportedTemplateTypedSwitchCaseKind
 {
+    Literal,
+    MatchAll,
+    Default,
     EnumPattern,
     AggregatePattern
 }
@@ -421,7 +424,10 @@ public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
 
 public sealed record ImportedTemplateTypedSwitchCaseSummary(
     ImportedTemplateTypedSwitchCaseKind Kind,
-    int Ordinal,
+    int? Ordinal = null,
+    string? Name = null,
+    ImportedTemplateTypedBodyExpressionSummary? Expression = null,
+    ImportedTemplateTypedBodyExpressionSummary? GuardExpression = null,
     IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? StatementSummaries = null)
 {
@@ -436,6 +442,7 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     ImportedTemplateTypedBodyStatementKind Kind,
     ImportedTemplateTypedBodyExpressionSummary Expression = null!,
     string? Name = null,
+    string? AssignmentOperator = null,
     string? StorageClass = null,
     bool IsMutable = false,
     bool IsConstant = false,
@@ -445,7 +452,8 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? IteratorStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? BodyStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
-    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null)
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
+    ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
         InitializerStatements ?? [];
@@ -1554,6 +1562,10 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetScalarLayout((bitWidth + 7) / 8),
             StarkTypeKind.Float when concreteType.BitWidth is int floatWidth =>
                 TryGetScalarLayout((floatWidth + 7) / 8),
+            StarkTypeKind.RawPointer or StarkTypeKind.Null =>
+                TryGetPointerLayout(),
+            StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
+                TryGetViewLayout(),
             StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
                 TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
             StarkTypeKind.Named when concreteType.NamedType is not null
@@ -1716,6 +1728,22 @@ internal static class ConcreteTypeLayoutHelper
             8 => new ConcreteTypeLayout(8, 8),
             _ => new ConcreteTypeLayout(sizeBytes, 1)
         };
+    }
+
+    private static ConcreteTypeLayout TryGetPointerLayout()
+    {
+        return new ConcreteTypeLayout(8, 8);
+    }
+
+    private static ConcreteTypeLayout TryGetViewLayout()
+    {
+        var pointerLayout = TryGetPointerLayout();
+        var lengthLayout = TryGetScalarLayout(8) ?? throw new InvalidOperationException("i64 layout must be available.");
+        var alignmentBytes = Math.Max(pointerLayout.AlignmentBytes, lengthLayout.AlignmentBytes);
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
     }
 
     private static int AlignTo(int value, int alignment)

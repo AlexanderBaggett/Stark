@@ -128,7 +128,7 @@ public enum IOStatus {
 
 `IOStatus` exists because Stark does not treat `void` as a first-class value type. Value-returning APIs use `IOResult<T>`. Effect-only APIs use `IOStatus`.
 
-`System.Text` is the public text module. It declares the shared encoding enum plus the first text helper APIs that future runtime conversions and concatenation paths will build on:
+`System.Text` is the public text module. It declares the shared encoding enum plus the current owned-text helper APIs for view projection, explicit runtime conversion, and concatenation:
 
 ```stark
 module System.Text
@@ -146,17 +146,23 @@ public finite law rawptr<i8> AsciiData(ascii source);
 public finite law i64 AsciiLength(ascii source);
 public finite law rawptr<i32> UnicodeData(unicode source);
 public finite law i64 UnicodeLength(unicode source);
+public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+public fn bool TryConvertAsciiToUtf16(rawmutptr<i16> destination, i64 capacity, ascii source, rawmutptr<i64> writtenLength);
+public fn bool TryConvertUtf16ToUnicode(rawmutptr<Unicode> destination, rawptr<i16> source, i64 sourceLength);
+public fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source);
+public fn bool TryConvertUnicodeToUtf16(rawmutptr<i16> destination, i64 capacity, unicode source, rawmutptr<i64> writtenLength);
+public fn bool TryConvertUtf16ToAscii(rawmutptr<Ascii> destination, rawptr<i16> source, i64 sourceLength);
 public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 ```
 
 ## Encoding Model
 
-`System.Text` defines the `Encoding` enum used by both `System.IO.File` and any future text conversion APIs. The owned text container types themselves are now core language types, so `System.Text` focuses on the shared encoding enum plus helper functions that operate on those core containers.
+`System.Text` defines the `Encoding` enum used by both `System.IO.File` and explicit text conversion APIs. The owned text container types themselves are now core language types, so `System.Text` focuses on the shared encoding enum plus helper functions that operate on those core containers.
 
 The semantics are:
 
-- `Binary` means raw bytes with no text conversion. Byte APIs always ignore encoding. Text-returning and text-writing APIs treat `Binary` as passthrough over the backing bytes of the Stark text value they operate on.
+- `Binary` means the file handle does not request an alternate multibyte text encoding. Byte APIs always ignore encoding. `ascii` text writes are passthrough UTF-8 bytes, and `unicode` text writes use the same UTF-8 platform text path as the raw-handle helpers for compatibility with the current default owned-file surface.
 - `UTF8` means the file stream converts to and from UTF-8. Writing an `ascii` string is a passthrough. Writing a `unicode` string converts UTF-32 to UTF-8 before writing.
 - `UTF16` means the file stream converts to and from UTF-16LE. Both `ascii` and `unicode` strings are converted before writing.
 - `UTF32` means the file stream converts to and from UTF-32. Writing a `unicode` string is a passthrough. Writing an `ascii` string converts UTF-8 to UTF-32 before writing.
@@ -177,9 +183,10 @@ The currently implemented bridge APIs are:
 
 - `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` for zero-copy immutable view projection
 - `System.Text.AsciiData(ascii)`, `System.Text.AsciiLength(ascii)`, `System.Text.UnicodeData(unicode)`, and `System.Text.UnicodeLength(unicode)` for explicit pointer/length access when stdlib code needs exact view boundaries at low-level OS or FFI edges
+- `System.Text.TryConvertAsciiToUnicode(rawmutptr<Unicode>, ascii)`, `System.Text.TryConvertUnicodeToAscii(rawmutptr<Ascii>, unicode)`, `System.Text.TryConvertAsciiToUtf16(rawmutptr<i16>, i64, ascii, rawmutptr<i64>)`, `System.Text.TryConvertUtf16ToUnicode(rawmutptr<Unicode>, rawptr<i16>, i64)`, `System.Text.TryConvertUnicodeToUtf16(rawmutptr<i16>, i64, unicode, rawmutptr<i64>)`, and `System.Text.TryConvertUtf16ToAscii(rawmutptr<Ascii>, rawptr<i16>, i64)` for explicit caller-owned UTF-8, UTF-16LE, and UTF-32 conversion
 - `System.Text.TryConcatAscii(rawmutptr<Ascii>, ascii, ascii)` and `System.Text.TryConcatUnicode(rawmutptr<Unicode>, unicode, unicode)` for explicit concatenation into caller-provided storage
 
-These APIs make allocation visible in user code: the caller owns the backing buffer, fills `Data` and `Capacity`, and concat returns `false` instead of allocating when the destination is too small.
+These APIs make allocation visible in user code: the caller owns the backing buffer, fills `Data` and `Capacity`, and conversion or concat returns `false` instead of allocating when the destination is too small.
 
 ## Console API
 
@@ -196,13 +203,18 @@ public fn IOStatus WriteError(borrow ascii text);
 public fn IOStatus WriteError(borrow unicode text);
 public fn IOStatus WriteErrorLine(borrow ascii text);
 public fn IOStatus WriteErrorLine(borrow unicode text);
+public fn Unicode ReadLine();
+public fn Unicode Read();
 ```
 
 Internal implementation:
 
 - On Linux, the current `ascii` output path uses internal syscall-backed write shims on fd `1` and fd `2`.
 - On Windows, `Write` and `WriteLine` call `WriteFile` on the handle from `GetStdHandle(STD_OUTPUT_HANDLE)`. `WriteError` and `WriteErrorLine` use `GetStdHandle(STD_ERROR_HANDLE)`.
-- On Linux, `unicode` overloads currently convert UTF-32 to UTF-8 in the stdlib and then write through the syscall-backed fd boundary.
+- On Linux, `unicode` overloads convert UTF-32 to UTF-8 in the stdlib and then write through the syscall-backed fd boundary.
+- `ReadLine` returns the next UTF-8 decoded line from stdin as `Unicode` without the trailing newline. `Read` returns the next UTF-8 decoded code point from stdin as a one-element `Unicode`.
+- `ReadLine` and `Read` currently return empty `Unicode` on EOF or input failure instead of a richer result type.
+- The current input implementation uses a shared buffered stdin handle plus reusable internal `Unicode` backing buffers rather than allocator-backed per-call ownership. Each new `ReadLine` overwrites the previous `ReadLine` result, and each new `Read` overwrites the previous `Read` result.
 - `WriteLine` always appends `\n` on both Linux and Windows. The library does not perform CRLF translation.
 - Console output is unbuffered by default. The write goes directly to the OS.
 
@@ -300,8 +312,9 @@ The `encoding` field and `System.Text.Encoding` enum are in place, but the curre
 - owned `File` text writes support both `ascii` and `unicode`
 - raw-handle helpers already support both `ascii` and `unicode`
 - on Linux, the current `unicode` write path converts UTF-32 to UTF-8 before issuing the write syscall
-- owned-file unicode writes flush any pending buffered ascii data and then use the platform unicode path directly
-- broader per-encoding file conversions and text-reading APIs remain part of the remaining shared text-IO work
+- owned-file `UTF8`, `UTF16`, and `UTF32` writes now honor the selected encoding for both `ascii` and `unicode`
+- owned-file `UTF16` and `UTF32` writes flush any pending buffered ascii data before writing encoded bytes directly
+- text-reading APIs remain future work
 
 `ReadBytes` and `WriteBytes` always ignore encoding and operate on raw bytes regardless.
 
@@ -452,7 +465,16 @@ The encoding conversions needed by the stdlib are:
 - UTF-32 to UTF-16LE
 - UTF-16LE to UTF-32
 
-These are pure computational functions with no platform dependency. They live in `System.Text` and are shared by both the IO layer and any future user-facing text APIs.
+These are pure computational functions with no platform dependency. They live in `System.Text` and are shared by both the IO layer and user-facing text APIs.
+
+These are implemented today through the six caller-owned `System.Text` helpers:
+
+- `TryConvertAsciiToUnicode`
+- `TryConvertAsciiToUtf16`
+- `TryConvertUtf16ToUnicode`
+- `TryConvertUnicodeToAscii`
+- `TryConvertUnicodeToUtf16`
+- `TryConvertUtf16ToAscii`
 
 Direct UTF-32 to UTF-16 conversion is preferred over routing through UTF-8 when performance matters.
 
@@ -584,11 +606,10 @@ The next implementation pass should focus on:
 2. Implement the Linux platform boundary without libc or glibc
 3. Rewrite `System.Console` to call through the platform layer
 4. Implement the `File` type with userspace buffering and destructor-driven cleanup
-5. Implement the `System.Text` UTF-8 to UTF-32 and UTF-32 to UTF-8 conversion pair and connect it to the owned text containers
-6. Implement UTF-8 to UTF-16 and UTF-16 to UTF-8 conversion for Windows path handling
-7. Implement the Windows platform boundary without CRT dependency
-8. Extend `System.IO.Path` with join, extension, base-name, and directory-name helpers
-9. Add platform-specific integration tests proving the package works without libc/glibc on Linux and without CRT dependency on Windows
+5. Implement UTF-8 to UTF-16 and UTF-16 to UTF-8 conversion for Windows path handling
+6. Implement the Windows platform boundary without CRT dependency
+7. Extend `System.IO.Path` with join, extension, base-name, and directory-name helpers
+8. Add platform-specific integration tests proving the package works without libc/glibc on Linux and without CRT dependency on Windows
 
 
 ## System.Math

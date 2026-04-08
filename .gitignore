@@ -51,3 +51,4 @@ BasicAgentCommand.txt
 .tmp-dotnet-home/.dotnet/10.0.201.aspNetCertificateSentinel
 .tmp-mir.txt
 .tmp-check.csx
+tests/tmp

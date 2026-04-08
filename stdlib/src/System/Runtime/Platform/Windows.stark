@@ -17,6 +17,7 @@ internal ffi fn i32 GetLastError();
 
 const i32 WinStdOutputHandle = -11;
 const i32 WinStdErrorHandle = -12;
+const i32 WinStdInputHandle = -10;
 const i32 WinGenericRead = -2147483648;
 const i32 WinGenericWrite = 1073741824;
 const i32 WinFileAppendData = 4;
@@ -850,6 +851,38 @@ internal fn i32 WriteStderrUnicode(unicode text) {
     }
 
     return WriteUnicodeToHandle((rawptr<i8>)handle, text);
+}
+
+internal fn rawptr<i8> OpenStdin() {
+    stack rawmutptr<i8> handle = GetStdHandle(WinStdInputHandle);
+    if (IsInvalidHandle(handle)) {
+        return null;
+    }
+
+    return (rawptr<i8>)handle;
+}
+
+internal fn void CloseStdin(rawptr<i8> handle) {
+    return;
+}
+
+internal fn i64 ReadStdin(rawmutptr<i8> buffer, i64 capacity) {
+    stack rawmutptr<i8> handle = GetStdHandle(WinStdInputHandle);
+    if (IsInvalidHandle(handle) || buffer == null || capacity <= 0) {
+        return 0;
+    }
+
+    stack mut i32 bytesRead = 0;
+    stack i32 request = RequestedChunkLength(capacity);
+    if (request <= 0) {
+        return 0;
+    }
+
+    if (ReadFile((rawptr<i8>)handle, buffer, request, &bytesRead, null) == 0 || bytesRead <= 0) {
+        return 0;
+    }
+
+    return (i64)bytesRead;
 }
 
 internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
