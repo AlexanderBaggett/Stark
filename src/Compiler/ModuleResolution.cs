@@ -122,7 +122,7 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
         if (module.ManifestPath is not null)
         {
             if (TryResolveManifestModule(module.ModuleName) is { } manifestModule
-                && PackageManifestLoader.TryBuildModuleSource(manifestModule, out sourceText))
+                && PackageImageLoader.TryBuildModuleSource(manifestModule, out sourceText))
             {
                 filePath = manifestModule.ManifestPath;
                 return true;
@@ -146,7 +146,7 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
         if (module.ManifestPath is not null
             && TryResolveManifestModule(module.ModuleName) is { } manifestModule
-            && PackageManifestLoader.TryBuildModuleDocument(manifestModule, out var manifestDocument))
+            && PackageImageLoader.TryBuildModuleDocument(manifestModule, out var manifestDocument))
         {
             document = manifestDocument with
             {
@@ -189,7 +189,7 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
             foreach (var manifestPath in Directory.EnumerateFiles(searchDirectory, "*.starkpkg.json", SearchOption.AllDirectories))
             {
-                if (!PackageManifestLoader.TryLoadManifest(manifestPath, out var manifest))
+                if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
                 {
                     continue;
                 }

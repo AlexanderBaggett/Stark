@@ -997,34 +997,45 @@ public static class DefaultCompilerPipeline
         {
             var ownership = context.Artifacts.GetRequired(CompilerArtifactKeys.InstantiationOwnership);
             var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             context.Artifacts.Set(
                 CompilerArtifactKeys.MonomorphizationPlan,
-                BuildMonomorphizationPlan(ownership, loadedModules));
+                BuildMonomorphizationPlan(ownership, loadedModules, typeModel));
         }
 
         private static MonomorphizationPlanModel BuildMonomorphizationPlan(
             InstantiationOwnershipModel ownership,
-            LoadedModuleSet loadedModules)
+            LoadedModuleSet loadedModules,
+            TypeCheckModel typeModel)
         {
             var functionInfos = CollectFunctionTemplatePlanInfos(loadedModules);
+            var publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
+            var enumLayouts = BuildPlanningEnumLayouts(loadedModules, typeModel);
             var functions = ownership.Functions
                 .Select(function =>
                 {
                     functionInfos.TryGetValue(function.TemplateName, out var info);
+                    var hasIndirectByValueAggregateAbiCost =
+                        !function.IsDeclaringModuleSourceBacked
+                        && HasIndirectByValueAggregateAbiCost(
+                            function,
+                            typeModel,
+                            publishedConcreteLayouts,
+                            enumLayouts);
                     return new MonomorphizedFunctionPlan(
-                    function.TemplateName,
-                    function.TypeArguments.ToArray(),
-                    function.DeclaringModuleName,
-                    function.OwnerModuleName,
-                    function.IsDeclaringModuleSourceBacked,
-                    DetermineCodeSizeHeuristic(info),
-                    info?.TopLevelStatementCount,
-                    DetermineLinkageKind(function, ownership.RootModuleName),
-                    GlobalSymbolNaming.ComputeMonomorphizedFunctionSymbolName(
-                        function.OwnerModuleName,
                         function.TemplateName,
-                        function.TypeArguments),
-                    function.FirstUseLocation);
+                        function.TypeArguments.ToArray(),
+                        function.DeclaringModuleName,
+                        function.OwnerModuleName,
+                        function.IsDeclaringModuleSourceBacked,
+                        DetermineCodeSizeHeuristic(info, hasIndirectByValueAggregateAbiCost),
+                        info?.TopLevelStatementCount,
+                        DetermineLinkageKind(function, ownership.RootModuleName),
+                        GlobalSymbolNaming.ComputeMonomorphizedFunctionSymbolName(
+                            function.OwnerModuleName,
+                            function.TemplateName,
+                            function.TypeArguments),
+                        function.FirstUseLocation);
                 })
                 .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
                 .ToArray();
@@ -1050,6 +1061,51 @@ public static class DefaultCompilerPipeline
                 ownership.RootModuleName,
                 functions,
                 types);
+        }
+
+        private static Dictionary<string, ConcreteTypeLayout> BuildPublishedConcreteLayouts(
+            LoadedModuleSet loadedModules)
+        {
+            var layouts = new Dictionary<string, ConcreteTypeLayout>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules)
+            {
+                if (module.PackageImageFacts is not { ConcreteLayouts.Count: > 0 } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var (qualifiedTypeName, layout) in packageImageFacts.ConcreteLayouts)
+                {
+                    layouts.TryAdd(qualifiedTypeName, layout);
+                }
+            }
+
+            return layouts;
+        }
+
+        private static Dictionary<string, EnumLayoutSymbol> BuildPlanningEnumLayouts(
+            LoadedModuleSet loadedModules,
+            TypeCheckModel typeModel)
+        {
+            var layouts = new Dictionary<string, EnumLayoutSymbol>(
+                EnumLayoutBuilder.Build(typeModel).Layouts,
+                StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules)
+            {
+                if (module.PackageImageFacts is not { EnumLayouts.Count: > 0 } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var (qualifiedTypeName, layout) in packageImageFacts.EnumLayouts)
+                {
+                    layouts.TryAdd(qualifiedTypeName, layout);
+                }
+            }
+
+            return layouts;
         }
 
         private static Dictionary<string, FunctionTemplatePlanInfo> CollectFunctionTemplatePlanInfos(
@@ -1113,7 +1169,8 @@ public static class DefaultCompilerPipeline
         }
 
         private static MonomorphizationCodeSizeHeuristic DetermineCodeSizeHeuristic(
-            FunctionTemplatePlanInfo? info)
+            FunctionTemplatePlanInfo? info,
+            bool hasIndirectByValueAggregateAbiCost)
         {
             if (info is null || !info.HasBody)
             {
@@ -1121,6 +1178,13 @@ public static class DefaultCompilerPipeline
             }
 
             if (info.IsCold || info.InlinePreference == InlinePreference.NoInline)
+            {
+                return MonomorphizationCodeSizeHeuristic.ReduceCodeSize;
+            }
+
+            if (hasIndirectByValueAggregateAbiCost
+                && info.InlinePreference != InlinePreference.Inline
+                && !info.IsHot)
             {
                 return MonomorphizationCodeSizeHeuristic.ReduceCodeSize;
             }
@@ -1133,6 +1197,96 @@ public static class DefaultCompilerPipeline
             }
 
             return MonomorphizationCodeSizeHeuristic.SpecializeDefault;
+        }
+
+        private static bool HasIndirectByValueAggregateAbiCost(
+            FunctionInstantiationOwnership function,
+            TypeCheckModel typeModel,
+            IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        {
+            if (!typeModel.Functions.TryGetValue(function.TemplateName, out var templateSignature))
+            {
+                return false;
+            }
+
+            var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                templateSignature,
+                function.TypeArguments,
+                function.TemplateName);
+
+            if (RequiresIndirectAggregateReturnAbi(
+                    instantiatedSignature.ReturnType,
+                    typeModel.NamedTypes,
+                    publishedConcreteLayouts,
+                    enumLayouts))
+            {
+                return true;
+            }
+
+            return instantiatedSignature.Parameters.Any(parameter =>
+                parameter.Type.BorrowKind == StarkBorrowKind.None
+                && parameter.Type.InitializationKind == StarkInitializationKind.None
+                && RequiresIndirectAggregateParameterAbi(
+                    parameter.Type,
+                    typeModel.NamedTypes,
+                    publishedConcreteLayouts,
+                    enumLayouts));
+        }
+
+        private static bool RequiresIndirectAggregateReturnAbi(
+            StarkTypeSymbol type,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        {
+            return TryGetConcreteTypeLayout(
+                       type,
+                       namedTypes,
+                       publishedConcreteLayouts,
+                       enumLayouts) is { SizeBytes: > 16 };
+        }
+
+        private static bool RequiresIndirectAggregateParameterAbi(
+            StarkTypeSymbol type,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        {
+            return RequiresIndirectAggregateReturnAbi(
+                type,
+                namedTypes,
+                publishedConcreteLayouts,
+                enumLayouts);
+        }
+
+        private static ConcreteTypeLayout? TryGetConcreteTypeLayout(
+            StarkTypeSymbol type,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        {
+            var concreteType = type with
+            {
+                BorrowKind = StarkBorrowKind.None,
+                AccessKind = StarkAccessKind.None,
+                InitializationKind = StarkInitializationKind.None,
+                IsMutableView = false
+            };
+
+            if (concreteType.Kind == StarkTypeKind.Named
+                && concreteType.NamedType is not null
+                && concreteType.TypeArguments is not { Count: > 0 }
+                && publishedConcreteLayouts.TryGetValue(concreteType.NamedType, out var publishedLayout))
+            {
+                return publishedLayout;
+            }
+
+            return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+                concreteType,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts);
         }
 
         private static MonomorphizationLinkageKind DetermineLinkageKind(
@@ -1191,13 +1345,14 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["monomorphization-plan", "refine-function-effects"];
+        public IReadOnlyList<string> Dependencies => ["monomorphization-plan", "refine-function-effects", "load-modules"];
 
         public void Execute(CompilerPassContext context)
         {
             var monomorphization = context.Artifacts.GetRequired(CompilerArtifactKeys.MonomorphizationPlan);
             var closedWorld = context.Artifacts.GetRequired(CompilerArtifactKeys.ClosedWorldOptimization);
-            var plan = BuildSpecializationPlan(monomorphization, closedWorld);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var plan = BuildSpecializationPlan(monomorphization, closedWorld, loadedModules);
             ValidatePlan(context, plan);
             context.Artifacts.Set(
                 CompilerArtifactKeys.SpecializationPlan,
@@ -1206,10 +1361,12 @@ public static class DefaultCompilerPipeline
 
         private static SpecializationPlanModel BuildSpecializationPlan(
             MonomorphizationPlanModel monomorphization,
-            ClosedWorldOptimizationModel closedWorld)
+            ClosedWorldOptimizationModel closedWorld,
+            LoadedModuleSet loadedModules)
         {
+            var importedAbiFallbacks = CollectImportedAbiFallbacks(loadedModules);
             var functions = monomorphization.Functions
-                .Select(function => BuildFunctionPlan(function, monomorphization.RootModuleName, closedWorld))
+                .Select(function => BuildFunctionPlan(function, monomorphization.RootModuleName, closedWorld, importedAbiFallbacks))
                 .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
                 .ToArray();
 
@@ -1218,10 +1375,31 @@ public static class DefaultCompilerPipeline
                 functions);
         }
 
+        private static HashSet<string> CollectImportedAbiFallbacks(LoadedModuleSet loadedModules)
+        {
+            var fallbacks = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules)
+            {
+                if (module.PackageImageFacts is not { AbiFunctions.Count: > 0 } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var qualifiedResolvedName in packageImageFacts.AbiFunctions.Keys)
+                {
+                    fallbacks.Add(qualifiedResolvedName);
+                }
+            }
+
+            return fallbacks;
+        }
+
         private static FunctionSpecializationPlan BuildFunctionPlan(
             MonomorphizedFunctionPlan function,
             string rootModuleName,
-            ClosedWorldOptimizationModel closedWorld)
+            ClosedWorldOptimizationModel closedWorld,
+            IReadOnlySet<string> importedAbiFallbacks)
         {
             var selectionOrder = new List<FunctionSpecializationStrategy>();
 
@@ -1235,7 +1413,7 @@ public static class DefaultCompilerPipeline
                 selectionOrder.Add(FunctionSpecializationStrategy.OwnedConcreteBody);
             }
 
-            if (ShouldIncludeAbiFallback(function, rootModuleName) || selectionOrder.Count == 0)
+            if (ShouldIncludeAbiFallback(function, rootModuleName, importedAbiFallbacks) || selectionOrder.Count == 0)
             {
                 selectionOrder.Add(FunctionSpecializationStrategy.DirectAbiBoundaryFallback);
             }
@@ -1310,10 +1488,13 @@ public static class DefaultCompilerPipeline
 
         private static bool ShouldIncludeAbiFallback(
             MonomorphizedFunctionPlan function,
-            string rootModuleName)
+            string rootModuleName,
+            IReadOnlySet<string> importedAbiFallbacks)
         {
             return function.CodeSizeHeuristic == MonomorphizationCodeSizeHeuristic.DeclarationOnly
-                || !string.Equals(function.DeclaringModuleName, rootModuleName, StringComparison.Ordinal);
+                || (!string.Equals(function.DeclaringModuleName, rootModuleName, StringComparison.Ordinal)
+                    && (function.IsDeclaringModuleSourceBacked
+                        || importedAbiFallbacks.Contains(function.TemplateName)));
         }
 
         private static bool HaveConflictingPriority(
@@ -2195,12 +2376,20 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.Modules.Values)
             {
+                var publishedTemplates = module.PackageImageFacts?.FunctionTemplates;
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
                 {
                     var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
                         module,
                         FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                    declarations[qualifiedName] = declaration.Function!;
+                    var function = declaration.Function!;
+                    if (!function.HasBody
+                        && publishedTemplates?.ContainsKey(qualifiedName) == true)
+                    {
+                        function = function with { HasBody = true };
+                    }
+
+                    declarations[qualifiedName] = function;
                 }
             }
 

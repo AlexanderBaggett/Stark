@@ -3504,10 +3504,10 @@ public sealed class LlvmIrEmissionTests
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
 
-            var manifest = PackageManifestBuilder.Create(
+            var manifest = PackageImageBuilder.Create(
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
-            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
 
             var typedOnlyManifest = manifest with
             {
@@ -3592,10 +3592,10 @@ public sealed class LlvmIrEmissionTests
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
 
-            var manifest = PackageManifestBuilder.Create(
+            var manifest = PackageImageBuilder.Create(
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
-            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
 
             var typedOnlyManifest = manifest with
             {
@@ -3682,10 +3682,10 @@ public sealed class LlvmIrEmissionTests
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
 
-            var manifest = PackageManifestBuilder.Create(
+            var manifest = PackageImageBuilder.Create(
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
-            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
 
             var typedOnlyManifest = manifest with
             {
@@ -3796,8 +3796,8 @@ public sealed class LlvmIrEmissionTests
             }
 
             fn void Forward(borrow Box box) {
-                stack borrow Box alias = box;
-                Touch(alias);
+                stack borrow Box aliasBox = box;
+                Touch(aliasBox);
             }
             """);
 
@@ -3806,8 +3806,8 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("%slot_alias = alloca %Box", llvm);
-        Assert.Contains("call fastcc void @Touch(ptr %slot_alias)", llvm);
+        Assert.Contains("%slot_aliasBox = alloca %Box", llvm);
+        Assert.Contains("call fastcc void @Touch(ptr %slot_aliasBox)", llvm);
         Assert.DoesNotContain("callarg_box", llvm);
     }
 
@@ -3870,7 +3870,7 @@ public sealed class LlvmIrEmissionTests
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
 
-            var manifest = PackageManifestBuilder.Create(
+            var manifest = PackageImageBuilder.Create(
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
 
@@ -4021,6 +4021,16 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("store i32", llvm);
         Assert.Contains("ptr @Counter", llvm);
         Assert.Contains("load i32, ptr @Counter", llvm);
+    }
+
+    private static StarkPackageModuleManifest WithEffectiveLegacyCompilerSectionCopies(StarkPackageModuleManifest module)
+    {
+        return module with
+        {
+            TypedInterface = module.EffectiveTypedInterface,
+            CompilerFacts = module.EffectiveCompilerFacts,
+            GenericTemplates = module.EffectiveGenericTemplates
+        };
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

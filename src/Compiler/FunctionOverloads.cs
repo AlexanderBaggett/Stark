@@ -34,6 +34,26 @@ internal static class FunctionOverloadFacts
         return BuildOverloadKey(parameterList.parameter().Select(static parameter => parameter.type_().GetText()));
     }
 
+    public static IEnumerable<string> GetDeclaredOverloadKeys(TopLevelDeclarationModel declaration)
+    {
+        if (declaration.Function is null)
+        {
+            return [];
+        }
+
+        var keys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            BuildOverloadKey(declaration.Function.Parameters)
+        };
+
+        if (!string.IsNullOrEmpty(declaration.Function.PublishedOverloadKey))
+        {
+            keys.Add(declaration.Function.PublishedOverloadKey);
+        }
+
+        return keys;
+    }
+
     public static string GetResolvedLocalName(SyntaxModel syntaxModel, TopLevelDeclarationModel declaration)
     {
         if (declaration.Function is null)
@@ -171,7 +191,7 @@ internal static class FunctionOverloadFacts
             candidate.Kind == DeclarationKind.Function
             && string.Equals(candidate.Name, sourceName, StringComparison.Ordinal)
             && candidate.Function is not null
-            && string.Equals(BuildOverloadKey(candidate.Function.Parameters), overloadKey, StringComparison.Ordinal));
+            && GetDeclaredOverloadKeys(candidate).Any(candidateKey => string.Equals(candidateKey, overloadKey, StringComparison.Ordinal)));
 
         if (match is null)
         {

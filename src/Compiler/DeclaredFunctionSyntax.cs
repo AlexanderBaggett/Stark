@@ -46,9 +46,10 @@ internal static class DeclaredFunctionSyntaxCollector
             .ToDictionary(
                 static group => group.Key,
                 static group => group
-                    .Select(static declaration => CreateFunctionIdentity(
-                        FunctionOverloadFacts.BuildOverloadKey(declaration.Function!.Parameters),
-                        declaration.Function!.Asm?.ArchitectureText))
+                    .SelectMany(static declaration => FunctionOverloadFacts.GetDeclaredOverloadKeys(declaration)
+                        .Select(overloadKey => CreateFunctionIdentity(
+                            overloadKey,
+                            declaration.Function!.Asm?.ArchitectureText)))
                     .ToHashSet(StringComparer.Ordinal),
                 StringComparer.Ordinal);
 
@@ -265,12 +266,15 @@ internal static class DeclaredFunctionSyntaxCollector
         string sourceName,
         StarkParser.ParameterListContext parameterList)
     {
-        return syntaxModel is null
-            ? sourceName
-            : FunctionOverloadFacts.GetResolvedLocalName(
-                syntaxModel,
-                sourceName,
-                FunctionOverloadFacts.BuildOverloadKey(parameterList));
+        if (syntaxModel is null)
+        {
+            return sourceName;
+        }
+
+        var overloadKey = FunctionOverloadFacts.BuildOverloadKey(parameterList);
+        return FunctionOverloadFacts.TryFindFunctionDeclaration(syntaxModel, sourceName, overloadKey, out var declaration)
+            ? FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration)
+            : FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, sourceName, overloadKey);
     }
 
     private static string CreateFunctionIdentity(string overloadKey, string? architectureText)

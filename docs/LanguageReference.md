@@ -130,10 +130,6 @@ Rules:
 - `ffi` marks a foreign-facing function boundary and disables the default internal calling convention behavior
 - `strictfp` selects strict IEEE-style floating-point semantics for the function
 
-The current compiler lowers `strictfp` through to LLVM's strict floating-point function attribute so a function can opt out of Stark's default fast-math model.
-
-The current compiler enforces the modifier exclusivity rules above as declaration errors.
-
 ### 5.3 Declarations and Bodies
 
 Function declarations may appear with either:
@@ -145,7 +141,7 @@ Semicolon form is used for declarations such as FFI functions or forward declara
 
 Function parameters are written as `T name`.
 
-Default-argument syntax such as `fn i32 Add(i32 left = 1)` is not part of the `v1.0` source surface.
+Default-argument syntax such as `fn i32 Add(i32 left = 1)` is not part of the Stark source surface.
 
 ## 6. Types
 
@@ -174,7 +170,7 @@ Range-constrained integers are written as:
 i32[0 255]
 ```
 
-The current implemented surface accepts both ordinary width-based integers such as `i32` and explicit range-constrained integers such as `i32[0 255]`.
+Integer types may be written either as ordinary width-based forms such as `i32` or as explicit range-constrained forms such as `i32[0 255]`.
 
 `void` is not a first-class Stark value type. It is valid only as a function return type.
 
@@ -227,136 +223,6 @@ Generic type parameters may appear on functions, `struct` declarations, `record`
 Generic parameters participate in name resolution and type substitution.
 
 Generic instantiation is monomorphized by default.
-
-Within one compilation, source-backed imported instantiations are owned by the
-defining module, while manifest-backed imported instantiations are owned by the
-root consumer module.
-
-Identical concrete instantiations inside one compilation are cached and
-deduplicated before later ownership and code-generation planning.
-
-The current planning model treats tiny or explicitly inline generic bodies as
-inline-friendly, and treats cold, `noinline`, or declaration-only generics as
-code-size-constrained.
-
-For linkage planning, source-backed imported instantiations prefer ODR-style
-deduplicable linkage, while root-owned or manifest-consumer-owned
-instantiations stay single-owner internal to the current build.
-
-When a package image publishes public or export generic template bodies,
-manifest-backed consumer-owned instantiations may also emit owned concrete
-bodies without requiring the original source file to still be present.
-
-Those package-image template sections also preserve the imported generic's
-published effect profile, top-level statement count, and typed primary
-constructor facts for object creation lowering, so `cold`, `noinline`,
-tiny-body heuristics, and primary-constructor lowering do not depend entirely
-on reconstructed source declarations.
-
-They also preserve typed local declaration facts for generic bodies, so local
-`const`, local variable, and `for` initializer types do not need to be
-recovered from bridge source text during imported generic type checking and MIR
-lowering.
-
-They also preserve typed explicit-conversion target facts, so imported generic
-bodies do not need to trust the bridge `(Type)value` text when resolving cast
-targets during type checking and MIR lowering.
-
-They also preserve typed enum-constructor facts, so imported generic bodies can
-keep resolving named-field enum constructors without trusting the bridge enum
-case target or member names.
-
-They also preserve typed tuple-enum-constructor call facts, so imported generic
-bodies can keep resolving positional enum constructor calls without trusting
-the bridge enum case target.
-
-They also preserve typed unit-enum-case value facts, so imported generic bodies
-can keep resolving unit enum cases without trusting the bridge enum case
-target.
-
-They also preserve typed enum-pattern target facts, so imported generic bodies
-can keep type-checking and lowering enum switch patterns without trusting the
-bridge enum case target text.
-
-They also preserve typed enum-pattern member facts, so imported generic bodies
-can keep type-checking and lowering named-field enum switch patterns without
-trusting the bridge member names.
-
-They also preserve typed aggregate-pattern target facts, so imported generic
-bodies can keep type-checking and lowering aggregate switch patterns without
-trusting the bridge aggregate type text.
-
-They also preserve typed direct-call target facts for generic bodies, so
-imported generic helpers may keep resolving direct helper calls without
-rediscovering every callee from the reconstructed bridge body text.
-
-They also preserve typed field-access facts, so imported generic bodies do not
-need to rediscover projected field types and field ordinals from the bridge
-body text during type checking and MIR lowering.
-
-They also preserve typed object-creation target types, so imported generic
-bodies do not need to trust the bridge `new TypeName(...)` text when resolving
-the constructed generic aggregate type.
-
-They also preserve typed object-initializer member facts, so imported generic
-bodies can keep lowering `new T() { ... }` member assignments without trusting
-the bridge-body field names.
-
-They also preserve typed member-call target facts, so imported generic bodies
-can keep resolving receiver-style helper calls without depending on bridge-body
-member names or call-site text reconstruction.
-
-They also preserve a first typed template-body subset for simple linear helper
-bodies such as `return value;`, `return 1;`, `return new Box<T>(value);`,
-`return Boxed<T>.Value { Data: value, Tag: tag };`,
-`return Boxed<T>.Value { Data: value, Tag: 1 };`,
-`return Option<T>.Some(value);`, `return Option<T>.None;`,
-`return box.Value;`, `return box.Echo(value);`, `return Callee(value);`, and
-`stack T copy = value; return copy;`, so imported generic MIR lowering can
-prefer structured body facts over reconstructed bridge text for those helper
-shapes.
-
-Package-image modules also preserve ordinary imports, not just `export import`
-re-exports, so imported generic bodies can keep resolving transitive package
-dependencies after the original source files are removed.
-
-Published package-image types also preserve record primary-constructor shape,
-so imported generic bodies can construct published records with `new Type(...)`
-without depending on flattened field-only reconstruction.
-
-They also publish deferred generic-instantiation patterns for nested generic
-callees, so recursive specialization planning does not need to rediscover that
-information from reconstructed imported bodies.
-
-The same package-image template sections now also preserve deferred generic
-type-instantiation patterns such as `Pair<T, bool>` inside generic bodies, so
-recursive imported type planning does not have to rediscover those concrete
-type uses from the imported body text either.
-
-That body materialization now expands transitively, so a concrete generic body
-may pull in the concrete generic callees that it depends on during the same
-compilation.
-
-Repeated requests for the same manifest-backed concrete instantiation are
-deduplicated within the build, and the resulting calls target the owned
-concrete body directly rather than a runtime generic fallback surface.
-
-For specialization planning, source-backed generic instantiations prefer an
-owned concrete body, eligible imported `law` instantiations may add a
-caller-specialized clone path ahead of that body, and declaration-only or
-code-size-constrained instantiations suppress clone paths and fall back toward
-direct ABI use.
-
-If two generic templates would collapse to the same internal specialization
-symbol after this planning, the compiler reports that ambiguity instead of
-guessing.
-
-The current backend-facing strategy layer then maps each planned
-specialization to one of three code-generation paths: ABI fallback only,
-owned concrete body emission, or owned concrete body emission with an optional
-law-caller-specialized clone path.
-
-Constrained generics, `where`-clause semantics, and specialization are deferred to `v2.0`.
 
 Type aliases introduce alternate names for existing types.
 
@@ -463,12 +329,12 @@ The two forms differ in what they may do to `self`:
 
 If a destructor is declared as `mut drop` but does not actually mutate `self`, the compiler warns and recommends the plain `drop` form instead.
 
-Destructors remain restricted:
+Destructors are restricted:
 
 - they do not panic
 - they do not synchronize
 - they do not allocate
-- explicit teardown APIs such as `Close` remain the right place for fallible cleanup and user-controlled ordering
+- explicit teardown APIs such as `Close` are the right place for fallible cleanup and user-controlled ordering
 
 After the destructor block runs, ordinary field destruction still proceeds.
 
@@ -541,14 +407,13 @@ Default enum layout is not a stable FFI contract.
 
 Traits group function requirements for a type or family of types. Traits do not imply class-style inheritance.
 
-Trait members are compile-time-only contracts. They participate in declaration modeling, package surfaces, and future conformance machinery, but are not directly callable as ordinary runtime functions.
+Trait members are compile-time-only contracts. They are not directly callable as ordinary runtime functions.
 
-In Stark v1.x, traits have no runtime representation.
+Traits have no runtime representation.
 
 - no trait objects
 - no witness-table or vtable-style runtime dispatch values
 - trait names are rejected in runtime value positions such as fields, globals, locals, parameters, and returns
-- any future runtime dispatch design is explicitly post-v1.x work
 
 ### 8.6 Doctrines
 
@@ -560,22 +425,14 @@ Doctrines have the following properties:
 - no owned data
 - no heap allocation
 - no environment capture
-- no runtime dispatch representation in v1.x
+- no runtime dispatch representation
 - members may be referenced directly through their qualified doctrine name
 - static dispatch by default
 - specialization-friendly in the closed-world model
 
-In the current compiler, closed-world trait/doctrine optimization follows these rules:
-
-- source-available `trait` and `doctrine` declarations are sealed by default for the current build
-- manifest-backed or ABI-only imported `trait` and `doctrine` surfaces are treated as ABI boundaries rather than closed-world bodies
-- doctrine members devirtualize to direct calls or direct ABI calls; trait members remain compile-time-only contracts with no runtime call lowering
-- doctrine members use shared code by default, while eligible imported non-`export` law members may additionally expose law-caller-specialized clone paths
-- trait-constrained monomorphization and other constrained-generic specialization remain deferred to `v2.0`
-
 ## 9. Globals and Storage Classes
 
-Top-level globals use dedicated global declaration forms. In the current implemented syntax, globals are written as `const`, `static`, or `static mut`, and global lifetime is implied by being a top-level declaration.
+Top-level globals use dedicated global declaration forms. Globals are written as `const`, `static`, or `static mut`, and global lifetime is implied by being a top-level declaration.
 
 Stark has three classes of globals:
 
@@ -660,7 +517,7 @@ The statement forms are:
 
 This is part of Stark's source-level control-flow contract, especially for `finite` functions.
 
-The current loop behavior rules are:
+Loop behavior rules are:
 
 - `infinite`
   - must use a statically unconditional condition
@@ -883,22 +740,14 @@ Supported escapes in string and character literals are:
 
 Character literals follow the same inference path instead of using a dedicated standalone `char` type.
 
-The current implemented runtime model is:
+The text runtime contract is:
 
-- both `ascii` and `unicode` lower to text views with runtime layout `{ ptr, i64 }`
-- for `ascii`, the pointer references UTF-8 bytes and the `i64` length is the byte length of the referenced text
-- for `unicode`, the pointer references UTF-32 code units and the `i64` length is the code-unit count of the referenced text
-- compiler-emitted `ascii` literals are stored as UTF-8 bytes in static data with a trailing `\0`, but the Stark value length excludes that terminator
-- compiler-emitted `unicode` literals are stored as UTF-32 code units in static data with a trailing zero code unit, but the Stark value length excludes that terminator
-- the core owned text containers are `Ascii` and `Unicode`, each using pointer/length/capacity storage and requiring no module import
-- `Ascii.Data` is `rawmutptr<i8>`, `Ascii.Length` counts UTF-8 code units, and `Ascii.Capacity` counts allocated UTF-8 code units
-- `Unicode.Data` is `rawmutptr<i32>`, `Unicode.Length` counts UTF-32 code units, and `Unicode.Capacity` counts allocated UTF-32 code units
-- `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` project those owning containers back to zero-copy immutable `ascii` and `unicode` views
-- `System.Text.AsciiData(ascii)`, `System.Text.AsciiLength(ascii)`, `System.Text.UnicodeData(unicode)`, and `System.Text.UnicodeLength(unicode)` expose the pointer/length parts of immutable text views explicitly for low-level stdlib and FFI work
-- `System.Text.TryConcatAscii` and `System.Text.TryConcatUnicode` implement the current non-hidden-allocation concatenation path by writing into caller-provided owned buffers through explicit `rawmutptr` destinations and returning `bool` success instead of allocating implicitly
-- explicit `ascii` / `unicode` widening and narrowing conversions are currently implemented only for compile-time text constants; general runtime text conversion still awaits explicit allocator-backed construction APIs that bridge immutable text views and those owning text containers
-- `text[start, length]` is implemented for both `ascii` and `unicode` and returns another zero-copy text view of the same text kind
-- single-element text indexing is not implemented yet
+- `ascii` is a UTF-8 text view
+- `unicode` is a UTF-32 text view
+- `Ascii` and `Unicode` are the owning text container forms
+- `text[start, length]` returns another zero-copy text view of the same text kind
+- explicit text conversion is required where widening, narrowing, or ownership changes are involved
+- single-element text indexing is not part of the language surface
 
 ## 13. FFI and Raw Boundaries
 
@@ -947,16 +796,3 @@ The source model assumes:
 - specialization is an explicit closed-world optimization tool
 
 Dynamic dispatch and open-world behavior are explicit concessions, not the default model.
-
-In the current compiler, closed-world inlining is intentionally conservative:
-
-- root-module doctrine and other supported law bodies use direct shared code in the current module
-- the compiler may strengthen the default inline preference to an always-inline lowering intent for eligible module-private root-module `law` or `finite law` bodies
-- the compiler may also do this for eligible module-private helpers inside source-loaded imported modules when those helpers are already declared `law` or `finite law` and are called only from same-module law bodies
-- the compiler may additionally do this for eligible non-export source-loaded imported law entrypoints when every known caller in the current closed-world build is also a law body
-- when a root-module law call targets an eligible non-export imported law body, the current compiler may materialize an internal root-side clone of the imported law chain so LLVM can optimize it without changing the original module ABI
-- those root-side clones are selected per law caller, so mixed law/non-law callers in the same build may split: law callers use the internal specialized clone path while non-law callers keep using the original imported ABI
-- imported ABI-only doctrine and law surfaces fall back to direct ABI calls instead of closed-world body specialization
-- this only happens when no explicit inline modifier was written
-- recursive law helpers are excluded
-- `export` ABI surfaces are still excluded from this rule

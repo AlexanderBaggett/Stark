@@ -285,8 +285,8 @@ public sealed class ParserSmokeTests
             fn i32 Run(rawmutptr<i32> input, i64 bits) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = (i32)bits;
-                stack rawptr<i32> alias = (rawptr<i32>)input;
-                Counter = *alias;
+                stack rawptr<i32> ptrAlias = (rawptr<i32>)input;
+                Counter = *ptrAlias;
                 return *(&Counter);
             }
             """

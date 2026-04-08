@@ -1,0 +1,2983 @@
+using Antlr4.Runtime;
+using System.Text;
+using Stark.Parsing;
+
+namespace Stark.Compiler;
+
+internal static partial class PackageImageBuilder
+{
+    private static IReadOnlyList<StarkPackageFunctionTemplateManifest> BuildGenericFunctionTemplates(
+        LoadedModuleDocument module,
+        TypeCheckModel typeModel)
+    {
+        var literalsByLocation = typeModel.Literals
+            .Where(record => string.Equals(record.Location.FilePath, module.Reference.FilePath, StringComparison.Ordinal))
+            .GroupBy(static record => BuildTemplateLiteralLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var deferredTriggersByFunction = typeModel.DeferredInstantiationTriggers
+            .GroupBy(static trigger => trigger.EnclosingFunctionName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<DeferredFunctionInstantiationTriggerRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var deferredTypeTriggersByFunction = typeModel.DeferredTypeTriggers
+            .GroupBy(static trigger => trigger.EnclosingFunctionName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<DeferredTypeInstantiationTriggerRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var objectCreationsByFunction = typeModel.ObjectCreations
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<ObjectCreationTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var enumConstructorsByFunction = typeModel.EnumConstructors
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<EnumConstructorTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var enumCallsByFunction = typeModel.EnumCalls
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<EnumCallTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var enumValuesByFunction = typeModel.EnumValues
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<EnumValueTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var enumPatternsByFunction = typeModel.EnumPatterns
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<EnumPatternTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var aggregatePatternsByFunction = typeModel.AggregatePatterns
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<AggregatePatternTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var localDeclarationsByFunction = typeModel.LocalDeclarations
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<LocalDeclarationTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var conversionsByFunction = typeModel.Conversions
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<ConversionTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var directCallsByFunction = typeModel.DirectCalls
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<DirectCallTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var fieldAccessesByFunction = typeModel.FieldAccesses
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<FieldAccessTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+        var memberCallsByFunction = typeModel.MemberCalls
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<MemberCallTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
+
+        return DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
+            .Where(static function => function.HasBody && function.TypeParameters is not null && function.Visibility is StarkVisibility.Public or StarkVisibility.Export)
+            .Select(function =>
+            {
+                var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
+                var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, function.Name);
+                var functionSignature = typeModel.Functions[lookupName];
+                deferredTriggersByFunction.TryGetValue(lookupName, out var deferredTriggers);
+                deferredTypeTriggersByFunction.TryGetValue(lookupName, out var deferredTypeTriggers);
+                objectCreationsByFunction.TryGetValue(lookupName, out var objectCreations);
+                enumConstructorsByFunction.TryGetValue(lookupName, out var enumConstructors);
+                enumCallsByFunction.TryGetValue(lookupName, out var enumCalls);
+                enumValuesByFunction.TryGetValue(lookupName, out var enumValues);
+                enumPatternsByFunction.TryGetValue(lookupName, out var enumPatterns);
+                aggregatePatternsByFunction.TryGetValue(lookupName, out var aggregatePatterns);
+                localDeclarationsByFunction.TryGetValue(lookupName, out var localDeclarations);
+                conversionsByFunction.TryGetValue(lookupName, out var conversions);
+                directCallsByFunction.TryGetValue(lookupName, out var directCalls);
+                fieldAccessesByFunction.TryGetValue(lookupName, out var fieldAccesses);
+                memberCallsByFunction.TryGetValue(lookupName, out var memberCalls);
+
+                return new StarkPackageFunctionTemplateManifest(
+                    QualifiedResolvedName: qualifiedResolvedName,
+                    QualifiedName: $"{module.SyntaxModel.ModuleName}.{function.DisplaySourceName}",
+                    OverloadKey: FunctionOverloadFacts.BuildOverloadKey(function.ParameterList),
+                    BodyText: GetContextSourceText(module.ParseResult, function.Body),
+                    TopLevelStatementCount: function.Body.block()?.statement().Length,
+                    TypedBody: BuildPublishedTypedTemplateBody(module, functionSignature.ReturnType, function.Body, literalsByLocation, objectCreations, enumConstructors, enumCalls, enumValues, enumPatterns, aggregatePatterns, localDeclarations, conversions, directCalls, memberCalls),
+                    DeferredFunctionInstantiations: deferredTriggers is { Count: > 0 }
+                        ? deferredTriggers
+                            .Where(static trigger => trigger.Signature.TemplateName is not null && trigger.Signature.TypeArguments is { Count: > 0 })
+                            .Select(trigger => new StarkPackageDeferredFunctionInstantiationManifest(
+                                QualifyPublishedCalledFunctionName(module, trigger.Signature.TemplateName!),
+                                trigger.Signature.TypeArguments!
+                                    .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                                    .ToArray()))
+                            .ToArray()
+                        : null,
+                    DeferredTypeInstantiations: deferredTypeTriggers is { Count: > 0 }
+                        ? deferredTypeTriggers
+                            .Select(trigger => new StarkPackageDeferredTypeInstantiationManifest(
+                                BuildPublishedAbiTypeReference(trigger.Type, module)))
+                            .ToArray()
+                        : null,
+                    ObjectCreations: BuildPublishedTemplateObjectCreations(module, function.Body, objectCreations),
+                    EnumConstructors: BuildPublishedTemplateEnumConstructors(module, function.Body, enumConstructors),
+                    EnumCalls: BuildPublishedTemplateEnumCalls(module, function.Body, enumCalls),
+                    EnumValues: BuildPublishedTemplateEnumValues(module, function.Body, enumValues),
+                    EnumPatterns: BuildPublishedTemplateEnumPatterns(module, function.Body, enumPatterns),
+                    AggregatePatterns: BuildPublishedTemplateAggregatePatterns(module, function.Body, aggregatePatterns),
+                    LocalDeclarations: BuildPublishedTemplateLocalDeclarations(module, localDeclarations),
+                    Conversions: BuildPublishedTemplateConversions(module, function.Body, conversions),
+                    DirectCalls: BuildPublishedTemplateDirectCalls(module, function.Body, directCalls),
+                    FieldAccesses: BuildPublishedTemplateFieldAccesses(module, function.Body, fieldAccesses),
+                    MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls));
+            })
+            .OrderBy(static template => template.QualifiedResolvedName, StringComparer.Ordinal)
+            .ThenBy(static template => template.OverloadKey, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static StarkPackageTypedTemplateBodyManifest? BuildPublishedTypedTemplateBody(
+        LoadedModuleDocument module,
+        StarkTypeSymbol returnType,
+        ParserRuleContext functionBody,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyList<ObjectCreationTypingRecord>? objectCreations,
+        IReadOnlyList<EnumConstructorTypingRecord>? enumConstructors,
+        IReadOnlyList<EnumCallTypingRecord>? enumCalls,
+        IReadOnlyList<EnumValueTypingRecord>? enumValues,
+        IReadOnlyList<EnumPatternTypingRecord>? enumPatterns,
+        IReadOnlyList<AggregatePatternTypingRecord>? aggregatePatterns,
+        IReadOnlyList<LocalDeclarationTypingRecord>? localDeclarations,
+        IReadOnlyList<ConversionTypingRecord>? conversions,
+        IReadOnlyList<DirectCallTypingRecord>? directCalls,
+        IReadOnlyList<MemberCallTypingRecord>? memberCalls)
+    {
+        var block = functionBody switch
+        {
+            StarkParser.FunctionBodyContext functionBodyContext => functionBodyContext.block(),
+            StarkParser.BlockContext directBlock => directBlock,
+            _ => null
+        };
+        if (block is null)
+        {
+            return null;
+        }
+
+        var statements = block.statement();
+        if (statements.Length == 0)
+        {
+            return null;
+        }
+
+        var localDeclarationsByLocation = (localDeclarations ?? [])
+            .GroupBy(static record => TemplateLocalDeclarationFacts.BuildLookupKey(record.Kind, record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var conversionsByLocation = (conversions ?? [])
+            .GroupBy(static record => BuildTemplateConversionLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var objectCreationOrdinals = CollectTrackedTemplateObjectCreations(functionBody)
+            .Select((objectCreation, ordinal) => (objectCreation, ordinal))
+            .ToDictionary(static item => item.objectCreation, static item => item.ordinal);
+        var enumConstructorsByLocation = (enumConstructors ?? [])
+            .GroupBy(static record => BuildTemplateEnumConstructorLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var enumConstructorOrdinals = CollectTemplateEnumConstructorExpressions(functionBody)
+            .Select((enumConstructor, ordinal) => (enumConstructor, ordinal))
+            .Where(item => enumConstructorsByLocation.ContainsKey(
+                BuildTemplateEnumConstructorLookupKey(item.enumConstructor.Start.Line, item.enumConstructor.Start.Column + 1)))
+            .ToDictionary(static item => item.enumConstructor, static item => item.ordinal);
+        var enumCallsByLocation = (enumCalls ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var enumCallOrdinals = CollectTemplateDirectCallArgumentLists(functionBody)
+            .Select((argumentList, ordinal) => (argumentList, ordinal))
+            .Where(item => enumCallsByLocation.ContainsKey(
+                TemplateDirectCallFacts.BuildLookupKey(item.argumentList.Start.Line, item.argumentList.Start.Column + 1)))
+            .ToDictionary(static item => item.argumentList, static item => item.ordinal);
+        var enumValuesByLocation = (enumValues ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var enumValueOrdinals = CollectTemplateEnumValuePrimaryExpressions(functionBody)
+            .Select((primaryExpression, ordinal) => (primaryExpression, ordinal))
+            .Where(item => enumValuesByLocation.ContainsKey(
+                TemplateDirectCallFacts.BuildLookupKey(item.primaryExpression.Start.Line, item.primaryExpression.Start.Column + 1)))
+            .ToDictionary(static item => item.primaryExpression, static item => item.ordinal);
+        var templatePatternContexts = CollectTemplateEnumPatternContexts(functionBody)
+            .Select((patternContext, ordinal) => (patternContext, ordinal))
+            .ToArray();
+        var enumPatternsByLocation = (enumPatterns ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var enumPatternOrdinals = templatePatternContexts
+            .Where(item => enumPatternsByLocation.ContainsKey(
+                TemplateDirectCallFacts.BuildLookupKey(item.patternContext.Start.Line, item.patternContext.Start.Column + 1)))
+            .ToDictionary(static item => item.patternContext, static item => item.ordinal);
+        var aggregatePatternsByLocation = (aggregatePatterns ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var aggregatePatternOrdinals = templatePatternContexts
+            .Where(item => item.patternContext is StarkParser.AggregatePatternContext
+                && aggregatePatternsByLocation.ContainsKey(
+                    TemplateDirectCallFacts.BuildLookupKey(item.patternContext.Start.Line, item.patternContext.Start.Column + 1)))
+            .ToDictionary(static item => item.patternContext, static item => item.ordinal);
+        var directCallsByLocation = (directCalls ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var directCallOrdinals = CollectTemplateArgumentListsByPublishedLocations(functionBody, directCallsByLocation.Keys)
+            .Select((argumentList, ordinal) => (argumentList, ordinal))
+            .ToDictionary(static item => item.argumentList, static item => item.ordinal);
+        var memberCallOrdinals = CollectTemplateMemberCallArgumentLists(functionBody)
+            .Select((argumentList, ordinal) => (argumentList, ordinal))
+            .ToDictionary(static item => item.argumentList, static item => item.ordinal);
+        var fieldAccessOrdinals = CollectTemplateMemberAccessParts(functionBody)
+            .Select((postfixPart, ordinal) => (postfixPart, ordinal))
+            .ToDictionary(static item => item.postfixPart, static item => item.ordinal);
+        if (!TryBuildPublishedTypedTemplateStatementList(
+                module,
+                statements,
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var publishedStatements))
+        {
+            return null;
+        }
+
+        var lastStatement = publishedStatements[^1];
+        var lastStatementKind = lastStatement.Kind;
+        if (string.Equals(lastStatementKind, "return", StringComparison.Ordinal))
+        {
+            if (lastStatement.Expression is null
+                && returnType.Kind != StarkTypeKind.Void)
+            {
+                return null;
+            }
+        }
+        else if (!(returnType.Kind == StarkTypeKind.Void
+                   && string.Equals(lastStatementKind, "expression", StringComparison.Ordinal))
+                 && !CanUseTypedTemplateSwitchAsTerminal(lastStatement, returnType))
+        {
+            return null;
+        }
+
+        for (var index = 0; index < publishedStatements.Count - 1; index++)
+        {
+            if (!string.Equals(publishedStatements[index].Kind, "local-variable", StringComparison.Ordinal)
+                && !(returnType.Kind == StarkTypeKind.Void
+                    && string.Equals(publishedStatements[index].Kind, "expression", StringComparison.Ordinal))
+                && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "switch", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "for", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "while", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "if", StringComparison.Ordinal))
+            {
+                return null;
+            }
+        }
+
+        return new StarkPackageTypedTemplateBodyManifest(publishedStatements);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateStatementList(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.StatementContext> statements,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
+    {
+        var builtStatements = new List<StarkPackageTypedTemplateStatementManifest>(statements.Count);
+        foreach (var statement in statements)
+        {
+            if (!TryBuildPublishedTypedTemplateStatement(
+                    module,
+                    statement,
+                    literalsByLocation,
+                    localDeclarationsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedStatement))
+            {
+                publishedStatements = [];
+                return false;
+            }
+
+            builtStatements.Add(publishedStatement);
+        }
+
+        publishedStatements = builtStatements;
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateStatement(
+        LoadedModuleDocument module,
+        StarkParser.StatementContext statement,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateStatementManifest publishedStatement)
+    {
+        publishedStatement = null!;
+
+        if (statement.localVariableDeclaration() is { } localVariable)
+        {
+            var declarators = localVariable.variableDeclarators().variableDeclarator();
+            if (declarators.Length != 1
+                || declarators[0].variableInitializer()?.expression() is not { } initializerExpression
+                || !localDeclarationsByLocation.TryGetValue(
+                    TemplateLocalDeclarationFacts.BuildLookupKey(
+                    TemplateLocalDeclarationFacts.VariableKind,
+                    localVariable.Start.Line,
+                    localVariable.Start.Column + 1),
+                    out var localDeclaration)
+                || !TryBuildPublishedTypedTemplateExpression(module, initializerExpression, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var initializer))
+            {
+                return false;
+            }
+
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "local-variable",
+                Expression: initializer,
+                Name: declarators[0].Identifier().GetText(),
+                StorageClass: localVariable.storageClass().GetText(),
+                IsMutable: localVariable.MUT() is not null,
+                Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module));
+            return true;
+        }
+
+        if (statement.localConstantDeclaration() is { } localConstant)
+        {
+            var declarators = localConstant.constantDeclarators().constantDeclarator();
+            if (declarators.Length != 1
+                || declarators[0].variableInitializer()?.expression() is not { } initializerExpression
+                || !localDeclarationsByLocation.TryGetValue(
+                    TemplateLocalDeclarationFacts.BuildLookupKey(
+                        TemplateLocalDeclarationFacts.ConstantKind,
+                        localConstant.Start.Line,
+                        localConstant.Start.Column + 1),
+                    out var localDeclaration)
+                || !TryBuildPublishedTypedTemplateExpression(module, initializerExpression, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var initializer))
+            {
+                return false;
+            }
+
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "local-variable",
+                Expression: initializer,
+                Name: declarators[0].Identifier().GetText(),
+                StorageClass: "local",
+                IsMutable: false,
+                IsConstant: true,
+                Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module));
+            return true;
+        }
+
+        if (statement.expressionStatement()?.expression() is { } expressionStatementExpression
+            && expressionStatementExpression.assignmentExpression().assignmentOperator() is null
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                expressionStatementExpression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var expressionStatementValue)
+            && (string.Equals(expressionStatementValue.Kind, "direct-call", StringComparison.Ordinal)
+                || string.Equals(expressionStatementValue.Kind, "member-call", StringComparison.Ordinal)))
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "expression",
+                Expression: expressionStatementValue);
+            return true;
+        }
+
+        if (statement.forStatement() is { } forStatement
+            && forStatement.forCondition() is { } forConditionClause
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                forConditionClause.expression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var forCondition)
+            && TryBuildPublishedTypedTemplateForInitializerStatements(
+                module,
+                forStatement.forInitializer(),
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var initializerStatements)
+            && TryBuildPublishedTypedTemplateForIteratorStatements(
+                module,
+                forStatement.forIterator(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var iteratorStatements)
+            && TryBuildPublishedTypedTemplateBranchStatement(
+                module,
+                forStatement.statement(),
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var forBodyStatements))
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "for",
+                Expression: forCondition,
+                InitializerStatements: initializerStatements,
+                IteratorStatements: iteratorStatements,
+                BodyStatements: forBodyStatements);
+            return true;
+        }
+
+        if (statement.whileStatement() is { } whileStatement
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                whileStatement.expression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var whileCondition)
+            && TryBuildPublishedTypedTemplateBranchStatement(
+                module,
+                whileStatement.statement(),
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var whileBodyStatements))
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "while",
+                Expression: whileCondition,
+                BodyStatements: whileBodyStatements);
+            return true;
+        }
+
+        if (statement.ifStatement() is { } ifStatement
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                ifStatement.expression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var condition)
+            && TryBuildPublishedTypedTemplateBranchStatement(
+                module,
+                ifStatement.statement(0),
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var thenStatements))
+        {
+            IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? elseStatements = null;
+            if (ifStatement.statement().Length >= 2
+                && !TryBuildPublishedTypedTemplateBranchStatement(
+                    module,
+                    ifStatement.statement(1),
+                    literalsByLocation,
+                    localDeclarationsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out elseStatements))
+            {
+                return false;
+            }
+
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "if",
+                Expression: condition,
+                ThenStatements: thenStatements,
+                ElseStatements: elseStatements);
+            return true;
+        }
+
+        if (statement.switchStatement() is { } switchStatement
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                switchStatement.expression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var switchExpression)
+            && TryBuildPublishedTypedTemplateSwitchCaseList(
+                module,
+                switchStatement.switchSection(),
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var switchCases))
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "switch",
+                Expression: switchExpression,
+                SwitchCases: switchCases);
+            return true;
+        }
+
+        if (statement.expressionStatement()?.expression().assignmentExpression() is { } assignmentExpression
+            && assignmentExpression.assignmentOperator() is not null
+            && string.Equals(assignmentExpression.assignmentOperator().GetText(), "=", StringComparison.Ordinal)
+            && TryBuildPublishedTypedTemplateAssignmentTarget(assignmentExpression.unaryExpression(), out var assignmentTargetName)
+            && TryBuildPublishedTypedTemplateAssignmentExpression(
+                module,
+                assignmentExpression.assignmentExpression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var assignmentValue))
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "assignment",
+                Expression: assignmentValue,
+                Name: assignmentTargetName);
+            return true;
+        }
+
+        if (statement.returnStatement() is { } returnStatement)
+        {
+            if (returnStatement.expression() is null)
+            {
+                publishedStatement = new StarkPackageTypedTemplateStatementManifest(Kind: "return");
+                return true;
+            }
+
+            if (TryBuildPublishedTypedTemplateExpression(module, returnStatement.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var returnExpression))
+            {
+                publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                    Kind: "return",
+                    Expression: returnExpression);
+                return true;
+            }
+        }
+
+        if (statement.breakStatement() is not null)
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "break");
+            return true;
+        }
+
+        if (statement.continueStatement() is not null)
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "continue");
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool CanUseTypedTemplateSwitchAsTerminal(
+        StarkPackageTypedTemplateStatementManifest statement,
+        StarkTypeSymbol returnType)
+    {
+        if (!string.Equals(statement.Kind, "switch", StringComparison.Ordinal)
+            || statement.SwitchCases is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        foreach (var switchCase in statement.SwitchCases)
+        {
+            if (switchCase.Statements is not { Count: > 0 })
+            {
+                return false;
+            }
+
+            var lastStatement = switchCase.Statements[^1];
+            if (!string.Equals(lastStatement.Kind, "return", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (lastStatement.Expression is null
+                && returnType.Kind != StarkTypeKind.Void)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateSwitchCaseList(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.SwitchSectionContext> sections,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest> switchCases)
+    {
+        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(sections.Count);
+        foreach (var section in sections)
+        {
+            if (section.switchLabel().Length != 1
+                || section.switchLabel()[0].pattern() is not { } pattern
+                || section.switchLabel()[0].DEFAULT() is not null
+                || section.switchLabel()[0].whenClause() is not null
+                || section.statement().Length == 0
+                || !TryBuildPublishedTypedTemplateStatementList(
+                    module,
+                    section.statement(),
+                    literalsByLocation,
+                    localDeclarationsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var statements)
+                || !TryBuildPublishedTypedTemplateSwitchCase(
+                    pattern,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    statements,
+                    out var builtCase))
+            {
+                switchCases = [];
+                return false;
+            }
+
+            builtCases.Add(builtCase);
+        }
+
+        switchCases = builtCases;
+        return builtCases.Count > 0;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateSwitchCase(
+        StarkParser.PatternContext pattern,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyList<StarkPackageTypedTemplateStatementManifest> statements,
+        out StarkPackageTypedTemplateSwitchCaseManifest switchCase)
+    {
+        switchCase = null!;
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
+                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                    out var members))
+            {
+                return false;
+            }
+
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: "enum-pattern",
+                Ordinal: ordinal,
+                Members: members,
+                Statements: statements);
+            return true;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
+                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    genericEnumAggregatePattern.aggregatePatternSuffix(),
+                    out var members))
+            {
+                return false;
+            }
+
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: "enum-pattern",
+                Ordinal: ordinal,
+                Members: members,
+                Statements: statements);
+            return true;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        aggregatePattern.aggregatePatternSuffix(),
+                        out var enumMembers))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "enum-pattern",
+                    Ordinal: enumOrdinal,
+                    Members: enumMembers,
+                    Statements: statements);
+                return true;
+            }
+
+            if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
+                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    aggregatePattern.aggregatePatternSuffix(),
+                    out var aggregateMembers))
+            {
+                return false;
+            }
+
+            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                Kind: "aggregate-pattern",
+                Ordinal: aggregateOrdinal,
+                Members: aggregateMembers,
+                Statements: statements);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+        StarkParser.AggregatePatternSuffixContext? suffix,
+        out IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members)
+    {
+        if (suffix is null)
+        {
+            members = [];
+            return true;
+        }
+
+        if (suffix.Identifier() is not null)
+        {
+            members = [];
+            return false;
+        }
+
+        return TryBuildPublishedTypedTemplateSwitchFieldPatterns(suffix.pattern(), out members);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+        IReadOnlyList<StarkParser.PatternContext> patterns,
+        out IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members)
+    {
+        var builtMembers = new List<StarkPackageTypedTemplatePatternManifest>(patterns.Count);
+        foreach (var pattern in patterns)
+        {
+            if (!TryBuildPublishedTypedTemplateSwitchFieldPattern(pattern, out var builtMember))
+            {
+                members = [];
+                return false;
+            }
+
+            builtMembers.Add(builtMember);
+        }
+
+        members = builtMembers;
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateSwitchFieldPattern(
+        StarkParser.PatternContext pattern,
+        out StarkPackageTypedTemplatePatternManifest member)
+    {
+        member = null!;
+
+        if (pattern.DISCARD() is not null)
+        {
+            member = new StarkPackageTypedTemplatePatternManifest("discard");
+            return true;
+        }
+
+        if (pattern.VAR() is not null && pattern.Identifier() is not null)
+        {
+            member = new StarkPackageTypedTemplatePatternManifest("capture", pattern.Identifier().GetText());
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateBranchStatement(
+        LoadedModuleDocument module,
+        StarkParser.StatementContext statement,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
+    {
+        if (statement.block() is { } block)
+        {
+            return TryBuildPublishedTypedTemplateStatementList(
+                module,
+                block.statement(),
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out publishedStatements);
+        }
+
+        if (TryBuildPublishedTypedTemplateStatement(
+                module,
+                statement,
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var publishedStatement))
+        {
+            publishedStatements = [publishedStatement];
+            return true;
+        }
+
+        publishedStatements = [];
+        return false;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateForInitializerStatements(
+        LoadedModuleDocument module,
+        StarkParser.ForInitializerContext? initializer,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> initializerStatements)
+    {
+        if (initializer is null)
+        {
+            initializerStatements = [];
+            return true;
+        }
+
+        if (initializer.localForVariableDeclaration() is { } localForVariableDeclaration)
+        {
+            var declarators = localForVariableDeclaration.variableDeclarators().variableDeclarator();
+            if (declarators.Length != 1
+                || declarators[0].variableInitializer()?.expression() is not { } initializerExpression
+                || !localDeclarationsByLocation.TryGetValue(
+                    TemplateLocalDeclarationFacts.BuildLookupKey(
+                        TemplateLocalDeclarationFacts.ForVariableKind,
+                        localForVariableDeclaration.Start.Line,
+                        localForVariableDeclaration.Start.Column + 1),
+                    out var localDeclaration)
+                || !TryBuildPublishedTypedTemplateExpression(
+                    module,
+                    initializerExpression,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var initializerValue))
+            {
+                initializerStatements = [];
+                return false;
+            }
+
+            initializerStatements =
+            [
+                new StarkPackageTypedTemplateStatementManifest(
+                    Kind: "local-variable",
+                    Expression: initializerValue,
+                    Name: declarators[0].Identifier().GetText(),
+                    StorageClass: localForVariableDeclaration.storageClass().GetText(),
+                    IsMutable: localForVariableDeclaration.MUT() is not null,
+                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module))
+            ];
+            return true;
+        }
+
+        if (initializer.expressionList() is { } expressionList)
+        {
+            return TryBuildPublishedTypedTemplateAssignmentStatementList(
+                module,
+                expressionList.expression(),
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out initializerStatements);
+        }
+
+        initializerStatements = [];
+        return false;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateForIteratorStatements(
+        LoadedModuleDocument module,
+        StarkParser.ForIteratorContext? iterator,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> iteratorStatements)
+    {
+        if (iterator is null)
+        {
+            iteratorStatements = [];
+            return true;
+        }
+
+        return TryBuildPublishedTypedTemplateAssignmentStatementList(
+            module,
+            iterator.expressionList().expression(),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out iteratorStatements);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateAssignmentStatementList(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.ExpressionContext> expressions,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> assignmentStatements)
+    {
+        var builtStatements = new List<StarkPackageTypedTemplateStatementManifest>(expressions.Count);
+        foreach (var expression in expressions)
+        {
+            if (expression.assignmentExpression() is not { } assignmentExpression
+                || assignmentExpression.assignmentOperator() is null
+                || !string.Equals(assignmentExpression.assignmentOperator().GetText(), "=", StringComparison.Ordinal)
+                || !TryBuildPublishedTypedTemplateAssignmentTarget(assignmentExpression.unaryExpression(), out var assignmentTargetName)
+                || !TryBuildPublishedTypedTemplateAssignmentExpression(
+                    module,
+                    assignmentExpression.assignmentExpression(),
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var assignmentValue))
+            {
+                assignmentStatements = [];
+                return false;
+            }
+
+            builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
+                Kind: "assignment",
+                Expression: assignmentValue,
+                Name: assignmentTargetName));
+        }
+
+        assignmentStatements = builtStatements;
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateExpression(
+        LoadedModuleDocument module,
+        StarkParser.ExpressionContext expression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (expression.assignmentExpression() is not { } assignmentExpression)
+        {
+            return false;
+        }
+
+        return TryBuildPublishedTypedTemplateAssignmentExpression(
+            module,
+            assignmentExpression,
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateAssignmentExpression(
+        LoadedModuleDocument module,
+        StarkParser.AssignmentExpressionContext assignmentExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (assignmentExpression.assignmentOperator() is not null
+            || assignmentExpression.conditionalExpression() is not { } conditionalExpression)
+        {
+            return false;
+        }
+
+        if (conditionalExpression.expression().Length == 2)
+        {
+            if (!TryBuildPublishedTypedTemplateConditionExpression(
+                    module,
+                    conditionalExpression.logicalOrExpression(),
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var condition)
+                || !TryBuildPublishedTypedTemplateExpression(
+                    module,
+                    conditionalExpression.expression(0),
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var whenTrue)
+                || !TryBuildPublishedTypedTemplateExpression(
+                    module,
+                    conditionalExpression.expression(1),
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var whenFalse))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "conditional",
+                Arguments: [condition, whenTrue, whenFalse]);
+            return true;
+        }
+
+        return TryBuildPublishedTypedTemplateLogicalOrExpression(
+            module,
+            conditionalExpression.logicalOrExpression(),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateAssignmentTarget(
+        StarkParser.UnaryExpressionContext unaryExpression,
+        out string targetName)
+    {
+        targetName = string.Empty;
+
+        if (unaryExpression.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null
+            || powerExpression.postfixExpression() is not { } postfixExpression
+            || postfixExpression.postfixPart().Length != 0
+            || postfixExpression.primaryExpression().Identifier() is not { } identifier)
+        {
+            return false;
+        }
+
+        targetName = identifier.GetText();
+        return true;
+    }
+
+    private delegate bool TryBuildPublishedTypedTemplateOperand<in TOperandContext>(
+        LoadedModuleDocument module,
+        TOperandContext operand,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+        where TOperandContext : ParserRuleContext;
+
+    private static bool TryBuildPublishedTypedTemplatePostfixExpression(
+        LoadedModuleDocument module,
+        StarkParser.PostfixExpressionContext postfixExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+        var primaryExpression = postfixExpression.primaryExpression();
+        var postfixParts = postfixExpression.postfixPart();
+        StarkPackageTypedTemplateExpressionManifest? baseExpression = null;
+
+        if (primaryExpression?.objectCreationExpression() is { } objectCreationExpression
+            && objectCreationOrdinals.TryGetValue(objectCreationExpression, out var objectCreationOrdinal))
+        {
+            var arguments = new List<StarkPackageTypedTemplateExpressionManifest>();
+            if (objectCreationExpression.argumentList() is { } objectCreationArgumentList)
+            {
+                foreach (var argument in objectCreationArgumentList.argument())
+                {
+                    if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                    {
+                        return false;
+                    }
+
+                    arguments.Add(publishedArgument);
+                }
+            }
+
+            if (objectCreationExpression.objectInitializer() is { } objectInitializer)
+            {
+                foreach (var memberInitializer in objectInitializer.memberInitializer())
+                {
+                    if (memberInitializer.variableInitializer()?.expression() is not { } initializerExpression
+                        || !TryBuildPublishedTypedTemplateExpression(module, initializerExpression, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                    {
+                        return false;
+                    }
+
+                    arguments.Add(publishedArgument);
+                }
+            }
+
+            baseExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "object-creation",
+                Ordinal: objectCreationOrdinal,
+                Arguments: arguments);
+        }
+
+        if (baseExpression is null
+            && primaryExpression?.enumConstructorExpression() is { } enumConstructorExpression
+            && enumConstructorOrdinals.TryGetValue(enumConstructorExpression, out var enumConstructorOrdinal))
+        {
+            var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(
+                enumConstructorExpression.enumConstructorInitializer().enumConstructorMember().Length);
+            foreach (var member in enumConstructorExpression.enumConstructorInitializer().enumConstructorMember())
+            {
+                if (!TryBuildPublishedTypedTemplateExpression(module, member.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(publishedArgument);
+            }
+
+            baseExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "enum-constructor",
+                Ordinal: enumConstructorOrdinal,
+                Arguments: arguments);
+        }
+
+        if (postfixParts.Length == 0
+            && primaryExpression?.literal() is { } literal
+            && literalsByLocation.TryGetValue(
+                BuildTemplateLiteralLookupKey(literal.Start.Line, literal.Start.Column + 1),
+                out var literalRecord))
+        {
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "literal",
+                LiteralText: literal.GetText(),
+                Type: BuildPublishedAbiTypeReference(literalRecord.Type, module));
+            return true;
+        }
+
+        if (postfixParts.Length == 0
+            && primaryExpression is not null
+            && enumValueOrdinals.TryGetValue(primaryExpression, out var enumValueOrdinal))
+        {
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "enum-value",
+                Ordinal: enumValueOrdinal);
+            return true;
+        }
+
+        if (postfixParts.Length == 1
+            && postfixParts[0].argumentList() is { } enumArgumentList
+            && enumCallOrdinals.TryGetValue(enumArgumentList, out var enumCallOrdinal))
+        {
+            var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(enumArgumentList.argument().Length);
+            foreach (var argument in enumArgumentList.argument())
+            {
+                if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(publishedArgument);
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "enum-call",
+                Ordinal: enumCallOrdinal,
+                Arguments: arguments);
+            return true;
+        }
+
+        if (baseExpression is null)
+        {
+            if (primaryExpression?.expression() is { } groupedExpression
+                && TryBuildPublishedTypedTemplateExpression(
+                    module,
+                    groupedExpression,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var groupedPublishedExpression))
+            {
+                baseExpression = groupedPublishedExpression;
+            }
+        }
+
+        if (baseExpression is null)
+        {
+            var name = primaryExpression?.Identifier()?.GetText()
+                ?? primaryExpression?.qualifiedName()?.GetText();
+            if (name is null)
+            {
+                return false;
+            }
+
+            baseExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "name",
+                Name: name);
+        }
+
+        if (postfixParts.Length == 0)
+        {
+            publishedExpression = baseExpression;
+            return true;
+        }
+
+        return TryBuildPublishedTypedTemplatePostfixChain(
+            module,
+            baseExpression,
+            postfixParts,
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplatePostfixChain(
+        LoadedModuleDocument module,
+        StarkPackageTypedTemplateExpressionManifest baseExpression,
+        IReadOnlyList<StarkParser.PostfixPartContext> postfixParts,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = baseExpression;
+
+        for (var index = 0; index < postfixParts.Count; index++)
+        {
+            var postfixPart = postfixParts[index];
+
+            if (postfixPart.expressionList() is { } indexExpressionList)
+            {
+                if (indexExpressionList.expression().Length == 0)
+                {
+                    return false;
+                }
+
+                var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(indexExpressionList.expression().Length + 1)
+                {
+                    publishedExpression
+                };
+                foreach (var indexExpression in indexExpressionList.expression())
+                {
+                    if (!TryBuildPublishedTypedTemplateExpression(
+                        module,
+                        indexExpression,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        directCallOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var publishedIndex))
+                    {
+                        return false;
+                    }
+
+                    arguments.Add(publishedIndex);
+                }
+
+                publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                    Kind: "index-access",
+                    Arguments: arguments);
+                continue;
+            }
+
+            if (postfixPart.argumentList() is { } directArgumentList)
+            {
+                if (publishedExpression.Kind != "name"
+                    || !directCallOrdinals.TryGetValue(directArgumentList, out var directCallOrdinal))
+                {
+                    return false;
+                }
+
+                var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(directArgumentList.argument().Length);
+                foreach (var argument in directArgumentList.argument())
+                {
+                    if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                    {
+                        return false;
+                    }
+
+                    arguments.Add(publishedArgument);
+                }
+
+                publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                    Kind: "direct-call",
+                    Ordinal: directCallOrdinal,
+                    Arguments: arguments);
+                continue;
+            }
+
+            if (postfixPart.Identifier() is not null)
+            {
+                if (index + 1 < postfixParts.Count
+                    && postfixParts[index + 1].argumentList() is { } chainedDirectArgumentList
+                    && publishedExpression.Kind == "name"
+                    && directCallOrdinals.TryGetValue(chainedDirectArgumentList, out var directCallOrdinal))
+                {
+                    var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(chainedDirectArgumentList.argument().Length);
+                    foreach (var argument in chainedDirectArgumentList.argument())
+                    {
+                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                        {
+                            return false;
+                        }
+
+                        arguments.Add(publishedArgument);
+                    }
+
+                    publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                        Kind: "direct-call",
+                        Ordinal: directCallOrdinal,
+                        Arguments: arguments);
+                    index += 1;
+                    continue;
+                }
+
+                if (index + 1 < postfixParts.Count
+                    && postfixParts[index + 1].argumentList() is { } memberArgumentList
+                    && memberCallOrdinals.TryGetValue(memberArgumentList, out var memberCallOrdinal))
+                {
+                    var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(memberArgumentList.argument().Length + 1)
+                    {
+                        publishedExpression
+                    };
+
+                    foreach (var argument in memberArgumentList.argument())
+                    {
+                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                        {
+                            return false;
+                        }
+
+                        arguments.Add(publishedArgument);
+                    }
+
+                    publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                        Kind: "member-call",
+                        Ordinal: memberCallOrdinal,
+                        Arguments: arguments);
+                    index += 1;
+                    continue;
+                }
+
+                if (!fieldAccessOrdinals.TryGetValue(postfixPart, out var fieldAccessOrdinal))
+                {
+                    return false;
+                }
+
+                publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                    Kind: "field-access",
+                    Ordinal: fieldAccessOrdinal,
+                    Arguments:
+                    [
+                        publishedExpression
+                    ]);
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateConditionExpression(
+        LoadedModuleDocument module,
+        StarkParser.LogicalOrExpressionContext logicalOrExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateLogicalOrExpression(
+            module,
+            logicalOrExpression,
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateLogicalOrExpression(
+        LoadedModuleDocument module,
+        StarkParser.LogicalOrExpressionContext logicalOrExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            logicalOrExpression.logicalAndExpression(),
+            ExtractOperators<StarkParser.LogicalAndExpressionContext>(logicalOrExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateLogicalAndExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateLogicalAndExpression(
+        LoadedModuleDocument module,
+        StarkParser.LogicalAndExpressionContext logicalAndExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            logicalAndExpression.bitwiseOrExpression(),
+            ExtractOperators<StarkParser.BitwiseOrExpressionContext>(logicalAndExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateBitwiseOrExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateBitwiseOrExpression(
+        LoadedModuleDocument module,
+        StarkParser.BitwiseOrExpressionContext bitwiseOrExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            bitwiseOrExpression.bitwiseXorExpression(),
+            ExtractOperators<StarkParser.BitwiseXorExpressionContext>(bitwiseOrExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateBitwiseXorExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateBitwiseXorExpression(
+        LoadedModuleDocument module,
+        StarkParser.BitwiseXorExpressionContext bitwiseXorExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            bitwiseXorExpression.bitwiseAndExpression(),
+            ExtractOperators<StarkParser.BitwiseAndExpressionContext>(bitwiseXorExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateBitwiseAndExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateBitwiseAndExpression(
+        LoadedModuleDocument module,
+        StarkParser.BitwiseAndExpressionContext bitwiseAndExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            bitwiseAndExpression.equalityExpression(),
+            ExtractOperators<StarkParser.EqualityExpressionContext>(bitwiseAndExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateEqualityExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateEqualityExpression(
+        LoadedModuleDocument module,
+        StarkParser.EqualityExpressionContext equalityExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            equalityExpression.relationalExpression(),
+            ExtractOperators<StarkParser.RelationalExpressionContext>(equalityExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateRelationalExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateRelationalExpression(
+        LoadedModuleDocument module,
+        StarkParser.RelationalExpressionContext relationalExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            relationalExpression.shiftExpression(),
+            ExtractOperators<StarkParser.ShiftExpressionContext>(relationalExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateShiftExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateShiftExpression(
+        LoadedModuleDocument module,
+        StarkParser.ShiftExpressionContext shiftExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            shiftExpression.additiveExpression(),
+            ExtractOperators<StarkParser.AdditiveExpressionContext>(shiftExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateAdditiveExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateAdditiveExpression(
+        LoadedModuleDocument module,
+        StarkParser.AdditiveExpressionContext additiveExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            additiveExpression.multiplicativeExpression(),
+            ExtractOperators<StarkParser.MultiplicativeExpressionContext>(additiveExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateMultiplicativeExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateMultiplicativeExpression(
+        LoadedModuleDocument module,
+        StarkParser.MultiplicativeExpressionContext multiplicativeExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        return TryBuildPublishedTypedTemplateBinaryChain(
+            module,
+            multiplicativeExpression.unaryExpression(),
+            ExtractOperators<StarkParser.UnaryExpressionContext>(multiplicativeExpression),
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            TryBuildPublishedTypedTemplateUnaryExpression,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateUnaryExpression(
+        LoadedModuleDocument module,
+        StarkParser.UnaryExpressionContext unaryExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (unaryExpression.powerExpression() is { } powerExpression)
+        {
+            return TryBuildPublishedTypedTemplatePowerExpression(
+                module,
+                powerExpression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out publishedExpression);
+        }
+
+        if (unaryExpression.unaryExpression() is not { } operandExpression)
+        {
+            return false;
+        }
+
+        if (unaryExpression.conversionType() is { } conversionType)
+        {
+            if (!conversionsByLocation.TryGetValue(
+                    BuildTemplateConversionLookupKey(unaryExpression.Start.Line, unaryExpression.Start.Column + 1),
+                    out var conversionRecord))
+            {
+                return false;
+            }
+
+            if (!TryBuildPublishedTypedTemplateUnaryExpression(
+                    module,
+                    operandExpression,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedOperand))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "conversion",
+                Arguments: [publishedOperand],
+                Type: BuildPublishedAbiTypeReference(conversionRecord.TargetType, module));
+            return true;
+        }
+
+        var operatorText = unaryExpression.unaryOperator()?.GetText() ?? unaryExpression.GetChild(0).GetText();
+        if (operatorText is not ("+" or "-" or "-%" or "!" or "~")
+            || !TryBuildPublishedTypedTemplateUnaryExpression(
+                module,
+                operandExpression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var publishedUnaryOperand))
+        {
+            return false;
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "unary",
+            Name: operatorText,
+            Arguments: [publishedUnaryOperand]);
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplatePowerExpression(
+        LoadedModuleDocument module,
+        StarkParser.PowerExpressionContext powerExpression,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (powerExpression.unaryExpression() is not null
+            || powerExpression.postfixExpression() is not { } postfixExpression)
+        {
+            return false;
+        }
+
+        return TryBuildPublishedTypedTemplatePostfixExpression(
+            module,
+            postfixExpression,
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateBinaryChain<TOperandContext>(
+        LoadedModuleDocument module,
+        IReadOnlyList<TOperandContext> operands,
+        IReadOnlyList<string> operators,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        TryBuildPublishedTypedTemplateOperand<TOperandContext> buildOperand,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+        where TOperandContext : ParserRuleContext
+    {
+        publishedExpression = null!;
+
+        if (operands.Count == 0
+            || operators.Count != operands.Count - 1
+            || !buildOperand(
+                module,
+                operands[0],
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var current))
+        {
+            return false;
+        }
+
+        for (var index = 1; index < operands.Count; index++)
+        {
+            if (!buildOperand(
+                    module,
+                    operands[index],
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var next))
+            {
+                return false;
+            }
+
+            current = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "binary",
+                Name: operators[index - 1],
+                Arguments: [current, next]);
+        }
+
+        publishedExpression = current;
+        return true;
+    }
+
+    private static IReadOnlyList<string> ExtractOperators<TOperand>(ParserRuleContext context)
+        where TOperand : ParserRuleContext
+    {
+        var operators = new List<string>();
+        var builder = new StringBuilder();
+
+        for (var index = 0; index < context.ChildCount; index++)
+        {
+            var child = context.GetChild(index);
+            if (child is TOperand)
+            {
+                if (builder.Length > 0)
+                {
+                    operators.Add(builder.ToString());
+                    builder.Clear();
+                }
+
+                continue;
+            }
+
+            builder.Append(child.GetText());
+        }
+
+        return operators;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateObjectCreationManifest>? BuildPublishedTemplateObjectCreations(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<ObjectCreationTypingRecord>? objectCreations)
+    {
+        if (objectCreations is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var objectCreationsByKey = objectCreations
+            .GroupBy(static record => BuildTemplateObjectCreationLookupKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTrackedTemplateObjectCreations(functionBody)
+            .Select(objectCreation => objectCreationsByKey.TryGetValue(
+                    BuildTemplateObjectCreationLookupKey(
+                        objectCreation.GetText(),
+                        objectCreation.Start.Line,
+                        objectCreation.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateObjectCreationManifest(
+                    BuildPublishedAbiTypeReference(record.CreatedType, module),
+                    BuildPublishedConstructorShape(module, record.Constructor),
+                    record.Members.Count == 0
+                        ? null
+                        : record.Members
+                            .Select(member => new StarkPackageTemplateObjectInitializerMemberManifest(
+                                member.FieldName,
+                                member.FieldIndex,
+                                BuildPublishedAbiTypeReference(member.FieldType, module)))
+                            .ToArray())
+                : new StarkPackageTemplateObjectCreationManifest(
+                    CreatedType: BuildPublishedAbiTypeReference(StarkTypeSymbols.Error, module),
+                    Constructor: null))
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateEnumConstructorManifest>? BuildPublishedTemplateEnumConstructors(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<EnumConstructorTypingRecord>? enumConstructors)
+    {
+        if (enumConstructors is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var enumConstructorsByLocation = enumConstructors
+            .GroupBy(static record => BuildTemplateEnumConstructorLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateEnumConstructorExpressions(functionBody)
+            .Select((enumConstructor, ordinal) => enumConstructorsByLocation.TryGetValue(
+                    BuildTemplateEnumConstructorLookupKey(enumConstructor.Start.Line, enumConstructor.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateEnumConstructorManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.EnumType, module),
+                    record.VariantName,
+                    record.Members.Count == 0
+                        ? null
+                        : record.Members
+                            .Select(member => new StarkPackageTemplateEnumConstructorMemberManifest(
+                                member.FieldName,
+                                member.FieldIndex,
+                                BuildPublishedAbiTypeReference(member.FieldType, module)))
+                            .ToArray())
+                : null)
+            .Where(static enumConstructor => enumConstructor is not null)
+            .Cast<StarkPackageTemplateEnumConstructorManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateEnumCallManifest>? BuildPublishedTemplateEnumCalls(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<EnumCallTypingRecord>? enumCalls)
+    {
+        if (enumCalls is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var enumCallsByLocation = enumCalls
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateDirectCallArgumentLists(functionBody)
+            .Select((argumentList, ordinal) => enumCallsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateEnumCallManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.EnumType, module),
+                    record.VariantName)
+                : null)
+            .Where(static enumCall => enumCall is not null)
+            .Cast<StarkPackageTemplateEnumCallManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateEnumValueManifest>? BuildPublishedTemplateEnumValues(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<EnumValueTypingRecord>? enumValues)
+    {
+        if (enumValues is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var enumValuesByLocation = enumValues
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateEnumValuePrimaryExpressions(functionBody)
+            .Select((primaryExpression, ordinal) => enumValuesByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(primaryExpression.Start.Line, primaryExpression.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateEnumValueManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.EnumType, module),
+                    record.VariantName)
+                : null)
+            .Where(static enumValue => enumValue is not null)
+            .Cast<StarkPackageTemplateEnumValueManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateEnumPatternManifest>? BuildPublishedTemplateEnumPatterns(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<EnumPatternTypingRecord>? enumPatterns)
+    {
+        if (enumPatterns is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var enumPatternsByLocation = enumPatterns
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateEnumPatternContexts(functionBody)
+            .Select((patternContext, ordinal) => enumPatternsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(patternContext.Start.Line, patternContext.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateEnumPatternManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.EnumType, module),
+                    record.VariantName,
+                    record.Members.Count == 0
+                        ? null
+                        : record.Members
+                            .Select(member => new StarkPackageTemplateEnumPatternMemberManifest(
+                                member.FieldName,
+                                member.FieldIndex,
+                                BuildPublishedAbiTypeReference(member.FieldType, module)))
+                            .ToArray())
+                : null)
+            .Where(static enumPattern => enumPattern is not null)
+            .Cast<StarkPackageTemplateEnumPatternManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateAggregatePatternManifest>? BuildPublishedTemplateAggregatePatterns(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<AggregatePatternTypingRecord>? aggregatePatterns)
+    {
+        if (aggregatePatterns is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var aggregatePatternsByLocation = aggregatePatterns
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateEnumPatternContexts(functionBody)
+            .Select((patternContext, ordinal) => patternContext is StarkParser.AggregatePatternContext aggregatePattern
+                    && aggregatePatternsByLocation.TryGetValue(
+                        TemplateDirectCallFacts.BuildLookupKey(aggregatePattern.Start.Line, aggregatePattern.Start.Column + 1),
+                        out var record)
+                ? new StarkPackageTemplateAggregatePatternManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.Type, module))
+                : null)
+            .Where(static aggregatePattern => aggregatePattern is not null)
+            .Cast<StarkPackageTemplateAggregatePatternManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static StarkPackagePublishedConstructorShapeManifest? BuildPublishedConstructorShape(
+        LoadedModuleDocument module,
+        TypedConstructorShape? constructor)
+    {
+        return constructor is null
+            ? null
+            : new StarkPackagePublishedConstructorShapeManifest(
+                constructor.TypeName,
+                constructor.Parameters
+                    .Select(parameter => new StarkPackageTypedParameterManifest(
+                        parameter.Name,
+                        BuildPublishedAbiTypeReference(parameter.Type, module)))
+                    .ToArray(),
+                constructor.IsPrimaryShape);
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateLocalDeclarationManifest>? BuildPublishedTemplateLocalDeclarations(
+        LoadedModuleDocument module,
+        IReadOnlyList<LocalDeclarationTypingRecord>? localDeclarations)
+    {
+        if (localDeclarations is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return localDeclarations
+            .OrderBy(static record => record.Location.Line)
+            .ThenBy(static record => record.Location.Column)
+            .Select(record => new StarkPackageTemplateLocalDeclarationManifest(
+                record.Kind,
+                record.Location.Line,
+                record.Location.Column,
+                BuildPublishedAbiTypeReference(record.Type, module)))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateConversionManifest>? BuildPublishedTemplateConversions(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<ConversionTypingRecord>? conversions)
+    {
+        if (conversions is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var conversionsByLocation = conversions
+            .GroupBy(static record => BuildTemplateConversionLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateConversionExpressions(functionBody)
+            .Select((unaryExpression, ordinal) => conversionsByLocation.TryGetValue(
+                    BuildTemplateConversionLookupKey(unaryExpression.Start.Line, unaryExpression.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateConversionManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.TargetType, module))
+                : null)
+            .Where(static conversion => conversion is not null)
+            .Cast<StarkPackageTemplateConversionManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateDirectCallManifest>? BuildPublishedTemplateDirectCalls(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<DirectCallTypingRecord>? directCalls)
+    {
+        if (directCalls is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var directCallsByLocation = directCalls
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateArgumentListsByPublishedLocations(functionBody, directCallsByLocation.Keys)
+            .Select((argumentList, ordinal) => directCallsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateDirectCallManifest(
+                    ordinal,
+                    QualifyPublishedCalledFunctionName(module, record.Signature.Name),
+                    BuildPublishedAbiTypeReference(record.Signature.ReturnType, module),
+                    record.Signature.Parameters
+                        .Select(parameter => new StarkPackageTypedParameterManifest(
+                            parameter.Name,
+                            BuildPublishedAbiTypeReference(parameter.Type, module)))
+                        .ToArray(),
+                    QualifiedSourceName: record.Signature.SourceName is null
+                        ? null
+                        : QualifyPublishedCalledFunctionName(module, record.Signature.SourceName),
+                    QualifiedTemplateName: record.Signature.TemplateName is null
+                        ? null
+                        : QualifyPublishedCalledFunctionName(module, record.Signature.TemplateName),
+                    TypeArguments: record.Signature.TypeArguments is { Count: > 0 }
+                        ? record.Signature.TypeArguments
+                            .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                            .ToArray()
+                        : null)
+                : null)
+            .Where(static directCall => directCall is not null)
+            .Cast<StarkPackageTemplateDirectCallManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateFieldAccessManifest>? BuildPublishedTemplateFieldAccesses(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<FieldAccessTypingRecord>? fieldAccesses)
+    {
+        if (fieldAccesses is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var fieldAccessesByLocation = fieldAccesses
+            .GroupBy(static record => TemplateFieldAccessFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateMemberAccessParts(functionBody)
+            .Select((postfixPart, ordinal) => fieldAccessesByLocation.TryGetValue(
+                    TemplateFieldAccessFacts.BuildLookupKey(postfixPart.Start.Line, postfixPart.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateFieldAccessManifest(
+                    ordinal,
+                    record.FieldName,
+                    record.FieldIndex,
+                    BuildPublishedAbiTypeReference(record.FieldType, module))
+                : null)
+            .Where(static fieldAccess => fieldAccess is not null)
+            .Cast<StarkPackageTemplateFieldAccessManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateMemberCallManifest>? BuildPublishedTemplateMemberCalls(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<MemberCallTypingRecord>? memberCalls)
+    {
+        if (memberCalls is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var memberCallsByLocation = memberCalls
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateMemberCallArgumentLists(functionBody)
+            .Select((argumentList, ordinal) => memberCallsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateMemberCallManifest(
+                    ordinal,
+                    QualifyPublishedCalledFunctionName(module, record.Signature.Name),
+                    BuildPublishedAbiTypeReference(record.Signature.ReturnType, module),
+                    record.Signature.Parameters
+                        .Select(parameter => new StarkPackageTypedParameterManifest(
+                            parameter.Name,
+                            BuildPublishedAbiTypeReference(parameter.Type, module)))
+                        .ToArray(),
+                    QualifiedSourceName: record.Signature.SourceName is null
+                        ? null
+                        : QualifyPublishedCalledFunctionName(module, record.Signature.SourceName),
+                    QualifiedTemplateName: record.Signature.TemplateName is null
+                        ? null
+                        : QualifyPublishedCalledFunctionName(module, record.Signature.TemplateName),
+                    TypeArguments: record.Signature.TypeArguments is { Count: > 0 }
+                        ? record.Signature.TypeArguments
+                            .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                            .ToArray()
+                        : null)
+                : null)
+            .Where(static memberCall => memberCall is not null)
+            .Cast<StarkPackageTemplateMemberCallManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkParser.ObjectCreationExpressionContext> CollectTrackedTemplateObjectCreations(ParserRuleContext node)
+    {
+        var objectCreations = new List<StarkParser.ObjectCreationExpressionContext>();
+        Collect(node, objectCreations);
+        return objectCreations;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.ObjectCreationExpressionContext> accumulator)
+        {
+            if (current is StarkParser.ObjectCreationExpressionContext objectCreation
+                && (objectCreation.objectInitializer() is not null
+                    || objectCreation.argumentList() is { } argumentList && argumentList.argument().Length > 0))
+            {
+                accumulator.Add(objectCreation);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static IReadOnlyList<StarkParser.ArgumentListContext> CollectTemplateDirectCallArgumentLists(ParserRuleContext node)
+    {
+        var directCalls = new List<StarkParser.ArgumentListContext>();
+        Collect(node, directCalls);
+        return directCalls;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.ArgumentListContext> accumulator)
+        {
+            if (current is StarkParser.PostfixExpressionContext postfixExpression
+                && postfixExpression.postfixPart().Length > 0
+                && postfixExpression.postfixPart()[0].argumentList() is { } argumentList)
+            {
+                accumulator.Add(argumentList);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static IReadOnlyList<StarkParser.ArgumentListContext> CollectTemplateArgumentListsByPublishedLocations(
+        ParserRuleContext node,
+        IEnumerable<string> publishedLocations)
+    {
+        var locationSet = publishedLocations.ToHashSet(StringComparer.Ordinal);
+        if (locationSet.Count == 0)
+        {
+            return [];
+        }
+
+        var argumentLists = new List<StarkParser.ArgumentListContext>();
+        Collect(node, argumentLists, locationSet);
+        return argumentLists;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.ArgumentListContext> accumulator,
+            IReadOnlySet<string> locationSet)
+        {
+            if (current is StarkParser.ArgumentListContext argumentList
+                && locationSet.Contains(TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1)))
+            {
+                accumulator.Add(argumentList);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator, locationSet);
+            }
+        }
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        return TryGetSimplePostfixExpression(multiplicative.unaryExpression(0));
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        if (expression.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null)
+        {
+            return null;
+        }
+
+        return powerExpression.postfixExpression();
+    }
+
+    private static string BuildTemplateEnumConstructorLookupKey(int line, int column)
+    {
+        return $"{line}:{column}";
+    }
+
+    private static string BuildTemplateLiteralLookupKey(int line, int column)
+    {
+        return $"{line}:{column}";
+    }
+
+    private static IReadOnlyList<StarkParser.EnumConstructorExpressionContext> CollectTemplateEnumConstructorExpressions(ParserRuleContext node)
+    {
+        var enumConstructors = new List<StarkParser.EnumConstructorExpressionContext>();
+        Collect(node, enumConstructors);
+        return enumConstructors;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.EnumConstructorExpressionContext> accumulator)
+        {
+            if (current is StarkParser.EnumConstructorExpressionContext enumConstructor)
+            {
+                accumulator.Add(enumConstructor);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static IReadOnlyList<StarkParser.PrimaryExpressionContext> CollectTemplateEnumValuePrimaryExpressions(ParserRuleContext node)
+    {
+        var enumValues = new List<StarkParser.PrimaryExpressionContext>();
+        Collect(node, enumValues);
+        return enumValues;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.PrimaryExpressionContext> accumulator)
+        {
+            if (current is StarkParser.PrimaryExpressionContext primaryExpression
+                && (primaryExpression.genericEnumCaseReference() is not null
+                    || primaryExpression.qualifiedName() is not null))
+            {
+                accumulator.Add(primaryExpression);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static IReadOnlyList<ParserRuleContext> CollectTemplateEnumPatternContexts(ParserRuleContext node)
+    {
+        var enumPatterns = new List<ParserRuleContext>();
+        Collect(node, enumPatterns);
+        return enumPatterns;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<ParserRuleContext> accumulator)
+        {
+            switch (current)
+            {
+                case StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern:
+                    accumulator.Add(enumNamedFieldPattern);
+                    break;
+                case StarkParser.GenericEnumAggregatePatternContext genericEnumAggregatePattern:
+                    accumulator.Add(genericEnumAggregatePattern);
+                    break;
+                case StarkParser.AggregatePatternContext aggregatePattern:
+                    accumulator.Add(aggregatePattern);
+                    break;
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static string BuildTemplateConversionLookupKey(int line, int column)
+    {
+        return $"{line}:{column}";
+    }
+
+    private static IReadOnlyList<StarkParser.UnaryExpressionContext> CollectTemplateConversionExpressions(ParserRuleContext node)
+    {
+        var conversions = new List<StarkParser.UnaryExpressionContext>();
+        Collect(node, conversions);
+        return conversions;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.UnaryExpressionContext> accumulator)
+        {
+            if (current is StarkParser.UnaryExpressionContext unaryExpression
+                && unaryExpression.conversionType() is not null)
+            {
+                accumulator.Add(unaryExpression);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static IReadOnlyList<StarkParser.PostfixPartContext> CollectTemplateMemberAccessParts(ParserRuleContext node)
+    {
+        var memberAccesses = new List<StarkParser.PostfixPartContext>();
+        Collect(node, memberAccesses);
+        return memberAccesses;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.PostfixPartContext> accumulator)
+        {
+            if (current is StarkParser.PostfixExpressionContext postfixExpression)
+            {
+                foreach (var postfixPart in postfixExpression.postfixPart())
+                {
+                    if (postfixPart.Identifier() is not null)
+                    {
+                        accumulator.Add(postfixPart);
+                    }
+                }
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static IReadOnlyList<StarkParser.ArgumentListContext> CollectTemplateMemberCallArgumentLists(ParserRuleContext node)
+    {
+        var memberCalls = new List<StarkParser.ArgumentListContext>();
+        Collect(node, memberCalls);
+        return memberCalls;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.ArgumentListContext> accumulator)
+        {
+            if (current is StarkParser.PostfixExpressionContext postfixExpression)
+            {
+                var postfixParts = postfixExpression.postfixPart();
+                for (var index = 0; index + 1 < postfixParts.Length; index++)
+                {
+                    if (postfixParts[index].Identifier() is not null
+                        && postfixParts[index + 1].argumentList() is { } argumentList)
+                    {
+                        accumulator.Add(argumentList);
+                    }
+                }
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
+    }
+
+    private static string BuildTemplateObjectCreationLookupKey(string expressionText, int line, int column)
+    {
+        return $"{line}:{column}:{expressionText}";
+    }
+}

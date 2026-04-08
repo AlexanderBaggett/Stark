@@ -951,15 +951,15 @@ Goal: add non-essential language surface after the first release without slowing
     - [ ] make direct compiler loading the primary path instead of reconstructing fake Stark source from lossy strings
   - [ ] Design a Stark-native, near-homoiconic package image syntax
     - [ ] represent package and module boundaries explicitly
-    - [ ] represent exported and public source surface explicitly
-    - [ ] represent typed compiler-owned sections explicitly rather than hiding them inside string fields
+    - [x] represent exported and public source surface explicitly
+    - [x] represent typed compiler-owned sections explicitly rather than hiding them inside string fields
     - [ ] define which sections are human-authored, compiler-emitted, or compiler-only
   - [ ] Add structured typed-interface sections
     - [x] encode types structurally instead of rendering them as plain strings
     - [x] encode functions, methods, globals, types, and aliases with visibility, generics, modifiers, and symbol names
     - [x] preserve primary-constructor type shape across package boundaries so imported generic bodies can construct published records without source
     - [x] encode re-exports and other package-boundary dependency surface directly
-    - [ ] preserve enough surface information that docs, tooling, and diagnostics do not need to recover it from lowered compiler facts
+    - [x] preserve enough surface information that docs, tooling, and diagnostics do not need to recover it from lowered compiler facts
   - [ ] Add compiler fact sections
     - [x] carry function effects and calling-convention facts across package boundaries
     - [x] carry ABI-lowering facts that should survive package publication
@@ -984,7 +984,7 @@ Goal: add non-essential language surface after the first release without slowing
     - [x] publish typed direct-call target facts needed for imported generic type checking and MIR lowering
     - [x] publish typed field-access facts needed for imported generic type checking and MIR lowering
     - [x] publish typed member-call target facts needed for imported generic type checking and MIR lowering
-    - [x] publish a first typed template-body subset for simple linear helper bodies such as literal returns, direct returns, object-creation returns, named enum-constructor returns including literal payload members, enum-call returns, enum-value returns, field-access returns, member-call returns, direct-call returns, and local-init-plus-return helpers
+    - [x] publish a first typed template-body subset for public/export generic functions and methods covering simple helper bodies such as literal returns, explicit conversion returns, unary operator returns, binary operator returns, conditional returns including binary/logical conditions, object-creation returns, named enum-constructor returns including literal payload members, enum-call returns, enum-value returns, direct-call returns, member-call returns, field-access returns, simple index-access returns over already-supported MIR indexable families, including text-slice helpers, simple chained field/index/member receiver forms, grouped-expression receiver forms, and direct-call-result or object-creation-result receiver forms, side-effect-only direct/member-call statements for void helpers, explicit `return;` in void helpers, local `const` helpers, simple local-update helpers with mutable reassignment and simple `if`/`else`, `while`, or `for` control flow, including structural `break` and `continue` inside the loop subset, and simple switch-pattern helpers over already-published enum and aggregate pattern facts, that end in a return
     - [ ] publish typed template bodies for exported or public generic functions and methods
     - [ ] preserve enough local, type, and effect information to specialize imported generics without reparsing source text
     - [ ] define explicit rules for which templates are published and which stay package-private
@@ -992,15 +992,26 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] Integrate package images into module loading and the compiler pipeline
     - [x] load package image data directly into compiler artifacts
     - [x] prefer package-image loading over synthetic source reconstruction whenever rich sections are available
+    - [x] let the temporary source bridge use authored source-surface overload identity to recover published generic template bodies even when declaration emission still uses canonical typed-interface spellings
+    - [x] let the temporary source bridge omit imported generic body text when a published typed template body is sufficient for downstream type checking and MIR lowering, including simple module-qualified direct-call helpers and receiver-style member-call helpers
+    - [x] centralize source-surface fallback so explicit source-surface sections win over legacy flat surface fields, while older flat source-surface data still preserves authored overload identity when explicit sections are missing
+    - [x] emit new package images with explicit source-surface sections as the primary surface representation instead of duplicating authored surface data into legacy flat fields
+    - [x] emit new package images with explicit compiler sections as the primary compiler-owned representation instead of duplicating typed interface, compiler facts, and generic templates into legacy flat fields
     - [ ] keep legacy manifest reconstruction only as a temporary bridge while the package-image path is being completed
     - [ ] remove synthetic-source dependence from manifest-backed generic, alias, doctrine, and trait imports once the package-image path is complete
+      - [x] resolve imported public/export type aliases from package-image typed-interface facts instead of reparsed bridge alias declarations
+      - [x] resolve imported public/export globals from package-image typed-interface facts instead of reparsed bridge global declarations
+      - [x] resolve imported public/export named type shape and record primary-constructor data from package-image typed-interface facts instead of reparsed bridge type declarations
+      - [x] resolve imported explicit struct and record constructor signatures from package-image typed-interface facts instead of relying on bridge constructor declarations
+      - [x] resolve imported trait/doctrine method signatures from package-image typed-interface facts instead of reparsed bridge declarations
   - [ ] Use package images to finish generic code generation across package boundaries
     - [x] emit consumer-owned specializations from imported generic template bodies
     - [x] support recursive and nested specialization expansion when templates come from package images
     - [x] define ownership, linkage, and dedup rules when one package publishes templates and another package owns concrete specializations
     - [x] ensure the package-boundary generic path stays zero-cost at runtime and does not introduce fallback indirection
   - [ ] Use package images to improve optimizer capability
-    - [ ] let specialization planning consume imported effect, ABI, and layout facts directly instead of re-deriving them from stringly data
+    - [x] use imported concrete layout facts during monomorphization planning so manifest-backed large by-value generic instantiations do not get treated like trivially inline helpers
+    - [x] let specialization planning consume imported effect, ABI, and layout facts directly instead of re-deriving them from stringly data
     - [ ] preserve enough information for future cross-package inlining, law cloning, or other package-aware optimizations
     - [ ] keep package publication from throwing away facts that are expensive for the compiler to recover later
   - [ ] Tooling, inspection, and diagnostics for package images
@@ -1012,7 +1023,7 @@ Goal: add non-essential language surface after the first release without slowing
     - [ ] writer or loader round-trip tests for rich package images
     - [ ] direct-import tests that no longer synthesize fake source when rich package-image sections are present
     - [ ] end-to-end tests for imported generic specialization from package images
-    - [ ] compatibility tests for the temporary legacy manifest bridge while both paths coexist
+    - [x] compatibility tests for the temporary legacy manifest bridge while both paths coexist
 
 ## Suggested Near-Term Execution Order
 

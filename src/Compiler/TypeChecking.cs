@@ -178,6 +178,17 @@ internal sealed class TypeChecker
     {
         foreach (var module in _loadedModules.Modules.Values)
         {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { TypeAliases.Count: > 0 } packageImageFacts)
+            {
+                foreach (var typeAlias in packageImageFacts.TypeAliases.Values)
+                {
+                    _typeAliases[typeAlias.Name] = typeAlias;
+                }
+
+                continue;
+            }
+
             foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
             {
                 if (declaration.typeAliasDeclaration() is not { } typeAliasDeclaration)
@@ -249,6 +260,31 @@ internal sealed class TypeChecker
     {
         foreach (var module in _loadedModules.Modules.Values)
         {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { NamedTypes.Count: > 0 } packageImageFacts)
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations)
+                {
+                    if (declaration.Kind is not (DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum or DeclarationKind.Trait or DeclarationKind.Doctrine))
+                    {
+                        continue;
+                    }
+
+                    if (!IsDeclarationVisible(module, declaration))
+                    {
+                        continue;
+                    }
+
+                    var qualifiedName = QualifyName(module, declaration.Name);
+                    if (packageImageFacts.NamedTypes.TryGetValue(qualifiedName, out var namedType))
+                    {
+                        _namedTypes[qualifiedName] = namedType;
+                    }
+                }
+
+                continue;
+            }
+
             foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
             {
                 if (declaration.structDeclaration() is { } structDeclaration)
@@ -528,6 +564,30 @@ internal sealed class TypeChecker
 
         foreach (var module in _loadedModules.Modules.Values)
         {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { FunctionSignatures.Count: > 0 } packageImageFacts)
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Kind == DeclarationKind.Function && declaration.Function is not null))
+                {
+                    if (!IsDeclarationVisible(module, declaration))
+                    {
+                        continue;
+                    }
+
+                    var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                    if (!packageImageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature))
+                    {
+                        continue;
+                    }
+
+                    RegisterFunctionSignature(signature, seenOverloadKeys, duplicateContext: null);
+                }
+
+                continue;
+            }
+
             foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
                 var localName = functionSyntax.DisplaySourceName;
@@ -574,22 +634,6 @@ internal sealed class TypeChecker
                 }
 
                 var sourceQualifiedName = QualifyName(module, localName);
-                var overloadKey = FunctionOverloadFacts.BuildOverloadKey(parameters.Select(static parameter => parameter.Type.DisplayName));
-                if (!seenOverloadKeys.TryGetValue(sourceQualifiedName, out var overloadKeys))
-                {
-                    overloadKeys = new HashSet<string>(StringComparer.Ordinal);
-                    seenOverloadKeys[sourceQualifiedName] = overloadKeys;
-                }
-
-                if (!overloadKeys.Add(overloadKey))
-                {
-                    ReportError(
-                        "STK3006",
-                        $"Function '{sourceQualifiedName}' declares overload '{sourceQualifiedName}{overloadKey}' more than once.",
-                        functionSyntax.DeclarationContext);
-                    continue;
-                }
-
                 var qualifiedName = QualifyName(module, functionSyntax.Name);
                 var signature = new TypedFunctionSignature(
                     qualifiedName,
@@ -597,22 +641,81 @@ internal sealed class TypeChecker
                     parameters,
                     SourceName: sourceQualifiedName,
                     GenericParameterNames: genericParameters?.ToArray());
-                _functions[qualifiedName] = signature;
-                if (!_functionOverloads.TryGetValue(sourceQualifiedName, out var overloads))
-                {
-                    overloads = [];
-                    _functionOverloads[sourceQualifiedName] = overloads;
-                }
-
-                overloads.Add(signature);
+                RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
             }
         }
+    }
+
+    private void RegisterFunctionSignature(
+        TypedFunctionSignature signature,
+        Dictionary<string, HashSet<string>> seenOverloadKeys,
+        ParserRuleContext? duplicateContext)
+    {
+        var sourceQualifiedName = signature.DisplaySourceName;
+        var overloadKey = FunctionOverloadFacts.BuildOverloadKey(signature.Parameters.Select(static parameter => parameter.Type.DisplayName));
+        if (!seenOverloadKeys.TryGetValue(sourceQualifiedName, out var overloads))
+        {
+            overloads = new HashSet<string>(StringComparer.Ordinal);
+            seenOverloadKeys[sourceQualifiedName] = overloads;
+        }
+
+        if (!overloads.Add(overloadKey))
+        {
+            if (duplicateContext is not null)
+            {
+                ReportError(
+                    "STK3006",
+                    $"Function '{sourceQualifiedName}' declares overload '{sourceQualifiedName}{overloadKey}' more than once.",
+                    duplicateContext);
+            }
+
+            return;
+        }
+
+        _functions[signature.Name] = signature;
+        if (!_functionOverloads.TryGetValue(sourceQualifiedName, out var collectedOverloads))
+        {
+            collectedOverloads = [];
+            _functionOverloads[sourceQualifiedName] = collectedOverloads;
+        }
+
+        collectedOverloads.Add(signature);
     }
 
     private void BuildConstructorShapes()
     {
         foreach (var module in _loadedModules.Modules.Values)
         {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { Constructors.Count: > 0 } packageImageFacts)
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations)
+                {
+                    if (declaration.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+                    {
+                        continue;
+                    }
+
+                    if (!IsDeclarationVisible(module, declaration))
+                    {
+                        continue;
+                    }
+
+                    var qualifiedName = QualifyName(module, declaration.Name);
+                    if (packageImageFacts.Constructors.TryGetValue(qualifiedName, out var constructors))
+                    {
+                        _constructors[qualifiedName] = constructors
+                            .Select(static constructor => new ConstructorShape(
+                                constructor.TypeName,
+                                constructor.Parameters.ToArray(),
+                                constructor.IsPrimaryShape))
+                            .ToList();
+                    }
+                }
+
+                continue;
+            }
+
             foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
             {
                 if (declaration.structDeclaration() is { } structDeclaration)
@@ -783,6 +886,33 @@ internal sealed class TypeChecker
     {
         foreach (var module in _loadedModules.ImportedModules)
         {
+            if (module.PackageImageFacts is { Globals.Count: > 0 } packageImageFacts)
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration =>
+                             declaration.Kind is DeclarationKind.GlobalConstant or DeclarationKind.GlobalVariable))
+                {
+                    if (!IsDeclarationVisible(module, declaration))
+                    {
+                        continue;
+                    }
+
+                    var qualifiedName = QualifyName(module, declaration.Name);
+                    if (!packageImageFacts.Globals.TryGetValue(qualifiedName, out var global))
+                    {
+                        continue;
+                    }
+
+                    _globals[qualifiedName] = new VariableSymbol(
+                        global.Name,
+                        global.Type,
+                        global.IsMutable,
+                        global.IsConst,
+                        global.BindingKind);
+                }
+
+                continue;
+            }
+
             foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
             {
                 if (declaration.globalConstantDeclaration() is { } constantDeclaration)
@@ -850,11 +980,6 @@ internal sealed class TypeChecker
         {
             foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
-                if (functionSyntax.Body.block() is not { } block)
-                {
-                    continue;
-                }
-
                 var qualifiedName = QualifyName(module, functionSyntax.Name);
                 if (!_functions.TryGetValue(qualifiedName, out var signature))
                 {
@@ -863,6 +988,21 @@ internal sealed class TypeChecker
 
                 if (!module.Reference.IsRoot && !signature.IsGeneric)
                 {
+                    continue;
+                }
+
+                var hasImportedTemplateSummary = _importedFunctionTemplates.TryGetValue(signature.Name, out var importedTemplateSummary);
+                if (functionSyntax.Body.block() is not { } block)
+                {
+                    if (!module.Reference.IsRoot
+                        && signature.IsGeneric
+                        && importedTemplateSummary?.TypedBody is not null)
+                    {
+                        // Imported generic bodies can stay declaration-only when the package image
+                        // already published a typed template body for downstream checking/lowering.
+                        continue;
+                    }
+
                     continue;
                 }
 
@@ -900,7 +1040,6 @@ internal sealed class TypeChecker
                     : null;
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
-                var hasImportedTemplateSummary = _importedFunctionTemplates.TryGetValue(signature.Name, out var importedTemplateSummary);
                 _currentImportedTemplateObjectCreations = hasImportedTemplateSummary ? importedTemplateSummary!.ObjectCreations : null;
                 _currentImportedTemplateObjectCreationOrdinals = hasImportedTemplateSummary && importedTemplateSummary!.ObjectCreations.Count > 0
                     ? CollectTrackedObjectCreationOrdinals(block)

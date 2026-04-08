@@ -325,6 +325,77 @@ When a package image publishes public or export generic template bodies, a
 manifest-backed consumer may materialize and emit its owned concrete
 specialization without needing the original source module on disk.
 
+Package-image modules also preserve an explicit public or export source-surface
+section for imports, re-exports, aliases, globals, types, and functions, so
+tooling and fallback source bridging do not have to recover that surface only
+from typed compiler facts.
+
+Compiler-owned package image data is now also grouped explicitly under
+compiler sections, so typed interface data, compiler facts, and generic
+template sections no longer need to exist only as flat module-level fields.
+The older flat fields remain temporarily as a compatibility bridge while the
+sectioned path becomes primary.
+
+New compiler-emitted package images now write typed interface data, compiler
+facts, and generic template sections to those explicit compiler sections
+instead of duplicating the same compiler-owned data into the older flat
+compiler fields.
+
+When both representations are present at once, the compiler prefers the
+explicit compiler sections over the legacy flat fields.
+
+The explicit source-surface section is similarly preferred over the older flat
+source-surface fields. If the explicit source-surface section is absent, the
+older flat surface fields remain as a compatibility fallback for authored
+overload identity and temporary source bridging.
+
+New compiler-emitted package images now write authored source-surface data to
+the explicit source-surface section instead of duplicating that same authored
+surface into legacy flat fields.
+
+Imported package-image concrete layout facts are now also consumed during
+monomorphization planning so manifest-backed generic instantiations with large
+by-value aggregate ABI cost prefer code-size reduction instead of being treated
+like trivially inline helpers.
+
+Specialization planning now also uses imported ABI facts directly when deciding
+whether a manifest-backed generic specialization can keep an ABI fallback path.
+If a package image publishes a specializable generic body but omits ABI facts
+for that template, the compiler now plans only the owned concrete body path
+instead of claiming an unavailable ABI boundary fallback.
+that explicit source-surface section instead of duplicating the same authored
+surface into the older flat source-surface fields.
+
+That source-surface section now preserves authored declaration spellings for
+published type references such as alias-based function signatures, record
+primary-constructor parameters, record fields, and published method
+signatures, instead of normalizing all of them through the typed interface
+first.
+
+When a typed interface and explicit source surface are both present, the
+temporary package-image source bridge can now use that authored source-surface
+overload identity to find published generic template bodies, even while its
+emitted fallback declarations still use canonical typed-interface spellings.
+
+If a published imported generic function or method also carries a supported
+typed template body,
+including simple explicit conversion helpers, unary and binary operator
+helpers, conditional helpers with binary or logical conditions, simple
+module-qualified direct-call helpers, receiver-style member-call helpers,
+simple index-access helpers over already-supported MIR indexable families,
+including text-slice helpers, simple chained field/index/member receiver forms,
+grouped-expression receiver forms, and direct-call-result or
+object-creation-result receiver forms,
+side-effect-only direct/member-call statements for void helpers, explicit
+`return;` in void helpers, simple local `const` helpers, and local-update
+helpers with mutable reassignment and simple `if`/`else` branching or simple
+`while`/`for` loops, including structural `break` and `continue` inside those
+loops, plus simple switch-pattern helpers over already-published enum and
+aggregate pattern facts, that end in a return,
+the temporary package-image source bridge may now emit only the declaration
+surface and let downstream type checking plus MIR lowering consume the typed
+template body directly instead of relying on reconstructed body text.
+
 Those package-image template sections now also preserve published code-size
 planning facts such as `cold`/`noinline` intent, top-level statement count,
 and typed primary-constructor facts for object creation lowering, so imported
@@ -383,19 +454,48 @@ They also preserve typed member-call target facts, so imported generic bodies
 can keep lowering receiver-style helper calls even when the bridge body text is
 no longer trustworthy for member lookup.
 
-They also preserve a first typed template-body subset for simple linear helper
-bodies such as `return value;`, `return 1;`, `return new Box<T>(value);`,
+They also preserve a first typed template-body subset for simple helper
+bodies such as `return value;`, `return 1;`,
+`return takeLeft ? left : right;`, `return new Box<T>(value);`,
 `return Boxed<T>.Value { Data: value, Tag: tag };`,
 `return Boxed<T>.Value { Data: value, Tag: 1 };`,
 `return Option<T>.Some(value);`, `return Option<T>.None;`,
 `return box.Value;`, `return box.Echo(value);`, `return Callee(value);`, and
-`stack T copy = value; return copy;`, so imported generic MIR lowering can
+`stack T copy = value; return copy;`, plus local `const` helpers like
+`const T copy = value; return copy;`, plus void helper statements like
+`ResetValue(box);` or `box.Reset();`, so imported generic MIR lowering can
 prefer structured body facts over reconstructed bridge text for those helper
 shapes.
 
 Package-image modules also preserve plain imports in addition to `export
 import` re-exports, so imported generic bodies can continue to resolve
 transitive module dependencies after package publication.
+
+Imported public and export type aliases now also resolve from typed
+package-image facts instead of reconstructed bridge alias declarations, so
+manifest-backed consumers do not need to trust bridge alias target text just
+to use a published alias.
+
+Imported public and export globals now also resolve from typed package-image
+facts instead of reconstructed bridge global declarations, so manifest-backed
+consumers do not need to trust bridge global type text just to use a published
+constant or static variable.
+
+Imported public and export named type shape now also resolves from typed
+package-image facts instead of reconstructed bridge type declarations, and
+record primary-constructor shapes do the same, so manifest-backed consumers do
+not need to trust bridge field or primary-constructor type text just to create
+or project those imported types.
+
+Imported explicit struct and record constructor signatures also resolve from
+typed package-image facts instead of reconstructed bridge declarations, so
+manifest-backed consumers do not need published constructor bodies or
+declaration text just to call those imported constructors.
+
+Imported trait and doctrine methods now also take their published signatures
+from typed package-image facts instead of reconstructed bridge declarations,
+so manifest-backed consumers do not need to trust bridge return or parameter
+type text just to use those imported compile-time-only method surfaces.
 
 Published package-image record types also preserve their primary-constructor
 shape, so imported generic bodies can construct those records directly rather

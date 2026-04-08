@@ -805,15 +805,15 @@ public sealed class OwnershipRoadmapRegressionTests
             fn retborrow i32 Source();
 
             fn void Run() {
-                stack retborrow i32 alias = Source();
-                alias = Source();
+                stack retborrow i32 borrowAlias = Source();
+                borrowAlias = Source();
 
                 return;
             }
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4202", "Lifetime error", "cannot assign a borrow with an unknown source lifetime to 'alias'", "destination scope");
+        AssertDiagnostic(result, "STK4202", "Lifetime error", "cannot assign a borrow with an unknown source lifetime to 'borrowAlias'", "destination scope");
     }
 
     [Fact]
@@ -857,8 +857,8 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32 Run() {
                 {
-                    stack retborrow i32 alias = Source();
-                    return alias;
+                    stack retborrow i32 borrowAlias = Source();
+                    return borrowAlias;
                 }
             }
             """);

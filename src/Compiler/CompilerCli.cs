@@ -564,7 +564,7 @@ internal static class CompilerCli
             }
 
             var manifestPath = DeriveLibraryManifestPath(toolchainResult.OutputPath);
-            var manifest = PackageManifestBuilder.Create(result, toolchainResult.OutputPath);
+            var manifest = PackageImageBuilder.Create(result, toolchainResult.OutputPath);
             await File.WriteAllTextAsync(manifestPath, manifest.ToJson());
 
             await stdout.WriteLineAsync($"Emitted static library: {toolchainResult.OutputPath}");

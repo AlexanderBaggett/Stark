@@ -153,7 +153,8 @@ public sealed record FunctionDeclarationModel(
     FunctionModifierSet Modifiers,
     bool HasBody,
     AsmFunctionModel? Asm = null,
-    IReadOnlyList<string>? GenericParameterNames = null)
+    IReadOnlyList<string>? GenericParameterNames = null,
+    string? PublishedOverloadKey = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
@@ -361,18 +362,43 @@ public sealed record ImportedFunctionTemplateSummary(
 public enum ImportedTemplateTypedBodyStatementKind
 {
     LocalVariableDeclaration,
+    ExpressionStatement,
+    Assignment,
+    Switch,
+    For,
+    While,
+    If,
+    Break,
+    Continue,
     Return
+}
+
+public enum ImportedTemplateTypedSwitchCaseKind
+{
+    EnumPattern,
+    AggregatePattern
+}
+
+public enum ImportedTemplateTypedSwitchFieldPatternKind
+{
+    Discard,
+    Capture
 }
 
 public enum ImportedTemplateTypedBodyExpressionKind
 {
     NameReference,
     Literal,
+    Conversion,
+    UnaryOperation,
+    BinaryOperation,
+    Conditional,
     ObjectCreation,
     EnumConstructor,
     EnumCall,
     EnumValue,
     DirectCall,
+    IndexAccess,
     FieldAccess,
     MemberCall
 }
@@ -389,13 +415,56 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
         Arguments ?? [];
 }
 
+public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
+    ImportedTemplateTypedSwitchFieldPatternKind Kind,
+    string? Name = null);
+
+public sealed record ImportedTemplateTypedSwitchCaseSummary(
+    ImportedTemplateTypedSwitchCaseKind Kind,
+    int Ordinal,
+    IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null,
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? StatementSummaries = null)
+{
+    public IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> Members =>
+        MemberPatterns ?? [];
+
+    public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Statements =>
+        StatementSummaries ?? [];
+}
+
 public sealed record ImportedTemplateTypedBodyStatementSummary(
     ImportedTemplateTypedBodyStatementKind Kind,
-    ImportedTemplateTypedBodyExpressionSummary Expression,
+    ImportedTemplateTypedBodyExpressionSummary Expression = null!,
     string? Name = null,
     string? StorageClass = null,
     bool IsMutable = false,
-    StarkTypeSymbol? Type = null);
+    bool IsConstant = false,
+    StarkTypeSymbol? Type = null,
+    IReadOnlyList<ImportedTemplateTypedSwitchCaseSummary>? SwitchCaseSummaries = null,
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? InitializerStatements = null,
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? IteratorStatements = null,
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? BodyStatements = null,
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
+    IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null)
+{
+    public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
+        InitializerStatements ?? [];
+
+    public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Iterator =>
+        IteratorStatements ?? [];
+
+    public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Body =>
+        BodyStatements ?? [];
+
+    public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> ThenBranch =>
+        ThenStatements ?? [];
+
+    public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> ElseBranch =>
+        ElseStatements ?? [];
+
+    public IReadOnlyList<ImportedTemplateTypedSwitchCaseSummary> SwitchCases =>
+        SwitchCaseSummaries ?? [];
+}
 
 public sealed record ImportedTemplateTypedBodySummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Statements);
@@ -491,6 +560,11 @@ public sealed record ImportedTemplateConversionSummary(
 
 public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, FunctionEffectProfile> FunctionEffects,
+    IReadOnlyDictionary<string, TypeAliasSymbol> TypeAliases,
+    IReadOnlyDictionary<string, TypedFunctionSignature> FunctionSignatures,
+    IReadOnlyDictionary<string, TypedGlobalSymbol> Globals,
+    IReadOnlyDictionary<string, NamedTypeSymbol> NamedTypes,
+    IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>> Constructors,
     IReadOnlyDictionary<string, AbiFunctionSignature> AbiFunctions,
     IReadOnlyDictionary<string, ConcreteTypeLayout> ConcreteLayouts,
     IReadOnlyDictionary<string, EnumLayoutSymbol> EnumLayouts,
@@ -1436,13 +1510,33 @@ internal static class ConcreteTypeLayoutHelper
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts = null)
     {
-        return TryGetConcreteTypeLayout(type, namedTypes, enumLayouts, new HashSet<string>(StringComparer.Ordinal));
+        return TryGetConcreteTypeLayout(
+            type,
+            namedTypes,
+            enumLayouts,
+            publishedConcreteLayouts: null,
+            new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    public static ConcreteTypeLayout? TryGetConcreteTypeLayout(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts)
+    {
+        return TryGetConcreteTypeLayout(
+            type,
+            namedTypes,
+            enumLayouts,
+            publishedConcreteLayouts,
+            new HashSet<string>(StringComparer.Ordinal));
     }
 
     private static ConcreteTypeLayout? TryGetConcreteTypeLayout(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
         ISet<string> activeNamedTypes)
     {
         var concreteType = type with
@@ -1461,17 +1555,22 @@ internal static class ConcreteTypeLayoutHelper
             StarkTypeKind.Float when concreteType.BitWidth is int floatWidth =>
                 TryGetScalarLayout((floatWidth + 7) / 8),
             StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
-                TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, activeNamedTypes),
+                TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+            StarkTypeKind.Named when concreteType.NamedType is not null
+                                     && concreteType.TypeArguments is not { Count: > 0 }
+                                     && publishedConcreteLayouts is not null
+                                     && publishedConcreteLayouts.TryGetValue(concreteType.NamedType, out var publishedLayout) =>
+                publishedLayout,
             StarkTypeKind.Named when concreteType.NamedType is not null
                                      && namedTypes.TryGetValue(concreteType.NamedType, out var namedType)
                                      && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record =>
-                TryGetNamedTypeLayout(namedType, namedTypes, enumLayouts, activeNamedTypes),
+                TryGetNamedTypeLayout(namedType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
             StarkTypeKind.Named when concreteType.NamedType is not null
                                      && namedTypes.TryGetValue(concreteType.NamedType, out var enumType)
                                      && enumType.Kind == DeclarationKind.Enum
                                      && enumLayouts is not null
                                      && enumLayouts.TryGetValue(concreteType.NamedType, out var enumLayout) =>
-                TryGetEnumTypeLayout(enumLayout, namedTypes, enumLayouts, activeNamedTypes),
+                TryGetEnumTypeLayout(enumLayout, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
             _ => null
         };
     }
@@ -1481,9 +1580,15 @@ internal static class ConcreteTypeLayoutHelper
         int fixedLength,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
         ISet<string> activeNamedTypes)
     {
-        var elementLayout = TryGetConcreteTypeLayout(elementType, namedTypes, enumLayouts, activeNamedTypes);
+        var elementLayout = TryGetConcreteTypeLayout(
+            elementType,
+            namedTypes,
+            enumLayouts,
+            publishedConcreteLayouts,
+            activeNamedTypes);
         if (elementLayout is null)
         {
             return null;
@@ -1504,6 +1609,7 @@ internal static class ConcreteTypeLayoutHelper
         NamedTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
         ISet<string> activeNamedTypes)
     {
         if (!activeNamedTypes.Add(type.Name))
@@ -1518,7 +1624,12 @@ internal static class ConcreteTypeLayoutHelper
 
             foreach (var field in type.OrderedFields)
             {
-                var fieldLayout = TryGetConcreteTypeLayout(field.Type, namedTypes, enumLayouts, activeNamedTypes);
+                var fieldLayout = TryGetConcreteTypeLayout(
+                    field.Type,
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    activeNamedTypes);
                 if (fieldLayout is null)
                 {
                     return null;
@@ -1546,6 +1657,7 @@ internal static class ConcreteTypeLayoutHelper
         EnumLayoutSymbol layout,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
         ISet<string> activeNamedTypes)
     {
         if (!activeNamedTypes.Add(layout.EnumName))
@@ -1560,7 +1672,12 @@ internal static class ConcreteTypeLayoutHelper
 
             foreach (var field in layout.OrderedFields)
             {
-                var fieldLayout = TryGetConcreteTypeLayout(field.Type, namedTypes, enumLayouts, activeNamedTypes);
+                var fieldLayout = TryGetConcreteTypeLayout(
+                    field.Type,
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    activeNamedTypes);
                 if (fieldLayout is null)
                 {
                     return null;
