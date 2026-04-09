@@ -10697,6 +10697,7 @@ internal sealed class MidLevelIrLowerer(
                 "+" => MidLevelIrBinaryOperator.Add,
                 "-" => MidLevelIrBinaryOperator.Subtract,
                 "*" => MidLevelIrBinaryOperator.Multiply,
+                "**" => MidLevelIrBinaryOperator.Exponent,
                 "+%" => MidLevelIrBinaryOperator.WrappingAdd,
                 "-%" => MidLevelIrBinaryOperator.WrappingSubtract,
                 "*%" => MidLevelIrBinaryOperator.WrappingMultiply,

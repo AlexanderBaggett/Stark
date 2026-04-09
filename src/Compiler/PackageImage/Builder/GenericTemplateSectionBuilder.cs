@@ -2494,10 +2494,17 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
+        var operators = ExtractOperators<StarkParser.RelationalExpressionContext>(equalityExpression);
+        if (operators.Count > 1)
+        {
+            publishedExpression = null!;
+            return false;
+        }
+
         return TryBuildPublishedTypedTemplateBinaryChain(
             module,
             equalityExpression.relationalExpression(),
-            ExtractOperators<StarkParser.RelationalExpressionContext>(equalityExpression),
+            operators,
             literalsByLocation,
             conversionsByLocation,
             objectCreationOrdinals,
@@ -2525,10 +2532,17 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
+        var operators = ExtractOperators<StarkParser.ShiftExpressionContext>(relationalExpression);
+        if (operators.Count > 1)
+        {
+            publishedExpression = null!;
+            return false;
+        }
+
         return TryBuildPublishedTypedTemplateBinaryChain(
             module,
             relationalExpression.shiftExpression(),
-            ExtractOperators<StarkParser.ShiftExpressionContext>(relationalExpression),
+            operators,
             literalsByLocation,
             conversionsByLocation,
             objectCreationOrdinals,
@@ -2775,25 +2789,56 @@ internal static partial class PackageImageBuilder
     {
         publishedExpression = null!;
 
-        if (powerExpression.unaryExpression() is not null
-            || powerExpression.postfixExpression() is not { } postfixExpression)
+        if (powerExpression.postfixExpression() is not { } postfixExpression)
         {
             return false;
         }
 
-        return TryBuildPublishedTypedTemplatePostfixExpression(
-            module,
-            postfixExpression,
-            literalsByLocation,
-            conversionsByLocation,
-            objectCreationOrdinals,
-            enumConstructorOrdinals,
-            enumCallOrdinals,
-            enumValueOrdinals,
-            directCallOrdinals,
-            memberCallOrdinals,
-            fieldAccessOrdinals,
-            out publishedExpression);
+        if (!TryBuildPublishedTypedTemplatePostfixExpression(
+                module,
+                postfixExpression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var left))
+        {
+            return false;
+        }
+
+        if (powerExpression.unaryExpression() is not { } rightExpression)
+        {
+            publishedExpression = left;
+            return true;
+        }
+
+        if (!TryBuildPublishedTypedTemplateUnaryExpression(
+                module,
+                rightExpression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var right))
+        {
+            return false;
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "binary",
+            Name: "**",
+            Arguments: [left, right]);
+        return true;
     }
 
     private static bool TryBuildPublishedTypedTemplateBinaryChain<TOperandContext>(
