@@ -180,7 +180,7 @@ internal static partial class PackageImageBuilder
                 }
             }
 
-            foreach (var genericTemplate in BuildGenericFunctionTemplates(module, typeModel))
+            foreach (var genericTemplate in BuildGenericFunctionTemplates(module, typeModel, validationModel))
             {
                 genericTemplates.Add(genericTemplate);
             }

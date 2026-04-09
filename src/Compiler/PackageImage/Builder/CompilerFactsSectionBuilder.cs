@@ -106,13 +106,30 @@ internal static partial class PackageImageBuilder
 
         var resolvedLocalName = FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration);
         var lookupName = FunctionOverloadFacts.QualifyResolvedName(module, resolvedLocalName);
+        return TryBuildPublishedFunctionSemanticManifest(
+            module,
+            lookupName,
+            $"{module.SyntaxModel.ModuleName}.{resolvedLocalName}",
+            validationModel,
+            out manifest);
+    }
+
+    private static bool TryBuildPublishedFunctionSemanticManifest(
+        LoadedModuleDocument module,
+        string lookupName,
+        string qualifiedResolvedName,
+        SemanticValidationModel validationModel,
+        out StarkPackageFunctionSemanticManifest manifest)
+    {
+        manifest = default!;
+
         if (!validationModel.Functions.TryGetValue(lookupName, out var validation))
         {
             return false;
         }
 
         manifest = new StarkPackageFunctionSemanticManifest(
-            QualifiedResolvedName: $"{module.SyntaxModel.ModuleName}.{resolvedLocalName}",
+            QualifiedResolvedName: qualifiedResolvedName,
             CalledFunctions: validation.CalledFunctions
                 .Select(callee => QualifyPublishedCalledFunctionName(module, callee))
                 .Distinct(StringComparer.Ordinal)

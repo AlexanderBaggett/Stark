@@ -6092,6 +6092,58 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void PackageManifestIncludesGenericTemplateSemanticSummaries()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-semantics-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32 Value;
+                }
+
+                public fn void Touch<T>(borrow Box box, T tag) {
+                    stack i32 copy = box.Value;
+                    return;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static function => function.QualifiedResolvedName == "Facade.Touch");
+            Assert.NotNull(template.Semantics);
+            Assert.NotNull(template.Semantics!.MemoryEffects);
+            Assert.True(template.Semantics.MemoryEffects!.ReadsArgumentMemory);
+            Assert.False(template.Semantics.MemoryEffects.WritesArgumentMemory);
+            var boxParameter = Assert.Single(template.Semantics.Parameters!, static parameter => parameter.Name == "box");
+            Assert.True(boxParameter.GuaranteedReadOnly);
+            Assert.Equal(4, boxParameter.DereferenceableBytes);
+            Assert.Equal(4, boxParameter.AlignmentBytes);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageManifestPublishesGroupedLocalDeclarationTypedTemplateBodies()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-grouped-local-template-body-pipeline-");
@@ -16836,6 +16888,113 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-template-semantics-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32 Value;
+                }
+
+                public fn void Touch<T>(borrow Box box, T tag) {
+                    stack i32 copy = box.Value;
+                    return;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run(borrow Facade.Box box, i32 value) {
+                        Facade.Touch(box, value);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Touch", out var importedSemantics));
+            Assert.NotNull(importedSemantics.MemoryEffects);
+            Assert.True(importedSemantics.MemoryEffects!.ReadsArgumentMemory);
+            Assert.True(Assert.Single(importedSemantics.Parameters!, static parameter => parameter.Name == "box").GuaranteedReadOnly);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            var definition = System.Text.RegularExpressions.Regex.Match(
+                llvmModule.Text,
+                $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            Assert.True(definition.Success, $"Expected a concrete LLVM definition for imported specialization '{function.SymbolName}'.");
+            Assert.Contains("ptr nonnull noalias readonly nocapture", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("dereferenceable(4)", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("align 4", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("memory(argmem: read)", definition.Value, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedComplexSingleStatementGenericBodiesUseEstimatedBodyCostForPlanning()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-body-cost-generic-mono-plan-pipeline-");
@@ -17457,6 +17616,202 @@ public sealed class CompilerPipelineTests
                     FunctionSpecializationStrategy.DirectAbiBoundaryFallback
                 },
                 function.SelectionOrder);
+            Assert.Equal(FunctionSpecializationCodeGenerationMode.SingleOwnerConcreteBody, function.CodeGenerationMode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedImportedLawGenericsPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-law-generic-template-semantics-plan-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
+        var mathPath = Path.Combine(tempDirectory.FullName, "Math.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Math
+
+                public doctrine Numbers {
+                    law i32 AddTag<T>(i32 left, i32 right, T tag) {
+                        return left + right;
+                    }
+                }
+                """,
+                mathPath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Math.lib" : "libMath.a"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Math"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+            Assert.Empty(Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Math").EffectiveCompilerFacts?.FunctionSemantics ?? []);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(mathPath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Math
+                    module Demo
+
+                    law i32 Run(i32 left, i32 right) {
+                        return Math.Numbers.AddTag(left, right, left);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "specialization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Math", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Math.Numbers.AddTag", out var importedSemantics));
+            Assert.Empty(importedSemantics.CalledFunctions);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.SpecializationPlan, out SpecializationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            var function = Assert.Single(plan.Functions);
+            Assert.Equal(
+                new[]
+                {
+                    FunctionSpecializationStrategy.LawCallerSpecializedClone,
+                    FunctionSpecializationStrategy.OwnedConcreteBody,
+                    FunctionSpecializationStrategy.DirectAbiBoundaryFallback
+                },
+                function.SelectionOrder);
+            Assert.Equal(FunctionSpecializationCodeGenerationMode.CallerSpecializedClone, function.CodeGenerationMode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedRecursiveImportedLawGenericsDoNotPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-recursive-law-generic-template-semantics-plan-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
+        var mathPath = Path.Combine(tempDirectory.FullName, "Math.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Math
+
+                public doctrine Numbers {
+                    law i32 CountDown<T>(i32 value, T tag) {
+                        if (value == 0) {
+                            return 0;
+                        }
+
+                        return Numbers.CountDown(value - 1, tag);
+                    }
+                }
+                """,
+                mathPath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Math.lib" : "libMath.a"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Math"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(mathPath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Math
+                    module Demo
+
+                    law i32 Run(i32 value) {
+                        return Math.Numbers.CountDown(value, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "specialization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Math", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Math.Numbers.CountDown", out var importedSemantics));
+            Assert.Contains("Math.Numbers.CountDown", importedSemantics.CalledFunctions);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.SpecializationPlan, out SpecializationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            var function = Assert.Single(plan.Functions);
+            Assert.DoesNotContain(FunctionSpecializationStrategy.LawCallerSpecializedClone, function.SelectionOrder);
             Assert.Equal(FunctionSpecializationCodeGenerationMode.SingleOwnerConcreteBody, function.CodeGenerationMode);
         }
         finally

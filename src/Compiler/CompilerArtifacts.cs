@@ -300,6 +300,7 @@ public sealed record LoadedModuleDocument(
 public sealed record ImportedFunctionTemplateSummary(
     int? TopLevelStatementCount,
     int? EstimatedBodyCost,
+    ImportedFunctionSemanticSummary? SemanticSummary = null,
     ImportedTemplateTypedBodySummary? TypedBodySummary = null,
     IReadOnlyList<ImportedDeferredFunctionInstantiationSummary>? DeferredFunctionInstantiations = null,
     IReadOnlyList<ImportedDeferredTypeInstantiationSummary>? DeferredTypeInstantiations = null,
@@ -315,7 +316,15 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateFieldAccessSummary>? FieldAccessSummaries = null,
     IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null)
 {
+    public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
+
     public ImportedTemplateTypedBodySummary? TypedBody => TypedBodySummary;
+
+    public IReadOnlyList<string> CalledFunctions => SemanticSummary?.CalledFunctions ?? [];
+
+    public FunctionMemoryEffectSummary? MemoryEffects => SemanticSummary?.MemoryEffects;
+
+    public IReadOnlyList<ParameterMemoryEffectSummary> Parameters => SemanticSummary?.Parameters ?? [];
 
     public IReadOnlyList<ImportedDeferredFunctionInstantiationSummary> DeferredInstantiations =>
         DeferredFunctionInstantiations ?? [];

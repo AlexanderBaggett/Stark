@@ -238,9 +238,22 @@ internal static partial class PackageImageLoader
 
         foreach (var functionTemplate in module.Module.EffectiveGenericTemplates?.Functions ?? [])
         {
+            ImportedFunctionSemanticSummary? templateSemantics = null;
+            if (functionTemplate.Semantics is not null)
+            {
+                if (!TryBuildImportedFunctionSemanticSummary(functionTemplate.Semantics, out var importedTemplateSemantics))
+                {
+                    return false;
+                }
+
+                templateSemantics = importedTemplateSemantics;
+                loadedFunctionSemantics.TryAdd(functionTemplate.QualifiedResolvedName, importedTemplateSemantics);
+            }
+
             loadedFunctionTemplates[functionTemplate.QualifiedResolvedName] = new ImportedFunctionTemplateSummary(
                 TopLevelStatementCount: functionTemplate.TopLevelStatementCount,
                 EstimatedBodyCost: functionTemplate.EstimatedBodyCost,
+                SemanticSummary: templateSemantics,
                 TypedBodySummary: TryBuildImportedTypedTemplateBody(functionTemplate.TypedBody, out var typedBody)
                     ? typedBody
                     : null,

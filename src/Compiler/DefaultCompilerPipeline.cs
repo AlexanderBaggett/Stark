@@ -2311,12 +2311,23 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
             {
+                var publishedTemplates = module.PackageImageFacts?.FunctionTemplates;
+
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
                 {
                     var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
                         module,
                         FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                    declarations[qualifiedName] = new ImportedFunctionDeclaration(module.SyntaxModel.ModuleName, declaration);
+                    var publishedDeclaration = declaration;
+                    var function = declaration.Function!;
+                    if (!function.HasBody
+                        && publishedTemplates?.ContainsKey(qualifiedName) == true)
+                    {
+                        function = function with { HasBody = true };
+                        publishedDeclaration = declaration with { Function = function };
+                    }
+
+                    declarations[qualifiedName] = new ImportedFunctionDeclaration(module.SyntaxModel.ModuleName, publishedDeclaration);
                 }
             }
 

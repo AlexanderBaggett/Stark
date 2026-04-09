@@ -130,7 +130,7 @@ internal sealed class LlvmIrEmitter
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
-        _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules);
+        _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
@@ -557,6 +557,34 @@ internal sealed class LlvmIrEmitter
             {
                 semantics[qualifiedName] = summary;
             }
+        }
+
+        return semantics;
+    }
+
+    private static IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> BuildPublishedFunctionSemantics(
+        LoadedModuleSet loadedModules,
+        SpecializationCodegenStrategyModel? specializationCodegenStrategy)
+    {
+        var semantics = BuildPublishedFunctionSemantics(loadedModules).ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
+
+        if (specializationCodegenStrategy is null)
+        {
+            return semantics;
+        }
+
+        foreach (var strategy in specializationCodegenStrategy.Functions)
+        {
+            if (semantics.ContainsKey(strategy.SymbolName)
+                || !semantics.TryGetValue(strategy.TemplateName, out var templateSemantics))
+            {
+                continue;
+            }
+
+            semantics[strategy.SymbolName] = templateSemantics with { Name = strategy.SymbolName };
         }
 
         return semantics;

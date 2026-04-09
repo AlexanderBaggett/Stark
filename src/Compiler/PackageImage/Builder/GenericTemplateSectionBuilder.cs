@@ -15,7 +15,8 @@ internal static partial class PackageImageBuilder
 
     private static IReadOnlyList<StarkPackageFunctionTemplateManifest> BuildGenericFunctionTemplates(
         LoadedModuleDocument module,
-        TypeCheckModel typeModel)
+        TypeCheckModel typeModel,
+        SemanticValidationModel? validationModel)
     {
         var literalsByLocation = typeModel.Literals
             .Where(record => string.Equals(record.Location.FilePath, module.Reference.FilePath, StringComparison.Ordinal))
@@ -158,6 +159,15 @@ internal static partial class PackageImageBuilder
                         : null,
                     TopLevelStatementCount: function.Body.block()?.statement().Length,
                     EstimatedBodyCost: GenericTemplateBodyCostEstimator.Estimate(function.Body),
+                    Semantics: validationModel is not null
+                        && TryBuildPublishedFunctionSemanticManifest(
+                            module,
+                            lookupName,
+                            qualifiedResolvedName,
+                            validationModel,
+                            out var semanticManifest)
+                            ? semanticManifest
+                            : null,
                     TypedBody: typedBody,
                     DeferredFunctionInstantiations: deferredTriggers is { Count: > 0 }
                         ? deferredTriggers

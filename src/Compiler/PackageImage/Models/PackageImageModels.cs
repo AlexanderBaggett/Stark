@@ -427,6 +427,7 @@ internal sealed record StarkPackageFunctionTemplateManifest(
     string? BodyText,
     int? TopLevelStatementCount = null,
     int? EstimatedBodyCost = null,
+    StarkPackageFunctionSemanticManifest? Semantics = null,
     StarkPackageTypedTemplateBodyManifest? TypedBody = null,
     IReadOnlyList<StarkPackageDeferredFunctionInstantiationManifest>? DeferredFunctionInstantiations = null,
     IReadOnlyList<StarkPackageDeferredTypeInstantiationManifest>? DeferredTypeInstantiations = null,
