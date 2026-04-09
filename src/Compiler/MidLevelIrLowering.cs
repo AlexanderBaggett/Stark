@@ -1537,6 +1537,54 @@ internal sealed class MidLevelIrLowerer(
         {
             target = default!;
 
+            if (!TryResolveImportedTypedTemplateAssignmentTargetCore(expression, out target, out var rootOperand))
+            {
+                return false;
+            }
+
+            if (!target.UsesAddressModel
+                && rootOperand is not null
+                && IsBorrowParameterRoot(rootOperand))
+            {
+                target = target with { UsesAddressModel = true };
+            }
+
+            return true;
+        }
+
+        private bool TryResolveImportedTypedTemplateAssignmentTargetCore(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out PlaceTarget target,
+            out MidLevelIrOperand? rootOperand)
+        {
+            target = default!;
+            rootOperand = null;
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.NameReference)
+            {
+                if (expression.Name is null)
+                {
+                    return false;
+                }
+
+                var operand = ResolveNamedOperand(expression.Name);
+                if (operand is null)
+                {
+                    return false;
+                }
+
+                target = new PlaceTarget(
+                    operand.Text,
+                    RootAddress: null,
+                    operand.Type,
+                    operand.Type,
+                    Path: [],
+                    UsesAddressModel: false,
+                    IsAddressMutable: GetAddressMutability(operand));
+                rootOperand = operand;
+                return true;
+            }
+
             if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.UnaryOperation
                 && string.Equals(expression.Name, "*", StringComparison.Ordinal)
                 && expression.Args.Count == 1)
@@ -1562,110 +1610,47 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
-            if (!TryResolveImportedTypedTemplateAssignmentTargetCore(
-                    expression,
-                    out var root,
-                    out var targetType,
-                    out var path,
-                    out _,
-                    out var usesAddressModel))
-            {
-                return false;
-            }
-
-            if (IsBorrowParameterRoot(root))
-            {
-                usesAddressModel = true;
-            }
-
-            target = new PlaceTarget(
-                root.Text,
-                RootAddress: null,
-                root.Type,
-                targetType,
-                path,
-                usesAddressModel,
-                GetAddressMutability(root));
-            return true;
-        }
-
-        private bool TryResolveImportedTypedTemplateAssignmentTargetCore(
-            ImportedTemplateTypedBodyExpressionSummary expression,
-            out MidLevelIrOperand root,
-            out StarkTypeSymbol targetType,
-            out List<PlacePathSegment> path,
-            out bool supportsAddressModel,
-            out bool usesAddressModel)
-        {
-            root = default!;
-            targetType = StarkTypeSymbols.Error;
-            path = [];
-            supportsAddressModel = false;
-            usesAddressModel = false;
-
-            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.NameReference)
-            {
-                if (expression.Name is null)
-                {
-                    return false;
-                }
-
-                var operand = ResolveNamedOperand(expression.Name);
-                if (operand is null)
-                {
-                    return false;
-                }
-
-                root = operand;
-                targetType = operand.Type;
-                supportsAddressModel = SupportsAddressModel(operand);
-                return true;
-            }
-
             if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.FieldAccess)
             {
                 if (expression.Ordinal is not { } ordinal
                     || expression.Args.Count != 1
                     || !_importedTemplateFieldAccesses.TryGetValue(ordinal, out var publishedFieldAccess)
-                    || !TryResolveImportedTypedTemplateAssignmentTargetCore(
-                        expression.Args[0],
-                        out root,
-                        out targetType,
-                        out path,
-                        out supportsAddressModel,
-                        out usesAddressModel))
+                    || !TryResolveImportedTypedTemplateAssignmentTargetCore(expression.Args[0], out target, out rootOperand))
                 {
                     return false;
                 }
 
-                var fieldType = ProjectFrozenView(targetType, ApplyGenericSubstitution(publishedFieldAccess.FieldType));
-                path.Add(new PlacePathSegment(
+                var fieldType = ProjectFrozenView(target.Type, ApplyGenericSubstitution(publishedFieldAccess.FieldType));
+                var updatedPath = target.Path.ToList();
+                updatedPath.Add(new PlacePathSegment(
                     PlacePathKind.Field,
                     publishedFieldAccess.FieldName,
                     publishedFieldAccess.FieldIndex,
                     IndexOperand: null,
-                    ParentType: targetType,
+                    ParentType: target.Type,
                     SegmentType: fieldType));
-                targetType = fieldType;
-                supportsAddressModel = supportsAddressModel || usesAddressModel;
+                target = target with
+                {
+                    Type = fieldType,
+                    Path = updatedPath
+                };
                 return true;
             }
 
             if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.IndexAccess)
             {
                 if (expression.Args.Count < 2
-                    || !TryResolveImportedTypedTemplateAssignmentTargetCore(
-                        expression.Args[0],
-                        out root,
-                        out targetType,
-                        out path,
-                        out supportsAddressModel,
-                        out usesAddressModel))
+                    || !TryResolveImportedTypedTemplateAssignmentTargetCore(expression.Args[0], out target, out rootOperand))
                 {
                     return false;
                 }
 
-                var currentType = targetType;
+                var updatedPath = target.Path.ToList();
+                var currentType = target.Type;
+                var usesAddressModel = target.UsesAddressModel;
+                var supportsAddressModel = target.RootAddress is not null
+                    || (rootOperand is not null && SupportsAddressModel(rootOperand));
+
                 for (var argumentIndex = 1; argumentIndex < expression.Args.Count; argumentIndex++)
                 {
                     var index = LowerImportedTypedTemplateExpression(expression.Args[argumentIndex], expectedType: null);
@@ -1679,7 +1664,7 @@ internal sealed class MidLevelIrLowerer(
                         if (TryResolveImportedTypedTemplateConstantIndex(index, out var constantIndex))
                         {
                             var constantElementType = ProjectFrozenView(currentType, currentType.ElementType);
-                            path.Add(new PlacePathSegment(
+                            updatedPath.Add(new PlacePathSegment(
                                 PlacePathKind.ConstantArrayIndex,
                                 FieldName: null,
                                 ConstantIndex: constantIndex,
@@ -1696,7 +1681,7 @@ internal sealed class MidLevelIrLowerer(
                         }
 
                         var dynamicElementType = ProjectFrozenView(currentType, currentType.ElementType);
-                        path.Add(new PlacePathSegment(
+                        updatedPath.Add(new PlacePathSegment(
                             PlacePathKind.DynamicArrayIndex,
                             FieldName: null,
                             ConstantIndex: null,
@@ -1712,7 +1697,7 @@ internal sealed class MidLevelIrLowerer(
                     if (currentType.Kind == StarkTypeKind.Slice && currentType.ElementType is not null)
                     {
                         var sliceElementType = ProjectFrozenView(currentType, currentType.ElementType);
-                        path.Add(new PlacePathSegment(
+                        updatedPath.Add(new PlacePathSegment(
                             PlacePathKind.SliceIndex,
                             FieldName: null,
                             ConstantIndex: null,
@@ -1727,7 +1712,7 @@ internal sealed class MidLevelIrLowerer(
 
                     if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
                     {
-                        path.Add(new PlacePathSegment(
+                        updatedPath.Add(new PlacePathSegment(
                             PlacePathKind.RawPointerIndex,
                             FieldName: null,
                             ConstantIndex: null,
@@ -1743,7 +1728,12 @@ internal sealed class MidLevelIrLowerer(
                     return false;
                 }
 
-                targetType = currentType;
+                target = target with
+                {
+                    Type = currentType,
+                    Path = updatedPath,
+                    UsesAddressModel = usesAddressModel
+                };
                 return true;
             }
 

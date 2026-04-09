@@ -1905,10 +1905,7 @@ internal static partial class PackageImageBuilder
         targetName = null;
         targetExpression = null!;
 
-        if (unaryExpression.conversionType() is null
-            && unaryExpression.powerExpression() is null
-            && string.Equals(unaryExpression.unaryOperator()?.GetText(), "*", StringComparison.Ordinal)
-            && TryBuildPublishedTypedTemplateUnaryExpression(
+        if (!TryBuildPublishedTypedTemplateUnaryExpression(
                 module,
                 unaryExpression,
                 literalsByLocation,
@@ -1920,55 +1917,32 @@ internal static partial class PackageImageBuilder
                 directCallOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
-                out targetExpression))
-        {
-            return true;
-        }
-
-        if (unaryExpression.powerExpression() is not { } powerExpression
-            || powerExpression.unaryExpression() is not null
-            || powerExpression.postfixExpression() is not { } postfixExpression)
+                out var builtTargetExpression)
+            || !CanPublishTypedTemplateAssignmentTarget(builtTargetExpression))
         {
             return false;
         }
 
-        var rootName = postfixExpression.primaryExpression().Identifier()?.GetText()
-            ?? postfixExpression.primaryExpression().qualifiedName()?.GetText();
-        if (rootName is null || postfixExpression.postfixPart().Any(static part => part.argumentList() is not null))
-        {
-            return false;
-        }
-
-        var baseExpression = new StarkPackageTypedTemplateExpressionManifest(
-            Kind: "name",
-            Name: rootName);
-
-        if (postfixExpression.postfixPart().Length == 0)
-        {
-            targetName = rootName;
-            targetExpression = baseExpression;
-            return true;
-        }
-
-        if (!TryBuildPublishedTypedTemplatePostfixChain(
-                module,
-                baseExpression,
-                postfixExpression.postfixPart(),
-                literalsByLocation,
-                conversionsByLocation,
-                objectCreationOrdinals,
-                enumConstructorOrdinals,
-                enumCallOrdinals,
-                enumValueOrdinals,
-                directCallOrdinals,
-                memberCallOrdinals,
-                fieldAccessOrdinals,
-                out targetExpression))
-        {
-            return false;
-        }
-
+        targetExpression = builtTargetExpression;
+        targetName = string.Equals(builtTargetExpression.Kind, "name", StringComparison.Ordinal)
+            ? builtTargetExpression.Name
+            : null;
         return true;
+    }
+
+    private static bool CanPublishTypedTemplateAssignmentTarget(StarkPackageTypedTemplateExpressionManifest expression)
+    {
+        return expression.Kind switch
+        {
+            "name" => !string.IsNullOrWhiteSpace(expression.Name),
+            "unary" => string.Equals(expression.Name, "*", StringComparison.Ordinal)
+                && expression.Arguments?.Count == 1,
+            "field-access" => expression.Arguments?.Count == 1
+                && CanPublishTypedTemplateAssignmentTarget(expression.Arguments[0]),
+            "index-access" => expression.Arguments?.Count >= 2
+                && CanPublishTypedTemplateAssignmentTarget(expression.Arguments[0]),
+            _ => false
+        };
     }
 
     private delegate bool TryBuildPublishedTypedTemplateOperand<in TOperandContext>(
