@@ -1562,8 +1562,50 @@ internal static partial class PackageImageBuilder
     {
         publishedExpression = null!;
 
-        if (assignmentExpression.assignmentOperator() is not null
-            || assignmentExpression.conditionalExpression() is not { } conditionalExpression)
+        if (assignmentExpression.assignmentOperator() is { } assignmentOperator)
+        {
+            if (assignmentExpression.unaryExpression() is not { } assignmentTargetUnary
+                || !TryBuildPublishedTypedTemplateAssignmentTarget(
+                    module,
+                    assignmentTargetUnary,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var assignmentTargetName,
+                    out var assignmentTarget)
+                || !TryBuildPublishedTypedTemplateAssignmentExpression(
+                    module,
+                    assignmentExpression.assignmentExpression(),
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var assignmentValue))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "assignment",
+                Name: assignmentTargetName,
+                AssignmentOperator: assignmentOperator.GetText(),
+                Arguments: [assignmentValue],
+                TargetExpression: assignmentTarget);
+            return true;
+        }
+
+        if (assignmentExpression.conditionalExpression() is not { } conditionalExpression)
         {
             return false;
         }

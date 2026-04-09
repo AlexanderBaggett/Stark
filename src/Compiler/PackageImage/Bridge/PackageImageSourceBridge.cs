@@ -1157,6 +1157,15 @@ internal static partial class PackageImageLoader
                 directCallsByOrdinal,
                 fieldAccessesByOrdinal,
                 memberCallsByOrdinal),
+            ImportedTemplateTypedBodyExpressionKind.Assignment => RenderImportedTypedTemplateAssignmentExpression(
+                expression,
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal),
             ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType && expression.Args.Count == 1
                 ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
@@ -1223,6 +1232,36 @@ internal static partial class PackageImageLoader
         }
 
         return $"{{ {string.Join(", ", parts)} }}";
+    }
+
+    private static string RenderImportedTypedTemplateAssignmentExpression(
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        if (expression.Args.Count != 1)
+        {
+            return string.Empty;
+        }
+
+        var targetText = expression.TargetExpression is not null
+            ? RenderImportedTypedTemplateExpression(expression.TargetExpression, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)
+            : expression.Name;
+        if (string.IsNullOrEmpty(targetText))
+        {
+            return string.Empty;
+        }
+
+        var assignmentOperator = string.IsNullOrEmpty(expression.AssignmentOperator)
+            ? "="
+            : expression.AssignmentOperator;
+        var valueText = RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal);
+        return $"{targetText} {assignmentOperator} {valueText}";
     }
 
     private static string RenderImportedTypedTemplateExpression(
@@ -1339,7 +1378,8 @@ internal static partial class PackageImageLoader
 
     private static bool CanOmitBridgeBodyText(StarkPackageTypedTemplateExpressionManifest expression)
     {
-        return (expression.Arguments ?? []).All(CanOmitBridgeBodyText);
+        return (expression.Arguments ?? []).All(CanOmitBridgeBodyText)
+            && (expression.TargetExpression is null || CanOmitBridgeBodyText(expression.TargetExpression));
     }
 
     private static bool TryGetGenericTemplateBody(

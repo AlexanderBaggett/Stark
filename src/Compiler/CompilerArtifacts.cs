@@ -394,6 +394,7 @@ public enum ImportedTemplateTypedBodyExpressionKind
     Literal,
     ArrayInitializer,
     ObjectInitializer,
+    Assignment,
     Conversion,
     UnaryOperation,
     BinaryOperation,
@@ -411,11 +412,13 @@ public enum ImportedTemplateTypedBodyExpressionKind
 public sealed record ImportedTemplateTypedBodyExpressionSummary(
     ImportedTemplateTypedBodyExpressionKind Kind,
     string? Name = null,
+    string? AssignmentOperator = null,
     int? Ordinal = null,
     IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary>? Arguments = null,
     IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
-    StarkTypeSymbol? Type = null)
+    StarkTypeSymbol? Type = null,
+    ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary> Args =>
         Arguments ?? [];

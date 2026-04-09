@@ -324,11 +324,13 @@ internal sealed record StarkPackageTemplateAggregatePatternManifest(
 internal sealed record StarkPackageTypedTemplateExpressionManifest(
     string Kind,
     string? Name = null,
+    string? AssignmentOperator = null,
     int? Ordinal = null,
     IReadOnlyList<StarkPackageTypedTemplateExpressionManifest>? Arguments = null,
     IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
-    StarkPackageTypeReference? Type = null);
+    StarkPackageTypeReference? Type = null,
+    StarkPackageTypedTemplateExpressionManifest? TargetExpression = null);
 
 internal sealed record StarkPackageTypedTemplatePatternManifest(
     string Kind,

@@ -394,6 +394,13 @@ internal static partial class PackageImageLoader
     {
         summary = null!;
 
+        ImportedTemplateTypedBodyExpressionSummary? targetExpression = null;
+        if (manifest.TargetExpression is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.TargetExpression, out targetExpression))
+        {
+            return false;
+        }
+
         if (string.Equals(manifest.Kind, "name", StringComparison.Ordinal))
         {
             if (manifest.Name is null)
@@ -472,6 +479,28 @@ internal static partial class PackageImageLoader
                 Arguments: arguments,
                 MemberNames: manifest.MemberNames,
                 Type: BuildTypeSymbol(manifest.Type));
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "assignment", StringComparison.Ordinal))
+        {
+            if ((manifest.Name is null && targetExpression is null)
+                || manifest.Arguments is not { Count: 1 })
+            {
+                return false;
+            }
+
+            if (!TryBuildImportedTypedTemplateExpression(manifest.Arguments[0], out var valueExpression))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.Assignment,
+                Name: manifest.Name,
+                AssignmentOperator: manifest.AssignmentOperator,
+                Arguments: [valueExpression],
+                TargetExpression: targetExpression);
             return true;
         }
 

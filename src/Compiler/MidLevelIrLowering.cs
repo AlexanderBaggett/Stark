@@ -1398,29 +1398,66 @@ internal sealed class MidLevelIrLowerer(
 
         private bool TryLowerImportedTypedTemplateAssignment(ImportedTemplateTypedBodyStatementSummary statement)
         {
-            if (statement.Expression is null)
+            if (statement.Expression is null
+                || !TryBuildImportedTypedTemplateAssignment(
+                    statement.Name,
+                    statement.TargetExpression,
+                    statement.AssignmentOperator,
+                    statement.Expression,
+                    out var assignment))
             {
                 return false;
             }
 
-            var assignmentOperator = string.IsNullOrEmpty(statement.AssignmentOperator)
+            EmitAssignment(assignment);
+            return true;
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateAssignmentExpression(
+            ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Args.Count != 1
+                || !TryBuildImportedTypedTemplateAssignment(
+                    expression.Name,
+                    expression.TargetExpression,
+                    expression.AssignmentOperator,
+                    expression.Args[0],
+                    out var assignment))
+            {
+                return null;
+            }
+
+            EmitAssignment(assignment);
+            return assignment.ResultValue;
+        }
+
+        private bool TryBuildImportedTypedTemplateAssignment(
+            string? targetName,
+            ImportedTemplateTypedBodyExpressionSummary? targetExpression,
+            string? assignmentOperatorText,
+            ImportedTemplateTypedBodyExpressionSummary valueExpression,
+            out LoweredAssignment assignment)
+        {
+            assignment = default!;
+
+            var assignmentOperator = string.IsNullOrEmpty(assignmentOperatorText)
                 ? "="
-                : statement.AssignmentOperator;
+                : assignmentOperatorText;
             PlaceTarget target;
             string assignmentTargetText;
 
-            if (statement.TargetExpression is not null)
+            if (targetExpression is not null)
             {
-                if (!TryResolveImportedTypedTemplateAssignmentTarget(statement.TargetExpression, out target))
+                if (!TryResolveImportedTypedTemplateAssignmentTarget(targetExpression, out target))
                 {
                     return false;
                 }
 
-                assignmentTargetText = RenderImportedTypedTemplateExpression(statement.TargetExpression);
+                assignmentTargetText = RenderImportedTypedTemplateExpression(targetExpression);
             }
             else
             {
-                if (statement.Name is not { } name
+                if (targetName is not { } name
                     || !_localsByName.TryGetValue(name, out var local)
                     || !local.IsMutable)
                 {
@@ -1445,11 +1482,11 @@ internal sealed class MidLevelIrLowerer(
                 return false;
             }
 
-            var assignmentText = $"{assignmentTargetText} {assignmentOperator} {RenderImportedTypedTemplateExpression(statement.Expression)}";
+            var assignmentText = $"{assignmentTargetText} {assignmentOperator} {RenderImportedTypedTemplateExpression(valueExpression)}";
             MidLevelIrOperand assignedValue;
             if (assignmentOperator == "=")
             {
-                var loweredAssignedValue = LowerImportedTypedTemplateExpression(statement.Expression, target.Type);
+                var loweredAssignedValue = LowerImportedTypedTemplateExpression(valueExpression, target.Type);
                 if (loweredAssignedValue is null)
                 {
                     return false;
@@ -1460,7 +1497,7 @@ internal sealed class MidLevelIrLowerer(
             else
             {
                 var currentValue = ReadPlace(target);
-                var right = LowerImportedTypedTemplateExpression(statement.Expression, currentValue.Type);
+                var right = LowerImportedTypedTemplateExpression(valueExpression, currentValue.Type);
                 if (right is null)
                 {
                     return false;
@@ -1490,8 +1527,7 @@ internal sealed class MidLevelIrLowerer(
                 assignedValue = CoerceOperand(temp, target.Type) ?? temp;
             }
 
-            var assignment = BuildAssignment(target, assignedValue, assignmentText);
-            EmitAssignment(assignment);
+            assignment = BuildAssignment(target, assignedValue, assignmentText);
             return true;
         }
 
@@ -2346,6 +2382,14 @@ internal sealed class MidLevelIrLowerer(
                 case ImportedTemplateTypedBodyExpressionKind.ObjectInitializer:
                 {
                     var result = LowerImportedTypedTemplateObjectInitializerExpression(expression, expectedType);
+                    return result is null || expectedType is null
+                        ? result
+                        : CoerceOperand(result, expectedType);
+                }
+
+                case ImportedTemplateTypedBodyExpressionKind.Assignment:
+                {
+                    var result = LowerImportedTypedTemplateAssignmentExpression(expression);
                     return result is null || expectedType is null
                         ? result
                         : CoerceOperand(result, expectedType);
@@ -3364,6 +3408,7 @@ internal sealed class MidLevelIrLowerer(
                     ? "{}"
                     : $"{{ {string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpression))} }}",
                 ImportedTemplateTypedBodyExpressionKind.ObjectInitializer => RenderImportedTypedTemplateObjectInitializer(expression),
+                ImportedTemplateTypedBodyExpressionKind.Assignment => RenderImportedTypedTemplateAssignmentExpression(expression),
                 ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType
                     && expression.Args.Count == 1
                     ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0])}"
@@ -3407,6 +3452,27 @@ internal sealed class MidLevelIrLowerer(
             }
 
             return $"{{ {string.Join(", ", parts)} }}";
+        }
+
+        private static string RenderImportedTypedTemplateAssignmentExpression(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Args.Count != 1)
+            {
+                return "assignment";
+            }
+
+            var targetText = expression.TargetExpression is not null
+                ? RenderImportedTypedTemplateExpression(expression.TargetExpression)
+                : expression.Name;
+            if (string.IsNullOrEmpty(targetText))
+            {
+                return "assignment";
+            }
+
+            var assignmentOperator = string.IsNullOrEmpty(expression.AssignmentOperator)
+                ? "="
+                : expression.AssignmentOperator;
+            return $"{targetText} {assignmentOperator} {RenderImportedTypedTemplateExpression(expression.Args[0])}";
         }
 
         private void LowerBlock(StarkParser.BlockContext block)
