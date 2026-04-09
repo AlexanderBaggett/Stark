@@ -1537,6 +1537,31 @@ internal sealed class MidLevelIrLowerer(
         {
             target = default!;
 
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.UnaryOperation
+                && string.Equals(expression.Name, "*", StringComparison.Ordinal)
+                && expression.Args.Count == 1)
+            {
+                var address = LowerImportedTypedTemplateExpression(expression.Args[0], expectedType: null);
+                if (address is null
+                    || address.Type.Kind != StarkTypeKind.RawPointer
+                    || !address.Type.IsMutablePointer
+                    || address.Type.ElementType is not { } elementType
+                    || !CanMutateThroughType(elementType))
+                {
+                    return false;
+                }
+
+                target = new PlaceTarget(
+                    RootName: null,
+                    RootAddress: address,
+                    RootType: elementType,
+                    Type: elementType,
+                    Path: [],
+                    UsesAddressModel: true,
+                    IsAddressMutable: true);
+                return true;
+            }
+
             if (!TryResolveImportedTypedTemplateAssignmentTargetCore(
                     expression,
                     out var root,
@@ -2846,10 +2871,26 @@ internal sealed class MidLevelIrLowerer(
                 "~" => EmitTemporary(
                     new MidLevelIrUnaryRValue(MidLevelIrUnaryOperator.BitwiseNot, operand, operand.Type, text),
                     "bitnot"),
+                "*" => LowerImportedTypedTemplateDereferenceUnary(operand, text),
                 _ => null
             };
 
             return expectedType is null ? result : CoerceOperand(result, expectedType);
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateDereferenceUnary(MidLevelIrOperand operand, string text)
+        {
+            if (operand.Type.Kind != StarkTypeKind.RawPointer || operand.Type.ElementType is null)
+            {
+                return null;
+            }
+
+            return EmitTemporary(
+                new MidLevelIrLoadIndirectRValue(
+                    operand,
+                    operand.Type.ElementType,
+                    text),
+                "load");
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateBinary(

@@ -1905,6 +1905,26 @@ internal static partial class PackageImageBuilder
         targetName = null;
         targetExpression = null!;
 
+        if (unaryExpression.conversionType() is null
+            && unaryExpression.powerExpression() is null
+            && string.Equals(unaryExpression.unaryOperator()?.GetText(), "*", StringComparison.Ordinal)
+            && TryBuildPublishedTypedTemplateUnaryExpression(
+                module,
+                unaryExpression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out targetExpression))
+        {
+            return true;
+        }
+
         if (unaryExpression.powerExpression() is not { } powerExpression
             || powerExpression.unaryExpression() is not null
             || powerExpression.postfixExpression() is not { } postfixExpression)
@@ -2713,7 +2733,7 @@ internal static partial class PackageImageBuilder
         }
 
         var operatorText = unaryExpression.unaryOperator()?.GetText() ?? unaryExpression.GetChild(0).GetText();
-        if (operatorText is not ("+" or "-" or "-%" or "!" or "~")
+        if (operatorText is not ("+" or "-" or "-%" or "!" or "~" or "*")
             || !TryBuildPublishedTypedTemplateUnaryExpression(
                 module,
                 operandExpression,
