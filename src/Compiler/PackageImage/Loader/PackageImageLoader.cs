@@ -197,4 +197,61 @@ internal static partial class PackageImageLoader
             TryBuildLoadedPackageImageFacts(module, out var packageImageFacts) ? packageImageFacts : null);
         return true;
     }
+
+    public static bool TryBuildStructuredModuleDocument(ResolvedPackageModule module, out LoadedModuleDocument document)
+    {
+        document = default!;
+
+        if (module.Module.EffectiveTypedInterface?.Functions.Any(static function => function.Asm is not null) == true
+            || !TryBuildModuleSyntaxModel(module, out var syntaxModel)
+            || !TryBuildLoadedPackageImageFacts(module, out var packageImageFacts)
+            || !TryBuildStructuredModuleSource(module, out var sourceText))
+        {
+            return false;
+        }
+
+        var parseResult = StarkSyntax.ParseCompilationUnit(sourceText);
+        if (parseResult.Diagnostics.Count != 0)
+        {
+            return false;
+        }
+
+        document = new LoadedModuleDocument(
+            new ResolvedModuleReference(
+                module.Module.ModuleName,
+                module.ManifestPath,
+                IsExternal: false,
+                IsRoot: false,
+                ManifestPath: module.ManifestPath,
+                LibraryPath: module.LibraryPath),
+            parseResult,
+            syntaxModel,
+            packageImageFacts);
+        return true;
+    }
+
+    private static bool TryBuildStructuredModuleSource(ResolvedPackageModule module, out string sourceText)
+    {
+        var genericTemplates = module.Module.EffectiveGenericTemplates?.Functions;
+        if (genericTemplates is not { Count: > 0 })
+        {
+            return TryBuildModuleSource(module, out sourceText);
+        }
+
+        var renderedTemplates = genericTemplates
+            .Select(template => TryRenderGenericTemplateBody(template, out var renderedBodyText)
+                ? template with { BodyText = renderedBodyText, TypedBody = null }
+                : template)
+            .ToArray();
+
+        var rewrittenModule = module with
+        {
+            Module = module.Module with
+            {
+                GenericTemplates = new StarkPackageGenericTemplateSection(renderedTemplates)
+            }
+        };
+
+        return TryBuildModuleSource(rewrittenModule, out sourceText);
+    }
 }

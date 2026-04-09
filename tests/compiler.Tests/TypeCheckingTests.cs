@@ -188,6 +188,26 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ScalarizableNamedAggregatesAreOrderedComparable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+
+            fn bool Less(Many left, Many right) {
+                return left < right;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
     public void ExplicitNonAsciiLiteralToAsciiConversionTypeChecks()
     {
         var result = Compile(

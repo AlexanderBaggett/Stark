@@ -558,9 +558,7 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
-            // For the supported typed template-body subset, the bridge can stay declaration-only.
-            if (template.TypedBody is not null
-                && CanOmitBridgeBodyText(template.TypedBody))
+            if (template.TypedBody is not null && CanOmitBridgeBodyText(template.TypedBody))
             {
                 continue;
             }
@@ -569,6 +567,380 @@ internal static partial class PackageImageLoader
         }
 
         return templates;
+    }
+
+    private static bool TryRenderGenericTemplateBody(
+        StarkPackageFunctionTemplateManifest template,
+        out string bodyText)
+    {
+        bodyText = string.Empty;
+
+        if (template.TypedBody is null
+            || !TryBuildImportedTypedTemplateBody(template.TypedBody, out var typedBody))
+        {
+            return false;
+        }
+
+        var objectCreationsByOrdinal = (template.ObjectCreations ?? [])
+            .Select((item, ordinal) => (item, ordinal))
+            .ToDictionary(static item => item.ordinal, static item => item.item);
+        var enumConstructorsByOrdinal = (template.EnumConstructors ?? [])
+            .ToDictionary(static item => item.Ordinal);
+        var enumCallsByOrdinal = (template.EnumCalls ?? [])
+            .ToDictionary(static item => item.Ordinal);
+        var enumValuesByOrdinal = (template.EnumValues ?? [])
+            .ToDictionary(static item => item.Ordinal);
+        var directCallsByOrdinal = (template.DirectCalls ?? [])
+            .ToDictionary(static item => item.Ordinal);
+        var fieldAccessesByOrdinal = (template.FieldAccesses ?? [])
+            .ToDictionary(static item => item.Ordinal);
+        var memberCallsByOrdinal = (template.MemberCalls ?? [])
+            .ToDictionary(static item => item.Ordinal);
+
+        var builder = new StringBuilder();
+        if (!TryRenderImportedTypedTemplateBody(
+                builder,
+                typedBody,
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal))
+        {
+            return false;
+        }
+
+        bodyText = builder.ToString();
+        return true;
+    }
+
+    private static bool TryRenderImportedTypedTemplateBody(
+        StringBuilder builder,
+        ImportedTemplateTypedBodySummary typedBody,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        builder.AppendLine("{");
+        foreach (var statement in typedBody.Statements)
+        {
+            if (!TryRenderImportedTypedTemplateStatement(
+                    builder,
+                    statement,
+                    objectCreationsByOrdinal,
+                    enumConstructorsByOrdinal,
+                    enumCallsByOrdinal,
+                    enumValuesByOrdinal,
+                    directCallsByOrdinal,
+                    fieldAccessesByOrdinal,
+                    memberCallsByOrdinal,
+                    indentLevel: 1))
+            {
+                return false;
+            }
+        }
+
+        builder.AppendLine("}");
+        return true;
+    }
+
+    private static bool TryRenderImportedTypedTemplateStatement(
+        StringBuilder builder,
+        ImportedTemplateTypedBodyStatementSummary statement,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        int indentLevel)
+    {
+        switch (statement.Kind)
+        {
+            case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:
+                if (statement.Name is null || statement.StorageClass is null || statement.Type is null || statement.Expression is null)
+                {
+                    return false;
+                }
+
+                AppendIndent(builder, indentLevel);
+                builder.Append(statement.StorageClass);
+                builder.Append(' ');
+                if (statement.IsMutable)
+                {
+                    builder.Append("mut ");
+                }
+
+                builder.Append(statement.Type.DisplayName);
+                builder.Append(' ');
+                builder.Append(statement.Name);
+                builder.Append(" = ");
+                if (!TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var localInitializerText))
+                {
+                    return false;
+                }
+
+                builder.Append(localInitializerText);
+                builder.AppendLine(";");
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
+                if (statement.Expression is null
+                    || !TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var expressionText))
+                {
+                    return false;
+                }
+
+                AppendIndent(builder, indentLevel);
+                builder.Append(expressionText);
+                builder.AppendLine(";");
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.Assignment:
+                if (statement.Expression is null
+                    || (statement.Name is null && statement.TargetExpression is null)
+                    || !TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var assignmentValueText))
+                {
+                    return false;
+                }
+
+                var assignmentTargetText = statement.TargetExpression is null
+                    ? statement.Name!
+                    : TryRenderImportedTypedTemplateExpression(
+                        statement.TargetExpression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var targetText)
+                        ? targetText
+                        : null;
+                if (assignmentTargetText is null)
+                {
+                    return false;
+                }
+
+                AppendIndent(builder, indentLevel);
+                builder.Append(assignmentTargetText);
+                builder.Append(' ');
+                builder.Append(string.IsNullOrEmpty(statement.AssignmentOperator) ? "=" : statement.AssignmentOperator);
+                builder.Append(' ');
+                builder.Append(assignmentValueText);
+                builder.AppendLine(";");
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.Return:
+                AppendIndent(builder, indentLevel);
+                builder.Append("return");
+                if (statement.Expression is not null)
+                {
+                    if (!TryRenderImportedTypedTemplateExpression(
+                            statement.Expression,
+                            objectCreationsByOrdinal,
+                            enumConstructorsByOrdinal,
+                            enumCallsByOrdinal,
+                            enumValuesByOrdinal,
+                            directCallsByOrdinal,
+                            fieldAccessesByOrdinal,
+                            memberCallsByOrdinal,
+                            out var returnText))
+                    {
+                        return false;
+                    }
+
+                    builder.Append(' ');
+                    builder.Append(returnText);
+                }
+
+                builder.AppendLine(";");
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryRenderImportedTypedTemplateExpression(
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        out string text)
+    {
+        text = expression.Kind switch
+        {
+            ImportedTemplateTypedBodyExpressionKind.NameReference => expression.Name ?? string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.Literal => expression.LiteralText ?? string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
+                ? "{ }"
+                : $"{{ {string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))} }}",
+            ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType && expression.Args.Count == 1
+                ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is { } unaryOperator && expression.Args.Count == 1
+                ? $"{unaryOperator}{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is { } binaryOperator && expression.Args.Count == 2
+                ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} {binaryOperator} {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.Conditional => expression.Args.Count == 3
+                ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} ? {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} : {RenderImportedTypedTemplateExpression(expression.Args[2], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.ObjectCreation => expression.Ordinal is { } objectCreationOrdinal && objectCreationsByOrdinal.TryGetValue(objectCreationOrdinal, out var objectCreation)
+                ? RenderObjectCreation(objectCreation, expression, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.EnumConstructor => expression.Ordinal is { } enumConstructorOrdinal && enumConstructorsByOrdinal.TryGetValue(enumConstructorOrdinal, out var enumConstructor)
+                ? $"{RenderTypeReference(enumConstructor.EnumType)}.{enumConstructor.VariantName}({string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.EnumCall => expression.Ordinal is { } enumCallOrdinal && enumCallsByOrdinal.TryGetValue(enumCallOrdinal, out var enumCall)
+                ? $"{RenderTypeReference(enumCall.EnumType)}.{enumCall.VariantName}({string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.EnumValue => expression.Ordinal is { } enumValueOrdinal && enumValuesByOrdinal.TryGetValue(enumValueOrdinal, out var enumValue)
+                ? $"{RenderTypeReference(enumValue.EnumType)}.{enumValue.VariantName}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.DirectCall => expression.Ordinal is { } directCallOrdinal && directCallsByOrdinal.TryGetValue(directCallOrdinal, out var directCall)
+                ? RenderDirectCall(directCall, expression, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.IndexAccess => expression.Args.Count >= 2
+                ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}[{string.Join(", ", expression.Args.Skip(1).Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))}]"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.FieldAccess => expression.Ordinal is { } fieldOrdinal
+                && fieldAccessesByOrdinal.TryGetValue(fieldOrdinal, out var fieldAccess)
+                ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}.{fieldAccess.FieldName}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.MemberCall => expression.Ordinal is { } memberCallOrdinal && memberCallsByOrdinal.TryGetValue(memberCallOrdinal, out var memberCall)
+                ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}.{GetMemberCallName(memberCall)}({string.Join(", ", expression.Args.Skip(1).Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})"
+                : string.Empty,
+            _ => string.Empty
+        };
+
+        return !string.IsNullOrEmpty(text);
+    }
+
+    private static string RenderImportedTypedTemplateExpression(
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        return TryRenderImportedTypedTemplateExpression(
+            expression,
+            objectCreationsByOrdinal,
+            enumConstructorsByOrdinal,
+            enumCallsByOrdinal,
+            enumValuesByOrdinal,
+            directCallsByOrdinal,
+            fieldAccessesByOrdinal,
+            memberCallsByOrdinal,
+            out var text)
+            ? text
+            : string.Empty;
+    }
+
+    private static string RenderObjectCreation(
+        StarkPackageTemplateObjectCreationManifest objectCreation,
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        var arguments = string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)));
+
+        if (objectCreation.Constructor is not null)
+        {
+            return $"new {RenderTypeReference(objectCreation.CreatedType)}({arguments})";
+        }
+
+        if (objectCreation.InitializerMembers is { Count: > 0 })
+        {
+            return $"new {RenderTypeReference(objectCreation.CreatedType)}() {{ {string.Join(", ", objectCreation.InitializerMembers.Select((member, index) => $"{member.FieldName} = {RenderImportedTypedTemplateExpression(expression.Args[index], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"))} }}";
+        }
+
+        return $"new {RenderTypeReference(objectCreation.CreatedType)}({arguments})";
+    }
+
+    private static string RenderDirectCall(
+        StarkPackageTemplateDirectCallManifest directCall,
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        var target = directCall.QualifiedSourceName ?? directCall.QualifiedTemplateName ?? directCall.QualifiedResolvedName;
+        if (directCall.TypeArguments is { Count: > 0 })
+        {
+            target = $"{target}<{string.Join(", ", directCall.TypeArguments.Select(RenderTypeReference))}>";
+        }
+
+        return $"{target}({string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})";
+    }
+
+    private static void AppendIndent(StringBuilder builder, int indentLevel)
+    {
+        for (var index = 0; index < indentLevel; index++)
+        {
+            builder.Append("    ");
+        }
+    }
+
+    private static string GetMemberCallName(StarkPackageTemplateMemberCallManifest memberCall)
+    {
+        var sourceName = memberCall.QualifiedSourceName ?? memberCall.QualifiedResolvedName;
+        var lastDot = sourceName.LastIndexOf('.');
+        return lastDot >= 0 ? sourceName[(lastDot + 1)..] : sourceName;
     }
 
     private static bool CanOmitBridgeBodyText(StarkPackageTypedTemplateBodyManifest typedBody)

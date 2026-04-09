@@ -146,7 +146,8 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
         if (module.ManifestPath is not null
             && TryResolveManifestModule(module.ModuleName) is { } manifestModule
-            && PackageImageLoader.TryBuildModuleDocument(manifestModule, out var manifestDocument))
+            && (PackageImageLoader.TryBuildStructuredModuleDocument(manifestModule, out var manifestDocument)
+                || PackageImageLoader.TryBuildModuleDocument(manifestModule, out manifestDocument)))
         {
             document = manifestDocument with
             {

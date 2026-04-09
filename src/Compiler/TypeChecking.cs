@@ -6109,25 +6109,56 @@ internal sealed class TypeChecker
         return type.Kind is StarkTypeKind.Integer or StarkTypeKind.Float;
     }
 
-    private static bool IsOrderedComparable(StarkTypeSymbol left, StarkTypeSymbol right)
+    private bool IsOrderedComparable(StarkTypeSymbol left, StarkTypeSymbol right)
     {
         var commonType = FindCommonType(left, right);
         return IsOrderedComparable(commonType);
     }
 
-    private static bool IsOrderedComparable(StarkTypeSymbol type)
+    private bool IsOrderedComparable(StarkTypeSymbol type)
     {
-        return type.Kind switch
-        {
-            StarkTypeKind.Integer
+        if (type.Kind is StarkTypeKind.Integer
             or StarkTypeKind.Float
             or StarkTypeKind.Bool
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Ascii
-            or StarkTypeKind.Unicode => true,
-            StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int => IsOrderedComparable(type.ElementType),
-            _ => false
-        };
+            or StarkTypeKind.Unicode)
+        {
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.FixedArray
+            && type.ElementType is not null
+            && type.FixedLength is int)
+        {
+            return IsOrderedComparable(type.ElementType);
+        }
+
+        if (type.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(type) is not { } namedType)
+        {
+            return false;
+        }
+
+        if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            return AreOrderedComparable(namedType.OrderedFields);
+        }
+
+        return false;
+    }
+
+    private bool AreOrderedComparable(IEnumerable<FieldSymbol> fields)
+    {
+        foreach (var field in fields)
+        {
+            if (!IsOrderedComparable(field.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsBitwiseAssignmentOperator(string assignmentOperator)

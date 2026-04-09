@@ -15,10 +15,14 @@ internal sealed class LlvmIrEmitter
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
+    private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
     private const int AggregateMemcpyThresholdBytes = 32;
+
+    private sealed record AggregateScalarLeaf(IReadOnlyList<int> Indices, StarkTypeSymbol Type);
+
     private readonly CompilationInput _input;
     private readonly ParseResult _parseResult;
     private readonly SyntaxModel _syntaxModel;
@@ -1882,10 +1886,139 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        var namedAggregateCompareTypes = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        foreach (var binary in EnumerateBinaryOperations())
+        {
+            if (binary.Type.Kind != StarkTypeKind.Bool)
+            {
+                continue;
+            }
+
+            if (binary.Operator is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                continue;
+            }
+
+            CollectScalarizedNamedAggregateOrderedComparisonTypes(binary.Left.Type, namedAggregateCompareTypes);
+        }
+
+        foreach (var namedAggregateType in namedAggregateCompareTypes.Values
+                     .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+                     .ToArray())
+        {
+            EmitScalarizedNamedAggregateOrderedComparisonHelperDefinition(builder, namedAggregateType);
+            builder.AppendLine();
+        }
+
         foreach (var bitWidth in CollectIntegerExponentBitWidths())
         {
             EmitIntegerExponentHelperDefinition(builder, bitWidth);
             builder.AppendLine();
+        }
+
+        void CollectScalarizedNamedAggregateOrderedComparisonTypes(
+            StarkTypeSymbol type,
+            Dictionary<string, StarkTypeSymbol> collected)
+        {
+            if (type.Kind != StarkTypeKind.Named)
+            {
+                return;
+            }
+
+            var namedType = ResolveNamedTypeSymbol(type);
+            if (namedType is null
+                || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                || !TryGetScalarizableAggregateLeaves(
+                    type,
+                    requireRepresentationPreserving: false,
+                    ignoreScalarizationThresholds: true,
+                    allowTextLeaves: true,
+                    allowSliceLeaves: false,
+                    out _))
+            {
+                return;
+            }
+
+            var helperName = GetScalarizedAggregateOrderedComparisonHelperName(type);
+            collected.TryAdd(helperName, type);
+        }
+
+        void EmitScalarizedNamedAggregateOrderedComparisonHelperDefinition(
+            StringBuilder helperBuilder,
+            StarkTypeSymbol aggregateType)
+        {
+            if (aggregateType.Kind != StarkTypeKind.Named
+                || ResolveNamedTypeSymbol(aggregateType) is not { } aggregateNamedType
+                || aggregateNamedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                || !TryGetScalarizableAggregateLeaves(
+                    aggregateType,
+                    requireRepresentationPreserving: false,
+                    ignoreScalarizationThresholds: true,
+                    allowTextLeaves: true,
+                    allowSliceLeaves: false,
+                    out var leaves))
+            {
+                throw new InvalidOperationException(
+                    $"Named aggregate ordered comparison helper requires a scalarizable named aggregate type, but found '{aggregateType.DisplayName}'.");
+            }
+
+            var helperName = GetScalarizedAggregateOrderedComparisonHelperName(aggregateType);
+            var aggregateLlvmType = MapType(aggregateType);
+
+            helperBuilder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({aggregateLlvmType} %left, {aggregateLlvmType} %right) {{");
+            helperBuilder.AppendLine("entry:");
+            if (leaves.Count == 0)
+            {
+                helperBuilder.AppendLine("  ret i32 0");
+                helperBuilder.AppendLine("}");
+                return;
+            }
+
+            helperBuilder.AppendLine("  br label %compare_0");
+
+            for (var index = 0; index < leaves.Count; index++)
+            {
+                helperBuilder.AppendLine();
+                helperBuilder.AppendLine($"compare_{index}:");
+
+                var leftValue = EmitAggregateLeafValueExtraction(
+                    helperBuilder,
+                    aggregateType,
+                    "%left",
+                    leaves[index].Indices,
+                    $"namedcmp_left_{index}");
+                var rightValue = EmitAggregateLeafValueExtraction(
+                    helperBuilder,
+                    aggregateType,
+                    "%right",
+                    leaves[index].Indices,
+                    $"namedcmp_right_{index}");
+
+                if (!TryEmitOrderedComparisonValue(
+                        helperBuilder,
+                        leaves[index].Type,
+                        leftValue,
+                        rightValue,
+                        index,
+                        $"check_greater_{index}",
+                        index == leaves.Count - 1 ? "return_equal" : $"compare_{index + 1}"))
+                {
+                    throw new UnsupportedBodyEmissionException(
+                        $"Unsupported ordered comparison leaf type '{leaves[index].Type.DisplayName}' in named aggregate helper.");
+                }
+            }
+
+            helperBuilder.AppendLine("return_equal:");
+            helperBuilder.AppendLine("  ret i32 0");
+            helperBuilder.AppendLine("return_less:");
+            helperBuilder.AppendLine("  ret i32 -1");
+            helperBuilder.AppendLine("return_greater:");
+            helperBuilder.AppendLine("  ret i32 1");
+            helperBuilder.AppendLine("}");
         }
     }
 
@@ -1932,6 +2065,34 @@ internal sealed class LlvmIrEmitter
             .ToArray();
     }
 
+    private IReadOnlyList<StarkTypeSymbol> CollectScalarizedNamedAggregateOrderedComparisonTypes()
+    {
+        var collected = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+
+        foreach (var binary in EnumerateBinaryOperations())
+        {
+            if (binary.Type.Kind != StarkTypeKind.Bool)
+            {
+                continue;
+            }
+
+            if (binary.Operator is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                continue;
+            }
+
+            CollectScalarizedNamedAggregateOrderedComparisonTypes(binary.Left.Type, collected);
+        }
+
+        return collected.Values
+            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private void CollectFixedArrayOrderedComparisonTypes(
         StarkTypeSymbol type,
         Dictionary<string, StarkTypeSymbol> collected)
@@ -1950,6 +2111,208 @@ internal sealed class LlvmIrEmitter
         }
 
         CollectFixedArrayOrderedComparisonTypes(type.ElementType, collected);
+    }
+
+    private void CollectScalarizedNamedAggregateOrderedComparisonTypes(
+        StarkTypeSymbol type,
+        Dictionary<string, StarkTypeSymbol> collected)
+    {
+        if (type.Kind != StarkTypeKind.Named
+            || !SupportsScalarizedAggregateOrderedComparison(type)
+            || !TryGetScalarizableAggregateLeaves(
+                type,
+                requireRepresentationPreserving: false,
+                ignoreScalarizationThresholds: true,
+                allowTextLeaves: true,
+                allowSliceLeaves: false,
+                out _))
+        {
+            return;
+        }
+
+        var helperName = GetScalarizedAggregateOrderedComparisonHelperName(type);
+        collected.TryAdd(helperName, type);
+    }
+
+    private bool SupportsScalarizedAggregateOrderedComparison(StarkTypeSymbol rootType)
+    {
+        return rootType.Kind switch
+        {
+            StarkTypeKind.FixedArray => true,
+            StarkTypeKind.Named => ResolveNamedTypeSymbol(rootType) is { } namedType
+                && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                    || (namedType.Kind == DeclarationKind.Enum && namedType.EnumVariants is { Count: > 0 })),
+            _ => false
+        };
+    }
+
+    private bool TryGetScalarizableAggregateLeaves(
+        StarkTypeSymbol type,
+        bool requireRepresentationPreserving,
+        bool ignoreScalarizationThresholds,
+        bool allowTextLeaves,
+        bool allowSliceLeaves,
+        out IReadOnlyList<AggregateScalarLeaf> leaves)
+    {
+        leaves = Array.Empty<AggregateScalarLeaf>();
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(type)) is not { } layout
+            || layout.SizeBytes <= 0
+            || (!ignoreScalarizationThresholds && layout.SizeBytes > AggregateScalarizationThresholdBytes))
+        {
+            return false;
+        }
+
+        var collectedLeaves = new List<AggregateScalarLeaf>();
+        if (!TryCollectScalarizableAggregateLeaves(
+                NormalizeAggregateType(type),
+                requireRepresentationPreserving,
+                allowTextLeaves,
+                allowSliceLeaves,
+                [],
+                collectedLeaves))
+        {
+            return false;
+        }
+
+        if (collectedLeaves.Count == 0
+            || (!ignoreScalarizationThresholds && collectedLeaves.Count > AggregateScalarizationMaxLeafCount))
+        {
+            return false;
+        }
+
+        leaves = collectedLeaves;
+        return true;
+    }
+
+    private bool TryCollectScalarizableAggregateLeaves(
+        StarkTypeSymbol type,
+        bool requireRepresentationPreserving,
+        bool allowTextLeaves,
+        bool allowSliceLeaves,
+        List<int> path,
+        List<AggregateScalarLeaf> leaves)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        switch (normalizedType.Kind)
+        {
+            case StarkTypeKind.Bool:
+            case StarkTypeKind.Integer:
+            case StarkTypeKind.Float:
+            case StarkTypeKind.RawPointer:
+                leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
+                return true;
+            case StarkTypeKind.Ascii when allowTextLeaves:
+            case StarkTypeKind.Unicode when allowTextLeaves:
+                leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
+                return true;
+            case StarkTypeKind.Slice when allowSliceLeaves:
+                leaves.Add(new AggregateScalarLeaf([.. path], normalizedType));
+                return true;
+            case StarkTypeKind.FixedArray when normalizedType.ElementType is not null && normalizedType.FixedLength is int fixedLength:
+                for (var index = 0; index < fixedLength; index++)
+                {
+                    path.Add(index);
+                    if (!TryCollectScalarizableAggregateLeaves(
+                            normalizedType.ElementType,
+                            requireRepresentationPreserving,
+                            allowTextLeaves,
+                            allowSliceLeaves,
+                            path,
+                            leaves))
+                    {
+                        path.RemoveAt(path.Count - 1);
+                        return false;
+                    }
+
+                    path.RemoveAt(path.Count - 1);
+                }
+
+                return true;
+            case StarkTypeKind.Named:
+            {
+                var namedType = ResolveNamedTypeSymbol(normalizedType);
+                if (namedType is null
+                    || !TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields))
+                {
+                    return false;
+                }
+
+                var sizeBytes = 0;
+                var alignmentBytes = 1;
+                for (var index = 0; index < orderedFields.Count; index++)
+                {
+                    var field = orderedFields[index];
+                    var fieldLayout = TryGetConcreteTypeLayout(NormalizeAggregateType(field.Type));
+                    if (fieldLayout is null)
+                    {
+                        return false;
+                    }
+
+                    var alignedOffset = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                    if (requireRepresentationPreserving && alignedOffset != sizeBytes)
+                    {
+                        return false;
+                    }
+
+                    path.Add(index);
+                    if (!TryCollectScalarizableAggregateLeaves(
+                            field.Type,
+                            requireRepresentationPreserving,
+                            allowTextLeaves,
+                            allowSliceLeaves,
+                            path,
+                            leaves))
+                    {
+                        path.RemoveAt(path.Count - 1);
+                        return false;
+                    }
+
+                    path.RemoveAt(path.Count - 1);
+                    sizeBytes = checked(alignedOffset + fieldLayout.SizeBytes);
+                    alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+                }
+
+                if (requireRepresentationPreserving && AlignTo(sizeBytes, alignmentBytes) != sizeBytes)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    private string EmitAggregateLeafValueExtraction(
+        StringBuilder builder,
+        StarkTypeSymbol rootType,
+        string rootValue,
+        IReadOnlyList<int> indices,
+        string purpose)
+    {
+        if (indices.Count == 0)
+        {
+            return rootValue;
+        }
+
+        var currentValue = rootValue;
+        var currentType = NormalizeAggregateType(rootType);
+        var step = 0;
+
+        foreach (var index in indices)
+        {
+            var nextType = GetAggregateElementType(currentType, index)
+                ?? throw new UnsupportedBodyEmissionException(
+                    $"Cannot extract aggregate leaf for '{rootType.DisplayName}'.");
+            var extracted = $"%{EscapeIdentifier($"{purpose}_{step++}")}";
+            builder.AppendLine($"  {extracted} = extractvalue {MapType(currentType)} {currentValue}, {index}");
+            currentValue = extracted;
+            currentType = NormalizeAggregateType(nextType);
+        }
+
+        return currentValue;
     }
 
     private void EmitTextEqualityHelperDefinition(
@@ -2103,6 +2466,94 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine("return_greater:");
         builder.AppendLine("  ret i32 1");
         builder.AppendLine("}");
+    }
+
+    private void EmitScalarizedNamedAggregateOrderedComparisonHelperDefinition(
+        StringBuilder builder,
+        StarkTypeSymbol aggregateType)
+    {
+        if (aggregateType.Kind != StarkTypeKind.Named
+            || !SupportsScalarizedAggregateOrderedComparison(aggregateType))
+        {
+            throw new InvalidOperationException(
+                $"Named aggregate ordered comparison helper requires a scalarizable named aggregate type, but found '{aggregateType.DisplayName}'.");
+        }
+
+        if (!TryGetScalarizableAggregateLeaves(
+                aggregateType,
+                requireRepresentationPreserving: false,
+                ignoreScalarizationThresholds: true,
+                allowTextLeaves: true,
+                allowSliceLeaves: false,
+                out var leaves))
+        {
+            throw new InvalidOperationException(
+                $"Named aggregate ordered comparison helper requires a scalarizable aggregate shape for '{aggregateType.DisplayName}'.");
+        }
+
+        var helperName = GetScalarizedAggregateOrderedComparisonHelperName(aggregateType);
+        var aggregateLlvmType = MapType(aggregateType);
+
+        builder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({aggregateLlvmType} %left, {aggregateLlvmType} %right) {{");
+        builder.AppendLine("entry:");
+        if (leaves.Count == 0)
+        {
+            builder.AppendLine("  ret i32 0");
+            builder.AppendLine("}");
+            return;
+        }
+
+        builder.AppendLine("  br label %compare_0");
+
+        for (var index = 0; index < leaves.Count; index++)
+        {
+            EmitScalarizedNamedAggregateOrderedComparisonLeaf(
+                builder,
+                aggregateType,
+                leaves[index],
+                index,
+                index == leaves.Count - 1);
+        }
+
+        builder.AppendLine("return_equal:");
+        builder.AppendLine("  ret i32 0");
+        builder.AppendLine("return_less:");
+        builder.AppendLine("  ret i32 -1");
+        builder.AppendLine("return_greater:");
+        builder.AppendLine("  ret i32 1");
+        builder.AppendLine("}");
+    }
+
+    private void EmitScalarizedNamedAggregateOrderedComparisonLeaf(
+        StringBuilder builder,
+        StarkTypeSymbol rootType,
+        AggregateScalarLeaf leaf,
+        int index,
+        bool isLastElement)
+    {
+        var compareBlock = $"compare_{index}";
+        var checkGreaterBlock = $"check_greater_{index}";
+        var nextBlock = isLastElement ? "return_equal" : $"compare_{index + 1}";
+
+        builder.AppendLine();
+        builder.AppendLine($"{compareBlock}:");
+        var leftValue = EmitAggregateLeafValueExtraction(builder, rootType, "%left", leaf.Indices, $"namedcmp_left_{index}");
+        var rightValue = EmitAggregateLeafValueExtraction(builder, rootType, "%right", leaf.Indices, $"namedcmp_right_{index}");
+
+        if (TryEmitOrderedComparisonValue(
+                builder,
+                leaf.Type,
+                leftValue,
+                rightValue,
+                index,
+                checkGreaterBlock,
+                nextBlock))
+        {
+            return;
+        }
+
+        throw new UnsupportedBodyEmissionException(
+            $"Unsupported ordered comparison leaf type '{leaf.Type.DisplayName}' in named aggregate helper.");
     }
 
     private void EmitFixedArrayOrderedComparisonElement(
@@ -4110,6 +4561,11 @@ internal sealed class LlvmIrEmitter
         return $"{FixedArrayCompareHelperNamePrefix}{EscapeIdentifier(fixedArrayType.DisplayName)}";
     }
 
+    private static string GetScalarizedAggregateOrderedComparisonHelperName(StarkTypeSymbol aggregateType)
+    {
+        return $"{ScalarizedAggregateCompareHelperNamePrefix}{EscapeIdentifier(aggregateType.DisplayName)}";
+    }
+
     private static string EscapeFileName(string filePath)
     {
         return filePath.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -4963,6 +5419,53 @@ internal sealed class LlvmIrEmitter
             : null;
     }
 
+    private static StarkTypeSymbol NormalizeAggregateType(StarkTypeSymbol type)
+    {
+        return type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+    }
+
+    private StarkTypeSymbol? GetAggregateElementType(StarkTypeSymbol type, int index)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.FixedArray when normalizedType.ElementType is not null => normalizedType.ElementType,
+            StarkTypeKind.Named when ResolveNamedTypeSymbol(normalizedType) is { } namedType
+                                       && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
+                                       && index >= 0
+                                       && index < orderedFields.Count
+                => orderedFields[index].Type,
+            _ => null
+        };
+    }
+
+    private bool TryGetScalarizableNamedAggregateFields(
+        NamedTypeSymbol namedType,
+        out IReadOnlyList<FieldSymbol> orderedFields)
+    {
+        if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            orderedFields = namedType.OrderedFields;
+            return true;
+        }
+
+        if (namedType.Kind == DeclarationKind.Enum
+            && _enumLayoutModel.Layouts.TryGetValue(namedType.Name, out var enumLayout))
+        {
+            orderedFields = enumLayout.OrderedFields;
+            return true;
+        }
+
+        orderedFields = Array.Empty<FieldSymbol>();
+        return false;
+    }
+
     private sealed class FunctionBodyEmitter
     {
         private readonly StringBuilder _builder;
@@ -5406,6 +5909,11 @@ internal sealed class LlvmIrEmitter
                     return;
                 }
 
+                if (TryEmitScalarizedNamedAggregateOrderedComparison(result, binary))
+                {
+                    return;
+                }
+
                 if (TryEmitSliceEquality(
                         result,
                         binary.Operator,
@@ -5594,11 +6102,76 @@ internal sealed class LlvmIrEmitter
             return true;
         }
 
+        private bool TryEmitScalarizedNamedAggregateOrderedComparison(string result, SsaBinaryRValue binary)
+        {
+            if (binary.Operator is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                return false;
+            }
+
+            var leftType = NormalizeAggregateType(binary.Left.Type);
+            var rightType = NormalizeAggregateType(binary.Right.Type);
+            if (leftType.Kind != StarkTypeKind.Named
+                || rightType.Kind != StarkTypeKind.Named
+                || leftType.NamedType != rightType.NamedType
+                || !SupportsScalarizedAggregateOrderedComparison(leftType))
+            {
+                return false;
+            }
+
+            if (!TryGetScalarizableAggregateLeaves(
+                    leftType,
+                    requireRepresentationPreserving: false,
+                    ignoreScalarizationThresholds: true,
+                    allowTextLeaves: true,
+                    allowSliceLeaves: false,
+                    out _))
+            {
+                return false;
+            }
+
+            var helperName = GetScalarizedAggregateOrderedComparisonHelperName(leftType);
+            var compareResult = $"%{EscapeIdentifier(CreateAbiTempName("namedcmp_root"))}";
+            var predicate = binary.Operator switch
+            {
+                SsaBinaryOperator.LessThan => "slt",
+                SsaBinaryOperator.LessThanOrEqual => "sle",
+                SsaBinaryOperator.GreaterThan => "sgt",
+                SsaBinaryOperator.GreaterThanOrEqual => "sge",
+                _ => string.Empty
+            };
+
+            if (predicate.Length == 0)
+            {
+                return false;
+            }
+
+            AppendLine(
+                $"  {compareResult} = call i32 @{EscapeIdentifier(helperName)}({MapType(leftType)} {FormatValue(binary.Left)}, {MapType(rightType)} {FormatValue(binary.Right)})");
+            AppendLine($"  {result} = icmp {predicate} i32 {compareResult}, 0");
+            return true;
+        }
+
         private bool SupportsScalarizedAggregateEquality(StarkTypeSymbol rootType)
         {
             return rootType.Kind switch
             {
                 StarkTypeKind.FixedArray => true,
+                StarkTypeKind.Named => _resolveNamedTypeSymbol(rootType) is { } namedType
+                    && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                        || (namedType.Kind == DeclarationKind.Enum && _enumLayouts.ContainsKey(namedType.Name))),
+                _ => false
+            };
+        }
+
+        private bool SupportsScalarizedAggregateOrderedComparison(StarkTypeSymbol rootType)
+        {
+            return rootType.Kind switch
+            {
                 StarkTypeKind.Named => _resolveNamedTypeSymbol(rootType) is { } namedType
                     && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
                         || (namedType.Kind == DeclarationKind.Enum && _enumLayouts.ContainsKey(namedType.Name))),
@@ -6288,6 +6861,35 @@ internal sealed class LlvmIrEmitter
                         $"Cannot scalarize aggregate leaf '{value.Text}' for '{rootType.DisplayName}'.");
                 var extracted = $"%{EscapeIdentifier(CreateAbiTempName("scalar_extract"))}";
                 AppendLine($"  {extracted} = extractvalue {MapType(currentType)} {currentValue}, {index}");
+                currentValue = extracted;
+                currentType = NormalizeAggregateType(nextType);
+            }
+
+            return currentValue;
+        }
+
+        private string EmitAggregateLeafValueExtraction(
+            StringBuilder builder,
+            StarkTypeSymbol rootType,
+            string rootValue,
+            IReadOnlyList<int> indices,
+            string purpose)
+        {
+            if (indices.Count == 0)
+            {
+                return rootValue;
+            }
+
+            var currentValue = rootValue;
+            var currentType = NormalizeAggregateType(rootType);
+
+            foreach (var index in indices)
+            {
+                var nextType = GetAggregateElementType(currentType, index)
+                    ?? throw new UnsupportedBodyEmissionException(
+                        $"Cannot extract aggregate leaf for '{rootType.DisplayName}'.");
+                var extracted = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+                builder.AppendLine($"  {extracted} = extractvalue {MapType(currentType)} {currentValue}, {index}");
                 currentValue = extracted;
                 currentType = NormalizeAggregateType(nextType);
             }
@@ -7010,8 +7612,6 @@ internal sealed class LlvmIrEmitter
                 _ => throw new UnsupportedBodyEmissionException($"Text operations require an ascii/unicode value, but found '{textType.DisplayName}'.")
             };
         }
-
-        private sealed record AggregateScalarLeaf(IReadOnlyList<int> Indices, StarkTypeSymbol Type);
 
         private void AppendLine(string text)
         {

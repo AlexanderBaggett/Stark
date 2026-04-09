@@ -75,7 +75,13 @@ internal static partial class PackageImageLoader
                         method.IsStrictFp,
                         asm: null,
                         method.GenericParameters,
-                        hasBody: HasGenericTemplateBody(
+                        hasBody: HasPublishedGenericTemplateBody(
+                            module.Module,
+                            module.Module.ModuleName,
+                            qualifiedMethodName,
+                            method.SymbolName,
+                            method.Parameters)
+                        || HasGenericTemplateBody(
                             module.Module,
                             publishedOverloadKeysBySymbol,
                             $"{module.Module.ModuleName}.{qualifiedMethodName}",
@@ -121,7 +127,13 @@ internal static partial class PackageImageLoader
                     function.IsStrictFp,
                     function.Asm,
                     function.GenericParameters,
-                    hasBody: HasGenericTemplateBody(
+                    hasBody: HasPublishedGenericTemplateBody(
+                        module.Module,
+                        module.Module.ModuleName,
+                        function.QualifiedName,
+                        function.SymbolName,
+                        function.Parameters)
+                    || HasGenericTemplateBody(
                         module.Module,
                         publishedOverloadKeysBySymbol,
                         function.QualifiedName,
@@ -165,5 +177,27 @@ internal static partial class PackageImageLoader
         return publishedOverloadKeysBySymbol.TryGetValue(symbolName, out var overloadKey)
             ? overloadKey
             : null;
+    }
+
+    private static bool HasPublishedGenericTemplateBody(
+        StarkPackageModuleManifest module,
+        string moduleName,
+        string qualifiedName,
+        string symbolName,
+        IReadOnlyList<StarkPackageTypedParameterManifest> parameters)
+    {
+        var templates = module.EffectiveGenericTemplates?.Functions;
+        if (templates is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        var moduleQualifiedName = $"{moduleName}.{qualifiedName}";
+        return templates.Any(template =>
+            string.Equals(template.QualifiedResolvedName, qualifiedName, StringComparison.Ordinal)
+            || string.Equals(template.QualifiedResolvedName, moduleQualifiedName, StringComparison.Ordinal)
+            || string.Equals(template.QualifiedName, qualifiedName, StringComparison.Ordinal)
+            || string.Equals(template.QualifiedName, moduleQualifiedName, StringComparison.Ordinal)
+            || string.Equals(template.QualifiedName, symbolName, StringComparison.Ordinal));
     }
 }

@@ -174,6 +174,101 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
     }
 
     [Fact]
+    public void ManifestBackedGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-structured-generic-loading-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Pair<T>(T Value) { }
+
+                public record Box(i32 Dummy) {
+                    fn Pair<T> MakePair<T>(borrow Box self, T value) {
+                        stack Pair<T> pair = new Pair<T>(value);
+                        return pair;
+                    }
+                }
+
+                public fn Pair<T> Relay<T>(Box box, T value) {
+                    return box.MakePair(value);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            GenericTemplates = module.GenericTemplates is { } genericTemplates
+                                ? genericTemplates with
+                                {
+                                    Functions = genericTemplates.Functions
+                                        .Select(template => template with
+                                        {
+                                            BodyText = "{ return this is not valid Stark; }"
+                                        })
+                                        .ToArray()
+                                }
+                                : null
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(Facade.Box box, i32 value) {
+                        stack Facade.Pair<i32> pair = Facade.Relay(box, value);
+                        return value;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            Assert.Contains(
+                mir.Functions,
+                static function => function.Name == "__stark_mono_fn_Demo__Facade_Relay__i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-call-summary-function-fallback-integration-");

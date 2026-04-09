@@ -195,6 +195,63 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task RecordOrderedComparisonsAreLexicographicAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+
+            fn bool Less(Many left, Many right) {
+                return left < right;
+            }
+
+            fn bool LessOrEqual(Many left, Many right) {
+                return left <= right;
+            }
+
+            fn bool Greater(Many left, Many right) {
+                return left > right;
+            }
+
+            fn bool GreaterOrEqual(Many left, Many right) {
+                return left >= right;
+            }
+
+            export ffi fn i32 main() {
+                stack Many lessLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many lessRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
+                stack Many lessOrEqualLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many lessOrEqualRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many greaterLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
+                stack Many greaterRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many greaterOrEqualLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many greaterOrEqualRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                stack Many topLeft = new Many() { A = 2, B = 0, C = 0, D = 0, E = 0 };
+                stack Many topRight = new Many() { A = 1, B = 9, C = 9, D = 9, E = 9 };
+
+                if (Less(lessLeft, lessRight)
+                    && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
+                    && Greater(greaterLeft, greaterRight)
+                    && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight)
+                    && GreaterOrEqual(topLeft, topRight)) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
     public async Task FixedArrayEqualityAndInequalityCompareScalarElementsAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
