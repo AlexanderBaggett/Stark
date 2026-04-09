@@ -525,7 +525,10 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
-            templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
+            if (!string.IsNullOrEmpty(template.BodyText))
+            {
+                templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
+            }
         }
 
         return templates;
@@ -542,7 +545,10 @@ internal static partial class PackageImageLoader
                 continue;
             }
 
-            templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
+            if (!string.IsNullOrEmpty(template.BodyText))
+            {
+                templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
+            }
         }
 
         return templates;

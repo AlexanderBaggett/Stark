@@ -401,7 +401,7 @@ internal sealed record StarkPackageFunctionTemplateManifest(
     string QualifiedResolvedName,
     string QualifiedName,
     string OverloadKey,
-    string BodyText,
+    string? BodyText,
     int? TopLevelStatementCount = null,
     StarkPackageTypedTemplateBodyManifest? TypedBody = null,
     IReadOnlyList<StarkPackageDeferredFunctionInstantiationManifest>? DeferredFunctionInstantiations = null,

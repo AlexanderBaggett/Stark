@@ -5604,15 +5604,65 @@ public sealed class CompilerPipelineTests
             var identity = Assert.Single(templates, static template => template.QualifiedResolvedName == "Facade.Identity");
             Assert.Equal("Facade.Identity", identity.QualifiedName);
             Assert.Equal("(T)", identity.OverloadKey);
-            Assert.Contains("stack T copy = value;", identity.BodyText, StringComparison.Ordinal);
-            Assert.Contains("return copy;", identity.BodyText, StringComparison.Ordinal);
+            Assert.Null(identity.BodyText);
+            Assert.NotNull(identity.TypedBody);
             Assert.Equal(2, identity.TopLevelStatementCount);
 
             var echo = Assert.Single(templates, static template => template.QualifiedResolvedName == "Facade.Box.Echo");
             Assert.Equal("Facade.Box.Echo", echo.QualifiedName);
             Assert.Equal("(T)", echo.OverloadKey);
-            Assert.Contains("return value;", echo.BodyText, StringComparison.Ordinal);
+            Assert.Null(echo.BodyText);
+            Assert.NotNull(echo.TypedBody);
             Assert.Equal(1, echo.TopLevelStatementCount);
+
+            var json = manifest.ToJson();
+            Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"TypedBody\"", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageManifestRetainsGenericTemplateBodyTextWhenTypedSubsetCannotRepresentBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-body-fallback-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 SumPair<T>(i32 value, T tag) {
+                    stack i32 first = value, second = value + 1;
+                    return first + second;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.SumPair");
+
+            Assert.Null(template.TypedBody);
+            Assert.NotNull(template.BodyText);
+            Assert.Contains("stack i32 first = value, second = value + 1;", template.BodyText, StringComparison.Ordinal);
+            Assert.Contains("return first + second;", template.BodyText, StringComparison.Ordinal);
         }
         finally
         {

@@ -125,13 +125,31 @@ internal static partial class PackageImageBuilder
                 fieldAccessesByFunction.TryGetValue(lookupName, out var fieldAccesses);
                 memberCallsByFunction.TryGetValue(lookupName, out var memberCalls);
 
+                var typedBody = BuildPublishedTypedTemplateBody(
+                    module,
+                    functionSignature.ReturnType,
+                    function.Body,
+                    literalsByLocation,
+                    objectCreations,
+                    enumConstructors,
+                    enumCalls,
+                    enumValues,
+                    enumPatterns,
+                    aggregatePatterns,
+                    localDeclarations,
+                    conversions,
+                    directCalls,
+                    memberCalls);
+
                 return new StarkPackageFunctionTemplateManifest(
                     QualifiedResolvedName: qualifiedResolvedName,
                     QualifiedName: $"{module.SyntaxModel.ModuleName}.{function.DisplaySourceName}",
                     OverloadKey: FunctionOverloadFacts.BuildOverloadKey(function.ParameterList),
-                    BodyText: GetContextSourceText(module.ParseResult, function.Body),
+                    BodyText: typedBody is null
+                        ? GetContextSourceText(module.ParseResult, function.Body)
+                        : null,
                     TopLevelStatementCount: function.Body.block()?.statement().Length,
-                    TypedBody: BuildPublishedTypedTemplateBody(module, functionSignature.ReturnType, function.Body, literalsByLocation, objectCreations, enumConstructors, enumCalls, enumValues, enumPatterns, aggregatePatterns, localDeclarations, conversions, directCalls, memberCalls),
+                    TypedBody: typedBody,
                     DeferredFunctionInstantiations: deferredTriggers is { Count: > 0 }
                         ? deferredTriggers
                             .Where(static trigger => trigger.Signature.TemplateName is not null && trigger.Signature.TypeArguments is { Count: > 0 })
