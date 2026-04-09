@@ -4503,6 +4503,130 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedTypedTerminalIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-terminal-if-body-bridge-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag) {
+                    if (takeLeft) {
+                        return left;
+                    } else if (takeMiddle) {
+                        return middle;
+                    } else {
+                        return right;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var chooseTerminal = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.ChooseTerminal");
+            Assert.Null(chooseTerminal.BodyText);
+            Assert.NotNull(chooseTerminal.TypedBody);
+
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(
+                        manifestPath,
+                        Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                        manifest,
+                        facadeModule),
+                    out var sourceText));
+
+            Assert.Contains("public fn i32 ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("if (takeLeft)", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return left;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return middle;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return right;", sourceText, StringComparison.Ordinal);
+
+            var corruptedTemplate = chooseTerminal with
+            {
+                BodyText = "{ return 0; }"
+            };
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = new StarkPackageGenericTemplateSection(
+                                module.EffectiveGenericTemplates!.Functions
+                                    .Select(template => template.QualifiedResolvedName == corruptedTemplate.QualifiedResolvedName
+                                        ? corruptedTemplate
+                                        : template)
+                                    .ToArray())
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+                        return Facade.ChooseTerminal(takeLeft, takeMiddle, left, middle, right, 0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var chooseBranch = Assert.Single(
+                mir.Functions,
+                static function => function.Name.StartsWith("__stark_mono_fn_Demo__Facade_ChooseTerminal__", StringComparison.Ordinal));
+            Assert.True(chooseBranch.HasBody);
+            Assert.True(chooseBranch.SupportsDirectCodeGeneration);
+            Assert.Contains(chooseBranch.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch);
+            Assert.True(
+                chooseBranch.Blocks.Count(static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Return) >= 3);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedTypedWhileTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-while-body-bridge-");

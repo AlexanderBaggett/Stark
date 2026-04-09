@@ -329,17 +329,9 @@ internal static partial class PackageImageBuilder
 
         var lastStatement = publishedStatements[^1];
         var lastStatementKind = lastStatement.Kind;
-        if (string.Equals(lastStatementKind, "return", StringComparison.Ordinal))
-        {
-            if (lastStatement.Expression is null
-                && returnType.Kind != StarkTypeKind.Void)
-            {
-                return null;
-            }
-        }
-        else if (!(returnType.Kind == StarkTypeKind.Void
-                   && CanUsePublishedTypedTemplateImplicitVoidReturnStatement(lastStatement))
-                 && !CanUseTypedTemplateSwitchAsTerminal(lastStatement, returnType))
+        if (!CanUseTypedTemplateStatementAsTerminal(lastStatement, returnType)
+            && !(returnType.Kind == StarkTypeKind.Void
+                 && CanUsePublishedTypedTemplateImplicitVoidReturnStatement(lastStatement)))
         {
             return null;
         }
@@ -915,6 +907,38 @@ internal static partial class PackageImageBuilder
         return false;
     }
 
+    private static bool CanUseTypedTemplateStatementAsTerminal(
+        StarkPackageTypedTemplateStatementManifest statement,
+        StarkTypeSymbol returnType)
+    {
+        if (string.Equals(statement.Kind, "return", StringComparison.Ordinal))
+        {
+            return statement.Expression is not null || returnType.Kind == StarkTypeKind.Void;
+        }
+
+        if (string.Equals(statement.Kind, "if", StringComparison.Ordinal))
+        {
+            return CanUseTypedTemplateIfAsTerminal(statement, returnType);
+        }
+
+        return CanUseTypedTemplateSwitchAsTerminal(statement, returnType);
+    }
+
+    private static bool CanUseTypedTemplateIfAsTerminal(
+        StarkPackageTypedTemplateStatementManifest statement,
+        StarkTypeSymbol returnType)
+    {
+        if (!string.Equals(statement.Kind, "if", StringComparison.Ordinal)
+            || statement.ThenStatements is not { Count: > 0 }
+            || statement.ElseStatements is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        return CanUseTypedTemplateStatementListAsTerminal(statement.ThenStatements, returnType)
+            && CanUseTypedTemplateStatementListAsTerminal(statement.ElseStatements, returnType);
+    }
+
     private static bool CanUseTypedTemplateSwitchAsTerminal(
         StarkPackageTypedTemplateStatementManifest statement,
         StarkTypeSymbol returnType)
@@ -927,25 +951,22 @@ internal static partial class PackageImageBuilder
 
         foreach (var switchCase in statement.SwitchCases)
         {
-            if (switchCase.Statements is not { Count: > 0 })
-            {
-                return false;
-            }
-
-            var lastStatement = switchCase.Statements[^1];
-            if (!string.Equals(lastStatement.Kind, "return", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            if (lastStatement.Expression is null
-                && returnType.Kind != StarkTypeKind.Void)
+            if (switchCase.Statements is not { Count: > 0 }
+                || !CanUseTypedTemplateStatementListAsTerminal(switchCase.Statements, returnType))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private static bool CanUseTypedTemplateStatementListAsTerminal(
+        IReadOnlyList<StarkPackageTypedTemplateStatementManifest> statements,
+        StarkTypeSymbol returnType)
+    {
+        return statements.Count != 0
+            && CanUseTypedTemplateStatementAsTerminal(statements[^1], returnType);
     }
 
     private static bool TryBuildPublishedTypedTemplateSwitchCaseList(
