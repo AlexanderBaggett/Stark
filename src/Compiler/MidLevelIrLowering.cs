@@ -2383,7 +2383,7 @@ internal sealed class MidLevelIrLowerer(
         private MidLevelIrOperand? LowerImportedTypedTemplateIndexAccess(
             ImportedTemplateTypedBodyExpressionSummary expression)
         {
-            if (expression.Args.Count < 2)
+            if (expression.Args.Count < 1)
             {
                 return null;
             }
@@ -2418,7 +2418,7 @@ internal sealed class MidLevelIrLowerer(
 
                 if (expression.Args.Count != 3)
                 {
-                    MarkUnsupported(reason: "Imported typed template-body text indexing currently requires exactly one integer index or two integer indices.");
+                    MarkUnsupported(reason: "Imported typed template-body text postfix brackets currently support full-view, single-index, or start-and-length access.");
                     return null;
                 }
 

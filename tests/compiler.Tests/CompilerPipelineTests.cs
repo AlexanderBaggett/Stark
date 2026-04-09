@@ -4478,7 +4478,7 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void StructuredPackageImageDocumentsRebuildTypedLoopControlTemplateBodiesFromTypedSummariesWhenBodyTextIsCorrupted()
+    public void StructuredPackageImageDocumentsKeepTypedLoopControlGenericDeclarationsWhenBodyTextIsCorrupted()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-structured-loop-control-body-bridge-");
         var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
@@ -4561,11 +4561,12 @@ public sealed class CompilerPipelineTests
                     out var importedDocument));
 
             Assert.DoesNotContain("this is not valid Stark", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("while willexit (index < count)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("if (index < 2)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("continue;", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("break;", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32 SumWhileControl<T>(i32 count, i32 stopAt, T tag);", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag);", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("while willexit (index < count)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continue;", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("break;", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -10613,7 +10614,8 @@ public sealed class CompilerPipelineTests
                         typedFacadeModule),
                     out var importedDocument));
             Assert.DoesNotContain("this is not valid Stark", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("return text[];", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn ascii WholeAscii<T>(ascii text, T tag);", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return text[];", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -10639,7 +10641,8 @@ public sealed class CompilerPipelineTests
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
             Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("return text[];", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn ascii WholeAscii<T>(ascii text, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return text[];", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
             Assert.NotNull(mir);

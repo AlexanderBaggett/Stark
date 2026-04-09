@@ -232,32 +232,6 @@ internal static partial class PackageImageLoader
 
     private static bool TryBuildStructuredModuleSource(ResolvedPackageModule module, out string sourceText)
     {
-        var genericTemplates = module.Module.EffectiveGenericTemplates?.Functions;
-        if (genericTemplates is not { Count: > 0 })
-        {
-            return TryBuildModuleSource(module, out sourceText);
-        }
-
-        var renderedTemplates = genericTemplates
-            .Select(template => TryRenderGenericTemplateBody(template, out var renderedBodyText)
-                ? template with { BodyText = renderedBodyText, TypedBody = null }
-                : template)
-            .ToArray();
-
-        var rewrittenModule = module with
-        {
-            Module = module.Module with
-            {
-                GenericTemplates = new StarkPackageGenericTemplateSection(renderedTemplates),
-                CompilerSections = module.Module.CompilerSections is null
-                    ? null
-                    : module.Module.CompilerSections with
-                    {
-                        GenericTemplates = new StarkPackageGenericTemplateSection(renderedTemplates)
-                    }
-            }
-        };
-
-        return TryBuildModuleSource(rewrittenModule, out sourceText);
+        return TryBuildModuleSource(module, out sourceText);
     }
 }

@@ -249,6 +249,14 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn Pair<T> Relay<T>(Box box, T value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return box.MakePair(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return pair;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
             Assert.NotNull(mir);
             Assert.Contains(
@@ -350,10 +358,12 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
             Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("while willexit (index < count)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("continue;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("break;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32 SumWhileControl<T>(i32 count, i32 stopAt, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("while willexit (index < count)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continue;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("break;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
             Assert.NotNull(mir);
