@@ -1090,8 +1090,7 @@ internal sealed class MidLevelIrLowerer(
         {
             if (statement.Name is null
                 || statement.StorageClass is null
-                || statement.Type is not { } statementType
-                || statement.Expression is null)
+                || statement.Type is not { } statementType)
             {
                 return false;
             }
@@ -1102,6 +1101,11 @@ internal sealed class MidLevelIrLowerer(
             TrackDeclaredLocal(name, declaredType);
             Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
             InitializeRuntimeDropState(name, declaredType, isActive: false);
+
+            if (statement.Expression is null)
+            {
+                return true;
+            }
 
             var initializer = LowerImportedTypedTemplateExpression(statement.Expression, declaredType);
             if (initializer is null)

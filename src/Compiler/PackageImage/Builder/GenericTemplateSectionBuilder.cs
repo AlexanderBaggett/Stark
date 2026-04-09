@@ -427,8 +427,9 @@ internal static partial class PackageImageBuilder
                 localVariable.variableDeclarators().variableDeclarator().Length);
             foreach (var declarator in localVariable.variableDeclarators().variableDeclarator())
             {
-                if (declarator.variableInitializer() is not { } variableInitializer
-                    || !TryBuildPublishedTypedTemplateVariableInitializer(
+                StarkPackageTypedTemplateExpressionManifest? initializer = null;
+                if (declarator.variableInitializer() is { } variableInitializer
+                    && !TryBuildPublishedTypedTemplateVariableInitializer(
                         module,
                         variableInitializer,
                         localDeclaration.Type,
@@ -441,19 +442,27 @@ internal static partial class PackageImageBuilder
                         directCallOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
-                        out var initializer))
+                        out initializer))
                 {
                     publishedStatements = [];
                     return false;
                 }
 
-                builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
-                    Kind: "local-variable",
-                    Expression: initializer,
-                    Name: declarator.Identifier().GetText(),
-                    StorageClass: localVariable.storageClass().GetText(),
-                    IsMutable: localVariable.MUT() is not null,
-                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
+                builtStatements.Add(
+                    initializer is null
+                        ? new StarkPackageTypedTemplateStatementManifest(
+                            Kind: "local-variable",
+                            Name: declarator.Identifier().GetText(),
+                            StorageClass: localVariable.storageClass().GetText(),
+                            IsMutable: localVariable.MUT() is not null,
+                            Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module))
+                        : new StarkPackageTypedTemplateStatementManifest(
+                            Kind: "local-variable",
+                            Expression: initializer,
+                            Name: declarator.Identifier().GetText(),
+                            StorageClass: localVariable.storageClass().GetText(),
+                            IsMutable: localVariable.MUT() is not null,
+                            Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
             }
 
             publishedStatements = builtStatements;
@@ -1314,8 +1323,9 @@ internal static partial class PackageImageBuilder
                 localForVariableDeclaration.variableDeclarators().variableDeclarator().Length);
             foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
             {
-                if (declarator.variableInitializer() is not { } variableInitializer
-                    || !TryBuildPublishedTypedTemplateVariableInitializer(
+                StarkPackageTypedTemplateExpressionManifest? initializerValue = null;
+                if (declarator.variableInitializer() is { } variableInitializer
+                    && !TryBuildPublishedTypedTemplateVariableInitializer(
                         module,
                         variableInitializer,
                         localDeclaration.Type,
@@ -1328,19 +1338,27 @@ internal static partial class PackageImageBuilder
                         directCallOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
-                        out var initializerValue))
+                        out initializerValue))
                 {
                     initializerStatements = [];
                     return false;
                 }
 
-                builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
-                    Kind: "local-variable",
-                    Expression: initializerValue,
-                    Name: declarator.Identifier().GetText(),
-                    StorageClass: localForVariableDeclaration.storageClass().GetText(),
-                    IsMutable: localForVariableDeclaration.MUT() is not null,
-                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
+                builtStatements.Add(
+                    initializerValue is null
+                        ? new StarkPackageTypedTemplateStatementManifest(
+                            Kind: "local-variable",
+                            Name: declarator.Identifier().GetText(),
+                            StorageClass: localForVariableDeclaration.storageClass().GetText(),
+                            IsMutable: localForVariableDeclaration.MUT() is not null,
+                            Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module))
+                        : new StarkPackageTypedTemplateStatementManifest(
+                            Kind: "local-variable",
+                            Expression: initializerValue,
+                            Name: declarator.Identifier().GetText(),
+                            StorageClass: localForVariableDeclaration.storageClass().GetText(),
+                            IsMutable: localForVariableDeclaration.MUT() is not null,
+                            Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
             }
 
             initializerStatements = builtStatements;

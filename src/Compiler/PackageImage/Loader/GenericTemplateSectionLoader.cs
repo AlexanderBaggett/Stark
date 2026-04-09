@@ -50,14 +50,14 @@ internal static partial class PackageImageLoader
 
         if (string.Equals(manifest.Kind, "local-variable", StringComparison.Ordinal))
         {
-            if (manifest.Name is null || manifest.StorageClass is null || manifest.Type is null || expression is null)
+            if (manifest.Name is null || manifest.StorageClass is null || manifest.Type is null)
             {
                 return false;
             }
 
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration,
-                expression,
+                Expression: expression!,
                 Name: manifest.Name,
                 StorageClass: manifest.StorageClass,
                 IsMutable: manifest.IsMutable,
