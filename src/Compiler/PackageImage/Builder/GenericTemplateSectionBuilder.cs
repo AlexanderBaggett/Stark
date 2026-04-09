@@ -2497,8 +2497,21 @@ internal static partial class PackageImageBuilder
         var operators = ExtractOperators<StarkParser.RelationalExpressionContext>(equalityExpression);
         if (operators.Count > 1)
         {
-            publishedExpression = null!;
-            return false;
+            return TryBuildPublishedTypedTemplateComparisonChain(
+                module,
+                equalityExpression.relationalExpression(),
+                operators,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                TryBuildPublishedTypedTemplateRelationalExpression,
+                out publishedExpression);
         }
 
         return TryBuildPublishedTypedTemplateBinaryChain(
@@ -2535,8 +2548,21 @@ internal static partial class PackageImageBuilder
         var operators = ExtractOperators<StarkParser.ShiftExpressionContext>(relationalExpression);
         if (operators.Count > 1)
         {
-            publishedExpression = null!;
-            return false;
+            return TryBuildPublishedTypedTemplateComparisonChain(
+                module,
+                relationalExpression.shiftExpression(),
+                operators,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                TryBuildPublishedTypedTemplateShiftExpression,
+                out publishedExpression);
         }
 
         return TryBuildPublishedTypedTemplateBinaryChain(
@@ -2905,6 +2931,60 @@ internal static partial class PackageImageBuilder
         }
 
         publishedExpression = current;
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateComparisonChain<TOperandContext>(
+        LoadedModuleDocument module,
+        IReadOnlyList<TOperandContext> operands,
+        IReadOnlyList<string> operators,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        TryBuildPublishedTypedTemplateOperand<TOperandContext> buildOperand,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+        where TOperandContext : ParserRuleContext
+    {
+        publishedExpression = null!;
+
+        if (operands.Count < 2 || operators.Count != operands.Count - 1)
+        {
+            return false;
+        }
+
+        var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(operands.Count);
+        foreach (var operand in operands)
+        {
+            if (!buildOperand(
+                    module,
+                    operand,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedOperand))
+            {
+                return false;
+            }
+
+            arguments.Add(publishedOperand);
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "comparison-chain",
+            Arguments: arguments,
+            OperatorNames: operators);
         return true;
     }
 

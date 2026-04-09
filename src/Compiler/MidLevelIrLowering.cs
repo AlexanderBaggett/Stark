@@ -2434,6 +2434,14 @@ internal sealed class MidLevelIrLowerer(
                         : CoerceOperand(result, expectedType);
                 }
 
+                case ImportedTemplateTypedBodyExpressionKind.ComparisonChain:
+                {
+                    var result = LowerImportedTypedTemplateComparisonChain(expression, expectedType);
+                    return result is null || expectedType is null
+                        ? result
+                        : CoerceOperand(result, expectedType);
+                }
+
                 case ImportedTemplateTypedBodyExpressionKind.Conditional:
                 {
                     var result = LowerImportedTypedTemplateConditional(expression, expectedType);
@@ -2964,6 +2972,80 @@ internal sealed class MidLevelIrLowerer(
             return expectedType is null ? result : CoerceOperand(result, expectedType);
         }
 
+        private MidLevelIrOperand? LowerImportedTypedTemplateComparisonChain(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            StarkTypeSymbol? expectedType)
+        {
+            if (expression.Args.Count < 2 || expression.Operators.Count != expression.Args.Count - 1)
+            {
+                return null;
+            }
+
+            var left = LowerImportedTypedTemplateExpression(expression.Args[0], expectedType: null);
+            if (left is null)
+            {
+                return null;
+            }
+
+            if (expression.Operators.Count == 1)
+            {
+                var right = LowerImportedTypedTemplateExpression(expression.Args[1], expectedType: null);
+                if (right is null)
+                {
+                    return null;
+                }
+
+                var comparison = EmitPairComparison(left, right, expression.Operators[0], RenderImportedTypedTemplateExpression(expression));
+                return expectedType is null ? comparison : CoerceOperand(comparison, expectedType);
+            }
+
+            var result = CreateTemporaryLocal(StarkTypeSymbols.Bool, "typed_cmpchain");
+            var joinBlock = CreateBlock("typed_cmpchain_join");
+            var currentLeft = left;
+
+            for (var index = 0; index < expression.Operators.Count; index++)
+            {
+                var right = LowerImportedTypedTemplateExpression(expression.Args[index + 1], expectedType: null);
+                if (right is null)
+                {
+                    return null;
+                }
+
+                var comparisonText =
+                    $"{RenderImportedTypedTemplateExpression(expression.Args[index])} {expression.Operators[index]} {RenderImportedTypedTemplateExpression(expression.Args[index + 1])}";
+                var comparison = EmitPairComparison(currentLeft, right, expression.Operators[index], comparisonText);
+                if (comparison is null)
+                {
+                    return null;
+                }
+
+                if (index == expression.Operators.Count - 1)
+                {
+                    EmitOperandAssignment(result, comparison, comparison.Text);
+                    EnsureGoto(joinBlock.Id);
+                    break;
+                }
+
+                var nextBlock = CreateBlock($"typed_cmpchain_next_{index + 1}");
+                var falseBlock = CreateBlock($"typed_cmpchain_false_{index}");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [nextBlock.Id, falseBlock.Id],
+                    ConditionText: comparison.Text,
+                    Condition: comparison);
+
+                CurrentBlock = falseBlock;
+                EmitOperandAssignment(result, new MidLevelIrBoolConstantOperand(false), "false");
+                EnsureGoto(joinBlock.Id);
+
+                CurrentBlock = nextBlock;
+                currentLeft = right;
+            }
+
+            CurrentBlock = joinBlock;
+            return expectedType is null ? result : CoerceOperand(result, expectedType);
+        }
+
         private MidLevelIrOperand? LowerImportedTypedTemplateShortCircuitBinary(
             ImportedTemplateTypedBodyExpressionSummary expression,
             string operatorText,
@@ -3469,6 +3551,7 @@ internal sealed class MidLevelIrLowerer(
                     && expression.Args.Count == 2
                     ? $"{RenderImportedTypedTemplateExpression(expression.Args[0])} {binaryOperator} {RenderImportedTypedTemplateExpression(expression.Args[1])}"
                     : "binary",
+                ImportedTemplateTypedBodyExpressionKind.ComparisonChain => RenderImportedTypedTemplateComparisonChain(expression),
                 ImportedTemplateTypedBodyExpressionKind.Conditional => expression.Args.Count == 3
                     ? $"{RenderImportedTypedTemplateExpression(expression.Args[0])} ? {RenderImportedTypedTemplateExpression(expression.Args[1])} : {RenderImportedTypedTemplateExpression(expression.Args[2])}"
                     : "conditional",
@@ -3521,6 +3604,25 @@ internal sealed class MidLevelIrLowerer(
                 ? "="
                 : expression.AssignmentOperator;
             return $"{targetText} {assignmentOperator} {RenderImportedTypedTemplateExpression(expression.Args[0])}";
+        }
+
+        private static string RenderImportedTypedTemplateComparisonChain(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Args.Count < 2 || expression.Operators.Count != expression.Args.Count - 1)
+            {
+                return "cmpchain";
+            }
+
+            var builder = new StringBuilder(RenderImportedTypedTemplateExpression(expression.Args[0]));
+            for (var index = 0; index < expression.Operators.Count; index++)
+            {
+                builder.Append(' ');
+                builder.Append(expression.Operators[index]);
+                builder.Append(' ');
+                builder.Append(RenderImportedTypedTemplateExpression(expression.Args[index + 1]));
+            }
+
+            return builder.ToString();
         }
 
         private void LowerBlock(StarkParser.BlockContext block)

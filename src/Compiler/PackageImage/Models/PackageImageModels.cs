@@ -330,7 +330,8 @@ internal sealed record StarkPackageTypedTemplateExpressionManifest(
     IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
     StarkPackageTypeReference? Type = null,
-    StarkPackageTypedTemplateExpressionManifest? TargetExpression = null);
+    StarkPackageTypedTemplateExpressionManifest? TargetExpression = null,
+    IReadOnlyList<string>? OperatorNames = null);
 
 internal sealed record StarkPackageTypedTemplatePatternManifest(
     string Kind,

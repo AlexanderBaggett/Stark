@@ -1175,6 +1175,15 @@ internal static partial class PackageImageLoader
             ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is { } binaryOperator && expression.Args.Count == 2
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} {binaryOperator} {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.ComparisonChain => RenderImportedTypedTemplateComparisonChain(
+                expression,
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal),
             ImportedTemplateTypedBodyExpressionKind.Conditional => expression.Args.Count == 3
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} ? {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} : {RenderImportedTypedTemplateExpression(expression.Args[2], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
@@ -1262,6 +1271,52 @@ internal static partial class PackageImageLoader
             : expression.AssignmentOperator;
         var valueText = RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal);
         return $"{targetText} {assignmentOperator} {valueText}";
+    }
+
+    private static string RenderImportedTypedTemplateComparisonChain(
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        if (expression.Args.Count < 2 || expression.Operators.Count != expression.Args.Count - 1)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(
+            RenderImportedTypedTemplateExpression(
+                expression.Args[0],
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal));
+
+        for (var index = 0; index < expression.Operators.Count; index++)
+        {
+            builder.Append(' ');
+            builder.Append(expression.Operators[index]);
+            builder.Append(' ');
+            builder.Append(
+                RenderImportedTypedTemplateExpression(
+                    expression.Args[index + 1],
+                    objectCreationsByOrdinal,
+                    enumConstructorsByOrdinal,
+                    enumCallsByOrdinal,
+                    enumValuesByOrdinal,
+                    directCallsByOrdinal,
+                    fieldAccessesByOrdinal,
+                    memberCallsByOrdinal));
+        }
+
+        return builder.ToString();
     }
 
     private static string RenderImportedTypedTemplateExpression(

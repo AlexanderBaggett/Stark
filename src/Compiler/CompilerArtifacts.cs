@@ -398,6 +398,7 @@ public enum ImportedTemplateTypedBodyExpressionKind
     Conversion,
     UnaryOperation,
     BinaryOperation,
+    ComparisonChain,
     Conditional,
     ObjectCreation,
     EnumConstructor,
@@ -418,13 +419,17 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
     IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
     StarkTypeSymbol? Type = null,
-    ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null)
+    ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
+    IReadOnlyList<string>? OperatorNames = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary> Args =>
         Arguments ?? [];
 
     public IReadOnlyList<string> Members =>
         MemberNames ?? [];
+
+    public IReadOnlyList<string> Operators =>
+        OperatorNames ?? [];
 }
 
 public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(

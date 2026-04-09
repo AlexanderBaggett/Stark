@@ -567,6 +567,33 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "comparison-chain", StringComparison.Ordinal))
+        {
+            if (manifest.Arguments is not { Count: >= 2 }
+                || manifest.OperatorNames is null
+                || manifest.OperatorNames.Count != manifest.Arguments.Count - 1)
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.ComparisonChain,
+                Arguments: arguments,
+                OperatorNames: manifest.OperatorNames);
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "conditional", StringComparison.Ordinal))
         {
             if (manifest.Arguments is not { Count: 3 })

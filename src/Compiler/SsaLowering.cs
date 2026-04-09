@@ -1000,6 +1000,12 @@ internal sealed class SsaLowerer
                     continue;
                 }
 
+                if (_blocks.TryGetValue(block.Terminator.Targets[0], out var targetBlock)
+                    && targetBlock.Phis.Count != 0)
+                {
+                    continue;
+                }
+
                 if (block.Terminator.Targets[0] == blockId)
                 {
                     continue;

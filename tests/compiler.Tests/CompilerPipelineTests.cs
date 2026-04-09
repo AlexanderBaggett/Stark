@@ -6544,9 +6544,9 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void PackageManifestRetainsGenericTemplateBodyTextWhenTypedSubsetCannotRepresentBody()
+    public void PackageManifestPublishesComparisonChainTypedTemplateBodies()
     {
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-body-fallback-pipeline-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comparison-chain-template-body-pipeline-");
 
         try
         {
@@ -6559,8 +6559,12 @@ public sealed class CompilerPipelineTests
                     return 1;
                 }
 
-                public fn bool Store<T>(T tag) {
+                public fn bool ObserveOrdered<T>(T tag) {
                     return 0 < Next() < 3;
+                }
+
+                public fn bool ObserveEquality<T>(T tag) {
+                    return 1 == Next() == 1;
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -6571,11 +6575,176 @@ public sealed class CompilerPipelineTests
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
             var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
-            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.Store");
+            var ordered = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.ObserveOrdered");
+            var equality = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.ObserveEquality");
 
-            Assert.Null(template.TypedBody);
-            Assert.NotNull(template.BodyText);
-            Assert.Contains("return 0 < Next() < 3;", template.BodyText, StringComparison.Ordinal);
+            Assert.Null(ordered.BodyText);
+            Assert.NotNull(ordered.TypedBody);
+            var orderedReturn = Assert.Single(ordered.TypedBody!.Statements);
+            Assert.Equal("return", orderedReturn.Kind);
+            Assert.Equal("comparison-chain", orderedReturn.Expression.Kind);
+            Assert.Equal(["<", "<"], orderedReturn.Expression.OperatorNames);
+            Assert.Equal(3, orderedReturn.Expression.Arguments!.Count);
+
+            Assert.Null(equality.BodyText);
+            Assert.NotNull(equality.TypedBody);
+            var equalityReturn = Assert.Single(equality.TypedBody!.Statements);
+            Assert.Equal("return", equalityReturn.Kind);
+            Assert.Equal("comparison-chain", equalityReturn.Expression.Kind);
+            Assert.Equal(["==", "=="], equalityReturn.Expression.OperatorNames);
+            Assert.Equal(3, equalityReturn.Expression.Arguments!.Count);
+
+            var json = manifest.ToJson();
+            Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"comparison-chain\"", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedTypedComparisonChainTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-comparison-chain-body-bridge-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 NextOrdered() {
+                    return 1;
+                }
+
+                public fn i32 NextEquality() {
+                    return 1;
+                }
+
+                public fn bool ObserveOrdered<T>(T tag) {
+                    return 0 < NextOrdered() < 3;
+                }
+
+                public fn bool ObserveEquality<T>(T tag) {
+                    return 1 == NextEquality() == 1;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            var typedFacadeModule = Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
+                    out var sourceText));
+
+            Assert.Contains("public fn bool ObserveOrdered<T>(T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn bool ObserveEquality<T>(T tag);", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return 0 < NextOrdered() < 3;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return 1 == NextEquality() == 1;", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn bool RunOrdered() {
+                        stack i32 tag = 0;
+                        return Facade.ObserveOrdered(tag);
+                    }
+
+                    fn bool RunEquality() {
+                        stack i32 tag = 0;
+                        return Facade.ObserveEquality(tag);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var ordered = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ObserveOrdered__i32");
+            Assert.True(ordered.HasBody);
+            Assert.True(ordered.SupportsDirectCodeGeneration);
+            Assert.Equal(
+                1,
+                ordered.Blocks
+                    .SelectMany(static block => block.Statements)
+                    .Count(static statement => statement.Value is MidLevelIrCallRValue));
+            Assert.True(ordered.Blocks.Count(static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch) >= 1);
+            Assert.Equal(
+                2,
+                ordered.Blocks
+                    .SelectMany(static block => block.Statements)
+                    .Count(static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.LessThan }));
+
+            var equality = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ObserveEquality__i32");
+            Assert.True(equality.HasBody);
+            Assert.True(equality.SupportsDirectCodeGeneration);
+            Assert.Equal(
+                1,
+                equality.Blocks
+                    .SelectMany(static block => block.Statements)
+                    .Count(static statement => statement.Value is MidLevelIrCallRValue));
+            Assert.True(equality.Blocks.Count(static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch) >= 1);
+            Assert.Equal(
+                2,
+                equality.Blocks
+                    .SelectMany(static block => block.Statements)
+                    .Count(static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Equal }));
         }
         finally
         {
