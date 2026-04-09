@@ -1414,6 +1414,33 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTails()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[3] Values;
+            }
+
+            fn i32 Run() {
+                stack Box box = new Box() { Values = { 1, 2 } };
+                return box.Values[2];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "Values" });
+        Assert.True(statements.Count(static statement => statement.Value is MidLevelIrInsertIndexRValue) >= 2);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractIndexRValue { ElementIndex: 2 });
+    }
+
+    [Fact]
     public void FixedArrayArithmeticIndexStillLowersToAggregateIndexOperations()
     {
         var result = Compile(

@@ -14,6 +14,7 @@ internal sealed class LlvmIrEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
@@ -1875,6 +1876,12 @@ internal sealed class LlvmIrEmitter
         EmitTextComparisonHelperDefinition(builder, StarkTypeSymbols.Unicode, UnicodeCompareHelperName);
         builder.AppendLine();
 
+        foreach (var fixedArrayType in CollectFixedArrayOrderedComparisonTypes())
+        {
+            EmitFixedArrayOrderedComparisonHelperDefinition(builder, fixedArrayType);
+            builder.AppendLine();
+        }
+
         foreach (var bitWidth in CollectIntegerExponentBitWidths())
         {
             EmitIntegerExponentHelperDefinition(builder, bitWidth);
@@ -1895,6 +1902,54 @@ internal sealed class LlvmIrEmitter
             .Distinct()
             .OrderBy(static bitWidth => bitWidth)
             .ToArray();
+    }
+
+    private IReadOnlyList<StarkTypeSymbol> CollectFixedArrayOrderedComparisonTypes()
+    {
+        var collected = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+
+        foreach (var binary in EnumerateBinaryOperations())
+        {
+            if (binary.Type.Kind != StarkTypeKind.Bool)
+            {
+                continue;
+            }
+
+            if (binary.Operator is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                continue;
+            }
+
+            CollectFixedArrayOrderedComparisonTypes(binary.Left.Type, collected);
+        }
+
+        return collected.Values
+            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private void CollectFixedArrayOrderedComparisonTypes(
+        StarkTypeSymbol type,
+        Dictionary<string, StarkTypeSymbol> collected)
+    {
+        if (type.Kind != StarkTypeKind.FixedArray
+            || type.ElementType is null
+            || type.FixedLength is not int)
+        {
+            return;
+        }
+
+        var helperName = GetFixedArrayOrderedComparisonHelperName(type);
+        if (!collected.TryAdd(helperName, type))
+        {
+            return;
+        }
+
+        CollectFixedArrayOrderedComparisonTypes(type.ElementType, collected);
     }
 
     private void EmitTextEqualityHelperDefinition(
@@ -2007,6 +2062,157 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine("return_equal:");
         builder.AppendLine("  ret i32 0");
         builder.AppendLine("}");
+    }
+
+    private void EmitFixedArrayOrderedComparisonHelperDefinition(StringBuilder builder, StarkTypeSymbol fixedArrayType)
+    {
+        if (fixedArrayType.Kind != StarkTypeKind.FixedArray
+            || fixedArrayType.ElementType is null
+            || fixedArrayType.FixedLength is not int fixedLength)
+        {
+            throw new InvalidOperationException($"Fixed-array ordered comparison helper requires a fixed array type, but found '{fixedArrayType.DisplayName}'.");
+        }
+
+        var helperName = GetFixedArrayOrderedComparisonHelperName(fixedArrayType);
+        var arrayLlvmType = MapType(fixedArrayType);
+
+        builder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({arrayLlvmType} %left, {arrayLlvmType} %right) {{");
+        builder.AppendLine("entry:");
+        if (fixedLength == 0)
+        {
+            builder.AppendLine("  ret i32 0");
+            builder.AppendLine("}");
+            return;
+        }
+
+        builder.AppendLine("  br label %compare_0");
+
+        for (var index = 0; index < fixedLength; index++)
+        {
+            EmitFixedArrayOrderedComparisonElement(
+                builder,
+                fixedArrayType,
+                index,
+                index == fixedLength - 1);
+        }
+
+        builder.AppendLine("return_equal:");
+        builder.AppendLine("  ret i32 0");
+        builder.AppendLine("return_less:");
+        builder.AppendLine("  ret i32 -1");
+        builder.AppendLine("return_greater:");
+        builder.AppendLine("  ret i32 1");
+        builder.AppendLine("}");
+    }
+
+    private void EmitFixedArrayOrderedComparisonElement(
+        StringBuilder builder,
+        StarkTypeSymbol rootType,
+        int index,
+        bool isLastElement)
+    {
+        var elementType = rootType.ElementType
+            ?? throw new InvalidOperationException($"Fixed-array ordered comparison helper requires a comparable element at index {index} for '{rootType.DisplayName}'.");
+        var compareBlock = $"compare_{index}";
+        var checkGreaterBlock = $"check_greater_{index}";
+        var nextBlock = isLastElement ? "return_equal" : $"compare_{index + 1}";
+
+        builder.AppendLine();
+        builder.AppendLine($"{compareBlock}:");
+        builder.AppendLine($"  %fixedcmp_left_{index} = extractvalue {MapType(rootType)} %left, {index}");
+        builder.AppendLine($"  %fixedcmp_right_{index} = extractvalue {MapType(rootType)} %right, {index}");
+
+        if (TryEmitOrderedComparisonValue(
+                builder,
+                elementType,
+                $"%fixedcmp_left_{index}",
+                $"%fixedcmp_right_{index}",
+                index,
+                checkGreaterBlock,
+                nextBlock))
+        {
+            return;
+        }
+
+        throw new UnsupportedBodyEmissionException(
+            $"Unsupported ordered comparison element type '{elementType.DisplayName}' in fixed-array helper.");
+    }
+
+    private bool TryEmitOrderedComparisonValue(
+        StringBuilder builder,
+        StarkTypeSymbol operandType,
+        string left,
+        string right,
+        int index,
+        string checkGreaterBlock,
+        string nextBlock)
+    {
+        switch (operandType.Kind)
+        {
+            case StarkTypeKind.Integer when operandType.BitWidth is not null:
+            {
+                builder.AppendLine($"  %fixedcmp_less_{index} = icmp slt {MapType(operandType)} {left}, {right}");
+                builder.AppendLine($"  br i1 %fixedcmp_less_{index}, label %return_less, label %{checkGreaterBlock}");
+                builder.AppendLine();
+                builder.AppendLine($"{checkGreaterBlock}:");
+                builder.AppendLine($"  %fixedcmp_greater_{index} = icmp sgt {MapType(operandType)} {left}, {right}");
+                builder.AppendLine($"  br i1 %fixedcmp_greater_{index}, label %return_greater, label %{nextBlock}");
+                return true;
+            }
+            case StarkTypeKind.Float:
+            {
+                builder.AppendLine($"  %fixedcmp_less_{index} = fcmp olt {MapType(operandType)} {left}, {right}");
+                builder.AppendLine($"  br i1 %fixedcmp_less_{index}, label %return_less, label %{checkGreaterBlock}");
+                builder.AppendLine();
+                builder.AppendLine($"{checkGreaterBlock}:");
+                builder.AppendLine($"  %fixedcmp_greater_{index} = fcmp ogt {MapType(operandType)} {left}, {right}");
+                builder.AppendLine($"  br i1 %fixedcmp_greater_{index}, label %return_greater, label %{nextBlock}");
+                return true;
+            }
+            case StarkTypeKind.Bool:
+            case StarkTypeKind.RawPointer:
+            {
+                var compareType = operandType.Kind == StarkTypeKind.RawPointer ? "ptr" : MapType(operandType);
+                builder.AppendLine($"  %fixedcmp_less_{index} = icmp ult {compareType} {left}, {right}");
+                builder.AppendLine($"  br i1 %fixedcmp_less_{index}, label %return_less, label %{checkGreaterBlock}");
+                builder.AppendLine();
+                builder.AppendLine($"{checkGreaterBlock}:");
+                builder.AppendLine($"  %fixedcmp_greater_{index} = icmp ugt {compareType} {left}, {right}");
+                builder.AppendLine($"  br i1 %fixedcmp_greater_{index}, label %return_greater, label %{nextBlock}");
+                return true;
+            }
+            case StarkTypeKind.Ascii:
+            case StarkTypeKind.Unicode:
+            {
+                var helperName = operandType.Kind == StarkTypeKind.Ascii
+                    ? AsciiCompareHelperName
+                    : UnicodeCompareHelperName;
+                var compareResult = $"%fixedcmp_text_{index}";
+                builder.AppendLine($"  {compareResult} = call i32 @{EscapeIdentifier(helperName)}({MapType(operandType)} {left}, {MapType(operandType)} {right})");
+                builder.AppendLine($"  %fixedcmp_less_{index} = icmp slt i32 {compareResult}, 0");
+                builder.AppendLine($"  br i1 %fixedcmp_less_{index}, label %return_less, label %{checkGreaterBlock}");
+                builder.AppendLine();
+                builder.AppendLine($"{checkGreaterBlock}:");
+                builder.AppendLine($"  %fixedcmp_greater_{index} = icmp sgt i32 {compareResult}, 0");
+                builder.AppendLine($"  br i1 %fixedcmp_greater_{index}, label %return_greater, label %{nextBlock}");
+                return true;
+            }
+            case StarkTypeKind.FixedArray when operandType.ElementType is not null && operandType.FixedLength is int:
+            {
+                var helperName = GetFixedArrayOrderedComparisonHelperName(operandType);
+                var compareResult = $"%fixedcmp_nested_{index}";
+                builder.AppendLine($"  {compareResult} = call i32 @{EscapeIdentifier(helperName)}({MapType(operandType)} {left}, {MapType(operandType)} {right})");
+                builder.AppendLine($"  %fixedcmp_less_{index} = icmp slt i32 {compareResult}, 0");
+                builder.AppendLine($"  br i1 %fixedcmp_less_{index}, label %return_less, label %{checkGreaterBlock}");
+                builder.AppendLine();
+                builder.AppendLine($"{checkGreaterBlock}:");
+                builder.AppendLine($"  %fixedcmp_greater_{index} = icmp sgt i32 {compareResult}, 0");
+                builder.AppendLine($"  br i1 %fixedcmp_greater_{index}, label %return_greater, label %{nextBlock}");
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     private void EmitIntegerExponentHelperDefinition(StringBuilder builder, int bitWidth)
@@ -3899,6 +4105,11 @@ internal sealed class LlvmIrEmitter
         return $"{IntegerExponentHelperNamePrefix}{bitWidth}";
     }
 
+    private static string GetFixedArrayOrderedComparisonHelperName(StarkTypeSymbol fixedArrayType)
+    {
+        return $"{FixedArrayCompareHelperNamePrefix}{EscapeIdentifier(fixedArrayType.DisplayName)}";
+    }
+
     private static string EscapeFileName(string filePath)
     {
         return filePath.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -5190,6 +5401,11 @@ internal sealed class LlvmIrEmitter
                     return;
                 }
 
+                if (TryEmitFixedArrayOrderedComparison(result, binary))
+                {
+                    return;
+                }
+
                 if (TryEmitSliceEquality(
                         result,
                         binary.Operator,
@@ -5332,6 +5548,50 @@ internal sealed class LlvmIrEmitter
                 operandType,
                 FormatValue(binary.Left),
                 FormatValue(binary.Right));
+        }
+
+        private bool TryEmitFixedArrayOrderedComparison(string result, SsaBinaryRValue binary)
+        {
+            if (binary.Operator is not (
+                    SsaBinaryOperator.LessThan
+                    or SsaBinaryOperator.LessThanOrEqual
+                    or SsaBinaryOperator.GreaterThan
+                    or SsaBinaryOperator.GreaterThanOrEqual))
+            {
+                return false;
+            }
+
+            var leftType = binary.Left.Type;
+            var rightType = binary.Right.Type;
+            if (leftType.Kind != StarkTypeKind.FixedArray
+                || rightType.Kind != StarkTypeKind.FixedArray
+                || leftType.ElementType is null
+                || rightType.ElementType is null
+                || leftType.FixedLength != rightType.FixedLength)
+            {
+                return false;
+            }
+
+            var helperName = GetFixedArrayOrderedComparisonHelperName(leftType);
+            var compareResult = $"%{EscapeIdentifier(CreateAbiTempName("fixedcmp_root"))}";
+            var predicate = binary.Operator switch
+            {
+                SsaBinaryOperator.LessThan => "slt",
+                SsaBinaryOperator.LessThanOrEqual => "sle",
+                SsaBinaryOperator.GreaterThan => "sgt",
+                SsaBinaryOperator.GreaterThanOrEqual => "sge",
+                _ => string.Empty
+            };
+
+            if (predicate.Length == 0)
+            {
+                return false;
+            }
+
+            AppendLine(
+                $"  {compareResult} = call i32 @{EscapeIdentifier(helperName)}({MapType(leftType)} {FormatValue(binary.Left)}, {MapType(rightType)} {FormatValue(binary.Right)})");
+            AppendLine($"  {result} = icmp {predicate} i32 {compareResult}, 0");
+            return true;
         }
 
         private bool SupportsScalarizedAggregateEquality(StarkTypeSymbol rootType)

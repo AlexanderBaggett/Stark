@@ -169,6 +169,25 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FixedArrayInitializersCanOmitTrailingElements()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run() {
+                stack i32[3] values = { 1, 2 };
+                return values[0] + values[1] + values[2];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
     public void ExplicitNonAsciiLiteralToAsciiConversionTypeChecks()
     {
         var result = Compile(

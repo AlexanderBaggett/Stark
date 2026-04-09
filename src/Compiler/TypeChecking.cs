@@ -3573,11 +3573,11 @@ internal sealed class TypeChecker
 
         if (targetType.Kind == StarkTypeKind.FixedArray
             && targetType.FixedLength is int fixedLength
-            && fixedLength != arrayInitializer.variableInitializer().Length)
+            && arrayInitializer.variableInitializer().Length > fixedLength)
         {
             ReportError(
                 "STK3006",
-                $"Array initializer provides {arrayInitializer.variableInitializer().Length} elements, but '{targetType.DisplayName}' expects {fixedLength}.",
+                $"Array initializer provides {arrayInitializer.variableInitializer().Length} elements, but '{targetType.DisplayName}' expects at most {fixedLength}.",
                 arrayInitializer);
         }
     }
@@ -6112,12 +6112,22 @@ internal sealed class TypeChecker
     private static bool IsOrderedComparable(StarkTypeSymbol left, StarkTypeSymbol right)
     {
         var commonType = FindCommonType(left, right);
-        return commonType.Kind is StarkTypeKind.Integer
+        return IsOrderedComparable(commonType);
+    }
+
+    private static bool IsOrderedComparable(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.Integer
             or StarkTypeKind.Float
             or StarkTypeKind.Bool
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Ascii
-            or StarkTypeKind.Unicode;
+            or StarkTypeKind.Unicode => true,
+            StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int => IsOrderedComparable(type.ElementType),
+            _ => false
+        };
     }
 
     private static bool IsBitwiseAssignmentOperator(string assignmentOperator)

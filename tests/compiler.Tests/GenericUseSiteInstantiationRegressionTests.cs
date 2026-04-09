@@ -33,6 +33,113 @@ public sealed class GenericUseSiteInstantiationRegressionTests
     }
 
     [Fact]
+    public void ManifestBackedGenericMethodsAndNestedGenericTypesMaterializeFromPublishedTemplateBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-method-nested-generic-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Pair<T>(T Value) { }
+
+                public record Box(i32 Dummy) {
+                    fn Pair<T> MakePair<T>(borrow Box self, T value) {
+                        stack Pair<T> pair = new Pair<T>(value);
+                        return pair;
+                    }
+                }
+
+                public fn Pair<T> Relay<T>(Box box, T value) {
+                    return box.MakePair(value);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn Facade.Pair<i32> Run(Facade.Box box, i32 value) {
+                        return Facade.Relay(box, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "monomorphization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            Assert.Contains(
+                plan.Functions,
+                static function => function.TemplateName == "Facade.Box.MakePair"
+                    && function.TypeArguments.Select(static type => type.DisplayName).SequenceEqual(["i32"])
+                    && function.OwnerModuleName == "Demo");
+
+            Assert.Contains(
+                plan.Functions,
+                static function => function.TemplateName == "Facade.Relay"
+                    && function.TypeArguments.Select(static type => type.DisplayName).SequenceEqual(["i32"])
+                    && function.OwnerModuleName == "Demo");
+
+            Assert.Contains(
+                plan.Types,
+                static type => type.TemplateName == "Facade.Pair"
+                    && type.InstantiatedTypeName == "Facade.Pair<i32>"
+                    && type.SymbolName == "__stark_mono_ty_Demo__Facade_Pair__i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWhenDeferredFunctionTriggersAreMissing()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-call-summary-generic-function-fallback-");

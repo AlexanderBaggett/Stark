@@ -102,6 +102,31 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task PartialFixedArrayInitializersInsideObjectInitializersZeroFillTrailingElementsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Box {
+                i32[3] Values;
+            }
+
+            export ffi fn i32 main() {
+                stack Box box = new Box() { Values = { 4, 7 } };
+                return box.Values[0] + box.Values[1] + box.Values[2];
+            }
+            """);
+
+        Assert.Equal(11, exitCode);
+    }
+
+    [Fact]
     public async Task SingleElementAsciiTextIndexReadsAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

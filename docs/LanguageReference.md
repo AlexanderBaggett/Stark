@@ -575,6 +575,7 @@ same backing storage.
 
 An array initializer may materialize a fixed array value or participate in
 nested aggregate initialization where the target storage is already defined.
+For fixed arrays, omitted trailing elements are zero-initialized.
 It may not target a slice type directly.
 
 This is invalid:

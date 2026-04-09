@@ -1021,7 +1021,7 @@ Goal: add non-essential language surface after the first release without slowing
     - [x] add diagnostics for missing required sections, malformed structured facts, or unsupported package-image content
     - [ ] document the package image as a compiler-owned source artifact rather than a narrow distribution manifest
   - [ ] Test coverage for package images
-    - [ ] writer or loader round-trip tests for rich package images
+    - [x] writer or loader round-trip tests for rich package images
     - [x] direct-import tests that no longer synthesize fake source when rich package-image sections are present
     - [x] end-to-end tests for imported generic specialization from package images
     - [x] compatibility tests for the temporary legacy manifest bridge while both paths coexist
