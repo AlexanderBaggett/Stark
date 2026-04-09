@@ -1892,18 +1892,14 @@ internal static partial class PackageImageBuilder
         {
             var postfixPart = postfixParts[index];
 
-            if (postfixPart.expressionList() is { } indexExpressionList)
+            if (postfixPart.LBRACK() is not null)
             {
-                if (indexExpressionList.expression().Length == 0)
-                {
-                    return false;
-                }
-
-                var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(indexExpressionList.expression().Length + 1)
+                var indexExpressions = postfixPart.expressionList()?.expression() ?? [];
+                var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(indexExpressions.Length + 1)
                 {
                     publishedExpression
                 };
-                foreach (var indexExpression in indexExpressionList.expression())
+                foreach (var indexExpression in indexExpressions)
                 {
                     if (!TryBuildPublishedTypedTemplateExpression(
                         module,

@@ -10540,6 +10540,129 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedGenericBodiesPreferTypedFullViewTextSliceTemplateBodiesWhenBridgeSourceIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-full-view-text-body-generic-body-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn ascii WholeAscii<T>(ascii text, T tag) {
+                    return text[];
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var wholeAscii = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.WholeAscii");
+            Assert.NotNull(wholeAscii.TypedBody);
+            var wholeAsciiReturn = Assert.Single(wholeAscii.TypedBody!.Statements);
+            Assert.Equal("return", wholeAsciiReturn.Kind);
+            Assert.Equal("index-access", wholeAsciiReturn.Expression.Kind);
+            var wholeAsciiArguments = Assert.Single(wholeAsciiReturn.Expression.Arguments!);
+            Assert.Equal("name", wholeAsciiArguments.Kind);
+            Assert.Equal("text", wholeAsciiArguments.Name);
+
+            var corruptedTemplate = wholeAscii with
+            {
+                BodyText = "{ return this is not valid Stark; }"
+            };
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = new StarkPackageGenericTemplateSection(
+                                module.EffectiveGenericTemplates!.Functions
+                                    .Select(template => template.QualifiedResolvedName == corruptedTemplate.QualifiedResolvedName
+                                        ? corruptedTemplate
+                                        : template)
+                                    .ToArray())
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            var typedFacadeModule = Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.True(
+                PackageImageLoader.TryBuildStructuredModuleDocument(
+                    new ResolvedPackageModule(
+                        manifestPath,
+                        Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                        typedOnlyManifest,
+                        typedFacadeModule),
+                    out var importedDocument));
+            Assert.DoesNotContain("this is not valid Stark", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("return text[];", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn ascii Run() {
+                        return Facade.WholeAscii("hello", 0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("return text[];", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var specialized = Assert.Single(
+                mir.Functions,
+                static function => function.Name.Contains("Facade_WholeAscii", StringComparison.Ordinal));
+            Assert.True(specialized.SupportsDirectCodeGeneration);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedGenericBodiesPreferTypedTextSliceTemplateBodiesWhenBridgeSourceIsCorrupted()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-text-slice-body-generic-body-pipeline-");

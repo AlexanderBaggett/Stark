@@ -648,7 +648,7 @@ internal static partial class PackageImageLoader
 
         if (string.Equals(manifest.Kind, "index-access", StringComparison.Ordinal))
         {
-            if (manifest.Arguments is not { Count: >= 2 })
+            if (manifest.Arguments is not { Count: >= 1 })
             {
                 return false;
             }
