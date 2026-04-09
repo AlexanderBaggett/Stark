@@ -326,6 +326,7 @@ internal sealed record StarkPackageTypedTemplateExpressionManifest(
     string? Name = null,
     int? Ordinal = null,
     IReadOnlyList<StarkPackageTypedTemplateExpressionManifest>? Arguments = null,
+    IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
     StarkPackageTypeReference? Type = null);
 

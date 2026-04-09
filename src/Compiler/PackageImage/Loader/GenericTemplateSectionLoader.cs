@@ -446,6 +446,35 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "object-initializer", StringComparison.Ordinal))
+        {
+            if (manifest.Type is null
+                || manifest.Arguments is null
+                || manifest.MemberNames is null
+                || manifest.MemberNames.Count != manifest.Arguments.Count)
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.ObjectInitializer,
+                Arguments: arguments,
+                MemberNames: manifest.MemberNames,
+                Type: BuildTypeSymbol(manifest.Type));
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "conversion", StringComparison.Ordinal))
         {
             if (manifest.Type is null || manifest.Arguments is not { Count: 1 })

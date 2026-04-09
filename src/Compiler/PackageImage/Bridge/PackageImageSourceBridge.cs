@@ -1148,6 +1148,15 @@ internal static partial class PackageImageLoader
             ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
                 ? "{ }"
                 : $"{{ {string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))} }}",
+            ImportedTemplateTypedBodyExpressionKind.ObjectInitializer => RenderImportedTypedTemplateObjectInitializer(
+                expression,
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal),
             ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType && expression.Args.Count == 1
                 ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
@@ -1189,6 +1198,31 @@ internal static partial class PackageImageLoader
         };
 
         return !string.IsNullOrEmpty(text);
+    }
+
+    private static string RenderImportedTypedTemplateObjectInitializer(
+        ImportedTemplateTypedBodyExpressionSummary expression,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
+    {
+        if (expression.Members.Count != expression.Args.Count)
+        {
+            return string.Empty;
+        }
+
+        var parts = new string[expression.Members.Count];
+        for (var index = 0; index < expression.Members.Count; index++)
+        {
+            parts[index] =
+                $"{expression.Members[index]} = {RenderImportedTypedTemplateExpression(expression.Args[index], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}";
+        }
+
+        return $"{{ {string.Join(", ", parts)} }}";
     }
 
     private static string RenderImportedTypedTemplateExpression(

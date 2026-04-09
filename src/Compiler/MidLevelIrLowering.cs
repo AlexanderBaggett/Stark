@@ -31,6 +31,8 @@ internal sealed class MidLevelIrLowerer(
             .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
             .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
             .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
+        new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
     private Dictionary<string, string> _materializedSpecializationSymbols = new(StringComparer.Ordinal);
 
     public MidLevelIrModule Lower(HighLevelIrModule hir)
@@ -1209,6 +1211,102 @@ internal sealed class MidLevelIrLowerer(
             return current;
         }
 
+        private MidLevelIrOperand? LowerImportedTypedTemplateObjectInitializerExpression(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            StarkTypeSymbol? expectedType)
+        {
+            var targetType = expectedType ?? (expression.Type is { } publishedType ? ApplyGenericSubstitution(publishedType) : null);
+            if (targetType is null
+                || expression.Members.Count != expression.Args.Count
+                || !TryBuildImportedTypedTemplateObjectInitializerMembers(targetType, expression, out var initializerMembers))
+            {
+                return null;
+            }
+
+            return LowerImportedTypedTemplateObjectInitializer(
+                targetType,
+                new MidLevelIrZeroInitializerOperand(targetType),
+                initializerMembers,
+                expression.Args);
+        }
+
+        private bool TryBuildImportedTypedTemplateObjectInitializerMembers(
+            StarkTypeSymbol targetType,
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary> initializerMembers)
+        {
+            initializerMembers = [];
+
+            if (!TryResolveImportedTypedTemplateNamedType(targetType, out var namedType, out var substitution))
+            {
+                return false;
+            }
+
+            var builtMembers = new List<ImportedTemplateObjectInitializerMemberSummary>(expression.Members.Count);
+            foreach (var memberName in expression.Members)
+            {
+                if (!namedType.TryGetField(memberName, out var field, out var fieldIndex))
+                {
+                    return false;
+                }
+
+                var fieldType = substitution.Count == 0
+                    ? field.Type
+                    : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                builtMembers.Add(new ImportedTemplateObjectInitializerMemberSummary(
+                    memberName,
+                    fieldIndex,
+                    fieldType));
+            }
+
+            initializerMembers = builtMembers;
+            return true;
+        }
+
+        private bool TryResolveImportedTypedTemplateNamedType(
+            StarkTypeSymbol targetType,
+            out NamedTypeSymbol namedType,
+            out IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        {
+            namedType = null!;
+            substitution = EmptyTypeSubstitution;
+
+            if (targetType.Kind != StarkTypeKind.Named
+                || targetType.NamedType is null)
+            {
+                return false;
+            }
+
+            if (!_typeModel.NamedTypes.TryGetValue(targetType.NamedType, out namedType!))
+            {
+                var baseName = StarkTypeSymbols.GetGenericBaseName(targetType.NamedType);
+                if (!_typeModel.NamedTypes.TryGetValue(baseName, out namedType!))
+                {
+                    return false;
+                }
+            }
+
+            if (targetType.TypeArguments is not { Count: > 0 } || namedType.GenericParams.Count == 0)
+            {
+                substitution = EmptyTypeSubstitution;
+                return true;
+            }
+
+            if (namedType.GenericParams.Count != targetType.TypeArguments.Count)
+            {
+                return false;
+            }
+
+            var builtSubstitution = new Dictionary<string, StarkTypeSymbol>(namedType.GenericParams.Count, StringComparer.Ordinal);
+            for (var index = 0; index < namedType.GenericParams.Count; index++)
+            {
+                builtSubstitution[namedType.GenericParams[index]] = targetType.TypeArguments[index];
+            }
+
+            substitution = builtSubstitution;
+            return true;
+        }
+
         private bool TryLowerImportedTypedTemplateConditionalCallStatement(
             ImportedTemplateTypedBodyExpressionSummary expression)
         {
@@ -2245,6 +2343,14 @@ internal sealed class MidLevelIrLowerer(
                         : CoerceOperand(result, expectedType);
                 }
 
+                case ImportedTemplateTypedBodyExpressionKind.ObjectInitializer:
+                {
+                    var result = LowerImportedTypedTemplateObjectInitializerExpression(expression, expectedType);
+                    return result is null || expectedType is null
+                        ? result
+                        : CoerceOperand(result, expectedType);
+                }
+
                 case ImportedTemplateTypedBodyExpressionKind.Conversion:
                 {
                     var result = LowerImportedTypedTemplateConversion(expression, expectedType);
@@ -3257,6 +3363,7 @@ internal sealed class MidLevelIrLowerer(
                 ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
                     ? "{}"
                     : $"{{ {string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpression))} }}",
+                ImportedTemplateTypedBodyExpressionKind.ObjectInitializer => RenderImportedTypedTemplateObjectInitializer(expression),
                 ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType
                     && expression.Args.Count == 1
                     ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0])}"
@@ -3284,6 +3391,22 @@ internal sealed class MidLevelIrLowerer(
                 ImportedTemplateTypedBodyExpressionKind.MemberCall => $"{RenderImportedTypedTemplateExpression(expression.Args[0])}.{expression.Ordinal}({string.Join(", ", expression.Args.Skip(1).Select(RenderImportedTypedTemplateExpression))})",
                 _ => string.Empty
             };
+        }
+
+        private static string RenderImportedTypedTemplateObjectInitializer(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Members.Count != expression.Args.Count)
+            {
+                return "objectinit";
+            }
+
+            var parts = new string[expression.Members.Count];
+            for (var index = 0; index < expression.Members.Count; index++)
+            {
+                parts[index] = $"{expression.Members[index]} = {RenderImportedTypedTemplateExpression(expression.Args[index])}";
+            }
+
+            return $"{{ {string.Join(", ", parts)} }}";
         }
 
         private void LowerBlock(StarkParser.BlockContext block)

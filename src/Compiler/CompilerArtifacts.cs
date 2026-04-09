@@ -393,6 +393,7 @@ public enum ImportedTemplateTypedBodyExpressionKind
     NameReference,
     Literal,
     ArrayInitializer,
+    ObjectInitializer,
     Conversion,
     UnaryOperation,
     BinaryOperation,
@@ -412,11 +413,15 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
     string? Name = null,
     int? Ordinal = null,
     IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary>? Arguments = null,
+    IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
     StarkTypeSymbol? Type = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary> Args =>
         Arguments ?? [];
+
+    public IReadOnlyList<string> Members =>
+        MemberNames ?? [];
 }
 
 public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(

@@ -6,6 +6,9 @@ namespace Stark.Compiler;
 
 internal static partial class PackageImageBuilder
 {
+    private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
+        new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+
     private static IReadOnlyList<StarkPackageFunctionTemplateManifest> BuildGenericFunctionTemplates(
         LoadedModuleDocument module,
         TypeCheckModel typeModel)
@@ -129,6 +132,7 @@ internal static partial class PackageImageBuilder
                     module,
                     functionSignature.ReturnType,
                     function.Body,
+                    typeModel.NamedTypes,
                     literalsByLocation,
                     objectCreations,
                     enumConstructors,
@@ -187,6 +191,7 @@ internal static partial class PackageImageBuilder
         LoadedModuleDocument module,
         StarkTypeSymbol returnType,
         ParserRuleContext functionBody,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyList<ObjectCreationTypingRecord>? objectCreations,
         IReadOnlyList<EnumConstructorTypingRecord>? enumConstructors,
@@ -282,6 +287,7 @@ internal static partial class PackageImageBuilder
         if (!TryBuildPublishedTypedTemplateStatementList(
                 module,
                 statements,
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -348,6 +354,7 @@ internal static partial class PackageImageBuilder
     private static bool TryBuildPublishedTypedTemplateStatementList(
         LoadedModuleDocument module,
         IReadOnlyList<StarkParser.StatementContext> statements,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
@@ -368,6 +375,7 @@ internal static partial class PackageImageBuilder
             if (!TryBuildPublishedTypedTemplateStatements(
                     module,
                     statement,
+                    namedTypes,
                     literalsByLocation,
                     localDeclarationsByLocation,
                     conversionsByLocation,
@@ -396,6 +404,7 @@ internal static partial class PackageImageBuilder
     private static bool TryBuildPublishedTypedTemplateStatements(
         LoadedModuleDocument module,
         StarkParser.StatementContext statement,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
@@ -433,6 +442,7 @@ internal static partial class PackageImageBuilder
                         module,
                         variableInitializer,
                         localDeclaration.Type,
+                        namedTypes,
                         literalsByLocation,
                         conversionsByLocation,
                         objectCreationOrdinals,
@@ -491,6 +501,7 @@ internal static partial class PackageImageBuilder
                         module,
                         variableInitializer,
                         localDeclaration.Type,
+                        namedTypes,
                         literalsByLocation,
                         conversionsByLocation,
                         objectCreationOrdinals,
@@ -523,6 +534,7 @@ internal static partial class PackageImageBuilder
         if (TryBuildPublishedTypedTemplateStatement(
                 module,
                 statement,
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -548,6 +560,7 @@ internal static partial class PackageImageBuilder
     private static bool TryBuildPublishedTypedTemplateStatement(
         LoadedModuleDocument module,
         StarkParser.StatementContext statement,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
@@ -604,6 +617,7 @@ internal static partial class PackageImageBuilder
             && TryBuildPublishedTypedTemplateForInitializerStatements(
                 module,
                 forStatement.forInitializer(),
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -631,6 +645,7 @@ internal static partial class PackageImageBuilder
             && TryBuildPublishedTypedTemplateBranchStatement(
                 module,
                 forStatement.statement(),
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -672,6 +687,7 @@ internal static partial class PackageImageBuilder
             && TryBuildPublishedTypedTemplateBranchStatement(
                 module,
                 whileStatement.statement(),
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -711,6 +727,7 @@ internal static partial class PackageImageBuilder
             && TryBuildPublishedTypedTemplateBranchStatement(
                 module,
                 ifStatement.statement(0),
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -730,6 +747,7 @@ internal static partial class PackageImageBuilder
                 && !TryBuildPublishedTypedTemplateBranchStatement(
                     module,
                     ifStatement.statement(1),
+                    namedTypes,
                     literalsByLocation,
                     localDeclarationsByLocation,
                     conversionsByLocation,
@@ -772,6 +790,7 @@ internal static partial class PackageImageBuilder
             && TryBuildPublishedTypedTemplateSwitchCaseList(
                 module,
                 switchStatement.switchSection(),
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -902,6 +921,7 @@ internal static partial class PackageImageBuilder
     private static bool TryBuildPublishedTypedTemplateSwitchCaseList(
         LoadedModuleDocument module,
         IReadOnlyList<StarkParser.SwitchSectionContext> sections,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
@@ -924,6 +944,7 @@ internal static partial class PackageImageBuilder
                 || !TryBuildPublishedTypedTemplateStatementList(
                     module,
                     section.statement(),
+                    namedTypes,
                     literalsByLocation,
                     localDeclarationsByLocation,
                     conversionsByLocation,
@@ -1227,6 +1248,7 @@ internal static partial class PackageImageBuilder
     private static bool TryBuildPublishedTypedTemplateBranchStatement(
         LoadedModuleDocument module,
         StarkParser.StatementContext statement,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
@@ -1246,6 +1268,7 @@ internal static partial class PackageImageBuilder
             return TryBuildPublishedTypedTemplateStatementList(
                 module,
                 block.statement(),
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -1264,6 +1287,7 @@ internal static partial class PackageImageBuilder
         if (TryBuildPublishedTypedTemplateStatements(
                 module,
                 statement,
+                namedTypes,
                 literalsByLocation,
                 localDeclarationsByLocation,
                 conversionsByLocation,
@@ -1288,6 +1312,7 @@ internal static partial class PackageImageBuilder
     private static bool TryBuildPublishedTypedTemplateForInitializerStatements(
         LoadedModuleDocument module,
         StarkParser.ForInitializerContext? initializer,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
@@ -1329,6 +1354,7 @@ internal static partial class PackageImageBuilder
                         module,
                         variableInitializer,
                         localDeclaration.Type,
+                        namedTypes,
                         literalsByLocation,
                         conversionsByLocation,
                         objectCreationOrdinals,
@@ -1612,6 +1638,7 @@ internal static partial class PackageImageBuilder
         LoadedModuleDocument module,
         StarkParser.VariableInitializerContext variableInitializer,
         StarkTypeSymbol targetType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
         IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
         IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
@@ -1642,6 +1669,25 @@ internal static partial class PackageImageBuilder
                 out publishedExpression);
         }
 
+        if (variableInitializer.objectInitializer() is { } objectInitializer)
+        {
+            return TryBuildPublishedTypedTemplateObjectInitializerExpression(
+                module,
+                objectInitializer,
+                targetType,
+                namedTypes,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out publishedExpression);
+        }
+
         if (variableInitializer.arrayInitializer() is { } arrayInitializer)
         {
             if (targetType.Kind != StarkTypeKind.FixedArray
@@ -1658,6 +1704,7 @@ internal static partial class PackageImageBuilder
                         module,
                         elementInitializer,
                         targetType.ElementType,
+                        namedTypes,
                         literalsByLocation,
                         conversionsByLocation,
                         objectCreationOrdinals,
@@ -1683,6 +1730,119 @@ internal static partial class PackageImageBuilder
         }
 
         return false;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateObjectInitializerExpression(
+        LoadedModuleDocument module,
+        StarkParser.ObjectInitializerContext objectInitializer,
+        StarkTypeSymbol targetType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (!TryResolvePublishedTypedTemplateNamedType(targetType, namedTypes, out var namedType, out var substitution))
+        {
+            return false;
+        }
+
+        var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(objectInitializer.memberInitializer().Length);
+        var memberNames = new List<string>(objectInitializer.memberInitializer().Length);
+        foreach (var memberInitializer in objectInitializer.memberInitializer())
+        {
+            var memberName = memberInitializer.Identifier().GetText();
+            if (!namedType.TryGetField(memberName, out var field, out _))
+            {
+                return false;
+            }
+
+            var fieldType = substitution.Count == 0
+                ? field.Type
+                : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+            if (memberInitializer.variableInitializer() is not { } nestedInitializer
+                || !TryBuildPublishedTypedTemplateVariableInitializer(
+                    module,
+                    nestedInitializer,
+                    fieldType,
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedMemberValue))
+            {
+                return false;
+            }
+
+            memberNames.Add(memberName);
+            arguments.Add(publishedMemberValue);
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "object-initializer",
+            Arguments: arguments,
+            MemberNames: memberNames,
+            Type: BuildPublishedAbiTypeReference(targetType, module));
+        return true;
+    }
+
+    private static bool TryResolvePublishedTypedTemplateNamedType(
+        StarkTypeSymbol targetType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        out NamedTypeSymbol namedType,
+        out IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        namedType = null!;
+        substitution = EmptyTypeSubstitution;
+
+        if (targetType.Kind != StarkTypeKind.Named
+            || targetType.NamedType is null)
+        {
+            return false;
+        }
+
+        if (!namedTypes.TryGetValue(targetType.NamedType, out namedType!))
+        {
+            var baseName = StarkTypeSymbols.GetGenericBaseName(targetType.NamedType);
+            if (!namedTypes.TryGetValue(baseName, out namedType!))
+            {
+                return false;
+            }
+        }
+
+        if (targetType.TypeArguments is not { Count: > 0 } || namedType.GenericParams.Count == 0)
+        {
+            substitution = EmptyTypeSubstitution;
+            return true;
+        }
+
+        if (namedType.GenericParams.Count != targetType.TypeArguments.Count)
+        {
+            return false;
+        }
+
+        var builtSubstitution = new Dictionary<string, StarkTypeSymbol>(namedType.GenericParams.Count, StringComparer.Ordinal);
+        for (var index = 0; index < namedType.GenericParams.Count; index++)
+        {
+            builtSubstitution[namedType.GenericParams[index]] = targetType.TypeArguments[index];
+        }
+
+        substitution = builtSubstitution;
+        return true;
     }
 
     private static bool TryBuildPublishedTypedTemplateAssignmentTarget(
