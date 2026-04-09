@@ -386,7 +386,10 @@ public enum ImportedTemplateTypedSwitchCaseKind
 public enum ImportedTemplateTypedSwitchFieldPatternKind
 {
     Discard,
-    Capture
+    Capture,
+    Literal,
+    EnumPattern,
+    AggregatePattern
 }
 
 public enum ImportedTemplateTypedBodyExpressionKind
@@ -435,7 +438,14 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
 
 public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
     ImportedTemplateTypedSwitchFieldPatternKind Kind,
-    string? Name = null);
+    string? Name = null,
+    int? Ordinal = null,
+    ImportedTemplateTypedBodyExpressionSummary? Expression = null,
+    IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null)
+{
+    public IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> Members =>
+        MemberPatterns ?? [];
+}
 
 public sealed record ImportedTemplateTypedSwitchCaseSummary(
     ImportedTemplateTypedSwitchCaseKind Kind,

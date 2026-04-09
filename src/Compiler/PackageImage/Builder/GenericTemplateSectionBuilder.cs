@@ -1122,6 +1122,10 @@ internal static partial class PackageImageBuilder
         {
             if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
                 || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    module,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
                     enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
                     out var members))
             {
@@ -1141,6 +1145,10 @@ internal static partial class PackageImageBuilder
         {
             if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
                 || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    module,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
                     genericEnumAggregatePattern.aggregatePatternSuffix(),
                     out var members))
             {
@@ -1161,6 +1169,10 @@ internal static partial class PackageImageBuilder
             if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
             {
                 if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
                         aggregatePattern.aggregatePatternSuffix(),
                         out var enumMembers))
                 {
@@ -1178,6 +1190,10 @@ internal static partial class PackageImageBuilder
 
             if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
                 || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    module,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
                     aggregatePattern.aggregatePatternSuffix(),
                     out var aggregateMembers))
             {
@@ -1219,6 +1235,10 @@ internal static partial class PackageImageBuilder
     }
 
     private static bool TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+        LoadedModuleDocument module,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
         StarkParser.AggregatePatternSuffixContext? suffix,
         out IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members)
     {
@@ -1234,17 +1254,33 @@ internal static partial class PackageImageBuilder
             return false;
         }
 
-        return TryBuildPublishedTypedTemplateSwitchFieldPatterns(suffix.pattern(), out members);
+        return TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+            module,
+            literalsByLocation,
+            enumPatternOrdinals,
+            aggregatePatternOrdinals,
+            suffix.pattern(),
+            out members);
     }
 
     private static bool TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+        LoadedModuleDocument module,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
         IReadOnlyList<StarkParser.PatternContext> patterns,
         out IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members)
     {
         var builtMembers = new List<StarkPackageTypedTemplatePatternManifest>(patterns.Count);
         foreach (var pattern in patterns)
         {
-            if (!TryBuildPublishedTypedTemplateSwitchFieldPattern(pattern, out var builtMember))
+            if (!TryBuildPublishedTypedTemplateSwitchFieldPattern(
+                    module,
+                    pattern,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    out var builtMember))
             {
                 members = [];
                 return false;
@@ -1258,7 +1294,11 @@ internal static partial class PackageImageBuilder
     }
 
     private static bool TryBuildPublishedTypedTemplateSwitchFieldPattern(
+        LoadedModuleDocument module,
         StarkParser.PatternContext pattern,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
         out StarkPackageTypedTemplatePatternManifest member)
     {
         member = null!;
@@ -1272,6 +1312,102 @@ internal static partial class PackageImageBuilder
         if (pattern.VAR() is not null && pattern.Identifier() is not null)
         {
             member = new StarkPackageTypedTemplatePatternManifest("capture", pattern.Identifier().GetText());
+            return true;
+        }
+
+        if (pattern.literal() is { } literal)
+        {
+            if (!TryBuildPublishedTypedTemplateLiteralExpression(module, literal, literalsByLocation, out var literalExpression))
+            {
+                return false;
+            }
+
+            member = new StarkPackageTypedTemplatePatternManifest(
+                "literal",
+                Expression: literalExpression);
+            return true;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
+                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    module,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                    out var members))
+            {
+                return false;
+            }
+
+            member = new StarkPackageTypedTemplatePatternManifest(
+                "enum-pattern",
+                Ordinal: ordinal,
+                Members: members);
+            return true;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
+                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    module,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    genericEnumAggregatePattern.aggregatePatternSuffix(),
+                    out var members))
+            {
+                return false;
+            }
+
+            member = new StarkPackageTypedTemplatePatternManifest(
+                "enum-pattern",
+                Ordinal: ordinal,
+                Members: members);
+            return true;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        aggregatePattern.aggregatePatternSuffix(),
+                        out var enumMembers))
+                {
+                    return false;
+                }
+
+                member = new StarkPackageTypedTemplatePatternManifest(
+                    "enum-pattern",
+                    Ordinal: enumOrdinal,
+                    Members: enumMembers);
+                return true;
+            }
+
+            if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
+                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                    module,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    aggregatePattern.aggregatePatternSuffix(),
+                    out var aggregateMembers))
+            {
+                return false;
+            }
+
+            member = new StarkPackageTypedTemplatePatternManifest(
+                "aggregate-pattern",
+                Ordinal: aggregateOrdinal,
+                Members: aggregateMembers);
             return true;
         }
 

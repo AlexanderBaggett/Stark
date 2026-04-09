@@ -9005,6 +9005,10 @@ public sealed class CompilerPipelineTests
                     Value { Data: T, Tag: i32 },
                 }
 
+                public enum Wrapped<T> {
+                    Value { Data: Counter, Marker: i32 },
+                }
+
                 public record Counter(i32 Value, i32 Count) { }
 
                 public fn i32 HasValueSwitch<T>(Option<T> value) {
@@ -9037,6 +9041,15 @@ public sealed class CompilerPipelineTests
                             return 10;
                         case var current when current > 5:
                             return current;
+                        default:
+                            return -1;
+                    }
+                }
+
+                public fn i32 ReadNestedCountSwitch<T>(Wrapped<T> wrapped, T tag) {
+                    switch (wrapped) {
+                        case Wrapped<T>.Value { Data: Counter(7, var count), Marker: 1 }:
+                            return count;
                         default:
                             return -1;
                     }
@@ -9118,6 +9131,26 @@ public sealed class CompilerPipelineTests
 
             Assert.Equal("default", classifySwitchCases[3].Kind);
             Assert.Single(classifySwitchCases[3].Statements!);
+
+            var readNestedCountSwitch = Assert.Single(facadeModule.GenericTemplates.Functions, static item => item.QualifiedResolvedName == "Facade.ReadNestedCountSwitch");
+            Assert.NotNull(readNestedCountSwitch.TypedBody);
+            var readNestedCountSwitchStatement = Assert.Single(readNestedCountSwitch.TypedBody!.Statements);
+            Assert.Equal("switch", readNestedCountSwitchStatement.Kind);
+            var readNestedCountCases = Assert.IsAssignableFrom<IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>>(readNestedCountSwitchStatement.SwitchCases);
+            Assert.Equal(2, readNestedCountCases.Count);
+            Assert.Equal("enum-pattern", readNestedCountCases[0].Kind);
+            var readNestedCountMembers = Assert.IsAssignableFrom<IReadOnlyList<StarkPackageTypedTemplatePatternManifest>>(readNestedCountCases[0].Members);
+            Assert.Equal(2, readNestedCountMembers.Count);
+            Assert.Equal("aggregate-pattern", readNestedCountMembers[0].Kind);
+            var nestedAggregateMembers = Assert.IsAssignableFrom<IReadOnlyList<StarkPackageTypedTemplatePatternManifest>>(readNestedCountMembers[0].Members);
+            Assert.Equal(2, nestedAggregateMembers.Count);
+            Assert.Equal("literal", nestedAggregateMembers[0].Kind);
+            Assert.Equal("7", nestedAggregateMembers[0].Expression!.LiteralText);
+            Assert.Equal("capture", nestedAggregateMembers[1].Kind);
+            Assert.Equal("count", nestedAggregateMembers[1].Name);
+            Assert.Equal("literal", readNestedCountMembers[1].Kind);
+            Assert.Equal("1", readNestedCountMembers[1].Expression!.LiteralText);
+            Assert.Equal("default", readNestedCountCases[1].Kind);
         }
         finally
         {
@@ -14588,6 +14621,126 @@ public sealed class CompilerPipelineTests
 
             var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ReadCount__i32");
             Assert.True(specialized.SupportsDirectCodeGeneration);
+            Assert.Contains(
+                specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
+                static value => value is MidLevelIrExtractFieldRValue { FieldName: "Count" });
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedGenericBodiesUsePublishedNestedAndLiteralSwitchPatternFactsWhenBridgeSourceIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-nested-pattern-facts-generic-body-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Counter(i32 Value, i32 Count) { }
+
+                public enum Wrapped<T> {
+                    Value { Data: Counter, Marker: i32 },
+                }
+
+                public fn i32 ReadNestedCount<T>(Wrapped<T> wrapped, T tag) {
+                    switch (wrapped) {
+                        case Wrapped<T>.Value { Data: Counter(7, var count), Marker: 1 }:
+                            return count;
+                        default:
+                            return -1;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var corruptedTemplate = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.ReadNestedCount") with
+            {
+                BodyText = """
+                    {
+                        switch (wrapped) {
+                            case Wrapped<T>.Missing { Data: Counter(0, var count), Marker: 99 }:
+                                return 0;
+                            default:
+                                return -100;
+                        }
+                    }
+                    """
+            };
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = new StarkPackageGenericTemplateSection(
+                                module.EffectiveGenericTemplates!.Functions
+                                    .Select(template => template.QualifiedResolvedName == corruptedTemplate.QualifiedResolvedName
+                                        ? corruptedTemplate
+                                        : template)
+                                    .ToArray())
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 value) {
+                        return Facade.ReadNestedCount(
+                            Facade.Wrapped<i32>.Value { Data: new Facade.Counter(7, value), Marker: 1 },
+                            value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ReadNestedCount__i32");
+            Assert.True(specialized.SupportsDirectCodeGeneration);
+            Assert.Contains(
+                specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
+                static value => value is MidLevelIrExtractFieldRValue { FieldName: "$Value_Data" });
             Assert.Contains(
                 specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
                 static value => value is MidLevelIrExtractFieldRValue { FieldName: "Count" });

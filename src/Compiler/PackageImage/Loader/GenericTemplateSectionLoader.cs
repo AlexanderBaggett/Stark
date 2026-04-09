@@ -385,6 +385,71 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "literal", StringComparison.Ordinal))
+        {
+            if (manifest.Expression is null
+                || !TryBuildImportedTypedTemplateExpression(manifest.Expression, out var literalExpression)
+                || literalExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal)
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.Literal,
+                Expression: literalExpression);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "enum-pattern", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is not { } ordinal)
+            {
+                return false;
+            }
+
+            var members = new List<ImportedTemplateTypedSwitchFieldPatternSummary>((manifest.Members ?? []).Count);
+            foreach (var member in manifest.Members ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateSwitchFieldPattern(member, out var builtMember))
+                {
+                    return false;
+                }
+
+                members.Add(builtMember);
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern,
+                Ordinal: ordinal,
+                MemberPatterns: members);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "aggregate-pattern", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is not { } ordinal)
+            {
+                return false;
+            }
+
+            var members = new List<ImportedTemplateTypedSwitchFieldPatternSummary>((manifest.Members ?? []).Count);
+            foreach (var member in manifest.Members ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateSwitchFieldPattern(member, out var builtMember))
+                {
+                    return false;
+                }
+
+                members.Add(builtMember);
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern,
+                Ordinal: ordinal,
+                MemberPatterns: members);
+            return true;
+        }
+
         return false;
     }
 

@@ -335,7 +335,10 @@ internal sealed record StarkPackageTypedTemplateExpressionManifest(
 
 internal sealed record StarkPackageTypedTemplatePatternManifest(
     string Kind,
-    string? Name = null);
+    string? Name = null,
+    int? Ordinal = null,
+    StarkPackageTypedTemplateExpressionManifest? Expression = null,
+    IReadOnlyList<StarkPackageTypedTemplatePatternManifest>? Members = null);
 
 internal sealed record StarkPackageTypedTemplateSwitchCaseManifest(
     string Kind,

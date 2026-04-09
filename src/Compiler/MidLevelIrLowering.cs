@@ -49,6 +49,8 @@ internal sealed class MidLevelIrLowerer(
     {
         var loweringTemplateName = function.BodyTemplateName ?? function.Name;
         _importedFunctionTemplates.TryGetValue(loweringTemplateName, out var importedTemplateSummary);
+        var keepImportedGenericTemplateDeclarationBodyless =
+            ShouldKeepImportedGenericTemplateDeclarationBodyless(function, importedTemplateSummary);
 
         if (function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass)
         {
@@ -67,7 +69,7 @@ internal sealed class MidLevelIrLowerer(
 
         if (!_functionsByName.TryGetValue(loweringTemplateName, out var loweringContext))
         {
-            if (function.HasBody)
+            if (function.HasBody && !keepImportedGenericTemplateDeclarationBodyless)
             {
                 _logs.GapWarning(
                     "lowering",
@@ -145,7 +147,7 @@ internal sealed class MidLevelIrLowerer(
         {
             if (body is null)
             {
-                if (function.HasBody)
+                if (function.HasBody && !keepImportedGenericTemplateDeclarationBodyless)
                 {
                     _logs.GapWarning(
                         "lowering",
@@ -210,6 +212,15 @@ internal sealed class MidLevelIrLowerer(
             builder.Blocks,
             function.BodyLoweringKind,
             functionLocation);
+    }
+
+    private static bool ShouldKeepImportedGenericTemplateDeclarationBodyless(
+        HighLevelIrFunction function,
+        ImportedFunctionTemplateSummary? importedTemplateSummary)
+    {
+        return function.GenericTypeSubstitution is null
+            && function.Signature.IsGeneric
+            && importedTemplateSummary?.TypedBody is not null;
     }
 
     private static Dictionary<string, string> CollectMaterializedSpecializationSymbols(HighLevelIrModule hir)
@@ -601,7 +612,8 @@ internal sealed class MidLevelIrLowerer(
             string Text,
             StarkParser.LiteralContext? Literal,
             string? CaptureName,
-            LowerableAggregatePattern? NestedPattern);
+            LowerableAggregatePattern? NestedPattern,
+            ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression);
 
         private sealed record LowerableAggregatePattern(
             string TypeName,
@@ -1946,8 +1958,21 @@ internal sealed class MidLevelIrLowerer(
         {
             aggregatePattern = null;
 
-            if (switchCase.Ordinal is not { } ordinal
-                || !_importedTemplateEnumPatterns.TryGetValue(ordinal, out var publishedEnumPattern))
+            return switchCase.Ordinal is { } ordinal
+                && TryBuildImportedTypedTemplateEnumSwitchPattern(
+                    ordinal,
+                    switchCase.Members,
+                    out aggregatePattern);
+        }
+
+        private bool TryBuildImportedTypedTemplateEnumSwitchPattern(
+            int ordinal,
+            IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+            out LowerableAggregatePattern? aggregatePattern)
+        {
+            aggregatePattern = null;
+
+            if (!_importedTemplateEnumPatterns.TryGetValue(ordinal, out var publishedEnumPattern))
             {
                 return false;
             }
@@ -1964,13 +1989,13 @@ internal sealed class MidLevelIrLowerer(
             if (enumVariant.UsesNamedFields)
             {
                 if (publishedEnumPattern.Members.Count != enumVariant.Fields.Count
-                    || switchCase.Members.Count != publishedEnumPattern.Members.Count)
+                    || memberPatterns.Count != publishedEnumPattern.Members.Count)
                 {
                     return false;
                 }
 
-                var fieldPatterns = new LowerableAggregateFieldPattern[switchCase.Members.Count];
-                for (var memberOrdinal = 0; memberOrdinal < switchCase.Members.Count; memberOrdinal++)
+                var fieldPatterns = new LowerableAggregateFieldPattern[memberPatterns.Count];
+                for (var memberOrdinal = 0; memberOrdinal < memberPatterns.Count; memberOrdinal++)
                 {
                     var publishedMember = publishedEnumPattern.Members[memberOrdinal];
                     if (publishedMember.FieldIndex < 0 || publishedMember.FieldIndex >= enumVariant.Fields.Count)
@@ -1980,7 +2005,7 @@ internal sealed class MidLevelIrLowerer(
 
                     var field = enumVariant.Fields[publishedMember.FieldIndex];
                     if (!TryBuildImportedTypedTemplateSwitchFieldPattern(
-                            switchCase.Members[memberOrdinal],
+                            memberPatterns[memberOrdinal],
                             publishedMember.FieldName,
                             field.StorageFieldName,
                             field.StorageFieldIndex,
@@ -1999,17 +2024,17 @@ internal sealed class MidLevelIrLowerer(
                 return true;
             }
 
-            if (switchCase.Members.Count != enumVariant.Fields.Count)
+            if (memberPatterns.Count != enumVariant.Fields.Count)
             {
                 return false;
             }
 
-            var tupleFieldPatterns = new LowerableAggregateFieldPattern[switchCase.Members.Count];
-            for (var fieldIndex = 0; fieldIndex < switchCase.Members.Count; fieldIndex++)
+            var tupleFieldPatterns = new LowerableAggregateFieldPattern[memberPatterns.Count];
+            for (var fieldIndex = 0; fieldIndex < memberPatterns.Count; fieldIndex++)
             {
                 var field = enumVariant.Fields[fieldIndex];
                 if (!TryBuildImportedTypedTemplateSwitchFieldPattern(
-                        switchCase.Members[fieldIndex],
+                        memberPatterns[fieldIndex],
                         field.SourceFieldName ?? field.SourcePosition.ToString(System.Globalization.CultureInfo.InvariantCulture),
                         field.StorageFieldName,
                         field.StorageFieldIndex,
@@ -2034,8 +2059,21 @@ internal sealed class MidLevelIrLowerer(
         {
             aggregatePattern = null;
 
-            if (switchCase.Ordinal is not { } ordinal
-                || !_importedTemplateAggregatePatterns.TryGetValue(ordinal, out var publishedAggregatePattern))
+            return switchCase.Ordinal is { } ordinal
+                && TryBuildImportedTypedTemplateAggregateSwitchPattern(
+                    ordinal,
+                    switchCase.Members,
+                    out aggregatePattern);
+        }
+
+        private bool TryBuildImportedTypedTemplateAggregateSwitchPattern(
+            int ordinal,
+            IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+            out LowerableAggregatePattern? aggregatePattern)
+        {
+            aggregatePattern = null;
+
+            if (!_importedTemplateAggregatePatterns.TryGetValue(ordinal, out var publishedAggregatePattern))
             {
                 return false;
             }
@@ -2048,17 +2086,17 @@ internal sealed class MidLevelIrLowerer(
                 return false;
             }
 
-            if (switchCase.Members.Count != 0 && switchCase.Members.Count != namedType.OrderedFields.Count)
+            if (memberPatterns.Count != 0 && memberPatterns.Count != namedType.OrderedFields.Count)
             {
                 return false;
             }
 
-            var fieldPatterns = new LowerableAggregateFieldPattern[switchCase.Members.Count];
-            for (var fieldIndex = 0; fieldIndex < switchCase.Members.Count; fieldIndex++)
+            var fieldPatterns = new LowerableAggregateFieldPattern[memberPatterns.Count];
+            for (var fieldIndex = 0; fieldIndex < memberPatterns.Count; fieldIndex++)
             {
                 var field = namedType.OrderedFields[fieldIndex];
                 if (!TryBuildImportedTypedTemplateSwitchFieldPattern(
-                        switchCase.Members[fieldIndex],
+                        memberPatterns[fieldIndex],
                         field.Name,
                         field.Name,
                         fieldIndex,
@@ -2077,7 +2115,7 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
-        private static bool TryBuildImportedTypedTemplateSwitchFieldPattern(
+        private bool TryBuildImportedTypedTemplateSwitchFieldPattern(
             ImportedTemplateTypedSwitchFieldPatternSummary fieldPattern,
             string fieldName,
             string storageFieldName,
@@ -2096,7 +2134,8 @@ internal sealed class MidLevelIrLowerer(
                     "_",
                     Literal: null,
                     CaptureName: null,
-                    NestedPattern: null);
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -2112,7 +2151,65 @@ internal sealed class MidLevelIrLowerer(
                     $"var {fieldPattern.Name}",
                     Literal: null,
                     CaptureName: fieldPattern.Name,
-                    NestedPattern: null);
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null);
+                return true;
+            }
+
+            if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.Literal
+                && fieldPattern.Expression is { Kind: ImportedTemplateTypedBodyExpressionKind.Literal } literalExpression)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Literal,
+                    RenderImportedTypedTemplateExpression(literalExpression),
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: null,
+                    ImportedLiteralExpression: literalExpression);
+                return true;
+            }
+
+            if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern
+                && fieldPattern.Ordinal is { } enumOrdinal
+                && TryBuildImportedTypedTemplateEnumSwitchPattern(enumOrdinal, fieldPattern.Members, out var nestedEnumPattern)
+                && nestedEnumPattern is not null
+                && nestedEnumPattern.WholeCaptureName is null)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Nested,
+                    "typed-nested-enum-pattern",
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: nestedEnumPattern,
+                    ImportedLiteralExpression: null);
+                return true;
+            }
+
+            if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern
+                && fieldPattern.Ordinal is { } aggregateOrdinal
+                && TryBuildImportedTypedTemplateAggregateSwitchPattern(aggregateOrdinal, fieldPattern.Members, out var nestedAggregatePattern)
+                && nestedAggregatePattern is not null
+                && nestedAggregatePattern.WholeCaptureName is null)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Nested,
+                    "typed-nested-aggregate-pattern",
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: nestedAggregatePattern,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5099,7 +5196,8 @@ internal sealed class MidLevelIrLowerer(
                     pattern.GetText(),
                     Literal: null,
                     CaptureName: null,
-                    NestedPattern: null);
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5114,7 +5212,8 @@ internal sealed class MidLevelIrLowerer(
                     pattern.GetText(),
                     Literal: null,
                     CaptureName: pattern.Identifier()?.GetText(),
-                    NestedPattern: null);
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5129,7 +5228,8 @@ internal sealed class MidLevelIrLowerer(
                     literal.GetText(),
                     literal,
                     CaptureName: null,
-                    NestedPattern: null);
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5152,7 +5252,8 @@ internal sealed class MidLevelIrLowerer(
                     nestedEnumNamedFieldPattern.GetText(),
                     Literal: null,
                     CaptureName: null,
-                    NestedPattern: parsedNestedPattern);
+                    NestedPattern: parsedNestedPattern,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5175,7 +5276,8 @@ internal sealed class MidLevelIrLowerer(
                     nestedAggregatePattern.GetText(),
                     Literal: null,
                     CaptureName: null,
-                    NestedPattern: parsedNestedPattern);
+                    NestedPattern: parsedNestedPattern,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5198,7 +5300,8 @@ internal sealed class MidLevelIrLowerer(
                     nestedGenericEnumAggregatePattern.GetText(),
                     Literal: null,
                     CaptureName: null,
-                    NestedPattern: parsedNestedPattern);
+                    NestedPattern: parsedNestedPattern,
+                    ImportedLiteralExpression: null);
                 return true;
             }
 
@@ -5566,10 +5669,15 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                var condition = EmitSwitchLiteralComparison(
-                    fieldValue,
-                    fieldPattern.Literal!,
-                    $"switch {switchValue.Text}.{fieldPattern.FieldName} == {fieldPattern.Text}");
+                var condition = fieldPattern.ImportedLiteralExpression is { } importedLiteralExpression
+                    ? EmitImportedTypedTemplateSwitchLiteralComparison(
+                        fieldValue,
+                        importedLiteralExpression,
+                        $"switch {switchValue.Text}.{fieldPattern.FieldName} == {fieldPattern.Text}")
+                    : EmitSwitchLiteralComparison(
+                        fieldValue,
+                        fieldPattern.Literal!,
+                        $"switch {switchValue.Text}.{fieldPattern.FieldName} == {fieldPattern.Text}");
                 if (condition is null)
                 {
                     return false;
