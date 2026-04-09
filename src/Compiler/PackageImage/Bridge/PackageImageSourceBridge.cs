@@ -590,6 +590,10 @@ internal static partial class PackageImageLoader
             .ToDictionary(static item => item.Ordinal);
         var enumValuesByOrdinal = (template.EnumValues ?? [])
             .ToDictionary(static item => item.Ordinal);
+        var enumPatternsByOrdinal = (template.EnumPatterns ?? [])
+            .ToDictionary(static item => item.Ordinal);
+        var aggregatePatternsByOrdinal = (template.AggregatePatterns ?? [])
+            .ToDictionary(static item => item.Ordinal);
         var directCallsByOrdinal = (template.DirectCalls ?? [])
             .ToDictionary(static item => item.Ordinal);
         var fieldAccessesByOrdinal = (template.FieldAccesses ?? [])
@@ -605,6 +609,8 @@ internal static partial class PackageImageLoader
                 enumConstructorsByOrdinal,
                 enumCallsByOrdinal,
                 enumValuesByOrdinal,
+                enumPatternsByOrdinal,
+                aggregatePatternsByOrdinal,
                 directCallsByOrdinal,
                 fieldAccessesByOrdinal,
                 memberCallsByOrdinal))
@@ -623,6 +629,8 @@ internal static partial class PackageImageLoader
         IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumPatternManifest> enumPatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateAggregatePatternManifest> aggregatePatternsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
@@ -637,6 +645,8 @@ internal static partial class PackageImageLoader
                     enumConstructorsByOrdinal,
                     enumCallsByOrdinal,
                     enumValuesByOrdinal,
+                    enumPatternsByOrdinal,
+                    aggregatePatternsByOrdinal,
                     directCallsByOrdinal,
                     fieldAccessesByOrdinal,
                     memberCallsByOrdinal,
@@ -657,6 +667,8 @@ internal static partial class PackageImageLoader
         IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumPatternManifest> enumPatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateAggregatePatternManifest> aggregatePatternsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,

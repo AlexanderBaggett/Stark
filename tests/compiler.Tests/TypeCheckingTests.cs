@@ -208,6 +208,29 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ScalarizableEnumsAreOrderedComparable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                None,
+                Many(i32, i32, i32, i32, i32),
+            }
+
+            fn bool Less(Token left, Token right) {
+                return left < right;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
     public void ExplicitNonAsciiLiteralToAsciiConversionTypeChecks()
     {
         var result = Compile(

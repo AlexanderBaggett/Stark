@@ -1931,7 +1931,7 @@ internal sealed class LlvmIrEmitter
 
             var namedType = ResolveNamedTypeSymbol(type);
             if (namedType is null
-                || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                || namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum)
                 || !TryGetScalarizableAggregateLeaves(
                     type,
                     requireRepresentationPreserving: false,
@@ -1953,7 +1953,7 @@ internal sealed class LlvmIrEmitter
         {
             if (aggregateType.Kind != StarkTypeKind.Named
                 || ResolveNamedTypeSymbol(aggregateType) is not { } aggregateNamedType
-                || aggregateNamedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                || aggregateNamedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum)
                 || !TryGetScalarizableAggregateLeaves(
                     aggregateType,
                     requireRepresentationPreserving: false,

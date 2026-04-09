@@ -6145,6 +6145,11 @@ internal sealed class TypeChecker
             return AreOrderedComparable(namedType.OrderedFields);
         }
 
+        if (namedType.Kind == DeclarationKind.Enum)
+        {
+            return AreOrderedComparableEnumVariants(namedType.Variants);
+        }
+
         return false;
     }
 
@@ -6155,6 +6160,22 @@ internal sealed class TypeChecker
             if (!IsOrderedComparable(field.Type))
             {
                 return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool AreOrderedComparableEnumVariants(IEnumerable<EnumVariantSymbol> variants)
+    {
+        foreach (var variant in variants)
+        {
+            foreach (var field in variant.Fields)
+            {
+                if (!IsOrderedComparable(field.Type))
+                {
+                    return false;
+                }
             }
         }
 

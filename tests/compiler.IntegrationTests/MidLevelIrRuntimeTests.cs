@@ -367,6 +367,70 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task EnumOrderedComparisonsAreLexicographicAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            enum Token {
+                None,
+                Number(i32),
+                Pair(i32, i32),
+            }
+
+            fn bool Less(Token left, Token right) {
+                return left < right;
+            }
+
+            fn bool LessOrEqual(Token left, Token right) {
+                return left <= right;
+            }
+
+            fn bool Greater(Token left, Token right) {
+                return left > right;
+            }
+
+            fn bool GreaterOrEqual(Token left, Token right) {
+                return left >= right;
+            }
+
+            export ffi fn i32 main() {
+                stack Token lessPayloadLeft = Token.Number(7);
+                stack Token lessPayloadRight = Token.Number(9);
+                stack Token lessVariantLeft = Token.None;
+                stack Token lessVariantRight = Token.Number(0);
+                stack Token greaterPayloadLeft = Token.Pair(1, 9);
+                stack Token greaterPayloadRight = Token.Pair(1, 7);
+                stack Token greaterVariantLeft = Token.Pair(0, 0);
+                stack Token greaterVariantRight = Token.Number(99);
+                stack Token lessOrEqualLeft = Token.Number(5);
+                stack Token lessOrEqualRight = Token.Number(5);
+                stack Token greaterOrEqualLeft = Token.Pair(2, 0);
+                stack Token greaterOrEqualRight = Token.Pair(2, 0);
+
+                if (Less(lessPayloadLeft, lessPayloadRight)
+                    && Less(lessVariantLeft, lessVariantRight)
+                    && Greater(greaterPayloadLeft, greaterPayloadRight)
+                    && Greater(greaterVariantLeft, greaterVariantRight)
+                    && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
+                    && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight)) {
+                    return 7;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
     public async Task LargerScalarizableAggregatesCompareAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

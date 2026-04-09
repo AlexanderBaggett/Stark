@@ -2083,6 +2083,52 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                None,
+                Many(i32, i32, i32, i32, i32),
+            }
+
+            fn bool Less(Token left, Token right) {
+                return left < right;
+            }
+
+            fn bool LessOrEqual(Token left, Token right) {
+                return left <= right;
+            }
+
+            fn bool Greater(Token left, Token right) {
+                return left > right;
+            }
+
+            fn bool GreaterOrEqual(Token left, Token right) {
+                return left >= right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal i32 @__stark_named_compare_", llvm);
+        Assert.Contains("call i32 @__stark_named_compare_", llvm);
+        Assert.Contains("icmp slt i8", llvm);
+        Assert.Contains("icmp sgt i8", llvm);
+        Assert.True(CountOccurrences(llvm, "icmp slt i32") >= 1);
+        Assert.True(CountOccurrences(llvm, "icmp sgt i32") >= 1);
+        Assert.Contains("icmp sle i32", llvm);
+        Assert.Contains("icmp sge i32", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Less", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for LessOrEqual", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Greater", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for GreaterOrEqual", llvm);
+    }
+
+    [Fact]
     public void LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
     {
         var result = Compile(
