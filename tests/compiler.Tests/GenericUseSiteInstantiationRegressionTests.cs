@@ -5,6 +5,34 @@ namespace compiler.Tests;
 public sealed class GenericUseSiteInstantiationRegressionTests
 {
     [Fact]
+    public void NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSites()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Wrapper<T>(T Value) { }
+                record Envelope<T>(Wrapper<T> Wrapped) { }
+                record Crate<T>(Envelope<T> Envelope) { }
+
+                fn i32 Run(Crate<i32> crate) {
+                    return 0;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        Assert.Contains(plan.Types, static type => type.SymbolName == "__stark_mono_ty_Demo__Crate__i32");
+        Assert.Contains(plan.Types, static type => type.SymbolName == "__stark_mono_ty_Demo__Envelope__i32");
+        Assert.Contains(plan.Types, static type => type.SymbolName == "__stark_mono_ty_Demo__Wrapper__i32");
+    }
+
+    [Fact]
     public void ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWhenDeferredFunctionTriggersAreMissing()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-call-summary-generic-function-fallback-");

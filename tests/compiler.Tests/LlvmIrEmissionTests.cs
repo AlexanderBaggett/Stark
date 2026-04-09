@@ -726,6 +726,26 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void IntegerExponentExpressionsEmitInternalPowHelpers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Run(i32 left, i32 right) {
+                return left ** right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal i32 @__stark_int_pow_i32(i32 %base, i32 %exponent)", llvm);
+        Assert.Contains("call i32 @__stark_int_pow_i32(", llvm);
+        Assert.DoesNotContain("@llvm.pow.i32", llvm);
+    }
+
+    [Fact]
     public void FloatLiteralArgumentsEmitLlvmDecimalConstants()
     {
         var result = Compile(

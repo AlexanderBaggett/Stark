@@ -1047,6 +1047,30 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void IntegerExponentExpressionLowersToMirBinaryOperation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i32 Run(i32 left, i32 right) {
+                return left ** right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var binary = Assert.Single(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrBinaryRValue);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        var exponent = Assert.IsType<MidLevelIrBinaryRValue>(binary.Value);
+        Assert.Equal(MidLevelIrBinaryOperator.Exponent, exponent.Operator);
+        Assert.Equal(StarkTypeKind.Integer, exponent.Type.Kind);
+    }
+
+    [Fact]
     public void CharacterLiteralsLowerToMirStringConstants()
     {
         var result = Compile(

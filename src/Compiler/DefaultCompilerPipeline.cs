@@ -1072,6 +1072,17 @@ public static class DefaultCompilerPipeline
             ISet<string> seen,
             ICollection<TypeInstantiationTriggerRecord> expanded)
         {
+            AddExpandedTypeTriggers(type, location, typeModel, seen, expanded, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private static void AddExpandedTypeTriggers(
+            StarkTypeSymbol type,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded,
+            ISet<string> activeNamedTypes)
+        {
             var coreType = StarkTypeSymbols.WithQualifiers(
                 type,
                 borrowKind: StarkBorrowKind.None,
@@ -1083,33 +1094,139 @@ public static class DefaultCompilerPipeline
             {
                 foreach (var typeArgument in coreType.TypeArguments)
                 {
-                    AddExpandedTypeTriggers(typeArgument, location, typeModel, seen, expanded);
+                    AddExpandedTypeTriggers(typeArgument, location, typeModel, seen, expanded, activeNamedTypes);
                 }
             }
 
             if (coreType.ElementType is not null)
             {
-                AddExpandedTypeTriggers(coreType.ElementType, location, typeModel, seen, expanded);
+                AddExpandedTypeTriggers(coreType.ElementType, location, typeModel, seen, expanded, activeNamedTypes);
             }
 
-            if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
+            if (coreType.Kind != StarkTypeKind.Named
                 || coreType.NamedType is null
-                || coreType.TypeArguments is not { Count: > 0 }
-                || ContainsUnboundGenericParameter(coreType, typeModel))
+                || !TryResolveNamedTypeDefinition(coreType, typeModel, out var namedType, out var typeArguments, out var resolvedTypeName))
             {
                 return;
             }
 
-            var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildTypeArgumentKey(coreType.TypeArguments)}";
-            if (!seen.Add(key))
+            if (StarkTypeSymbols.IsGenericInstantiation(coreType)
+                && coreType.TypeArguments is { Count: > 0 }
+                && !ContainsUnboundGenericParameter(coreType, typeModel))
+            {
+                var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildTypeArgumentKey(coreType.TypeArguments)}";
+                if (!seen.Add(key))
+                {
+                    return;
+                }
+
+                expanded.Add(new TypeInstantiationTriggerRecord(
+                    coreType.NamedType,
+                    coreType.TypeArguments.ToArray(),
+                    location));
+            }
+
+            AddNestedTypeTriggersFromNamedType(
+                namedType,
+                typeArguments,
+                resolvedTypeName,
+                location,
+                typeModel,
+                seen,
+                expanded,
+                activeNamedTypes);
+        }
+
+        private static bool TryResolveNamedTypeDefinition(
+            StarkTypeSymbol coreType,
+            TypeCheckModel typeModel,
+            out NamedTypeSymbol namedType,
+            out IReadOnlyList<StarkTypeSymbol> typeArguments,
+            out string instantiatedTypeName)
+        {
+            namedType = null!;
+            typeArguments = [];
+            instantiatedTypeName = coreType.NamedType ?? string.Empty;
+
+            if (coreType.NamedType is null)
+            {
+                return false;
+            }
+
+            if (typeModel.NamedTypes.TryGetValue(coreType.NamedType, out namedType))
+            {
+                if (coreType.TypeArguments is { Count: > 0 })
+                {
+                    typeArguments = coreType.TypeArguments;
+                }
+
+                return true;
+            }
+
+            if (coreType.TypeArguments is not { Count: > 0 })
+            {
+                return false;
+            }
+
+            var baseName = StarkTypeSymbols.GetGenericBaseName(coreType.NamedType);
+            if (!typeModel.NamedTypes.TryGetValue(baseName, out namedType))
+            {
+                return false;
+            }
+
+            typeArguments = coreType.TypeArguments;
+            return true;
+        }
+
+        private static void AddNestedTypeTriggersFromNamedType(
+            NamedTypeSymbol namedType,
+            IReadOnlyList<StarkTypeSymbol> typeArguments,
+            string instantiatedTypeName,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded,
+            ISet<string> activeNamedTypes)
+        {
+            if (!activeNamedTypes.Add(instantiatedTypeName))
             {
                 return;
             }
 
-            expanded.Add(new TypeInstantiationTriggerRecord(
-                coreType.NamedType,
-                coreType.TypeArguments.ToArray(),
-                location));
+            try
+            {
+                IReadOnlyDictionary<string, StarkTypeSymbol>? substitution = null;
+                if (namedType.IsGeneric
+                    && typeArguments.Count == namedType.GenericParams.Count)
+                {
+                    substitution = namedType.GenericParams
+                        .Zip(typeArguments, static (parameter, argument) => new KeyValuePair<string, StarkTypeSymbol>(parameter, argument))
+                        .ToDictionary(static entry => entry.Key, static entry => entry.Value, StringComparer.Ordinal);
+                }
+
+                foreach (var field in namedType.OrderedFields)
+                {
+                    var nestedFieldType = substitution is null
+                        ? field.Type
+                        : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                    AddExpandedTypeTriggers(nestedFieldType, location, typeModel, seen, expanded, activeNamedTypes);
+                }
+
+                foreach (var variant in namedType.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        var nestedFieldType = substitution is null
+                            ? field.Type
+                            : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                        AddExpandedTypeTriggers(nestedFieldType, location, typeModel, seen, expanded, activeNamedTypes);
+                    }
+                }
+            }
+            finally
+            {
+                activeNamedTypes.Remove(instantiatedTypeName);
+            }
         }
 
         private static bool ContainsUnboundGenericParameter(StarkTypeSymbol type, TypeCheckModel typeModel)

@@ -924,6 +924,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [x] substitute generic parameters through fields, returns, and locals
   - [ ] instantiate generic functions and types at use sites
     - [x] instantiate generic types at use sites for source modules and manifest-backed consumers
+    - [x] recursively expand nested generic type layouts from source and manifest-backed use sites
 - [x] Monomorphization planning
   - [x] symbol naming scheme
   - [x] code-size control heuristics
@@ -1021,8 +1022,8 @@ Goal: add non-essential language surface after the first release without slowing
     - [ ] document the package image as a compiler-owned source artifact rather than a narrow distribution manifest
   - [ ] Test coverage for package images
     - [ ] writer or loader round-trip tests for rich package images
-    - [ ] direct-import tests that no longer synthesize fake source when rich package-image sections are present
-    - [ ] end-to-end tests for imported generic specialization from package images
+    - [x] direct-import tests that no longer synthesize fake source when rich package-image sections are present
+    - [x] end-to-end tests for imported generic specialization from package images
     - [x] compatibility tests for the temporary legacy manifest bridge while both paths coexist
 
 ## Suggested Near-Term Execution Order

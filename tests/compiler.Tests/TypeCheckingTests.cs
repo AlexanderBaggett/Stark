@@ -5,7 +5,7 @@ namespace compiler.Tests;
 public sealed class TypeCheckingTests
 {
     [Fact]
-    public void IntegerExponentiationRequiresFloatingPointOperand()
+    public void IntegerExponentiationTypeChecks()
     {
         var result = Compile(
             """
@@ -16,11 +16,7 @@ public sealed class TypeCheckingTests
             }
             """);
 
-        Assert.False(result.Succeeded);
-        Assert.Contains(
-            result.Diagnostics,
-            diagnostic => diagnostic.Code == "STK3002"
-                && diagnostic.Message.Contains("floating-point operand", StringComparison.Ordinal));
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]

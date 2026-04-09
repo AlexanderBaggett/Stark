@@ -3851,9 +3851,9 @@ internal sealed class TypeChecker
         }
 
         var resultType = FindCommonType(left.Type, right.Type);
-        if (resultType.Kind != StarkTypeKind.Float)
+        if (resultType.Kind is not (StarkTypeKind.Float or StarkTypeKind.Integer))
         {
-            ReportError("STK3002", "Operator '**' currently requires at least one floating-point operand.", expression);
+            ReportError("STK3002", "Operator '**' requires integer or floating-point operands.", expression);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
@@ -6594,10 +6594,15 @@ internal sealed class TypeChecker
     private void RecordTypeInstantiationTriggers(StarkTypeSymbol type, SourceLocation location)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        RecordTypeInstantiationTriggers(type, location, seen);
+        var activeNamedTypes = new HashSet<string>(StringComparer.Ordinal);
+        RecordTypeInstantiationTriggers(type, location, seen, activeNamedTypes);
     }
 
-    private void RecordTypeInstantiationTriggers(StarkTypeSymbol type, SourceLocation location, ISet<string> seen)
+    private void RecordTypeInstantiationTriggers(
+        StarkTypeSymbol type,
+        SourceLocation location,
+        ISet<string> seen,
+        ISet<string> activeNamedTypes)
     {
         var coreType = StarkTypeSymbols.WithQualifiers(
             type,
@@ -6610,13 +6615,44 @@ internal sealed class TypeChecker
         {
             foreach (var typeArgument in coreType.TypeArguments)
             {
-                RecordTypeInstantiationTriggers(typeArgument, location, seen);
+                RecordTypeInstantiationTriggers(typeArgument, location, seen, activeNamedTypes);
             }
         }
 
         if (coreType.ElementType is not null)
         {
-            RecordTypeInstantiationTriggers(coreType.ElementType, location, seen);
+            RecordTypeInstantiationTriggers(coreType.ElementType, location, seen, activeNamedTypes);
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
+            && coreType.Kind == StarkTypeKind.Named
+            && coreType.NamedType is { } namedTypeName
+            && _namedTypes.TryGetValue(namedTypeName, out var namedType))
+        {
+            if (!activeNamedTypes.Add(namedTypeName))
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (var field in namedType.OrderedFields)
+                {
+                    RecordTypeInstantiationTriggers(field.Type, location, seen, activeNamedTypes);
+                }
+
+                foreach (var variant in namedType.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        RecordTypeInstantiationTriggers(field.Type, location, seen, activeNamedTypes);
+                    }
+                }
+            }
+            finally
+            {
+                activeNamedTypes.Remove(namedTypeName);
+            }
         }
 
         if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
@@ -6651,6 +6687,34 @@ internal sealed class TypeChecker
             coreType.NamedType,
             coreType.TypeArguments.ToArray(),
             location));
+
+        if (_namedTypes.TryGetValue(coreType.NamedType, out var instantiatedType))
+        {
+            if (!activeNamedTypes.Add(coreType.NamedType))
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (var field in instantiatedType.OrderedFields)
+                {
+                    RecordTypeInstantiationTriggers(field.Type, location, seen, activeNamedTypes);
+                }
+
+                foreach (var variant in instantiatedType.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        RecordTypeInstantiationTriggers(field.Type, location, seen, activeNamedTypes);
+                    }
+                }
+            }
+            finally
+            {
+                activeNamedTypes.Remove(coreType.NamedType);
+            }
+        }
     }
 
     private void RecordDeferredTypeInstantiationTrigger(StarkTypeSymbol type, SourceLocation location)

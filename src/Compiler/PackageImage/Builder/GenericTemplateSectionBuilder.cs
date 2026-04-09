@@ -398,15 +398,29 @@ internal static partial class PackageImageBuilder
         if (statement.localVariableDeclaration() is { } localVariable)
         {
             var declarators = localVariable.variableDeclarators().variableDeclarator();
+            var variableInitializer = declarators.Length == 1 ? declarators[0].variableInitializer() : null;
             if (declarators.Length != 1
-                || declarators[0].variableInitializer()?.expression() is not { } initializerExpression
                 || !localDeclarationsByLocation.TryGetValue(
                     TemplateLocalDeclarationFacts.BuildLookupKey(
                     TemplateLocalDeclarationFacts.VariableKind,
                     localVariable.Start.Line,
                     localVariable.Start.Column + 1),
                     out var localDeclaration)
-                || !TryBuildPublishedTypedTemplateExpression(module, initializerExpression, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var initializer))
+                || variableInitializer is null
+                || !TryBuildPublishedTypedTemplateVariableInitializer(
+                    module,
+                    variableInitializer,
+                    localDeclaration.Type,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var initializer))
             {
                 return false;
             }
@@ -424,15 +438,29 @@ internal static partial class PackageImageBuilder
         if (statement.localConstantDeclaration() is { } localConstant)
         {
             var declarators = localConstant.constantDeclarators().constantDeclarator();
+            var variableInitializer = declarators.Length == 1 ? declarators[0].variableInitializer() : null;
             if (declarators.Length != 1
-                || declarators[0].variableInitializer()?.expression() is not { } initializerExpression
                 || !localDeclarationsByLocation.TryGetValue(
                     TemplateLocalDeclarationFacts.BuildLookupKey(
                         TemplateLocalDeclarationFacts.ConstantKind,
                         localConstant.Start.Line,
                         localConstant.Start.Column + 1),
                     out var localDeclaration)
-                || !TryBuildPublishedTypedTemplateExpression(module, initializerExpression, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, directCallOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var initializer))
+                || variableInitializer is null
+                || !TryBuildPublishedTypedTemplateVariableInitializer(
+                    module,
+                    variableInitializer,
+                    localDeclaration.Type,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var initializer))
             {
                 return false;
             }
@@ -1503,6 +1531,83 @@ internal static partial class PackageImageBuilder
             memberCallOrdinals,
             fieldAccessOrdinals,
             out publishedExpression);
+    }
+
+    private static bool TryBuildPublishedTypedTemplateVariableInitializer(
+        LoadedModuleDocument module,
+        StarkParser.VariableInitializerContext variableInitializer,
+        StarkTypeSymbol targetType,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        if (variableInitializer.expression() is { } expression)
+        {
+            return TryBuildPublishedTypedTemplateExpression(
+                module,
+                expression,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out publishedExpression);
+        }
+
+        if (variableInitializer.arrayInitializer() is { } arrayInitializer)
+        {
+            if (targetType.Kind != StarkTypeKind.FixedArray
+                || targetType.ElementType is null
+                || targetType.FixedLength is not int)
+            {
+                return false;
+            }
+
+            var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(arrayInitializer.variableInitializer().Length);
+            foreach (var elementInitializer in arrayInitializer.variableInitializer())
+            {
+                if (!TryBuildPublishedTypedTemplateVariableInitializer(
+                        module,
+                        elementInitializer,
+                        targetType.ElementType,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        directCallOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var publishedElement))
+                {
+                    return false;
+                }
+
+                arguments.Add(publishedElement);
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "array-initializer",
+                Arguments: arguments,
+                Type: BuildPublishedAbiTypeReference(targetType, module));
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryBuildPublishedTypedTemplateAssignmentTarget(

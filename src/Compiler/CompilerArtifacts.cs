@@ -392,6 +392,7 @@ public enum ImportedTemplateTypedBodyExpressionKind
 {
     NameReference,
     Literal,
+    ArrayInitializer,
     Conversion,
     UnaryOperation,
     BinaryOperation,

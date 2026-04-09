@@ -5,6 +5,70 @@ namespace compiler.IntegrationTests;
 public sealed class GenericUseSiteInstantiationIntegrationTests
 {
     [Fact]
+    public void ManifestBackedNestedGenericTypePlanningDiscoversNestedLayoutsFromImportedUseSites()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-nested-generic-layout-integration-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Wrapper<T>(T Value) { }
+                public record Envelope<T>(Wrapper<T> Wrapped) { }
+                public record Crate<T>(Envelope<T> Envelope) { }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(Facade.Crate<i32> crate) {
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "monomorphization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            Assert.Contains(plan.Types, static type => type.SymbolName == "__stark_mono_ty_Demo__Facade_Crate__i32");
+            Assert.Contains(plan.Types, static type => type.SymbolName == "__stark_mono_ty_Demo__Facade_Envelope__i32");
+            Assert.Contains(plan.Types, static type => type.SymbolName == "__stark_mono_ty_Demo__Facade_Wrapper__i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-call-summary-function-fallback-integration-");

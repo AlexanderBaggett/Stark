@@ -1162,6 +1162,49 @@ internal sealed class MidLevelIrLowerer(
             return true;
         }
 
+        private MidLevelIrOperand? LowerImportedTypedTemplateArrayInitializer(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            StarkTypeSymbol? expectedType)
+        {
+            var targetType = expectedType ?? expression.Type;
+            if (targetType is null
+                || targetType.Kind != StarkTypeKind.FixedArray
+                || targetType.ElementType is null
+                || targetType.FixedLength is not int fixedLength)
+            {
+                return null;
+            }
+
+            MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(targetType);
+            var elementCount = Math.Min(fixedLength, expression.Args.Count);
+
+            for (var index = 0; index < elementCount; index++)
+            {
+                var element = LowerImportedTypedTemplateExpression(expression.Args[index], targetType.ElementType);
+                if (element is null)
+                {
+                    return null;
+                }
+
+                var updated = EmitTemporary(
+                    new MidLevelIrInsertIndexRValue(
+                        current,
+                        index,
+                        element,
+                        targetType,
+                        $"{current.Text}[{RenderImportedTypedTemplateExpression(expression.Args[index])}]"),
+                    "insertindex");
+                if (updated is null)
+                {
+                    return null;
+                }
+
+                current = updated;
+            }
+
+            return current;
+        }
+
         private bool TryLowerImportedTypedTemplateConditionalCallStatement(
             ImportedTemplateTypedBodyExpressionSummary expression)
         {
@@ -2190,6 +2233,14 @@ internal sealed class MidLevelIrLowerer(
                         : CoerceOperand(result, expectedType);
                 }
 
+                case ImportedTemplateTypedBodyExpressionKind.ArrayInitializer:
+                {
+                    var result = LowerImportedTypedTemplateArrayInitializer(expression, expectedType);
+                    return result is null || expectedType is null
+                        ? result
+                        : CoerceOperand(result, expectedType);
+                }
+
                 case ImportedTemplateTypedBodyExpressionKind.Conversion:
                 {
                     var result = LowerImportedTypedTemplateConversion(expression, expectedType);
@@ -3194,6 +3245,9 @@ internal sealed class MidLevelIrLowerer(
             {
                 ImportedTemplateTypedBodyExpressionKind.NameReference => expression.Name ?? string.Empty,
                 ImportedTemplateTypedBodyExpressionKind.Literal => expression.LiteralText ?? string.Empty,
+                ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
+                    ? "{}"
+                    : $"{{ {string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpression))} }}",
                 ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType
                     && expression.Args.Count == 1
                     ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0])}"
@@ -6138,7 +6192,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             var resultType = FindCommonType(left.Type, right.Type);
-            if (resultType.Kind != StarkTypeKind.Float)
+            if (resultType.Kind is not (StarkTypeKind.Float or StarkTypeKind.Integer))
             {
                 MarkUnsupported();
                 return null;

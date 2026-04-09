@@ -14,6 +14,7 @@ internal sealed class LlvmIrEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
     private const int AggregateMemcpyThresholdBytes = 32;
@@ -1873,6 +1874,27 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine();
         EmitTextComparisonHelperDefinition(builder, StarkTypeSymbols.Unicode, UnicodeCompareHelperName);
         builder.AppendLine();
+
+        foreach (var bitWidth in CollectIntegerExponentBitWidths())
+        {
+            EmitIntegerExponentHelperDefinition(builder, bitWidth);
+            builder.AppendLine();
+        }
+    }
+
+    private IReadOnlyList<int> CollectIntegerExponentBitWidths()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(instruction => instruction.Value)
+            .OfType<SsaBinaryRValue>()
+            .Where(static binary => binary.Operator == SsaBinaryOperator.Exponent && binary.Type.Kind == StarkTypeKind.Integer && binary.Type.BitWidth is int)
+            .Select(static binary => binary.Type.BitWidth!.Value)
+            .Distinct()
+            .OrderBy(static bitWidth => bitWidth)
+            .ToArray();
     }
 
     private void EmitTextEqualityHelperDefinition(
@@ -1984,6 +2006,36 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine();
         builder.AppendLine("return_equal:");
         builder.AppendLine("  ret i32 0");
+        builder.AppendLine("}");
+    }
+
+    private void EmitIntegerExponentHelperDefinition(StringBuilder builder, int bitWidth)
+    {
+        var integerType = StarkTypeSymbols.Integer(bitWidth);
+        var llvmType = MapType(integerType);
+        var helperName = GetIntegerExponentHelperName(bitWidth);
+
+        builder.AppendLine($"define internal {llvmType} @{EscapeIdentifier(helperName)}({llvmType} %base, {llvmType} %exponent) {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %negative = icmp slt {llvmType} %exponent, 0");
+        builder.AppendLine("  br i1 %negative, label %return_zero, label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("loop_header:");
+        builder.AppendLine($"  %pow_result = phi {llvmType} [ 1, %entry ], [ %pow_next, %loop_body ]");
+        builder.AppendLine($"  %pow_exp = phi {llvmType} [ %exponent, %entry ], [ %pow_exp_next, %loop_body ]");
+        builder.AppendLine($"  %pow_done = icmp eq {llvmType} %pow_exp, 0");
+        builder.AppendLine("  br i1 %pow_done, label %return_result, label %loop_body");
+        builder.AppendLine();
+        builder.AppendLine("loop_body:");
+        builder.AppendLine($"  %pow_next = mul {llvmType} %pow_result, %base");
+        builder.AppendLine($"  %pow_exp_next = sub {llvmType} %pow_exp, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("return_zero:");
+        builder.AppendLine($"  ret {llvmType} 0");
+        builder.AppendLine();
+        builder.AppendLine("return_result:");
+        builder.AppendLine($"  ret {llvmType} %pow_result");
         builder.AppendLine("}");
     }
 
@@ -3842,6 +3894,11 @@ internal sealed class LlvmIrEmitter
         };
     }
 
+    private static string GetIntegerExponentHelperName(int bitWidth)
+    {
+        return $"{IntegerExponentHelperNamePrefix}{bitWidth}";
+    }
+
     private static string EscapeFileName(string filePath)
     {
         return filePath.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -5024,6 +5081,24 @@ internal sealed class LlvmIrEmitter
                 }
             }
 
+            if (binary.Operator == SsaBinaryOperator.Exponent)
+            {
+                if (binary.Type.Kind == StarkTypeKind.Float)
+                {
+                    EmitFloatExponent(result, binary);
+                    return;
+                }
+
+                if (binary.Type.Kind == StarkTypeKind.Integer)
+                {
+                    EmitIntegerExponent(result, binary);
+                    return;
+                }
+
+                throw new UnsupportedBodyEmissionException(
+                    $"Unsupported exponent operator type '{binary.Type.DisplayName}'.");
+            }
+
             if (binary.Type.Kind == StarkTypeKind.Float)
             {
                 var opcode = binary.Operator switch
@@ -5039,12 +5114,6 @@ internal sealed class LlvmIrEmitter
                 if (!string.IsNullOrEmpty(opcode))
                 {
                     AppendLine($"  {result} = {opcode} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
-                    return;
-                }
-
-                if (binary.Operator == SsaBinaryOperator.Exponent)
-                {
-                    EmitFloatExponent(result, binary);
                     return;
                 }
             }
@@ -5515,6 +5584,16 @@ internal sealed class LlvmIrEmitter
             var llvmType = MapType(binary.Left.Type);
             var intrinsicName = $"@llvm.pow.{LlvmIrEmitter.GetFloatIntrinsicSuffix(binary.Left.Type)}";
             AppendLine($"  {result} = call {llvmType} {intrinsicName}({llvmType} {FormatValue(binary.Left)}, {llvmType} {FormatValue(binary.Right)})");
+        }
+
+        private void EmitIntegerExponent(string result, SsaBinaryRValue binary)
+        {
+            var bitWidth = binary.Type.BitWidth ?? throw new UnsupportedBodyEmissionException(
+                $"Integer exponent operator '{binary.Type.DisplayName}' is missing a bit width.");
+            var llvmType = MapType(binary.Type);
+            var helperName = GetIntegerExponentHelperName(bitWidth);
+            AppendLine(
+                $"  {result} = call {llvmType} @{EscapeIdentifier(helperName)}({llvmType} {FormatValue(binary.Left)}, {llvmType} {FormatValue(binary.Right)})");
         }
 
         private static void GetSignedIntegerBounds(int bitWidth, out BigInteger minValue, out BigInteger maxValue)
