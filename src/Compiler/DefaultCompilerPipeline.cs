@@ -1314,7 +1314,8 @@ public static class DefaultCompilerPipeline
             bool IsHot,
             bool IsCold,
             InlinePreference InlinePreference,
-            int? TopLevelStatementCount);
+            int? TopLevelStatementCount,
+            int? EstimatedBodyCost);
 
         public string Id => "monomorphization-plan";
 
@@ -1361,6 +1362,7 @@ public static class DefaultCompilerPipeline
                         function.IsDeclaringModuleSourceBacked,
                         DetermineCodeSizeHeuristic(info, hasIndirectByValueAggregateAbiCost),
                         info?.TopLevelStatementCount,
+                        info?.EstimatedBodyCost,
                         DetermineLinkageKind(function, ownership.RootModuleName),
                         GlobalSymbolNaming.ComputeMonomorphizedFunctionSymbolName(
                             function.OwnerModuleName,
@@ -1459,7 +1461,8 @@ public static class DefaultCompilerPipeline
                         IsHot: effects?.IsHot ?? false,
                         IsCold: effects?.IsCold ?? false,
                         InlinePreference: effects?.InlinePreference ?? InlinePreference.InlineHint,
-                        TopLevelStatementCount: template.TopLevelStatementCount);
+                        TopLevelStatementCount: template.TopLevelStatementCount,
+                        EstimatedBodyCost: template.EstimatedBodyCost);
                 }
             }
 
@@ -1492,7 +1495,8 @@ public static class DefaultCompilerPipeline
                             declaration.Function.Modifiers.IsHot,
                             declaration.Function.Modifiers.IsCold,
                             declaration.Function.Modifiers.InlinePreference,
-                            functionSyntax.Body.block()?.statement().Length));
+                            functionSyntax.Body.block()?.statement().Length,
+                            GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body)));
                 }
             }
 
@@ -1521,7 +1525,10 @@ public static class DefaultCompilerPipeline
             }
 
             if (info.InlinePreference == InlinePreference.Inline
-                || (info.TopLevelStatementCount is { } topLevelStatementCount
+                || (info.EstimatedBodyCost is { } estimatedBodyCost
+                    && estimatedBodyCost <= (info.IsHot ? 4 : 2))
+                || (info.EstimatedBodyCost is null
+                    && info.TopLevelStatementCount is { } topLevelStatementCount
                     && topLevelStatementCount <= (info.IsHot ? 4 : 2)))
             {
                 return MonomorphizationCodeSizeHeuristic.InlineSmallBody;

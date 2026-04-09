@@ -299,6 +299,7 @@ public sealed record LoadedModuleDocument(
 
 public sealed record ImportedFunctionTemplateSummary(
     int? TopLevelStatementCount,
+    int? EstimatedBodyCost,
     ImportedTemplateTypedBodySummary? TypedBodySummary = null,
     IReadOnlyList<ImportedDeferredFunctionInstantiationSummary>? DeferredFunctionInstantiations = null,
     IReadOnlyList<ImportedDeferredTypeInstantiationSummary>? DeferredTypeInstantiations = null,
@@ -1376,6 +1377,7 @@ public sealed record MonomorphizedFunctionPlan(
     bool IsDeclaringModuleSourceBacked,
     MonomorphizationCodeSizeHeuristic CodeSizeHeuristic,
     int? EstimatedTopLevelStatementCount,
+    int? EstimatedBodyCost,
     MonomorphizationLinkageKind Linkage,
     string SymbolName,
     SourceLocation FirstUseLocation);

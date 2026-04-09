@@ -240,6 +240,7 @@ internal static partial class PackageImageLoader
         {
             loadedFunctionTemplates[functionTemplate.QualifiedResolvedName] = new ImportedFunctionTemplateSummary(
                 TopLevelStatementCount: functionTemplate.TopLevelStatementCount,
+                EstimatedBodyCost: functionTemplate.EstimatedBodyCost,
                 TypedBodySummary: TryBuildImportedTypedTemplateBody(functionTemplate.TypedBody, out var typedBody)
                     ? typedBody
                     : null,

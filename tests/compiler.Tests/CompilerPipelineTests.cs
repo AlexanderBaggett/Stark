@@ -3749,7 +3749,7 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void PackageImageSourceBridgeUsesSourceSurfaceOverloadKeysForUnsupportedGenericTemplateBodiesWhenTypedInterfaceIsPresent()
+    public void PackageImageSourceBridgeKeepsSupportedGenericTemplateBodiesDeclarationOnlyWhenTypedInterfaceIsPresent()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-bridge-surface-");
 
@@ -3774,6 +3774,9 @@ public sealed class CompilerPipelineTests
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
             var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var identityTemplate = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.Identity");
+            Assert.True(identityTemplate.EstimatedBodyCost is > 0);
+            Assert.Contains("\"EstimatedBodyCost\"", manifest.ToJson(), StringComparison.Ordinal);
 
             Assert.True(
                 PackageImageLoader.TryBuildModuleSource(
@@ -3785,10 +3788,9 @@ public sealed class CompilerPipelineTests
                     out var sourceText));
 
             Assert.Contains("public alias Count = i32;", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn i32 Identity<T>(i32 value) {", sourceText, StringComparison.Ordinal);
-            Assert.Contains("return value + 0;", sourceText, StringComparison.Ordinal);
-
-            Assert.DoesNotContain("public fn i32 Identity<T>(i32 value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32 Identity<T>(i32 value);", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("public fn i32 Identity<T>(i32 value) {", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return value + 0;", sourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -16308,6 +16310,91 @@ public sealed class CompilerPipelineTests
             Assert.Equal(3, function.EstimatedTopLevelStatementCount);
             Assert.Equal(MonomorphizationLinkageKind.InternalSingleOwner, function.Linkage);
             Assert.Equal("__stark_mono_fn_Demo__Facade_Choose__i32", function.SymbolName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedComplexSingleStatementGenericBodiesUseEstimatedBodyCostForPlanning()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-body-cost-generic-mono-plan-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 Classify<T>(i32 value, T tag) {
+                    switch (value) {
+                        case 0:
+                            return 10;
+                        case 1:
+                            return 11;
+                        case 2:
+                            return 12;
+                        default:
+                            return value;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 value) {
+                        return Facade.Classify(value, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "monomorphization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionTemplates.TryGetValue("Facade.Classify", out var templateSummary));
+            Assert.Equal(1, templateSummary.TopLevelStatementCount);
+            Assert.True(templateSummary.EstimatedBodyCost is > 2);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            var function = Assert.Single(plan.Functions);
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.SpecializeDefault, function.CodeSizeHeuristic);
+            Assert.Equal(1, function.EstimatedTopLevelStatementCount);
+            Assert.Equal(templateSummary.EstimatedBodyCost, function.EstimatedBodyCost);
+            Assert.Equal(MonomorphizationLinkageKind.InternalSingleOwner, function.Linkage);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Classify__i32", function.SymbolName);
         }
         finally
         {

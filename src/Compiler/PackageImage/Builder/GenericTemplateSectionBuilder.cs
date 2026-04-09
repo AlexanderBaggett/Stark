@@ -157,6 +157,7 @@ internal static partial class PackageImageBuilder
                         ? GetContextSourceText(module.ParseResult, function.Body)
                         : null,
                     TopLevelStatementCount: function.Body.block()?.statement().Length,
+                    EstimatedBodyCost: GenericTemplateBodyCostEstimator.Estimate(function.Body),
                     TypedBody: typedBody,
                     DeferredFunctionInstantiations: deferredTriggers is { Count: > 0 }
                         ? deferredTriggers

@@ -1015,6 +1015,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] Use package images to improve optimizer capability
     - [x] use imported concrete layout facts during monomorphization planning so manifest-backed large by-value generic instantiations do not get treated like trivially inline helpers
     - [x] let specialization planning consume imported effect, ABI, and layout facts directly instead of re-deriving them from stringly data
+    - [x] publish weighted generic body-cost summaries so imported monomorphization planning does not rely only on top-level statement count
     - [ ] preserve enough information for future cross-package inlining, law cloning, or other package-aware optimizations
     - [ ] keep package publication from throwing away facts that are expensive for the compiler to recover later
   - [ ] Tooling, inspection, and diagnostics for package images
