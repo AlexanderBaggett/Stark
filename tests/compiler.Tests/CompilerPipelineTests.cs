@@ -3886,6 +3886,119 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedTypedGroupedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-grouped-local-body-bridge-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 SumTo<T>(i32 limit, T tag) {
+                    stack mut i32 total = 0, stop = limit;
+                    for willexit (stack mut i32 index = 0, max = stop; index < max; index += 1) {
+                        total += index;
+                    }
+
+                    return total;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            var typedFacadeModule = Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
+                    out var sourceText));
+
+            Assert.Contains("public fn i32 SumTo<T>(i32 limit, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("stack mut i32 total = 0, stop = limit;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("for willexit (stack mut i32 index = 0, max = stop;", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 limit) {
+                        stack i32 tag = 0;
+                        return Facade.SumTo(limit, tag);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var sumTo = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_SumTo__i32");
+            Assert.True(sumTo.HasBody);
+            Assert.True(sumTo.SupportsDirectCodeGeneration);
+            Assert.Contains(sumTo.Locals, static local => local.Name == "total");
+            Assert.Contains(sumTo.Locals, static local => local.Name == "stop");
+            Assert.Contains(sumTo.Locals, static local => local.Name == "index");
+            Assert.Contains(sumTo.Locals, static local => local.Name == "max");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedTypedConversionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-conversion-body-bridge-");
@@ -5633,9 +5746,9 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void PackageManifestRetainsGenericTemplateBodyTextWhenTypedSubsetCannotRepresentBody()
+    public void PackageManifestPublishesGroupedLocalDeclarationTypedTemplateBodies()
     {
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-body-fallback-pipeline-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-grouped-local-template-body-pipeline-");
 
         try
         {
@@ -5648,6 +5761,15 @@ public sealed class CompilerPipelineTests
                     stack i32 first = value, second = value + 1;
                     return first + second;
                 }
+
+                public fn i32 SumTo<T>(i32 limit, T tag) {
+                    stack mut i32 total = 0, stop = limit;
+                    for willexit (stack mut i32 index = 0, max = stop; index < max; index += 1) {
+                        total += index;
+                    }
+
+                    return total;
+                }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -5657,12 +5779,93 @@ public sealed class CompilerPipelineTests
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
             var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
-            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.SumPair");
+            var sumPair = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.SumPair");
+
+            Assert.Null(sumPair.BodyText);
+            Assert.NotNull(sumPair.TypedBody);
+            Assert.Equal(2, sumPair.TopLevelStatementCount);
+            Assert.Equal(3, sumPair.TypedBody!.Statements.Count);
+            Assert.Collection(
+                sumPair.TypedBody.Statements,
+                statement =>
+                {
+                    Assert.Equal("local-variable", statement.Kind);
+                    Assert.Equal("first", statement.Name);
+                },
+                statement =>
+                {
+                    Assert.Equal("local-variable", statement.Kind);
+                    Assert.Equal("second", statement.Name);
+                },
+                statement =>
+                {
+                    Assert.Equal("return", statement.Kind);
+                    Assert.NotNull(statement.Expression);
+                });
+
+            var sumTo = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.SumTo");
+            Assert.Null(sumTo.BodyText);
+            Assert.NotNull(sumTo.TypedBody);
+            Assert.Equal(3, sumTo.TopLevelStatementCount);
+            Assert.Equal(4, sumTo.TypedBody!.Statements.Count);
+            Assert.Equal("total", sumTo.TypedBody.Statements[0].Name);
+            Assert.Equal("stop", sumTo.TypedBody.Statements[1].Name);
+            var loop = sumTo.TypedBody.Statements[2];
+            Assert.Equal("for", loop.Kind);
+            Assert.NotNull(loop.InitializerStatements);
+            Assert.Equal(2, loop.InitializerStatements!.Count);
+            Assert.Equal("index", loop.InitializerStatements[0].Name);
+            Assert.Equal("max", loop.InitializerStatements[1].Name);
+            Assert.Equal("return", sumTo.TypedBody.Statements[3].Kind);
+
+            var json = manifest.ToJson();
+            Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"TypedBody\"", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageManifestRetainsGenericTemplateBodyTextWhenTypedSubsetCannotRepresentBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-body-fallback-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn void Observe<T>(i32 value, T tag) {
+                    value + 1;
+                    return;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.Observe");
 
             Assert.Null(template.TypedBody);
             Assert.NotNull(template.BodyText);
-            Assert.Contains("stack i32 first = value, second = value + 1;", template.BodyText, StringComparison.Ordinal);
-            Assert.Contains("return first + second;", template.BodyText, StringComparison.Ordinal);
+            Assert.Contains("value + 1;", template.BodyText, StringComparison.Ordinal);
+            Assert.Contains("return;", template.BodyText, StringComparison.Ordinal);
         }
         finally
         {

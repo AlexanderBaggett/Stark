@@ -366,7 +366,7 @@ internal static partial class PackageImageBuilder
         var builtStatements = new List<StarkPackageTypedTemplateStatementManifest>(statements.Count);
         foreach (var statement in statements)
         {
-            if (!TryBuildPublishedTypedTemplateStatement(
+            if (!TryBuildPublishedTypedTemplateStatements(
                     module,
                     statement,
                     literalsByLocation,
@@ -381,17 +381,160 @@ internal static partial class PackageImageBuilder
                     directCallOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
-                    out var publishedStatement))
+                    out var publishedStatementGroup))
             {
                 publishedStatements = [];
                 return false;
             }
 
-            builtStatements.Add(publishedStatement);
+            builtStatements.AddRange(publishedStatementGroup);
         }
 
         publishedStatements = builtStatements;
         return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateStatements(
+        LoadedModuleDocument module,
+        StarkParser.StatementContext statement,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> enumPatternOrdinals,
+        IReadOnlyDictionary<ParserRuleContext, int> aggregatePatternOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
+    {
+        if (statement.localVariableDeclaration() is { } localVariable)
+        {
+            if (!localDeclarationsByLocation.TryGetValue(
+                    TemplateLocalDeclarationFacts.BuildLookupKey(
+                        TemplateLocalDeclarationFacts.VariableKind,
+                        localVariable.Start.Line,
+                        localVariable.Start.Column + 1),
+                    out var localDeclaration))
+            {
+                publishedStatements = [];
+                return false;
+            }
+
+            var builtStatements = new List<StarkPackageTypedTemplateStatementManifest>(
+                localVariable.variableDeclarators().variableDeclarator().Length);
+            foreach (var declarator in localVariable.variableDeclarators().variableDeclarator())
+            {
+                if (declarator.variableInitializer() is not { } variableInitializer
+                    || !TryBuildPublishedTypedTemplateVariableInitializer(
+                        module,
+                        variableInitializer,
+                        localDeclaration.Type,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        directCallOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var initializer))
+                {
+                    publishedStatements = [];
+                    return false;
+                }
+
+                builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
+                    Kind: "local-variable",
+                    Expression: initializer,
+                    Name: declarator.Identifier().GetText(),
+                    StorageClass: localVariable.storageClass().GetText(),
+                    IsMutable: localVariable.MUT() is not null,
+                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
+            }
+
+            publishedStatements = builtStatements;
+            return true;
+        }
+
+        if (statement.localConstantDeclaration() is { } localConstant)
+        {
+            if (!localDeclarationsByLocation.TryGetValue(
+                    TemplateLocalDeclarationFacts.BuildLookupKey(
+                        TemplateLocalDeclarationFacts.ConstantKind,
+                        localConstant.Start.Line,
+                        localConstant.Start.Column + 1),
+                    out var localDeclaration))
+            {
+                publishedStatements = [];
+                return false;
+            }
+
+            var builtStatements = new List<StarkPackageTypedTemplateStatementManifest>(
+                localConstant.constantDeclarators().constantDeclarator().Length);
+            foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
+            {
+                if (declarator.variableInitializer() is not { } variableInitializer
+                    || !TryBuildPublishedTypedTemplateVariableInitializer(
+                        module,
+                        variableInitializer,
+                        localDeclaration.Type,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        directCallOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var initializer))
+                {
+                    publishedStatements = [];
+                    return false;
+                }
+
+                builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
+                    Kind: "local-variable",
+                    Expression: initializer,
+                    Name: declarator.Identifier().GetText(),
+                    StorageClass: "local",
+                    IsMutable: false,
+                    IsConstant: true,
+                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
+            }
+
+            publishedStatements = builtStatements;
+            return true;
+        }
+
+        if (TryBuildPublishedTypedTemplateStatement(
+                module,
+                statement,
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var publishedStatement))
+        {
+            publishedStatements = [publishedStatement];
+            return true;
+        }
+
+        publishedStatements = [];
+        return false;
     }
 
     private static bool TryBuildPublishedTypedTemplateStatement(
@@ -412,87 +555,6 @@ internal static partial class PackageImageBuilder
         out StarkPackageTypedTemplateStatementManifest publishedStatement)
     {
         publishedStatement = null!;
-
-        if (statement.localVariableDeclaration() is { } localVariable)
-        {
-            var declarators = localVariable.variableDeclarators().variableDeclarator();
-            var variableInitializer = declarators.Length == 1 ? declarators[0].variableInitializer() : null;
-            if (declarators.Length != 1
-                || !localDeclarationsByLocation.TryGetValue(
-                    TemplateLocalDeclarationFacts.BuildLookupKey(
-                    TemplateLocalDeclarationFacts.VariableKind,
-                    localVariable.Start.Line,
-                    localVariable.Start.Column + 1),
-                    out var localDeclaration)
-                || variableInitializer is null
-                || !TryBuildPublishedTypedTemplateVariableInitializer(
-                    module,
-                    variableInitializer,
-                    localDeclaration.Type,
-                    literalsByLocation,
-                    conversionsByLocation,
-                    objectCreationOrdinals,
-                    enumConstructorOrdinals,
-                    enumCallOrdinals,
-                    enumValueOrdinals,
-                    directCallOrdinals,
-                    memberCallOrdinals,
-                    fieldAccessOrdinals,
-                    out var initializer))
-            {
-                return false;
-            }
-
-            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
-                Kind: "local-variable",
-                Expression: initializer,
-                Name: declarators[0].Identifier().GetText(),
-                StorageClass: localVariable.storageClass().GetText(),
-                IsMutable: localVariable.MUT() is not null,
-                Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module));
-            return true;
-        }
-
-        if (statement.localConstantDeclaration() is { } localConstant)
-        {
-            var declarators = localConstant.constantDeclarators().constantDeclarator();
-            var variableInitializer = declarators.Length == 1 ? declarators[0].variableInitializer() : null;
-            if (declarators.Length != 1
-                || !localDeclarationsByLocation.TryGetValue(
-                    TemplateLocalDeclarationFacts.BuildLookupKey(
-                        TemplateLocalDeclarationFacts.ConstantKind,
-                        localConstant.Start.Line,
-                        localConstant.Start.Column + 1),
-                    out var localDeclaration)
-                || variableInitializer is null
-                || !TryBuildPublishedTypedTemplateVariableInitializer(
-                    module,
-                    variableInitializer,
-                    localDeclaration.Type,
-                    literalsByLocation,
-                    conversionsByLocation,
-                    objectCreationOrdinals,
-                    enumConstructorOrdinals,
-                    enumCallOrdinals,
-                    enumValueOrdinals,
-                    directCallOrdinals,
-                    memberCallOrdinals,
-                    fieldAccessOrdinals,
-                    out var initializer))
-            {
-                return false;
-            }
-
-            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
-                Kind: "local-variable",
-                Expression: initializer,
-                Name: declarators[0].Identifier().GetText(),
-                StorageClass: "local",
-                IsMutable: false,
-                IsConstant: true,
-                Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module));
-            return true;
-        }
 
         if (statement.expressionStatement()?.expression() is { } expressionStatementExpression
             && expressionStatementExpression.assignmentExpression().assignmentOperator() is null
@@ -1222,7 +1284,7 @@ internal static partial class PackageImageBuilder
                 out publishedStatements);
         }
 
-        if (TryBuildPublishedTypedTemplateStatement(
+        if (TryBuildPublishedTypedTemplateStatements(
                 module,
                 statement,
                 literalsByLocation,
@@ -1237,9 +1299,8 @@ internal static partial class PackageImageBuilder
                 directCallOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
-                out var publishedStatement))
+                out publishedStatements))
         {
-            publishedStatements = [publishedStatement];
             return true;
         }
 
@@ -1270,43 +1331,51 @@ internal static partial class PackageImageBuilder
 
         if (initializer.localForVariableDeclaration() is { } localForVariableDeclaration)
         {
-            var declarators = localForVariableDeclaration.variableDeclarators().variableDeclarator();
-            if (declarators.Length != 1
-                || declarators[0].variableInitializer()?.expression() is not { } initializerExpression
-                || !localDeclarationsByLocation.TryGetValue(
+            if (!localDeclarationsByLocation.TryGetValue(
                     TemplateLocalDeclarationFacts.BuildLookupKey(
                         TemplateLocalDeclarationFacts.ForVariableKind,
                         localForVariableDeclaration.Start.Line,
                         localForVariableDeclaration.Start.Column + 1),
-                    out var localDeclaration)
-                || !TryBuildPublishedTypedTemplateExpression(
-                    module,
-                    initializerExpression,
-                    literalsByLocation,
-                    conversionsByLocation,
-                    objectCreationOrdinals,
-                    enumConstructorOrdinals,
-                    enumCallOrdinals,
-                    enumValueOrdinals,
-                    directCallOrdinals,
-                    memberCallOrdinals,
-                    fieldAccessOrdinals,
-                    out var initializerValue))
+                    out var localDeclaration))
             {
                 initializerStatements = [];
                 return false;
             }
 
-            initializerStatements =
-            [
-                new StarkPackageTypedTemplateStatementManifest(
+            var builtStatements = new List<StarkPackageTypedTemplateStatementManifest>(
+                localForVariableDeclaration.variableDeclarators().variableDeclarator().Length);
+            foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
+            {
+                if (declarator.variableInitializer() is not { } variableInitializer
+                    || !TryBuildPublishedTypedTemplateVariableInitializer(
+                        module,
+                        variableInitializer,
+                        localDeclaration.Type,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        directCallOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var initializerValue))
+                {
+                    initializerStatements = [];
+                    return false;
+                }
+
+                builtStatements.Add(new StarkPackageTypedTemplateStatementManifest(
                     Kind: "local-variable",
                     Expression: initializerValue,
-                    Name: declarators[0].Identifier().GetText(),
+                    Name: declarator.Identifier().GetText(),
                     StorageClass: localForVariableDeclaration.storageClass().GetText(),
                     IsMutable: localForVariableDeclaration.MUT() is not null,
-                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module))
-            ];
+                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
+            }
+
+            initializerStatements = builtStatements;
             return true;
         }
 
