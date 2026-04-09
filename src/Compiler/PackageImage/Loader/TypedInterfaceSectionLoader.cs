@@ -75,6 +75,10 @@ internal static partial class PackageImageLoader
                         method.Parameters,
                         method.IsFfi,
                         method.IsStrictFp,
+                        method.IsHot,
+                        method.IsCold,
+                        method.InlinePreference,
+                        method.HasExplicitInlinePreference,
                         asm: null,
                         method.GenericParameters,
                         hasBody: method.HasGenericTemplateBody
@@ -130,6 +134,10 @@ internal static partial class PackageImageLoader
                     function.Parameters,
                     function.IsFfi,
                     function.IsStrictFp,
+                    function.IsHot,
+                    function.IsCold,
+                    function.InlinePreference,
+                    function.HasExplicitInlinePreference,
                     function.Asm,
                     function.GenericParameters,
                     hasBody: function.HasGenericTemplateBody

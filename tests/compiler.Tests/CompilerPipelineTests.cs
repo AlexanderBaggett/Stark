@@ -7682,8 +7682,8 @@ public sealed class CompilerPipelineTests
                         typedOnlyManifest,
                         typedFacadeModule),
                     out var sourceText));
-            Assert.Contains("public strictfp finite law f32 Precise(f32 value);", sourceText, StringComparison.Ordinal);
-            Assert.Contains("export ffi fn void Sink(rawptr<i8> value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public strictfp hot noinline finite law f32 Precise(f32 value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("export cold ffi fn void Sink(rawptr<i8> value);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -7737,6 +7737,111 @@ public sealed class CompilerPipelineTests
                 // Best effort cleanup only.
             }
         }
+    }
+
+    [Fact]
+    public void PackageImageSyntaxModelCarriesFunctionModifiersFromTypedInterfaceWhenCompilerFactsAreMissing()
+    {
+        var module = new StarkPackageModuleManifest(
+            ModuleName: "Facade",
+            ReExports: [],
+            Functions: [],
+            Types: [],
+            Globals: [],
+            TypeAliases: [],
+            TypedInterface: new StarkPackageTypedInterfaceSection(
+                Functions:
+                [
+                    new StarkPackageTypedFunctionManifest(
+                        Name: "Choose",
+                        QualifiedName: "Facade.Choose",
+                        Visibility: "public",
+                        SymbolName: "Facade.Choose",
+                        Kind: "fn",
+                        ReturnType: new StarkPackageTypeReference("integer", BitWidth: 32),
+                        Parameters:
+                        [
+                            new StarkPackageTypedParameterManifest("left", new StarkPackageTypeReference("integer", BitWidth: 32)),
+                            new StarkPackageTypedParameterManifest("right", new StarkPackageTypeReference("integer", BitWidth: 32))
+                        ],
+                        IsFfi: false,
+                        IsStrictFp: true,
+                        UseFastCallingConvention: true,
+                        QualifiedResolvedName: "Facade.Choose",
+                        PublishedOverloadKey: "(i32, i32)",
+                        IsHot: true,
+                        InlinePreference: "noinline",
+                        HasExplicitInlinePreference: true)
+                ],
+                Types:
+                [
+                    new StarkPackageTypedTypeManifest(
+                        Name: "Box",
+                        QualifiedName: "Facade.Box",
+                        Visibility: "public",
+                        Kind: "struct",
+                        Fields:
+                        [
+                            new StarkPackageTypedFieldManifest(
+                                "Value",
+                                new StarkPackageTypeReference("integer", BitWidth: 32))
+                        ],
+                        Methods:
+                        [
+                            new StarkPackageTypedMethodManifest(
+                                Name: "Measure",
+                                QualifiedName: "Facade.Box.Measure",
+                                SymbolName: "Facade.Box.Measure",
+                                Kind: "fn",
+                                ReturnType: new StarkPackageTypeReference("integer", BitWidth: 32),
+                                Parameters:
+                                [
+                                    new StarkPackageTypedParameterManifest(
+                                        "delta",
+                                        new StarkPackageTypeReference("integer", BitWidth: 32))
+                                ],
+                                IsFfi: false,
+                                IsStrictFp: false,
+                                UseFastCallingConvention: true,
+                                QualifiedResolvedName: "Facade.Box.Measure",
+                                PublishedOverloadKey: "(i32)",
+                                IsCold: true,
+                                InlinePreference: "inlinehint",
+                                HasExplicitInlinePreference: true)
+                        ]),
+                ],
+                Globals: []));
+        var resolvedModule = new ResolvedPackageModule(
+            ManifestPath: "/tmp/facade.starkpkg.json",
+            LibraryPath: "/tmp/libFacade.a",
+            Manifest: new StarkPackageManifest("Facade", "libFacade.a", [module]),
+            Module: module);
+
+        Assert.True(PackageImageLoader.TryBuildModuleSyntaxModel(resolvedModule, out var syntaxModel));
+
+        var chooseDeclaration = Assert.Single(
+            syntaxModel.Declarations,
+            static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Choose");
+        Assert.NotNull(chooseDeclaration.Function);
+        Assert.True(chooseDeclaration.Function!.Modifiers.IsStrictFp);
+        Assert.True(chooseDeclaration.Function.Modifiers.IsHot);
+        Assert.False(chooseDeclaration.Function.Modifiers.IsCold);
+        Assert.Equal(InlinePreference.NoInline, chooseDeclaration.Function.Modifiers.InlinePreference);
+        Assert.True(chooseDeclaration.Function.Modifiers.HasExplicitInlinePreference);
+
+        var measureDeclaration = Assert.Single(
+            syntaxModel.Declarations,
+            static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Box.Measure");
+        Assert.NotNull(measureDeclaration.Function);
+        Assert.False(measureDeclaration.Function!.Modifiers.IsStrictFp);
+        Assert.False(measureDeclaration.Function.Modifiers.IsHot);
+        Assert.True(measureDeclaration.Function.Modifiers.IsCold);
+        Assert.Equal(InlinePreference.InlineHint, measureDeclaration.Function.Modifiers.InlinePreference);
+        Assert.True(measureDeclaration.Function.Modifiers.HasExplicitInlinePreference);
+
+        Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
+        Assert.Contains("public strictfp hot noinline fn i32 Choose(i32 left, i32 right);", sourceText, StringComparison.Ordinal);
+        Assert.Contains("cold inlinehint fn i32 Measure(i32 delta);", sourceText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -16587,6 +16692,135 @@ public sealed class CompilerPipelineTests
             Assert.Equal(3, function.EstimatedTopLevelStatementCount);
             Assert.Equal(MonomorphizationLinkageKind.InternalSingleOwner, function.Linkage);
             Assert.Equal("__stark_mono_fn_Demo__Facade_Choose__i32", function.SymbolName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-typed-interface-modifiers-generic-codegen-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public cold noinline fn T Choose<T>(T left, T right, bool takeRight) {
+                    stack T current = left;
+                    if (takeRight) {
+                        current = right;
+                    }
+
+                    return current;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = null,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: null,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+            var typedFacadeModule = Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade");
+
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(
+                        manifestPath,
+                        Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                        typedOnlyManifest,
+                        typedFacadeModule),
+                    out var sourceText));
+            Assert.Contains("public cold noinline fn T Choose<T>(T left, T right, bool takeRight);", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 left, i32 right, bool takeRight) {
+                        return Facade.Choose(left, right, takeRight);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.Contains("public cold noinline fn T Choose<T>(T left, T right, bool takeRight);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionTemplates.TryGetValue("Facade.Choose", out var importedTemplate));
+            Assert.NotNull(importedTemplate.TypedBody);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            var function = Assert.Single(plan.Functions);
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.ReduceCodeSize, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Choose__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*cold[^\r\n]*noinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported specialization to keep cold/noinline attributes in emitted LLVM.");
         }
         finally
         {

@@ -1497,6 +1497,22 @@ public static class DefaultCompilerPipeline
                             declaration.Function.Modifiers.InlinePreference,
                             functionSyntax.Body.block()?.statement().Length,
                             GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body)));
+
+                    if (infos.TryGetValue(resolvedName, out var existing))
+                    {
+                        var syntaxTopLevelStatementCount = functionSyntax.Body.block()?.statement().Length;
+                        var syntaxEstimatedBodyCost = functionSyntax.HasBody
+                            ? GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body)
+                            : null;
+
+                        infos[resolvedName] = new FunctionTemplatePlanInfo(
+                            HasBody: declaration.Function.HasBody || existing.HasBody,
+                            IsHot: declaration.Function.Modifiers.IsHot,
+                            IsCold: declaration.Function.Modifiers.IsCold,
+                            InlinePreference: declaration.Function.Modifiers.InlinePreference,
+                            TopLevelStatementCount: syntaxTopLevelStatementCount ?? existing.TopLevelStatementCount,
+                            EstimatedBodyCost: syntaxEstimatedBodyCost ?? existing.EstimatedBodyCost);
+                    }
                 }
             }
 

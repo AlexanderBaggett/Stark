@@ -41,7 +41,11 @@ internal static partial class PackageImageBuilder
             effects.IsStrictFp,
             effects.UseFastCallingConvention,
             BuildAsmManifest(declarationFunction.Asm),
-            GenericParameters: declarationFunction.GenericParams.Count == 0 ? null : declarationFunction.GenericParams.ToArray());
+            GenericParameters: declarationFunction.GenericParams.Count == 0 ? null : declarationFunction.GenericParams.ToArray(),
+            IsHot: declarationFunction.Modifiers.IsHot,
+            IsCold: declarationFunction.Modifiers.IsCold,
+            InlinePreference: RenderInlinePreference(declarationFunction.Modifiers.InlinePreference),
+            HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference);
         return true;
     }
 
@@ -72,7 +76,11 @@ internal static partial class PackageImageBuilder
             manifest.GenericParameters,
             QualifiedResolvedName: QualifyPublishedResolvedName(moduleName, lookupName),
             PublishedOverloadKey: declarationFunction.PublishedOverloadKey ?? FunctionOverloadFacts.BuildOverloadKey(declarationFunction.Parameters),
-            HasGenericTemplateBody: declarationFunction.HasBody && declarationFunction.IsGeneric);
+            HasGenericTemplateBody: declarationFunction.HasBody && declarationFunction.IsGeneric,
+            IsHot: manifest.IsHot,
+            IsCold: manifest.IsCold,
+            InlinePreference: manifest.InlinePreference,
+            HasExplicitInlinePreference: manifest.HasExplicitInlinePreference);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -356,7 +364,11 @@ internal static partial class PackageImageBuilder
                     effects.IsFfi,
                     effects.IsStrictFp,
                     effects.UseFastCallingConvention,
-                    GenericParameters: declaration.Function.GenericParams.Count == 0 ? null : declaration.Function.GenericParams.ToArray());
+                    GenericParameters: declaration.Function.GenericParams.Count == 0 ? null : declaration.Function.GenericParams.ToArray(),
+                    IsHot: declaration.Function.Modifiers.IsHot,
+                    IsCold: declaration.Function.Modifiers.IsCold,
+                    InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),
+                    HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference);
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -406,7 +418,11 @@ internal static partial class PackageImageBuilder
                     GenericParameters: declaration.Function.GenericParams.Count == 0 ? null : declaration.Function.GenericParams.ToArray(),
                     QualifiedResolvedName: QualifyPublishedResolvedName(module.SyntaxModel.ModuleName, lookupName),
                     PublishedOverloadKey: declaration.Function.PublishedOverloadKey ?? FunctionOverloadFacts.BuildOverloadKey(declaration.Function.Parameters),
-                    HasGenericTemplateBody: declaration.Function.HasBody && declaration.Function.IsGeneric);
+                    HasGenericTemplateBody: declaration.Function.HasBody && declaration.Function.IsGeneric,
+                    IsHot: declaration.Function.Modifiers.IsHot,
+                    IsCold: declaration.Function.Modifiers.IsCold,
+                    InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),
+                    HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference);
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()

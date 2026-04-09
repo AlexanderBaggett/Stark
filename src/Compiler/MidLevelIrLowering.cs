@@ -1471,7 +1471,7 @@ internal sealed class MidLevelIrLowerer(
             {
                 if (targetName is not { } name
                     || !_localsByName.TryGetValue(name, out var local)
-                    || !local.IsMutable)
+                    || local.IsConstant)
                 {
                     return false;
                 }
@@ -1483,13 +1483,13 @@ internal sealed class MidLevelIrLowerer(
                     local.Type,
                     Path: [],
                     UsesAddressModel: false,
-                    IsAddressMutable: true);
+                    IsAddressMutable: CanMutateThroughType(local.Type));
                 assignmentTargetText = name;
             }
 
             if (target.RootName is { } rootName
                 && _localsByName.TryGetValue(rootName, out var localBinding)
-                && !localBinding.IsMutable)
+                && localBinding.IsConstant)
             {
                 return false;
             }

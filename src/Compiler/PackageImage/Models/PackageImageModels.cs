@@ -88,7 +88,11 @@ internal sealed record StarkPackageFunctionManifest(
     bool IsStrictFp,
     bool UseFastCallingConvention,
     StarkPackageAsmManifest? Asm = null,
-    IReadOnlyList<string>? GenericParameters = null);
+    IReadOnlyList<string>? GenericParameters = null,
+    bool IsHot = false,
+    bool IsCold = false,
+    string InlinePreference = "inlinehint",
+    bool HasExplicitInlinePreference = false);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -120,7 +124,11 @@ internal sealed record StarkPackageMethodManifest(
     bool IsFfi,
     bool IsStrictFp,
     bool UseFastCallingConvention,
-    IReadOnlyList<string>? GenericParameters = null);
+    IReadOnlyList<string>? GenericParameters = null,
+    bool IsHot = false,
+    bool IsCold = false,
+    string InlinePreference = "inlinehint",
+    bool HasExplicitInlinePreference = false);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -210,7 +218,11 @@ internal sealed record StarkPackageTypedFunctionManifest(
     IReadOnlyList<string>? GenericParameters = null,
     string? QualifiedResolvedName = null,
     string? PublishedOverloadKey = null,
-    bool HasGenericTemplateBody = false);
+    bool HasGenericTemplateBody = false,
+    bool IsHot = false,
+    bool IsCold = false,
+    string InlinePreference = "inlinehint",
+    bool HasExplicitInlinePreference = false);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -225,7 +237,11 @@ internal sealed record StarkPackageTypedMethodManifest(
     IReadOnlyList<string>? GenericParameters = null,
     string? QualifiedResolvedName = null,
     string? PublishedOverloadKey = null,
-    bool HasGenericTemplateBody = false);
+    bool HasGenericTemplateBody = false,
+    bool IsHot = false,
+    bool IsCold = false,
+    string InlinePreference = "inlinehint",
+    bool HasExplicitInlinePreference = false);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,

@@ -155,14 +155,30 @@ internal static partial class PackageImageLoader
                         method.Parameters,
                         out var methodBodyText);
                     builder.Append("    ");
-                    if (method.IsFfi)
-                    {
-                        builder.Append("ffi ");
-                    }
-
                     if (method.IsStrictFp)
                     {
                         builder.Append("strictfp ");
+                    }
+
+                    if (method.IsHot)
+                    {
+                        builder.Append("hot ");
+                    }
+
+                    if (method.IsCold)
+                    {
+                        builder.Append("cold ");
+                    }
+
+                    if (method.HasExplicitInlinePreference)
+                    {
+                        builder.Append(RenderInlinePreference(ParseInlinePreferenceOrDefault(method.InlinePreference)));
+                        builder.Append(' ');
+                    }
+
+                    if (method.IsFfi)
+                    {
+                        builder.Append("ffi ");
                     }
 
                     builder.Append(RenderFunctionKind(method.Kind));
@@ -389,14 +405,30 @@ internal static partial class PackageImageLoader
     {
         builder.Append(function.Visibility);
         builder.Append(' ');
-        if (function.IsFfi)
-        {
-            builder.Append("ffi ");
-        }
-
         if (function.IsStrictFp)
         {
             builder.Append("strictfp ");
+        }
+
+        if (function.IsHot)
+        {
+            builder.Append("hot ");
+        }
+
+        if (function.IsCold)
+        {
+            builder.Append("cold ");
+        }
+
+        if (function.HasExplicitInlinePreference)
+        {
+            builder.Append(RenderInlinePreference(ParseInlinePreferenceOrDefault(function.InlinePreference)));
+            builder.Append(' ');
+        }
+
+        if (function.IsFfi)
+        {
+            builder.Append("ffi ");
         }
 
         if (function.Asm is not null)
@@ -494,11 +526,16 @@ internal static partial class PackageImageLoader
         IReadOnlyList<StarkPackageTypedParameterManifest> parameters,
         bool isFfi,
         bool isStrictFp,
+        bool isHot,
+        bool isCold,
+        string inlinePreference,
+        bool hasExplicitInlinePreference,
         StarkPackageAsmManifest? asm,
         IReadOnlyList<string>? genericParameters,
         bool hasBody = false,
         string? publishedOverloadKey = null)
     {
+        var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
             Name: name,
             Kind: functionKind,
@@ -507,16 +544,23 @@ internal static partial class PackageImageLoader
                 .Select(parameter => new ParameterModel(parameter.Name, RenderTypeReference(parameter.Type)))
                 .ToArray(),
             Modifiers: new FunctionModifierSet(
-                InlinePreference.InlineHint,
-                HasExplicitInlinePreference: false,
-                IsHot: false,
-                IsCold: false,
+                parsedInlinePreference,
+                HasExplicitInlinePreference: hasExplicitInlinePreference,
+                IsHot: isHot,
+                IsCold: isCold,
                 IsFfi: isFfi,
                 IsStrictFp: isStrictFp),
             HasBody: hasBody,
             Asm: CreateAsmModel(asm),
             GenericParameterNames: genericParameters ?? [],
             PublishedOverloadKey: publishedOverloadKey);
+    }
+
+    private static InlinePreference ParseInlinePreferenceOrDefault(string inlinePreference)
+    {
+        return TryParseInlinePreference(inlinePreference, out var parsed)
+            ? parsed
+            : InlinePreference.InlineHint;
     }
 
     private static Dictionary<string, string> BuildGenericTemplateBodyLookup(StarkPackageModuleManifest module)
@@ -1735,7 +1779,11 @@ internal static partial class PackageImageLoader
             function.IsStrictFp,
             function.UseFastCallingConvention,
             function.Asm,
-            function.GenericParameters);
+            function.GenericParameters,
+            function.IsHot,
+            function.IsCold,
+            function.InlinePreference,
+            function.HasExplicitInlinePreference);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -1772,7 +1820,11 @@ internal static partial class PackageImageLoader
                 method.IsFfi,
                 method.IsStrictFp,
                 method.UseFastCallingConvention,
-                method.GenericParameters))
+                method.GenericParameters,
+                method.IsHot,
+                method.IsCold,
+                method.InlinePreference,
+                method.HasExplicitInlinePreference))
                 .ToArray(),
             type.Destructor);
     }

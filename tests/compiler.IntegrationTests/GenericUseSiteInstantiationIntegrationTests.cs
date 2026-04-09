@@ -369,6 +369,127 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
     }
 
     [Fact]
+    public async Task ManifestBackedTypedInterfaceModifiersWithoutCompilerFactsStillSpecializeAndRun()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-typed-interface-modifiers-runtime-");
+        var facadeSourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+        var demoSourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                facadeSourcePath,
+                """
+                module Facade
+
+                public cold noinline fn T Choose<T>(T left, T right, bool takeRight) {
+                    stack T current = left;
+                    if (takeRight) {
+                        current = right;
+                    }
+
+                    return current;
+                }
+                """);
+
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [facadeSourcePath, "--emit-lib", "-o", libraryPath],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.Equal(0, emitExitCode);
+            Assert.Contains("Emitted static library:", emitStdout.ToString());
+            Assert.Equal(string.Empty, emitStderr.ToString());
+            Assert.True(File.Exists(libraryPath));
+            Assert.True(File.Exists(manifestPath));
+
+            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
+            Assert.NotNull(manifest);
+
+            var typedOnlyManifest = BuildTypedOnlyFacadeManifest(
+                manifest!,
+                static template => template,
+                omitCompilerFacts: true);
+
+            await File.WriteAllTextAsync(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadeSourcePath);
+
+            await File.WriteAllTextAsync(
+                demoSourcePath,
+                """
+                import Facade
+                module Demo
+
+                export ffi fn i32 main() {
+                    stack i32 left = 3;
+                    stack i32 right = 7;
+                    return Facade.Choose(left, right, true);
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    demoSourcePath,
+                    "--emit-exe",
+                    "-o",
+                    outputPath,
+                    "-I",
+                    tempDirectory.FullName
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, compileExitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processOutput = await process!.StandardOutput.ReadToEndAsync();
+            var processError = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(string.Empty, processOutput);
+            Assert.Equal(string.Empty, processError);
+            Assert.Equal(7, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedBridgeGenericBodiesLoadWithoutSourceSurfaceFunctionEntriesWhenTypedInterfaceCarriesOverloadKeys()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-bridge-generic-loading-without-source-surface-");
@@ -615,10 +736,12 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
 
     private static StarkPackageManifest BuildTypedOnlyFacadeManifest(
         StarkPackageManifest manifest,
-        Func<StarkPackageFunctionTemplateManifest, StarkPackageFunctionTemplateManifest> rewriteTemplate)
+        Func<StarkPackageFunctionTemplateManifest, StarkPackageFunctionTemplateManifest> rewriteTemplate,
+        bool omitCompilerFacts = false)
     {
         var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
         Assert.NotNull(facadeModule.GenericTemplates);
+        var compilerFacts = omitCompilerFacts ? null : facadeModule.CompilerFacts;
 
         var rewrittenTemplates = facadeModule.GenericTemplates!.Functions
             .Select(rewriteTemplate)
@@ -635,11 +758,11 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                         Globals = [],
                         TypeAliases = [],
                         TypedInterface = facadeModule.TypedInterface,
-                        CompilerFacts = facadeModule.CompilerFacts,
+                        CompilerFacts = compilerFacts,
                         GenericTemplates = new StarkPackageGenericTemplateSection(rewrittenTemplates),
                         CompilerSections = new StarkPackageCompilerSectionsManifest(
                             TypedInterface: facadeModule.TypedInterface,
-                            CompilerFacts: facadeModule.CompilerFacts,
+                            CompilerFacts: compilerFacts,
                             GenericTemplates: new StarkPackageGenericTemplateSection(rewrittenTemplates)),
                         SourceSurface = new StarkPackageSourceSurfaceSection(
                             Imports: facadeModule.EffectiveSourceSurface.Imports,
