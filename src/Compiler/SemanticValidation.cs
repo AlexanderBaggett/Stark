@@ -312,6 +312,8 @@ internal sealed class SemanticValidator
             return;
         }
 
+        summary.SetOptimizationSummary(FunctionOptimizationSummaryBuilder.Build(block));
+
         var previousGenericParameters = _currentFunctionGenericParameters;
         _currentFunctionGenericParameters = signature.IsGeneric
             ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
@@ -3616,6 +3618,8 @@ internal sealed class SemanticValidator
 
         public bool WritesOtherMemory { get; private set; }
 
+        public FunctionOptimizationSummary? OptimizationSummary { get; private set; }
+
         public void Configure(StarkTypeSymbol returnType, bool hasBody, StarkFunctionKind declaredKind)
         {
             ReturnType = returnType;
@@ -3635,6 +3639,11 @@ internal sealed class SemanticValidator
             {
                 Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, namedTypes, enumLayouts);
             }
+        }
+
+        public void SetOptimizationSummary(FunctionOptimizationSummary? summary)
+        {
+            OptimizationSummary = summary;
         }
 
         public void MarkParameterRead(string name)
@@ -3776,7 +3785,8 @@ internal sealed class SemanticValidator
                 CalledFunctions.OrderBy(static item => item, StringComparer.Ordinal).ToArray(),
                 memoryEffects,
                 parameterSummaries,
-                ResolvedCalls.ToArray());
+                ResolvedCalls.ToArray(),
+                OptimizationSummary);
         }
     }
 }

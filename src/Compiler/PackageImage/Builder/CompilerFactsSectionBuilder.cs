@@ -159,7 +159,17 @@ internal static partial class PackageImageBuilder
                     parameter.Reads,
                     parameter.Writes,
                     parameter.CaptureKind.ToString().ToLowerInvariant()))
-                .ToArray());
+                .ToArray(),
+            Optimization: validation.OptimizationSummary is null
+                ? null
+                : new StarkPackageFunctionOptimizationManifest(
+                    validation.OptimizationSummary.DirectCallCount,
+                    validation.OptimizationSummary.MemberCallCount,
+                    validation.OptimizationSummary.BranchStatementCount,
+                    validation.OptimizationSummary.LoopStatementCount,
+                    validation.OptimizationSummary.ObjectCreationCount,
+                    validation.OptimizationSummary.IsSingleReturnDirectCallForwarder,
+                    validation.OptimizationSummary.IsSingleReturnMemberCallForwarder));
         return true;
     }
 }

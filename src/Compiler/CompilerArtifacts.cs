@@ -318,6 +318,8 @@ public sealed record ImportedFunctionTemplateSummary(
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
 
+    public FunctionOptimizationSummary? OptimizationSummary => SemanticSummary?.OptimizationSummary;
+
     public ImportedTemplateTypedBodySummary? TypedBody => TypedBodySummary;
 
     public IReadOnlyList<string> CalledFunctions => SemanticSummary?.CalledFunctions ?? [];
@@ -1824,6 +1826,18 @@ public sealed record CallMemoryEffectSummary(
     FunctionMemoryEffectSummary MemoryEffects,
     IReadOnlyList<CallArgumentMemoryEffectSummary> Arguments);
 
+public sealed record FunctionOptimizationSummary(
+    int DirectCallCount,
+    int MemberCallCount,
+    int BranchStatementCount,
+    int LoopStatementCount,
+    int ObjectCreationCount,
+    bool IsSingleReturnDirectCallForwarder,
+    bool IsSingleReturnMemberCallForwarder)
+{
+    public bool IsSingleReturnCallForwarder => IsSingleReturnDirectCallForwarder || IsSingleReturnMemberCallForwarder;
+}
+
 public sealed record FunctionValidationSummary(
     string Name,
     StarkFunctionKind DeclaredKind,
@@ -1833,7 +1847,8 @@ public sealed record FunctionValidationSummary(
     IReadOnlyList<string> CalledFunctions,
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
-    IReadOnlyList<CallMemoryEffectSummary>? Calls = null)
+    IReadOnlyList<CallMemoryEffectSummary>? Calls = null,
+    FunctionOptimizationSummary? OptimizationSummary = null)
 {
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
 }
@@ -1844,7 +1859,8 @@ public sealed record ImportedFunctionSemanticSummary(
     StarkFunctionKind EffectiveKind,
     IReadOnlyList<string> CalledFunctions,
     FunctionMemoryEffectSummary? MemoryEffects = null,
-    IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null)
+    IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
+    FunctionOptimizationSummary? OptimizationSummary = null)
 {
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
 }

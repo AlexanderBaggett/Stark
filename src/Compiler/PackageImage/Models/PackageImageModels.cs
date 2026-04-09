@@ -511,7 +511,17 @@ internal sealed record StarkPackageFunctionSemanticManifest(
     string EffectiveKind,
     IReadOnlyList<string> CalledFunctions,
     StarkPackageFunctionMemoryEffectsManifest? MemoryEffects = null,
-    IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null);
+    IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null,
+    StarkPackageFunctionOptimizationManifest? Optimization = null);
+
+internal sealed record StarkPackageFunctionOptimizationManifest(
+    int DirectCallCount,
+    int MemberCallCount,
+    int BranchStatementCount,
+    int LoopStatementCount,
+    int ObjectCreationCount,
+    bool IsSingleReturnDirectCallForwarder,
+    bool IsSingleReturnMemberCallForwarder);
 
 internal sealed record StarkPackageConcreteTypeLayoutManifest(
     string QualifiedTypeName,

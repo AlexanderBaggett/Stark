@@ -1315,7 +1315,8 @@ public static class DefaultCompilerPipeline
             bool IsCold,
             InlinePreference InlinePreference,
             int? TopLevelStatementCount,
-            int? EstimatedBodyCost);
+            int? EstimatedBodyCost,
+            FunctionOptimizationSummary? OptimizationSummary);
 
         public string Id => "monomorphization-plan";
 
@@ -1462,7 +1463,8 @@ public static class DefaultCompilerPipeline
                         IsCold: effects?.IsCold ?? false,
                         InlinePreference: effects?.InlinePreference ?? InlinePreference.InlineHint,
                         TopLevelStatementCount: template.TopLevelStatementCount,
-                        EstimatedBodyCost: template.EstimatedBodyCost);
+                        EstimatedBodyCost: template.EstimatedBodyCost,
+                        OptimizationSummary: template.OptimizationSummary);
                 }
             }
 
@@ -1496,13 +1498,17 @@ public static class DefaultCompilerPipeline
                             declaration.Function.Modifiers.IsCold,
                             declaration.Function.Modifiers.InlinePreference,
                             functionSyntax.Body.block()?.statement().Length,
-                            GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body)));
+                            GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body),
+                            FunctionOptimizationSummaryBuilder.Build(functionSyntax.Body)));
 
                     if (infos.TryGetValue(resolvedName, out var existing))
                     {
                         var syntaxTopLevelStatementCount = functionSyntax.Body.block()?.statement().Length;
                         var syntaxEstimatedBodyCost = functionSyntax.HasBody
                             ? GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body)
+                            : null;
+                        var syntaxOptimizationSummary = functionSyntax.HasBody
+                            ? FunctionOptimizationSummaryBuilder.Build(functionSyntax.Body)
                             : null;
 
                         infos[resolvedName] = new FunctionTemplatePlanInfo(
@@ -1511,7 +1517,8 @@ public static class DefaultCompilerPipeline
                             IsCold: declaration.Function.Modifiers.IsCold,
                             InlinePreference: declaration.Function.Modifiers.InlinePreference,
                             TopLevelStatementCount: syntaxTopLevelStatementCount ?? existing.TopLevelStatementCount,
-                            EstimatedBodyCost: syntaxEstimatedBodyCost ?? existing.EstimatedBodyCost);
+                            EstimatedBodyCost: syntaxEstimatedBodyCost ?? existing.EstimatedBodyCost,
+                            OptimizationSummary: syntaxOptimizationSummary ?? existing.OptimizationSummary);
                     }
                 }
             }
@@ -1538,6 +1545,11 @@ public static class DefaultCompilerPipeline
                 && !info.IsHot)
             {
                 return MonomorphizationCodeSizeHeuristic.ReduceCodeSize;
+            }
+
+            if (info.OptimizationSummary?.IsSingleReturnCallForwarder == true)
+            {
+                return MonomorphizationCodeSizeHeuristic.InlineSmallBody;
             }
 
             if (info.InlinePreference == InlinePreference.Inline
@@ -2015,12 +2027,18 @@ public static class DefaultCompilerPipeline
             var recursiveLawFunctions = FindRecursiveFunctions(
                 validationModel.Functions,
                 static summary => FunctionKindFacts.IsLaw(summary.EffectiveKind));
+            var recursiveFunctions = FindRecursiveFunctions(
+                validationModel.Functions,
+                static _ => true);
             var lawOnlyCallTargets = FindLawOnlyCallTargets(validationModel.Functions);
             var importedDeclarations = CollectImportedFunctionDeclarations(loadedModules);
             var importedCallGraph = CollectImportedDirectCallGraph(loadedModules);
             var importedRecursiveLawFunctions = FindRecursiveFunctions(
                 importedCallGraph,
                 functionName => IsImportedEffectiveLaw(functionName, importedDeclarations, importedSemantics));
+            var importedRecursiveFunctions = FindRecursiveFunctions(
+                importedCallGraph,
+                importedDeclarations.ContainsKey);
             var importedLawOnlyCallTargets = FindImportedLawOnlyCallTargets(
                 validationModel.Functions,
                 importedDeclarations,
@@ -2050,9 +2068,11 @@ public static class DefaultCompilerPipeline
                     rootDeclarations,
                     lawOnlyCallTargets,
                     recursiveLawFunctions,
+                    recursiveFunctions,
                     importedDeclarations,
                     importedLawOnlyCallTargets,
-                    importedRecursiveLawFunctions);
+                    importedRecursiveLawFunctions,
+                    importedRecursiveFunctions);
 
                 refined[name] = existing with
                 {
@@ -2089,10 +2109,26 @@ public static class DefaultCompilerPipeline
             IReadOnlyDictionary<string, TopLevelDeclarationModel> rootDeclarations,
             ISet<string> lawOnlyCallTargets,
             ISet<string> recursiveLawFunctions,
+            ISet<string> recursiveFunctions,
             IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations,
             ISet<string> importedLawOnlyCallTargets,
-            ISet<string> importedRecursiveLawFunctions)
+            ISet<string> importedRecursiveLawFunctions,
+            ISet<string> importedRecursiveFunctions)
         {
+            if (summary is not null
+                && rootDeclarations.TryGetValue(functionName, out var wrapperRootDeclaration)
+                && wrapperRootDeclaration.Function is { HasBody: true } wrapperRootFunction
+                && wrapperRootDeclaration.Visibility == StarkVisibility.Module
+                && !wrapperRootFunction.Modifiers.HasExplicitInlinePreference
+                && existing.InlinePreference == InlinePreference.InlineHint
+                && !existing.IsFfi
+                && !existing.IsCold
+                && summary.OptimizationSummary?.IsSingleReturnDirectCallForwarder == true
+                && !recursiveFunctions.Contains(functionName))
+            {
+                return InlinePreference.Inline;
+            }
+
             if (summary is not null
                 && rootDeclarations.TryGetValue(functionName, out var rootDeclaration)
                 && rootDeclaration.Function is { HasBody: true } rootFunction
@@ -2104,6 +2140,19 @@ public static class DefaultCompilerPipeline
                 && FunctionKindFacts.IsLaw(summary.EffectiveKind)
                 && lawOnlyCallTargets.Contains(functionName)
                 && !recursiveLawFunctions.Contains(functionName))
+            {
+                return InlinePreference.Inline;
+            }
+
+            if (importedSummary?.OptimizationSummary?.IsSingleReturnDirectCallForwarder == true
+                && importedDeclarations.TryGetValue(functionName, out var importedWrapperDeclaration)
+                && importedWrapperDeclaration.Declaration.Function is { HasBody: true } importedWrapperFunction
+                && importedWrapperDeclaration.Declaration.Visibility != StarkVisibility.Export
+                && !importedWrapperFunction.Modifiers.HasExplicitInlinePreference
+                && existing.InlinePreference == InlinePreference.InlineHint
+                && !existing.IsFfi
+                && !existing.IsCold
+                && !importedRecursiveFunctions.Contains(functionName))
             {
                 return InlinePreference.Inline;
             }

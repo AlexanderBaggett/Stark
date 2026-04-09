@@ -508,13 +508,25 @@ internal static partial class PackageImageLoader
                 functionSemantic.MemoryEffects.ReadsOtherMemory,
                 functionSemantic.MemoryEffects.WritesOtherMemory);
 
+        var optimizationSummary = functionSemantic.Optimization is null
+            ? null
+            : new FunctionOptimizationSummary(
+                functionSemantic.Optimization.DirectCallCount,
+                functionSemantic.Optimization.MemberCallCount,
+                functionSemantic.Optimization.BranchStatementCount,
+                functionSemantic.Optimization.LoopStatementCount,
+                functionSemantic.Optimization.ObjectCreationCount,
+                functionSemantic.Optimization.IsSingleReturnDirectCallForwarder,
+                functionSemantic.Optimization.IsSingleReturnMemberCallForwarder);
+
         summary = new ImportedFunctionSemanticSummary(
             functionSemantic.QualifiedResolvedName,
             declaredKind,
             effectiveKind,
             functionSemantic.CalledFunctions,
             memoryEffects,
-            parameters);
+            parameters,
+            optimizationSummary);
         return true;
     }
 }

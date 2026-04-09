@@ -3824,6 +3824,38 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ModulePrivateDirectCallForwardersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Core(i32 value) {
+                return value + 1;
+            }
+
+            fn i32 Forward(i32 value) {
+                return Core(value);
+            }
+
+            fn i32 Use(i32 value) {
+                return Forward(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Forward\(i32 %arg_value\)[^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private direct-call forwarder to emit with alwaysinline.");
+        Assert.Contains("call fastcc i32 @Forward(i32 %arg_value)", llvm);
+    }
+
+    [Fact]
     public void HotFunctionsEmitHotAttribute()
     {
         var result = Compile(
