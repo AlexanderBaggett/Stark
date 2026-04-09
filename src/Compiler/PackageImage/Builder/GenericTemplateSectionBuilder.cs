@@ -319,8 +319,7 @@ internal static partial class PackageImageBuilder
         for (var index = 0; index < publishedStatements.Count - 1; index++)
         {
             if (!string.Equals(publishedStatements[index].Kind, "local-variable", StringComparison.Ordinal)
-                && !(returnType.Kind == StarkTypeKind.Void
-                    && string.Equals(publishedStatements[index].Kind, "expression", StringComparison.Ordinal))
+                && !string.Equals(publishedStatements[index].Kind, "expression", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "switch", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "for", StringComparison.Ordinal)
@@ -570,8 +569,7 @@ internal static partial class PackageImageBuilder
                 directCallOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
-                out var expressionStatementValue)
-            && CanUsePublishedTypedTemplateExpressionStatement(expressionStatementValue))
+                out var expressionStatementValue))
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "expression",
@@ -857,36 +855,6 @@ internal static partial class PackageImageBuilder
         }
 
         return false;
-    }
-
-    private static bool CanUsePublishedTypedTemplateExpressionStatement(
-        StarkPackageTypedTemplateExpressionManifest expression)
-    {
-        if (string.Equals(expression.Kind, "direct-call", StringComparison.Ordinal)
-            || string.Equals(expression.Kind, "member-call", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return string.Equals(expression.Kind, "conditional", StringComparison.Ordinal)
-            && expression.Arguments is { Count: 3 } arguments
-            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[1])
-            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[2]);
-    }
-
-    private static bool CanUsePublishedTypedTemplateConditionalCallStatementBranch(
-        StarkPackageTypedTemplateExpressionManifest expression)
-    {
-        if (string.Equals(expression.Kind, "direct-call", StringComparison.Ordinal)
-            || string.Equals(expression.Kind, "member-call", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return string.Equals(expression.Kind, "conditional", StringComparison.Ordinal)
-            && expression.Arguments is { Count: 3 } arguments
-            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[1])
-            && CanUsePublishedTypedTemplateConditionalCallStatementBranch(arguments[2]);
     }
 
     private static bool CanUseTypedTemplateSwitchAsTerminal(
