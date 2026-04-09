@@ -525,7 +525,10 @@ internal sealed record StarkPackageFunctionOptimizationManifest(
     bool IsSingleReturnDirectCallForwarder,
     bool IsSingleReturnMemberCallForwarder,
     bool IsSingleReturnFieldAccessWrapper,
-    bool IsSingleReturnIndexAccessWrapper);
+    bool IsSingleReturnIndexAccessWrapper,
+    bool IsSingleReturnConversionWrapper,
+    bool IsSingleReturnAddressOfWrapper,
+    bool IsSingleReturnDereferenceWrapper);
 
 internal sealed record StarkPackageConcreteTypeLayoutManifest(
     string QualifiedTypeName,

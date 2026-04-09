@@ -3951,6 +3951,67 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ModulePrivateConversionWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Inner(i32 Value) { }
+            record Box(Inner Inner) { }
+
+            fn i64 Read(borrow Box box) {
+                return (i64)box.Inner.Value;
+            }
+
+            fn i64 Use(borrow Box box) {
+                return Read(box);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private conversion wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i64 @Read(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModulePrivateAddressOfWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Buffer(i32[2] Values) { }
+
+            fn rawptr<i32> Pin(borrow Buffer buffer, i32 index) {
+                return &buffer.Values[index];
+            }
+
+            fn rawptr<i32> Use(borrow Buffer buffer, i32 index) {
+                return Pin(buffer, index);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Pin\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private address-of wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc ptr @Pin(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HotFunctionsEmitHotAttribute()
     {
         var result = Compile(

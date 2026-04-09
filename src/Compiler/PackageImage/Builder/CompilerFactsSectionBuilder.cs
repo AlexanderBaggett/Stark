@@ -173,7 +173,10 @@ internal static partial class PackageImageBuilder
                     validation.OptimizationSummary.IsSingleReturnDirectCallForwarder,
                     validation.OptimizationSummary.IsSingleReturnMemberCallForwarder,
                     validation.OptimizationSummary.IsSingleReturnFieldAccessWrapper,
-                    validation.OptimizationSummary.IsSingleReturnIndexAccessWrapper));
+                    validation.OptimizationSummary.IsSingleReturnIndexAccessWrapper,
+                    validation.OptimizationSummary.IsSingleReturnConversionWrapper,
+                    validation.OptimizationSummary.IsSingleReturnAddressOfWrapper,
+                    validation.OptimizationSummary.IsSingleReturnDereferenceWrapper));
         return true;
     }
 }

@@ -1837,13 +1837,20 @@ public sealed record FunctionOptimizationSummary(
     bool IsSingleReturnDirectCallForwarder,
     bool IsSingleReturnMemberCallForwarder,
     bool IsSingleReturnFieldAccessWrapper,
-    bool IsSingleReturnIndexAccessWrapper)
+    bool IsSingleReturnIndexAccessWrapper,
+    bool IsSingleReturnConversionWrapper,
+    bool IsSingleReturnAddressOfWrapper,
+    bool IsSingleReturnDereferenceWrapper)
 {
     public bool IsSingleReturnCallForwarder => IsSingleReturnDirectCallForwarder || IsSingleReturnMemberCallForwarder;
 
     public bool IsSingleReturnAccessWrapper => IsSingleReturnFieldAccessWrapper || IsSingleReturnIndexAccessWrapper;
 
-    public bool IsSingleReturnInlineWrapper => IsSingleReturnCallForwarder || IsSingleReturnAccessWrapper;
+    public bool IsSingleReturnUnaryOrConversionWrapper =>
+        IsSingleReturnConversionWrapper || IsSingleReturnAddressOfWrapper || IsSingleReturnDereferenceWrapper;
+
+    public bool IsSingleReturnInlineWrapper =>
+        IsSingleReturnCallForwarder || IsSingleReturnAccessWrapper || IsSingleReturnUnaryOrConversionWrapper;
 }
 
 public sealed record FunctionValidationSummary(

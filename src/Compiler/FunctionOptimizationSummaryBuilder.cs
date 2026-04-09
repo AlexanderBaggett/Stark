@@ -37,7 +37,10 @@ internal static class FunctionOptimizationSummaryBuilder
             wrapperKind == SingleReturnWrapperKind.DirectCall,
             wrapperKind == SingleReturnWrapperKind.MemberCall,
             wrapperKind == SingleReturnWrapperKind.FieldAccess,
-            wrapperKind == SingleReturnWrapperKind.IndexAccess);
+            wrapperKind == SingleReturnWrapperKind.IndexAccess,
+            wrapperKind == SingleReturnWrapperKind.Conversion,
+            wrapperKind == SingleReturnWrapperKind.AddressOf,
+            wrapperKind == SingleReturnWrapperKind.Dereference);
     }
 
     private static void CountBlock(StarkParser.BlockContext block, SummaryAccumulator accumulator)
@@ -267,13 +270,66 @@ internal static class FunctionOptimizationSummaryBuilder
         kind = SingleReturnWrapperKind.None;
 
         if (block.statement().Length != 1
-            || block.statement(0).returnStatement()?.expression() is not { } returnExpression
-            || TryGetSimplePostfixExpression(returnExpression) is not { } postfixExpression)
+            || block.statement(0).returnStatement()?.expression() is not { } returnExpression)
         {
             return false;
         }
 
-        return TryClassifySimplePostfixExpression(postfixExpression, out kind, out _, out _);
+        return TryClassifySimpleReturnWrapperExpression(returnExpression, out kind);
+    }
+
+    private static bool TryClassifySimpleReturnWrapperExpression(
+        StarkParser.ExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+        return TryGetSimpleUnaryExpression(expression) is { } unaryExpression
+            && TryClassifySimpleReturnWrapperUnary(unaryExpression, out kind);
+    }
+
+    private static bool TryClassifySimpleReturnWrapperUnary(
+        StarkParser.UnaryExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (TryGetSimplePostfixExpression(expression) is { } postfixExpression)
+        {
+            return TryClassifySimplePostfixExpression(postfixExpression, out kind, out _, out _);
+        }
+
+        if (expression.conversionType() is not null
+            && expression.unaryExpression() is { } convertedOperand
+            && (TryClassifySimpleReturnWrapperUnary(convertedOperand, out _)
+                || TryIsSimpleAddressableOperand(convertedOperand)
+                || TryIsSimpleIdentifierOrQualifiedNameOperand(convertedOperand)))
+        {
+            kind = SingleReturnWrapperKind.Conversion;
+            return true;
+        }
+
+        if (expression.unaryOperator() is not { } unaryOperator
+            || expression.unaryExpression() is not { } operand)
+        {
+            return false;
+        }
+
+        if (unaryOperator.GetText() == "&"
+            && TryIsSimpleAddressableOperand(operand))
+        {
+            kind = SingleReturnWrapperKind.AddressOf;
+            return true;
+        }
+
+        if (unaryOperator.GetText() == "*"
+            && (TryClassifySimpleReturnWrapperUnary(operand, out _)
+                || TryIsSimplePointerOperand(operand)))
+        {
+            kind = SingleReturnWrapperKind.Dereference;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryClassifySimplePostfixExpression(
@@ -347,7 +403,59 @@ internal static class FunctionOptimizationSummaryBuilder
         return false;
     }
 
-    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.ExpressionContext expression)
+    private static bool TryIsSimpleIdentifierOrQualifiedNameOperand(StarkParser.UnaryExpressionContext expression)
+    {
+        return TryGetSimplePostfixExpression(expression) is { } postfixExpression
+            && postfixExpression.postfixPart().Length == 0
+            && TryIsSimpleIdentifierOrQualifiedNamePrimary(postfixExpression.primaryExpression());
+    }
+
+    private static bool TryIsSimplePointerOperand(StarkParser.UnaryExpressionContext expression)
+    {
+        return TryIsSimpleIdentifierOrQualifiedNameOperand(expression);
+    }
+
+    private static bool TryIsSimpleAddressableOperand(StarkParser.UnaryExpressionContext expression)
+    {
+        if (TryGetSimplePostfixExpression(expression) is { } postfixExpression)
+        {
+            return TryIsSimpleAddressablePostfixExpression(postfixExpression);
+        }
+
+        return expression.unaryOperator()?.GetText() == "*"
+            && expression.unaryExpression() is { } pointerOperand
+            && TryIsSimplePointerOperand(pointerOperand);
+    }
+
+    private static bool TryIsSimpleAddressablePostfixExpression(StarkParser.PostfixExpressionContext expression)
+    {
+        if (!TryIsSimpleIdentifierOrQualifiedNamePrimary(expression.primaryExpression()))
+        {
+            return false;
+        }
+
+        foreach (var postfixPart in expression.postfixPart())
+        {
+            if (postfixPart.argumentList() is not null)
+            {
+                return false;
+            }
+
+            if (postfixPart.Identifier() is null && postfixPart.LBRACK() is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryIsSimpleIdentifierOrQualifiedNamePrimary(StarkParser.PrimaryExpressionContext expression)
+    {
+        return expression.Identifier() is not null || expression.qualifiedName() is not null;
+    }
+
+    private static StarkParser.UnaryExpressionContext? TryGetSimpleUnaryExpression(StarkParser.ExpressionContext expression)
     {
         var assignment = expression.assignmentExpression();
         if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
@@ -420,7 +528,7 @@ internal static class FunctionOptimizationSummaryBuilder
             return null;
         }
 
-        return TryGetSimplePostfixExpression(multiplicative.unaryExpression(0));
+        return multiplicative.unaryExpression(0);
     }
 
     private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.UnaryExpressionContext expression)
@@ -457,6 +565,9 @@ internal static class FunctionOptimizationSummaryBuilder
         DirectCall,
         MemberCall,
         FieldAccess,
-        IndexAccess
+        IndexAccess,
+        Conversion,
+        AddressOf,
+        Dereference
     }
 }
