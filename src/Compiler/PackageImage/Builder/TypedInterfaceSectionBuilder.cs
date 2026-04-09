@@ -46,6 +46,7 @@ internal static partial class PackageImageBuilder
     }
 
     private static StarkPackageTypedFunctionManifest BuildTypedFunctionManifest(
+        FunctionDeclarationModel declarationFunction,
         StarkPackageFunctionManifest manifest,
         string lookupName,
         TypeCheckModel typeModel,
@@ -69,7 +70,9 @@ internal static partial class PackageImageBuilder
             manifest.UseFastCallingConvention,
             manifest.Asm,
             manifest.GenericParameters,
-            QualifiedResolvedName: QualifyPublishedResolvedName(moduleName, lookupName));
+            QualifiedResolvedName: QualifyPublishedResolvedName(moduleName, lookupName),
+            PublishedOverloadKey: declarationFunction.PublishedOverloadKey ?? FunctionOverloadFacts.BuildOverloadKey(declarationFunction.Parameters),
+            HasGenericTemplateBody: declarationFunction.HasBody && declarationFunction.IsGeneric);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -401,7 +404,9 @@ internal static partial class PackageImageBuilder
                     effects.IsStrictFp,
                     effects.UseFastCallingConvention,
                     GenericParameters: declaration.Function.GenericParams.Count == 0 ? null : declaration.Function.GenericParams.ToArray(),
-                    QualifiedResolvedName: QualifyPublishedResolvedName(module.SyntaxModel.ModuleName, lookupName));
+                    QualifiedResolvedName: QualifyPublishedResolvedName(module.SyntaxModel.ModuleName, lookupName),
+                    PublishedOverloadKey: declaration.Function.PublishedOverloadKey ?? FunctionOverloadFacts.BuildOverloadKey(declaration.Function.Parameters),
+                    HasGenericTemplateBody: declaration.Function.HasBody && declaration.Function.IsGeneric);
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()

@@ -207,27 +207,12 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             var manifest = PackageImageBuilder.Create(
                 libraryResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
-            var corruptedManifest = manifest with
-            {
-                Modules = manifest.Modules
-                    .Select(module => module.ModuleName == "Facade"
-                        ? module with
-                        {
-                            GenericTemplates = module.GenericTemplates is { } genericTemplates
-                                ? genericTemplates with
-                                {
-                                    Functions = genericTemplates.Functions
-                                        .Select(template => template with
-                                        {
-                                            BodyText = "{ return this is not valid Stark; }"
-                                        })
-                                        .ToArray()
-                                }
-                                : null
-                        }
-                        : module)
-                    .ToArray()
-            };
+            var corruptedManifest = BuildTypedOnlyFacadeManifest(
+                manifest,
+                template => template with
+                {
+                    BodyText = "{ return this is not valid Stark; }"
+                });
 
             File.WriteAllText(manifestPath, corruptedManifest.ToJson());
             File.Delete(facadePath);
@@ -369,6 +354,87 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.NotNull(mir);
             Assert.Contains(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_SumWhileControl__i32");
             Assert.Contains(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_SumForControl__i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedBridgeGenericBodiesLoadWithoutSourceSurfaceFunctionEntriesWhenTypedInterfaceCarriesOverloadKeys()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-bridge-generic-loading-without-source-surface-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public alias BufferView = i32[];
+
+                public fn BufferView Relay<T>(BufferView view, T tag) {
+                    return view;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var bridgeOnlyManifest = BuildTypedOnlyFacadeManifest(
+                manifest,
+                template => template.QualifiedResolvedName == "Facade.Relay"
+                    ? template with { TypedBody = null }
+                    : template);
+
+            File.WriteAllText(manifestPath, bridgeOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32[] values) {
+                        stack i32[] copy = Facade.Relay(values, 0);
+                        return copy[0];
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.Contains("public alias BufferView = i32[];", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("Relay<T>", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("return", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            var specializedRelay = Assert.Single(
+                mir.Functions,
+                static function => function.Name.StartsWith("__stark_mono_fn_Demo__Facade_Relay__", StringComparison.Ordinal));
+            Assert.True(specializedRelay.HasBody);
+            Assert.True(specializedRelay.SupportsDirectCodeGeneration);
         }
         finally
         {
@@ -570,7 +636,18 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                         TypeAliases = [],
                         TypedInterface = facadeModule.TypedInterface,
                         CompilerFacts = facadeModule.CompilerFacts,
-                        GenericTemplates = new StarkPackageGenericTemplateSection(rewrittenTemplates)
+                        GenericTemplates = new StarkPackageGenericTemplateSection(rewrittenTemplates),
+                        CompilerSections = new StarkPackageCompilerSectionsManifest(
+                            TypedInterface: facadeModule.TypedInterface,
+                            CompilerFacts: facadeModule.CompilerFacts,
+                            GenericTemplates: new StarkPackageGenericTemplateSection(rewrittenTemplates)),
+                        SourceSurface = new StarkPackageSourceSurfaceSection(
+                            Imports: facadeModule.EffectiveSourceSurface.Imports,
+                            ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                            Functions: [],
+                            Types: [],
+                            Globals: [],
+                            TypeAliases: [])
                     }
                     : module)
                 .ToArray()

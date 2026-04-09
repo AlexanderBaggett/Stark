@@ -62,6 +62,8 @@ internal static partial class PackageImageLoader
                 }
 
                 var qualifiedMethodName = $"{type.Name}.{method.Name}";
+                var publishedOverloadKey = method.PublishedOverloadKey
+                    ?? TryGetPublishedOverloadKey(publishedOverloadKeysBySymbol, method.SymbolName);
                 declarations.Add(new TopLevelDeclarationModel(
                     qualifiedMethodName,
                     DeclarationKind.Function,
@@ -75,19 +77,20 @@ internal static partial class PackageImageLoader
                         method.IsStrictFp,
                         asm: null,
                         method.GenericParameters,
-                        hasBody: HasPublishedGenericTemplateBody(
+                        hasBody: method.HasGenericTemplateBody
+                        || HasPublishedGenericTemplateBody(
                             module.Module,
                             module.Module.ModuleName,
                             qualifiedMethodName,
                             method.SymbolName,
-                            method.Parameters)
+                            publishedOverloadKey)
                         || HasGenericTemplateBody(
                             module.Module,
                             publishedOverloadKeysBySymbol,
                             $"{module.Module.ModuleName}.{qualifiedMethodName}",
                             method.SymbolName,
                             method.Parameters),
-                        publishedOverloadKey: TryGetPublishedOverloadKey(publishedOverloadKeysBySymbol, method.SymbolName))));
+                        publishedOverloadKey: publishedOverloadKey)));
             }
         }
 
@@ -114,6 +117,8 @@ internal static partial class PackageImageLoader
                 return false;
             }
 
+            var publishedOverloadKey = function.PublishedOverloadKey
+                ?? TryGetPublishedOverloadKey(publishedOverloadKeysBySymbol, function.SymbolName);
             declarations.Add(new TopLevelDeclarationModel(
                 function.Name,
                 DeclarationKind.Function,
@@ -127,19 +132,20 @@ internal static partial class PackageImageLoader
                     function.IsStrictFp,
                     function.Asm,
                     function.GenericParameters,
-                    hasBody: HasPublishedGenericTemplateBody(
+                    hasBody: function.HasGenericTemplateBody
+                    || HasPublishedGenericTemplateBody(
                         module.Module,
                         module.Module.ModuleName,
                         function.QualifiedName,
                         function.SymbolName,
-                        function.Parameters)
+                        publishedOverloadKey)
                     || HasGenericTemplateBody(
                         module.Module,
                         publishedOverloadKeysBySymbol,
                         function.QualifiedName,
                         function.SymbolName,
                         function.Parameters),
-                    publishedOverloadKey: TryGetPublishedOverloadKey(publishedOverloadKeysBySymbol, function.SymbolName))));
+                    publishedOverloadKey: publishedOverloadKey)));
         }
 
         syntaxModel = new SyntaxModel(
@@ -152,18 +158,45 @@ internal static partial class PackageImageLoader
     private static Dictionary<string, string> BuildPublishedOverloadKeyLookup(StarkPackageModuleManifest module)
     {
         var lookup = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (module.EffectiveTypedInterface is { } typedInterface)
+        {
+            foreach (var function in typedInterface.Functions)
+            {
+                if (!string.IsNullOrWhiteSpace(function.PublishedOverloadKey))
+                {
+                    lookup[function.SymbolName] = function.PublishedOverloadKey;
+                }
+            }
+
+            foreach (var type in typedInterface.Types)
+            {
+                foreach (var method in type.Methods ?? [])
+                {
+                    if (!string.IsNullOrWhiteSpace(method.PublishedOverloadKey))
+                    {
+                        lookup[method.SymbolName] = method.PublishedOverloadKey;
+                    }
+                }
+            }
+        }
+
         var sourceSurface = module.EffectiveSourceSurface;
 
         foreach (var function in sourceSurface.Functions ?? [])
         {
-            lookup[function.SymbolName] = FunctionOverloadFacts.BuildOverloadKey(function.Parameters.Select(static parameter => parameter.Type));
+            lookup.TryAdd(
+                function.SymbolName,
+                FunctionOverloadFacts.BuildOverloadKey(function.Parameters.Select(static parameter => parameter.Type)));
         }
 
         foreach (var type in sourceSurface.Types ?? [])
         {
             foreach (var method in type.Methods ?? [])
             {
-                lookup[method.SymbolName] = FunctionOverloadFacts.BuildOverloadKey(method.Parameters.Select(static parameter => parameter.Type));
+                lookup.TryAdd(
+                    method.SymbolName,
+                    FunctionOverloadFacts.BuildOverloadKey(method.Parameters.Select(static parameter => parameter.Type)));
             }
         }
 
@@ -184,7 +217,7 @@ internal static partial class PackageImageLoader
         string moduleName,
         string qualifiedName,
         string symbolName,
-        IReadOnlyList<StarkPackageTypedParameterManifest> parameters)
+        string? publishedOverloadKey)
     {
         var templates = module.EffectiveGenericTemplates?.Functions;
         if (templates is not { Count: > 0 })
@@ -194,10 +227,12 @@ internal static partial class PackageImageLoader
 
         var moduleQualifiedName = $"{moduleName}.{qualifiedName}";
         return templates.Any(template =>
-            string.Equals(template.QualifiedResolvedName, qualifiedName, StringComparison.Ordinal)
-            || string.Equals(template.QualifiedResolvedName, moduleQualifiedName, StringComparison.Ordinal)
-            || string.Equals(template.QualifiedName, qualifiedName, StringComparison.Ordinal)
-            || string.Equals(template.QualifiedName, moduleQualifiedName, StringComparison.Ordinal)
-            || string.Equals(template.QualifiedName, symbolName, StringComparison.Ordinal));
+            (string.IsNullOrWhiteSpace(publishedOverloadKey)
+             || string.Equals(template.OverloadKey, publishedOverloadKey, StringComparison.Ordinal))
+            && (string.Equals(template.QualifiedResolvedName, qualifiedName, StringComparison.Ordinal)
+                || string.Equals(template.QualifiedResolvedName, moduleQualifiedName, StringComparison.Ordinal)
+                || string.Equals(template.QualifiedName, qualifiedName, StringComparison.Ordinal)
+                || string.Equals(template.QualifiedName, moduleQualifiedName, StringComparison.Ordinal)
+                || string.Equals(template.QualifiedName, symbolName, StringComparison.Ordinal)));
     }
 }

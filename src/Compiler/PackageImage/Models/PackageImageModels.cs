@@ -208,7 +208,9 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool UseFastCallingConvention,
     StarkPackageAsmManifest? Asm = null,
     IReadOnlyList<string>? GenericParameters = null,
-    string? QualifiedResolvedName = null);
+    string? QualifiedResolvedName = null,
+    string? PublishedOverloadKey = null,
+    bool HasGenericTemplateBody = false);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -221,7 +223,9 @@ internal sealed record StarkPackageTypedMethodManifest(
     bool IsStrictFp,
     bool UseFastCallingConvention,
     IReadOnlyList<string>? GenericParameters = null,
-    string? QualifiedResolvedName = null);
+    string? QualifiedResolvedName = null,
+    string? PublishedOverloadKey = null,
+    bool HasGenericTemplateBody = false);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,

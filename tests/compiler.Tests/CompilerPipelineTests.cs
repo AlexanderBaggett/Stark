@@ -4548,7 +4548,24 @@ public sealed class CompilerPipelineTests
                                     {
                                         BodyText = "{ return this is not valid Stark; }"
                                     })
-                                    .ToArray())
+                                    .ToArray()),
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: new StarkPackageGenericTemplateSection(
+                                    facadeModule.GenericTemplates!.Functions
+                                        .Select(template => template with
+                                        {
+                                            BodyText = "{ return this is not valid Stark; }"
+                                        })
+                                        .ToArray())),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
                         }
                         : module)
                     .ToArray()
@@ -5006,6 +5023,129 @@ public sealed class CompilerPipelineTests
             static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Box.Echo");
         Assert.NotNull(echo.Function);
         Assert.Equal("(borrowBox,BufferView)", echo.Function!.PublishedOverloadKey);
+    }
+
+    [Fact]
+    public void PackageImageSyntaxModelCarriesPublishedOverloadKeysFromTypedInterfaceWhenSourceSurfaceFunctionEntriesAreMissing()
+    {
+        var facadeModule = new StarkPackageModuleManifest(
+            "Facade",
+            ReExports: [],
+            Functions: [],
+            Types: [],
+            Globals: [],
+            TypeAliases: [],
+            TypedInterface: new StarkPackageTypedInterfaceSection(
+                Functions:
+                [
+                    new StarkPackageTypedFunctionManifest(
+                        Name: "First",
+                        QualifiedName: "Facade.First",
+                        Visibility: "public",
+                        SymbolName: "Facade.First",
+                        Kind: "fn",
+                        ReturnType: new StarkPackageTypeReference(
+                            "slice",
+                            ElementType: new StarkPackageTypeReference("integer", BitWidth: 32)),
+                        Parameters:
+                        [
+                            new StarkPackageTypedParameterManifest(
+                                "view",
+                                new StarkPackageTypeReference(
+                                    "slice",
+                                    ElementType: new StarkPackageTypeReference("integer", BitWidth: 32)))
+                        ],
+                        IsFfi: false,
+                        IsStrictFp: false,
+                        UseFastCallingConvention: true,
+                        PublishedOverloadKey: "(BufferView)",
+                        HasGenericTemplateBody: true)
+                ],
+                Types:
+                [
+                    new StarkPackageTypedTypeManifest(
+                        Name: "Box",
+                        QualifiedName: "Facade.Box",
+                        Visibility: "public",
+                        Kind: "record",
+                        Fields:
+                        [
+                            new StarkPackageTypedFieldManifest(
+                                "Values",
+                                new StarkPackageTypeReference(
+                                    "slice",
+                                    ElementType: new StarkPackageTypeReference("integer", BitWidth: 32)))
+                        ],
+                        Methods:
+                        [
+                            new StarkPackageTypedMethodManifest(
+                                Name: "Echo",
+                                QualifiedName: "Facade.Box.Echo",
+                                SymbolName: "Facade.Box.Echo",
+                                Kind: "fn",
+                                ReturnType: new StarkPackageTypeReference(
+                                    "slice",
+                                    ElementType: new StarkPackageTypeReference("integer", BitWidth: 32)),
+                                Parameters:
+                                [
+                                    new StarkPackageTypedParameterManifest(
+                                        "self",
+                                        new StarkPackageTypeReference(
+                                            "named",
+                                            BorrowKind: "borrow",
+                                            Name: "Box")),
+                                    new StarkPackageTypedParameterManifest(
+                                        "view",
+                                        new StarkPackageTypeReference(
+                                            "slice",
+                                            ElementType: new StarkPackageTypeReference("integer", BitWidth: 32)))
+                                ],
+                                IsFfi: false,
+                                IsStrictFp: false,
+                                UseFastCallingConvention: true,
+                                PublishedOverloadKey: "(borrowBox,BufferView)",
+                                HasGenericTemplateBody: true)
+                        ])
+                ],
+                Globals: [],
+                TypeAliases:
+                [
+                    new StarkPackageTypedTypeAliasManifest(
+                        Name: "BufferView",
+                        QualifiedName: "Facade.BufferView",
+                        Visibility: "public",
+                        TargetType: new StarkPackageTypeReference(
+                            "slice",
+                            ElementType: new StarkPackageTypeReference("integer", BitWidth: 32)))
+                ]),
+            SourceSurface: new StarkPackageSourceSurfaceSection(
+                Functions: [],
+                Types: [],
+                Globals: [],
+                TypeAliases: []));
+
+        Assert.True(
+            PackageImageLoader.TryBuildModuleSyntaxModel(
+                new ResolvedPackageModule(
+                    "/virtual/Facade.starkpkg.json",
+                    "/virtual/libFacade.a",
+                    new StarkPackageManifest("Facade", "libFacade.a", [facadeModule]),
+                    facadeModule),
+                out var syntaxModel));
+
+        var first = Assert.Single(
+            syntaxModel.Declarations,
+            static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "First");
+        Assert.NotNull(first.Function);
+        Assert.True(first.Function!.HasBody);
+        Assert.Equal("(BufferView)", first.Function.PublishedOverloadKey);
+
+        var echo = Assert.Single(
+            syntaxModel.Declarations,
+            static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Box.Echo");
+        Assert.NotNull(echo.Function);
+        Assert.True(echo.Function!.HasBody);
+        Assert.Equal("(borrowBox,BufferView)", echo.Function.PublishedOverloadKey);
     }
 
     [Fact]

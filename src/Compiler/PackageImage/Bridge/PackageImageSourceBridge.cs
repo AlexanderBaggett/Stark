@@ -14,7 +14,7 @@ internal static partial class PackageImageLoader
 
         var builder = new StringBuilder();
         var genericTemplateBodies = BuildRenderableGenericTemplateBodyLookup(module.Module);
-        var sourceSurfaceOverloadKeysBySymbol = BuildSourceSurfaceOverloadKeyLookup(module.Module);
+        var publishedOverloadKeysBySymbol = BuildPublishedOverloadKeyLookup(module.Module);
         var typeAliases = GetTypeAliases(module.Module);
         var types = GetTypes(module.Module);
         var globals = GetGlobals(module.Module);
@@ -149,7 +149,7 @@ internal static partial class PackageImageLoader
                 {
                     TryGetGenericTemplateBody(
                         genericTemplateBodies,
-                        sourceSurfaceOverloadKeysBySymbol,
+                        publishedOverloadKeysBySymbol,
                         $"{module.Module.ModuleName}.{type.Name}.{method.Name}",
                         method.SymbolName,
                         method.Parameters,
@@ -233,7 +233,7 @@ internal static partial class PackageImageLoader
         {
             TryGetGenericTemplateBody(
                 genericTemplateBodies,
-                sourceSurfaceOverloadKeysBySymbol,
+                publishedOverloadKeysBySymbol,
                 function.QualifiedName,
                 function.SymbolName,
                 function.Parameters,
@@ -361,27 +361,6 @@ internal static partial class PackageImageLoader
         }
 
         return module.EffectiveSourceSurface.Functions ?? [];
-    }
-
-    private static Dictionary<string, string> BuildSourceSurfaceOverloadKeyLookup(StarkPackageModuleManifest module)
-    {
-        var lookup = new Dictionary<string, string>(StringComparer.Ordinal);
-        var sourceSurface = module.EffectiveSourceSurface;
-
-        foreach (var function in sourceSurface.Functions ?? [])
-        {
-            lookup[function.SymbolName] = FunctionOverloadFacts.BuildOverloadKey(function.Parameters.Select(static parameter => parameter.Type));
-        }
-
-        foreach (var type in sourceSurface.Types ?? [])
-        {
-            foreach (var method in type.Methods ?? [])
-            {
-                lookup[method.SymbolName] = FunctionOverloadFacts.BuildOverloadKey(method.Parameters.Select(static parameter => parameter.Type));
-            }
-        }
-
-        return lookup;
     }
 
     private static string RenderFunctionKind(string kind)
@@ -1325,15 +1304,15 @@ internal static partial class PackageImageLoader
 
     private static bool TryGetGenericTemplateBody(
         IReadOnlyDictionary<string, string> genericTemplateBodies,
-        IReadOnlyDictionary<string, string> sourceSurfaceOverloadKeysBySymbol,
+        IReadOnlyDictionary<string, string> publishedOverloadKeysBySymbol,
         string qualifiedName,
         string symbolName,
         IReadOnlyList<StarkPackageParameterManifest> parameters,
         out string? bodyText)
     {
-        if (sourceSurfaceOverloadKeysBySymbol.TryGetValue(symbolName, out var sourceSurfaceOverloadKey)
+        if (publishedOverloadKeysBySymbol.TryGetValue(symbolName, out var publishedOverloadKey)
             && genericTemplateBodies.TryGetValue(
-                BuildGenericTemplateLookupKey(qualifiedName, sourceSurfaceOverloadKey),
+                BuildGenericTemplateLookupKey(qualifiedName, publishedOverloadKey),
                 out bodyText))
         {
             return true;
@@ -1348,14 +1327,14 @@ internal static partial class PackageImageLoader
 
     private static bool HasGenericTemplateBody(
         StarkPackageModuleManifest module,
-        IReadOnlyDictionary<string, string> sourceSurfaceOverloadKeysBySymbol,
+        IReadOnlyDictionary<string, string> publishedOverloadKeysBySymbol,
         string qualifiedName,
         string symbolName,
         IReadOnlyList<StarkPackageTypedParameterManifest> parameters)
     {
         var genericTemplateBodies = BuildGenericTemplateBodyLookup(module);
-        return sourceSurfaceOverloadKeysBySymbol.TryGetValue(symbolName, out var sourceSurfaceOverloadKey)
-            && genericTemplateBodies.ContainsKey(BuildGenericTemplateLookupKey(qualifiedName, sourceSurfaceOverloadKey))
+        return publishedOverloadKeysBySymbol.TryGetValue(symbolName, out var publishedOverloadKey)
+            && genericTemplateBodies.ContainsKey(BuildGenericTemplateLookupKey(qualifiedName, publishedOverloadKey))
             || TryGetGenericTemplateBody(
                 genericTemplateBodies,
                 qualifiedName,
@@ -1365,15 +1344,15 @@ internal static partial class PackageImageLoader
 
     private static bool TryGetGenericTemplateBody(
         IReadOnlyDictionary<string, string> genericTemplateBodies,
-        IReadOnlyDictionary<string, string> sourceSurfaceOverloadKeysBySymbol,
+        IReadOnlyDictionary<string, string> publishedOverloadKeysBySymbol,
         string qualifiedName,
         string symbolName,
         IReadOnlyList<StarkPackageTypedParameterManifest> parameters,
         out string? bodyText)
     {
-        if (sourceSurfaceOverloadKeysBySymbol.TryGetValue(symbolName, out var sourceSurfaceOverloadKey)
+        if (publishedOverloadKeysBySymbol.TryGetValue(symbolName, out var publishedOverloadKey)
             && genericTemplateBodies.TryGetValue(
-                BuildGenericTemplateLookupKey(qualifiedName, sourceSurfaceOverloadKey),
+                BuildGenericTemplateLookupKey(qualifiedName, publishedOverloadKey),
                 out bodyText))
         {
             return true;
