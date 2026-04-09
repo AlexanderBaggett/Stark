@@ -4,6 +4,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/compiler.Tests/compiler.Tests.csproj" />
+    <Project Path="tests/compiler.PipelineTests/compiler.PipelineTests.csproj" />
     <Project Path="tests/compiler.FeatureTests/compiler.FeatureTests.csproj" />
     <Project Path="tests/compiler.IntegrationTests/compiler.IntegrationTests.csproj" />
     <Project Path="tests/compiler.StandardLibraryTests/compiler.StandardLibraryTests.csproj" />
