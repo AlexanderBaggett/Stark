@@ -1847,6 +1847,60 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ClosedWorldOptimizationModelCapturesImportedTopLevelLawRules()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                law i32 UseLawClone(i32 left, i32 right) {
+                    return Math.Add(left, right);
+                }
+
+                fn i32 UseDirect(i32 left, i32 right) {
+                    Touch();
+                    return Math.Add(left, right);
+                }
+
+                ffi fn void Touch();
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public finite law i32 Add(i32 left, i32 right) {
+                            return left + right;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ClosedWorldOptimization, out ClosedWorldOptimizationModel? closedWorld));
+        Assert.NotNull(closedWorld);
+
+        Assert.Equal(
+            new[]
+            {
+                ClosedWorldCallLoweringStrategy.LawCallerSpecializedClone,
+                ClosedWorldCallLoweringStrategy.DirectAbiBoundary
+            },
+            closedWorld.Functions["Math.Add"].SelectionOrder);
+        Assert.Equal(ClosedWorldCodeGenerationMode.CallerSpecializedClone, closedWorld.Functions["Math.Add"].CodeGenerationMode);
+        Assert.True(closedWorld.Functions["Math.Add"].CanDevirtualize);
+    }
+
+    [Fact]
     public void PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModule()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -17038,7 +17092,7 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawEmitRefinedAttributesWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawEmitLawClonesWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-llvm-pipeline-");
         var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
@@ -17089,8 +17143,8 @@ public sealed class CompilerPipelineTests
                     import Math
                     module Demo
 
-                    fn i32 Run() {
-                        return Math.AddTag(3, 4, 5);
+                    law i32 Run(i32 left, i32 right) {
+                        return Math.AddTag(left, right, left);
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -17123,16 +17177,10 @@ public sealed class CompilerPipelineTests
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
-            var definition = System.Text.RegularExpressions.Regex.Match(
-                llvmModule.Text,
-                $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
-                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-            Assert.True(definition.Success, $"Expected a concrete LLVM definition for imported specialization '{function.SymbolName}'.");
-            Assert.Contains("willreturn", definition.Value, StringComparison.Ordinal);
-            Assert.Contains("mustprogress", definition.Value, StringComparison.Ordinal);
-            Assert.Contains("nosync", definition.Value, StringComparison.Ordinal);
-            Assert.Contains("nofree", definition.Value, StringComparison.Ordinal);
-            Assert.Contains("memory(none)", definition.Value, StringComparison.Ordinal);
+            var cloneSymbol = $"__stark_law_clone_{function.SymbolName}";
+            Assert.Contains($"define internal fastcc i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"call fastcc i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"define internal fastcc i32 @{function.SymbolName}", llvmModule.Text, StringComparison.Ordinal);
         }
         finally
         {
@@ -17723,6 +17771,68 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-top-level-generic-specialization-plan-pipeline-");
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(tempDirectory.FullName, "Math.stark"),
+                """
+                module Math
+
+                public finite law T Identity<T>(T value) {
+                    return value;
+                }
+                """);
+
+            var pipeline = DefaultCompilerPipeline.Create();
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Math
+                    module Demo
+
+                    finite law i32 Run(i32 value) {
+                        return Math.Identity(value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "specialization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SpecializationPlan, out SpecializationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            var function = Assert.Single(plan.Functions);
+            Assert.Equal("__stark_mono_fn_Math__Math_Identity__i32", function.SymbolName);
+            Assert.Equal(
+                new[]
+                {
+                    FunctionSpecializationStrategy.LawCallerSpecializedClone,
+                    FunctionSpecializationStrategy.OwnedConcreteBody,
+                    FunctionSpecializationStrategy.DirectAbiBoundaryFallback
+                },
+                function.SelectionOrder);
+            Assert.Equal(FunctionSpecializationCodeGenerationMode.CallerSpecializedClone, function.CodeGenerationMode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ColdImportedLawGenericsPreferOwnedBodyOverCallerCloneInSpecializationPlan()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cold-source-generic-specialization-plan-pipeline-");
@@ -17885,7 +17995,7 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
-    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawRefineEffectsWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-plan-pipeline-");
         var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
@@ -17936,8 +18046,8 @@ public sealed class CompilerPipelineTests
                     import Math
                     module Demo
 
-                    fn i32 Run() {
-                        return Math.AddTag(3, 4, 5);
+                    law i32 Run(i32 left, i32 right) {
+                        return Math.AddTag(left, right, left);
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -17954,6 +18064,19 @@ public sealed class CompilerPipelineTests
             Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Math.AddTag", out var importedSemantics));
             Assert.Equal(StarkFunctionKind.Fn, importedSemantics.DeclaredKind);
             Assert.Equal(StarkFunctionKind.FiniteLaw, importedSemantics.EffectiveKind);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.SpecializationPlan, out SpecializationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions);
+            Assert.Equal(
+                new[]
+                {
+                    FunctionSpecializationStrategy.LawCallerSpecializedClone,
+                    FunctionSpecializationStrategy.OwnedConcreteBody,
+                    FunctionSpecializationStrategy.DirectAbiBoundaryFallback
+                },
+                function.SelectionOrder);
+            Assert.Equal(FunctionSpecializationCodeGenerationMode.CallerSpecializedClone, function.CodeGenerationMode);
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
             Assert.NotNull(effectModel);

@@ -677,7 +677,8 @@ internal sealed class LlvmIrEmitter
     private IReadOnlyDictionary<string, ImportedLawClonePlan> BuildClosedWorldImportedLawClones()
     {
         var importedDeclarations = CollectImportedFunctionDeclarations();
-        if (importedDeclarations.Count == 0)
+        var cloneEligibleSpecializations = CollectLawCloneEligibleSpecializations();
+        if (importedDeclarations.Count == 0 && cloneEligibleSpecializations.Count == 0)
         {
             return new Dictionary<string, ImportedLawClonePlan>(StringComparer.Ordinal);
         }
@@ -686,7 +687,8 @@ internal sealed class LlvmIrEmitter
         var callsByFunction = CollectCallsByFunction(_ssa);
         var recursiveImportedLawFunctions = FindRecursiveFunctions(
             callsByFunction,
-            functionName => importedDeclarations.ContainsKey(functionName)
+            functionName =>
+                (importedDeclarations.ContainsKey(functionName) || cloneEligibleSpecializations.ContainsKey(functionName))
                 && _effectModel.Functions.TryGetValue(functionName, out var effects)
                 && FunctionKindFacts.IsLaw(effects.Kind));
         var rootLawFunctions = _syntaxModel.Declarations
@@ -719,10 +721,21 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
-            var signature = _allFunctionSignatures[functionName];
+            if (!ssaByName.TryGetValue(functionName, out var ssaFunction))
+            {
+                continue;
+            }
+
+            var signature = _allFunctionSignatures.TryGetValue(functionName, out var resolvedSignature)
+                ? resolvedSignature
+                : new TypedFunctionSignature(
+                    functionName,
+                    ssaFunction.ReturnType,
+                    ssaFunction.Parameters,
+                    SourceName: functionName);
             var effects = BuildLawCloneEffectProfile(functionName);
             var cloneAbi = BuildSyntheticAbiSignature(signature, GetImportedLawCloneSymbolName(functionName), isFfi: false, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
-            clones[functionName] = new ImportedLawClonePlan(functionName, signature, cloneAbi, effects, ssaByName[functionName]);
+            clones[functionName] = new ImportedLawClonePlan(functionName, signature, cloneAbi, effects, ssaFunction);
 
             if (!callsByFunction.TryGetValue(functionName, out var importedCallees))
             {
@@ -739,14 +752,41 @@ internal sealed class LlvmIrEmitter
 
         void EnqueueIfEligible(string functionName)
         {
-            if (!visited.Add(functionName)
-                || !IsImportedLawCloneEligible(functionName, importedDeclarations, ssaByName, recursiveImportedLawFunctions))
+            if (!visited.Add(functionName))
+            {
+                return;
+            }
+
+            if (cloneEligibleSpecializations.TryGetValue(functionName, out var specializationStrategy))
+            {
+                if (!IsSpecializationLawCloneEligible(specializationStrategy, ssaByName, recursiveImportedLawFunctions))
+                {
+                    return;
+                }
+
+                pending.Enqueue(functionName);
+                return;
+            }
+
+            if (!IsImportedLawCloneEligible(functionName, importedDeclarations, ssaByName, recursiveImportedLawFunctions))
             {
                 return;
             }
 
             pending.Enqueue(functionName);
         }
+    }
+
+    private Dictionary<string, FunctionSpecializationCodegenStrategy> CollectLawCloneEligibleSpecializations()
+    {
+        if (_specializationCodegenStrategy is null)
+        {
+            return new Dictionary<string, FunctionSpecializationCodegenStrategy>(StringComparer.Ordinal);
+        }
+
+        return _specializationCodegenStrategy.Functions
+            .Where(static strategy => strategy.StrategyKind == FunctionSpecializationCodegenStrategyKind.EmitOwnedConcreteBodyAndPreferLawCallerClone)
+            .ToDictionary(static strategy => strategy.SymbolName, static strategy => strategy, StringComparer.Ordinal);
     }
 
     private Dictionary<string, TopLevelDeclarationModel> CollectImportedFunctionDeclarations()
@@ -769,7 +809,7 @@ internal sealed class LlvmIrEmitter
 
     private FunctionEffectProfile BuildLawCloneEffectProfile(string functionName)
     {
-        var effects = _effectModel.Functions[functionName];
+        var effects = _allFunctionEffects[functionName];
         return effects.InlinePreference == InlinePreference.Inline
             ? effects
             : effects with { InlinePreference = InlinePreference.Inline };
@@ -797,6 +837,21 @@ internal sealed class LlvmIrEmitter
             && ssaByName.TryGetValue(functionName, out var ssaFunction)
             && ssaFunction.HasBody
             && IsClosedWorldLawCloneEnabled(functionName)
+            && ssaFunction.SupportsDirectCodeGeneration;
+    }
+
+    private bool IsSpecializationLawCloneEligible(
+        FunctionSpecializationCodegenStrategy strategy,
+        IReadOnlyDictionary<string, SsaFunction> ssaByName,
+        ISet<string> recursiveImportedLawFunctions)
+    {
+        return !recursiveImportedLawFunctions.Contains(strategy.SymbolName)
+            && _allFunctionEffects.TryGetValue(strategy.SymbolName, out var effects)
+            && FunctionKindFacts.IsLaw(effects.Kind)
+            && !effects.IsFfi
+            && !effects.IsCold
+            && ssaByName.TryGetValue(strategy.SymbolName, out var ssaFunction)
+            && ssaFunction.HasBody
             && ssaFunction.SupportsDirectCodeGeneration;
     }
 

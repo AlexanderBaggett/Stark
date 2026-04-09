@@ -3680,6 +3680,49 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClones()
+    {
+        var result = Compile(
+            """
+            import Math
+            module Demo
+
+            law i32 UseLawClone(i32 left, i32 right) {
+                return Math.Add(left, right);
+            }
+
+            fn i32 UseDirect(i32 left, i32 right) {
+                Touch();
+                return Math.Add(left, right);
+            }
+
+            ffi fn void Touch();
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        public finite law i32 Add(i32 left, i32 right) {
+                            return left + right;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("call fastcc i32 @__stark_law_clone_Math_Add(i32 %arg_left, i32 %arg_right)", llvm);
+        Assert.Contains("call fastcc i32 @Math_Add(i32 %arg_left, i32 %arg_right)", llvm);
+    }
+
+    [Fact]
     public void ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvm()
     {
         var result = Compile(

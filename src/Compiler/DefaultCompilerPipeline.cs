@@ -2156,14 +2156,27 @@ public static class DefaultCompilerPipeline
 
             foreach (var function in effectModel.Functions.Values)
             {
-                if (!TryResolveContainingAbstraction(function.Name, typeInfos, out var abstraction))
+                if (TryResolveContainingAbstraction(function.Name, typeInfos, out var abstraction))
+                {
+                    functionInfos[function.Name] = BuildClosedWorldFunctionInfo(
+                        function,
+                        abstraction.Kind,
+                        abstraction.Seal,
+                        rootFunctionNames,
+                        sourceFunctionDeclarations,
+                        importedRecursiveLawFunctions);
+                    continue;
+                }
+
+                if (!IsTopLevelFunction(function.Name, typeModel.NamedTypes))
                 {
                     continue;
                 }
 
                 functionInfos[function.Name] = BuildClosedWorldFunctionInfo(
                     function,
-                    abstraction,
+                    DeclarationKind.Function,
+                    ResolveClosedWorldTopLevelFunctionSeal(function.Name, syntaxModel.ModuleName, sealedModules),
                     rootFunctionNames,
                     sourceFunctionDeclarations,
                     importedRecursiveLawFunctions);
@@ -2194,17 +2207,18 @@ public static class DefaultCompilerPipeline
 
         private static ClosedWorldFunctionOptimizationInfo BuildClosedWorldFunctionInfo(
             FunctionEffectProfile function,
-            ClosedWorldTypeOptimizationInfo abstraction,
+            DeclarationKind kind,
+            ClosedWorldSealKind seal,
             ISet<string> rootFunctionNames,
             IReadOnlyDictionary<string, TopLevelDeclarationModel> sourceFunctionDeclarations,
             ISet<string> importedRecursiveLawFunctions)
         {
-            if (abstraction.Kind == DeclarationKind.Trait)
+            if (kind == DeclarationKind.Trait)
             {
                 return new ClosedWorldFunctionOptimizationInfo(
                     function.Name,
-                    abstraction.Kind,
-                    abstraction.Seal,
+                    kind,
+                    seal,
                     [ClosedWorldCallLoweringStrategy.CompileTimeOnlyContract],
                     ClosedWorldCodeGenerationMode.MonomorphizationDeferred,
                     CanDevirtualize: false);
@@ -2214,8 +2228,8 @@ public static class DefaultCompilerPipeline
             {
                 return new ClosedWorldFunctionOptimizationInfo(
                     function.Name,
-                    abstraction.Kind,
-                    abstraction.Seal,
+                    kind,
+                    seal,
                     rootDeclaration.Function is { HasBody: true }
                         ? [ClosedWorldCallLoweringStrategy.DirectSharedBody]
                         : [ClosedWorldCallLoweringStrategy.DirectAbiBoundary],
@@ -2227,8 +2241,8 @@ public static class DefaultCompilerPipeline
             {
                 return new ClosedWorldFunctionOptimizationInfo(
                     function.Name,
-                    abstraction.Kind,
-                    abstraction.Seal,
+                    kind,
+                    seal,
                     [ClosedWorldCallLoweringStrategy.DirectAbiBoundary],
                     ClosedWorldCodeGenerationMode.SharedCode,
                     CanDevirtualize: true);
@@ -2245,11 +2259,39 @@ public static class DefaultCompilerPipeline
 
             return new ClosedWorldFunctionOptimizationInfo(
                 function.Name,
-                abstraction.Kind,
-                abstraction.Seal,
+                kind,
+                seal,
                 selectionOrder,
                 codeGenerationMode,
                 CanDevirtualize: true);
+        }
+
+        private static bool IsTopLevelFunction(
+            string functionName,
+            IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        {
+            var separatorIndex = functionName.LastIndexOf('.');
+            if (separatorIndex < 0)
+            {
+                return true;
+            }
+
+            var containingName = functionName[..separatorIndex];
+            return !namedTypes.ContainsKey(containingName);
+        }
+
+        private static ClosedWorldSealKind ResolveClosedWorldTopLevelFunctionSeal(
+            string functionName,
+            string rootModuleName,
+            ISet<string> sealedModules)
+        {
+            var separatorIndex = functionName.LastIndexOf('.');
+            var moduleName = separatorIndex >= 0
+                ? functionName[..separatorIndex]
+                : rootModuleName;
+            return sealedModules.Contains(moduleName)
+                ? ClosedWorldSealKind.SealedByDefault
+                : ClosedWorldSealKind.AbiBoundary;
         }
 
         private static bool TryResolveContainingAbstraction(
