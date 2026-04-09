@@ -130,6 +130,8 @@ internal static partial class PackageImageBuilder
 
         manifest = new StarkPackageFunctionSemanticManifest(
             QualifiedResolvedName: qualifiedResolvedName,
+            DeclaredKind: validation.DeclaredKind.ToString().ToLowerInvariant(),
+            EffectiveKind: validation.EffectiveKind.ToString().ToLowerInvariant(),
             CalledFunctions: validation.CalledFunctions
                 .Select(callee => QualifyPublishedCalledFunctionName(module, callee))
                 .Distinct(StringComparer.Ordinal)

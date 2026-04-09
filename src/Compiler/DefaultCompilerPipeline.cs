@@ -2001,6 +2001,7 @@ public static class DefaultCompilerPipeline
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var validationModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var importedSemantics = CollectImportedFunctionSemantics(loadedModules);
             var refined = effectModel.Functions
                 .ToDictionary(
                     static pair => pair.Key,
@@ -2019,12 +2020,12 @@ public static class DefaultCompilerPipeline
             var importedCallGraph = CollectImportedDirectCallGraph(loadedModules);
             var importedRecursiveLawFunctions = FindRecursiveFunctions(
                 importedCallGraph,
-                functionName => importedDeclarations.TryGetValue(functionName, out var declaration)
-                    && FunctionKindFacts.IsLaw(declaration.Declaration.Function!.Kind));
+                functionName => IsImportedEffectiveLaw(functionName, importedDeclarations, importedSemantics));
             var importedLawOnlyCallTargets = FindImportedLawOnlyCallTargets(
                 validationModel.Functions,
                 importedDeclarations,
-                importedCallGraph);
+                importedCallGraph,
+                importedSemantics);
 
             foreach (var (name, existing) in effectModel.Functions)
             {
@@ -2034,13 +2035,17 @@ public static class DefaultCompilerPipeline
                 }
 
                 validationModel.Functions.TryGetValue(name, out var summary);
-                var effectiveKind = summary?.EffectiveKind ?? existing.Kind;
+                importedSemantics.TryGetValue(name, out var importedSummary);
+                var effectiveKind = summary?.EffectiveKind ?? importedSummary?.EffectiveKind ?? existing.Kind;
                 var isLaw = FunctionKindFacts.IsLaw(effectiveKind);
                 var isFinite = FunctionKindFacts.IsFinite(effectiveKind);
-                var readsArgumentMemory = summary?.MemoryEffects?.ReadsArgumentMemory ?? existing.ReadsArgumentMemory;
+                var readsArgumentMemory = summary?.MemoryEffects?.ReadsArgumentMemory
+                    ?? importedSummary?.MemoryEffects?.ReadsArgumentMemory
+                    ?? existing.ReadsArgumentMemory;
                 var inlinePreference = DetermineInlinePreference(
                     name,
                     summary,
+                    importedSummary,
                     existing,
                     rootDeclarations,
                     lawOnlyCallTargets,
@@ -2079,6 +2084,7 @@ public static class DefaultCompilerPipeline
         private static InlinePreference DetermineInlinePreference(
             string functionName,
             FunctionValidationSummary? summary,
+            ImportedFunctionSemanticSummary? importedSummary,
             FunctionEffectProfile existing,
             IReadOnlyDictionary<string, TopLevelDeclarationModel> rootDeclarations,
             ISet<string> lawOnlyCallTargets,
@@ -2109,7 +2115,7 @@ public static class DefaultCompilerPipeline
                 || existing.InlinePreference != InlinePreference.InlineHint
                 || existing.IsFfi
                 || existing.IsCold
-                || !FunctionKindFacts.IsLaw(importedFunction.Kind)
+                || !FunctionKindFacts.IsLaw(importedSummary?.EffectiveKind ?? importedFunction.Kind)
                 || !importedLawOnlyCallTargets.Contains(functionName)
                 || importedRecursiveLawFunctions.Contains(functionName))
             {
@@ -2334,6 +2340,26 @@ public static class DefaultCompilerPipeline
             return declarations;
         }
 
+        private static Dictionary<string, ImportedFunctionSemanticSummary> CollectImportedFunctionSemantics(LoadedModuleSet loadedModules)
+        {
+            var semantics = new Dictionary<string, ImportedFunctionSemanticSummary>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+            {
+                if (module.PackageImageFacts is not { FunctionSemantics.Count: > 0 } packageImageFacts)
+                {
+                    continue;
+                }
+
+                foreach (var (qualifiedName, summary) in packageImageFacts.FunctionSemantics)
+                {
+                    semantics[qualifiedName] = summary;
+                }
+            }
+
+            return semantics;
+        }
+
         private static Dictionary<string, HashSet<string>> CollectImportedDirectCallGraph(LoadedModuleSet loadedModules)
         {
             var callGraph = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -2508,7 +2534,8 @@ public static class DefaultCompilerPipeline
         private static HashSet<string> FindImportedLawOnlyCallTargets(
             IReadOnlyDictionary<string, FunctionValidationSummary> rootSummaries,
             IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations,
-            IReadOnlyDictionary<string, HashSet<string>> importedCallGraph)
+            IReadOnlyDictionary<string, HashSet<string>> importedCallGraph,
+            IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> importedSemantics)
         {
             var callersByCallee = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
@@ -2541,6 +2568,11 @@ public static class DefaultCompilerPipeline
                     return FunctionKindFacts.IsLaw(rootSummary.EffectiveKind);
                 }
 
+                if (importedSemantics.TryGetValue(caller, out var importedSummary))
+                {
+                    return FunctionKindFacts.IsLaw(importedSummary.EffectiveKind);
+                }
+
                 return importedDeclarations.TryGetValue(caller, out var importedDeclaration)
                     && importedDeclaration.Declaration.Function is { } importedFunction
                     && FunctionKindFacts.IsLaw(importedFunction.Kind);
@@ -2556,6 +2588,21 @@ public static class DefaultCompilerPipeline
 
                 callers.Add(caller);
             }
+        }
+
+        private static bool IsImportedEffectiveLaw(
+            string functionName,
+            IReadOnlyDictionary<string, ImportedFunctionDeclaration> importedDeclarations,
+            IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> importedSemantics)
+        {
+            if (importedSemantics.TryGetValue(functionName, out var importedSummary))
+            {
+                return FunctionKindFacts.IsLaw(importedSummary.EffectiveKind);
+            }
+
+            return importedDeclarations.TryGetValue(functionName, out var declaration)
+                && declaration.Declaration.Function is { } function
+                && FunctionKindFacts.IsLaw(function.Kind);
         }
 
         private static HashSet<string> FindRecursiveFunctions(

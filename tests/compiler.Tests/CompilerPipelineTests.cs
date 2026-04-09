@@ -6144,6 +6144,49 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void PackageManifestIncludesGenericTemplateEffectiveKindsInSemanticSummaries()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-effective-kinds-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 AddTag<T>(i32 left, i32 right, T tag) {
+                    return left + right;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static function => function.QualifiedResolvedName == "Facade.AddTag");
+            Assert.NotNull(template.Semantics);
+            Assert.Equal("fn", template.Semantics!.DeclaredKind);
+            Assert.Equal("finitelaw", template.Semantics.EffectiveKind);
+            Assert.Empty(template.Semantics.CalledFunctions);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageManifestPublishesGroupedLocalDeclarationTypedTemplateBodies()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-grouped-local-template-body-pipeline-");
@@ -16995,6 +17038,116 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawEmitRefinedAttributesWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
+        var mathPath = Path.Combine(tempDirectory.FullName, "Math.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Math
+
+                public fn i32 AddTag<T>(i32 left, i32 right, T tag) {
+                    return left + right;
+                }
+                """,
+                mathPath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Math.lib" : "libMath.a"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Math"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(mathPath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Math
+                    module Demo
+
+                    fn i32 Run() {
+                        return Math.AddTag(3, 4, 5);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Math", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Math.AddTag", out var importedSemantics));
+            Assert.Equal(StarkFunctionKind.Fn, importedSemantics.DeclaredKind);
+            Assert.Equal(StarkFunctionKind.FiniteLaw, importedSemantics.EffectiveKind);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+            Assert.NotNull(effectModel);
+            Assert.Equal(StarkFunctionKind.FiniteLaw, effectModel.Functions["Math.AddTag"].Kind);
+            Assert.True(effectModel.Functions["Math.AddTag"].IsPure);
+            Assert.True(effectModel.Functions["Math.AddTag"].NoSync);
+            Assert.True(effectModel.Functions["Math.AddTag"].NoFree);
+            Assert.True(effectModel.Functions["Math.AddTag"].WillReturn);
+            Assert.True(effectModel.Functions["Math.AddTag"].MustProgress);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            var definition = System.Text.RegularExpressions.Regex.Match(
+                llvmModule.Text,
+                $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            Assert.True(definition.Success, $"Expected a concrete LLVM definition for imported specialization '{function.SymbolName}'.");
+            Assert.Contains("willreturn", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("mustprogress", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("nosync", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("nofree", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("memory(none)", definition.Value, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedComplexSingleStatementGenericBodiesUseEstimatedBodyCostForPlanning()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-body-cost-generic-mono-plan-pipeline-");
@@ -17717,6 +17870,100 @@ public sealed class CompilerPipelineTests
                 },
                 function.SelectionOrder);
             Assert.Equal(FunctionSpecializationCodeGenerationMode.CallerSpecializedClone, function.CodeGenerationMode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawRefineEffectsWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-plan-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
+        var mathPath = Path.Combine(tempDirectory.FullName, "Math.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Math
+
+                public fn i32 AddTag<T>(i32 left, i32 right, T tag) {
+                    return left + right;
+                }
+                """,
+                mathPath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Math.lib" : "libMath.a"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Math"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(mathPath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Math
+                    module Demo
+
+                    fn i32 Run() {
+                        return Math.AddTag(3, 4, 5);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "specialization-plan",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Math", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Math.AddTag", out var importedSemantics));
+            Assert.Equal(StarkFunctionKind.Fn, importedSemantics.DeclaredKind);
+            Assert.Equal(StarkFunctionKind.FiniteLaw, importedSemantics.EffectiveKind);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effectModel));
+            Assert.NotNull(effectModel);
+            var effects = effectModel.Functions["Math.AddTag"];
+            Assert.Equal(StarkFunctionKind.FiniteLaw, effects.Kind);
+            Assert.True(effects.IsPure);
+            Assert.True(effects.NoSync);
+            Assert.True(effects.NoFree);
+            Assert.True(effects.WillReturn);
+            Assert.True(effects.MustProgress);
         }
         finally
         {

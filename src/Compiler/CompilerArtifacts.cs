@@ -1840,9 +1840,14 @@ public sealed record FunctionValidationSummary(
 
 public sealed record ImportedFunctionSemanticSummary(
     string Name,
+    StarkFunctionKind DeclaredKind,
+    StarkFunctionKind EffectiveKind,
     IReadOnlyList<string> CalledFunctions,
     FunctionMemoryEffectSummary? MemoryEffects = null,
-    IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null);
+    IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null)
+{
+    public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
+}
 
 public sealed record SemanticValidationModel(
     string ModuleName,

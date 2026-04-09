@@ -465,6 +465,12 @@ internal static partial class PackageImageLoader
     {
         summary = default!;
 
+        if (!TryParseFunctionKind(functionSemantic.DeclaredKind, out var declaredKind)
+            || !TryParseFunctionKind(functionSemantic.EffectiveKind, out var effectiveKind))
+        {
+            return false;
+        }
+
         var parameters = functionSemantic.Parameters is null
             ? null
             : new List<ParameterMemoryEffectSummary>(functionSemantic.Parameters.Count);
@@ -504,6 +510,8 @@ internal static partial class PackageImageLoader
 
         summary = new ImportedFunctionSemanticSummary(
             functionSemantic.QualifiedResolvedName,
+            declaredKind,
+            effectiveKind,
             functionSemantic.CalledFunctions,
             memoryEffects,
             parameters);

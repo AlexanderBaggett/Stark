@@ -507,6 +507,8 @@ internal sealed record StarkPackageParameterMemoryEffectsManifest(
 
 internal sealed record StarkPackageFunctionSemanticManifest(
     string QualifiedResolvedName,
+    string DeclaredKind,
+    string EffectiveKind,
     IReadOnlyList<string> CalledFunctions,
     StarkPackageFunctionMemoryEffectsManifest? MemoryEffects = null,
     IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null);
