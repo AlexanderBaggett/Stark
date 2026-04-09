@@ -6416,6 +6416,83 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void PackageManifestPublishesAddressOfTypedTemplateBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-address-of-template-body-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Buffer(i32 First, i32[4] Values) { }
+
+                public fn i32 Observe<T>(i32 value, T tag) {
+                    stack mut i32[4] data = { 1, 2, 3, 4 };
+                    stack mut Buffer buffer = { First = value, Values = data };
+                    stack rawmutptr<i32> firstPtr = &buffer.First;
+                    stack rawmutptr<i32> slotPtr = &buffer.Values[2];
+                    stack rawmutptr<i32> aliasPtr = &*slotPtr;
+                    return *aliasPtr = *firstPtr + value;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.Observe");
+
+            Assert.Null(template.BodyText);
+            Assert.NotNull(template.TypedBody);
+            Assert.Equal(6, template.TopLevelStatementCount);
+            Assert.Equal(6, template.TypedBody!.Statements.Count);
+
+            var firstPointerInitializer = template.TypedBody.Statements[2];
+            Assert.Equal("local-variable", firstPointerInitializer.Kind);
+            Assert.Equal("unary", firstPointerInitializer.Expression.Kind);
+            Assert.Equal("&", firstPointerInitializer.Expression.Name);
+            var firstPointerTarget = Assert.Single(firstPointerInitializer.Expression.Arguments!);
+            Assert.Equal("field-access", firstPointerTarget.Kind);
+
+            var slotPointerInitializer = template.TypedBody.Statements[3];
+            Assert.Equal("local-variable", slotPointerInitializer.Kind);
+            Assert.Equal("unary", slotPointerInitializer.Expression.Kind);
+            Assert.Equal("&", slotPointerInitializer.Expression.Name);
+            var slotPointerTarget = Assert.Single(slotPointerInitializer.Expression.Arguments!);
+            Assert.Equal("index-access", slotPointerTarget.Kind);
+
+            var aliasPointerInitializer = template.TypedBody.Statements[4];
+            Assert.Equal("local-variable", aliasPointerInitializer.Kind);
+            Assert.Equal("unary", aliasPointerInitializer.Expression.Kind);
+            Assert.Equal("&", aliasPointerInitializer.Expression.Name);
+            var aliasPointerTarget = Assert.Single(aliasPointerInitializer.Expression.Arguments!);
+            Assert.Equal("unary", aliasPointerTarget.Kind);
+            Assert.Equal("*", aliasPointerTarget.Name);
+
+            var json = manifest.ToJson();
+            Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"&\"", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageManifestRetainsGenericTemplateBodyTextWhenTypedSubsetCannotRepresentBody()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-body-fallback-pipeline-");
@@ -6427,9 +6504,8 @@ public sealed class CompilerPipelineTests
                 """
                 module Facade
 
-                public fn i32 Store<T>(i32 value, T tag) {
-                    stack mut i32 current = 0;
-                    return *(&current) = value;
+                public fn i32 Store<T>(i32 value, i32 exponent, T tag) {
+                    return value ** exponent;
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -6444,7 +6520,7 @@ public sealed class CompilerPipelineTests
 
             Assert.Null(template.TypedBody);
             Assert.NotNull(template.BodyText);
-            Assert.Contains("return *(&current) = value;", template.BodyText, StringComparison.Ordinal);
+            Assert.Contains("return value ** exponent;", template.BodyText, StringComparison.Ordinal);
         }
         finally
         {
@@ -6673,6 +6749,125 @@ public sealed class CompilerPipelineTests
             Assert.True(observeStatements.Count(static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect) >= 2);
             Assert.Contains(observeStatements, static statement => statement.Value is MidLevelIrFieldAddressRValue);
             Assert.Contains(observeStatements, static statement => statement.Value is MidLevelIrElementAddressRValue);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedTypedAddressOfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-address-of-body-bridge-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Buffer(i32 First, i32[4] Values) { }
+
+                public fn i32 Observe<T>(i32 value, T tag) {
+                    stack mut i32[4] data = { 1, 2, 3, 4 };
+                    stack mut Buffer buffer = { First = value, Values = data };
+                    stack rawmutptr<i32> firstPtr = &buffer.First;
+                    stack rawmutptr<i32> slotPtr = &buffer.Values[2];
+                    stack rawmutptr<i32> aliasPtr = &*slotPtr;
+                    return *aliasPtr = *firstPtr + value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            var typedFacadeModule = Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
+                    out var sourceText));
+
+            Assert.Contains("public fn i32 Observe<T>(i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("stack rawmutptr<i32> firstPtr = &buffer.First;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("stack rawmutptr<i32> slotPtr = &buffer.Values[2];", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 value) {
+                        stack i32 tag = 0;
+                        return Facade.Observe(value, tag);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var observe = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_Observe__i32");
+            Assert.True(observe.HasBody);
+            Assert.True(observe.SupportsDirectCodeGeneration);
+            Assert.Contains(observe.Locals, static local => local.Name == "firstPtr");
+            Assert.Contains(observe.Locals, static local => local.Name == "slotPtr");
+            Assert.Contains(observe.Locals, static local => local.Name == "aliasPtr");
+            var observeStatements = observe.Blocks.SelectMany(static block => block.Statements).ToArray();
+            Assert.Contains(observeStatements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue);
+            Assert.Contains(observeStatements, static statement => statement.Value is MidLevelIrFieldAddressRValue);
+            Assert.Contains(observeStatements, static statement => statement.Value is MidLevelIrElementAddressRValue);
+            Assert.Contains(observeStatements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
         }
         finally
         {

@@ -2707,6 +2707,33 @@ internal static partial class PackageImageBuilder
         }
 
         var operatorText = unaryExpression.unaryOperator()?.GetText() ?? unaryExpression.GetChild(0).GetText();
+        if (operatorText == "&")
+        {
+            if (!TryBuildPublishedTypedTemplateAssignmentTarget(
+                    module,
+                    operandExpression,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out _,
+                    out var publishedAddressTarget))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "unary",
+                Name: operatorText,
+                Arguments: [publishedAddressTarget]);
+            return true;
+        }
+
         if (operatorText is not ("+" or "-" or "-%" or "!" or "~" or "*")
             || !TryBuildPublishedTypedTemplateUnaryExpression(
                 module,

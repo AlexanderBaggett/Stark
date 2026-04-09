@@ -2830,13 +2830,19 @@ internal sealed class MidLevelIrLowerer(
                 return null;
             }
 
+            var text = RenderImportedTypedTemplateExpression(expression);
+            if (operatorText == "&")
+            {
+                var address = LowerImportedTypedTemplateAddressOfUnary(expression.Args[0]);
+                return expectedType is null ? address : CoerceOperand(address, expectedType);
+            }
+
             var operand = LowerImportedTypedTemplateExpression(expression.Args[0], expectedType: null);
             if (operand is null)
             {
                 return null;
             }
 
-            var text = RenderImportedTypedTemplateExpression(expression);
             MidLevelIrOperand? result = operatorText switch
             {
                 "+" => operand,
@@ -2866,6 +2872,17 @@ internal sealed class MidLevelIrLowerer(
             };
 
             return expectedType is null ? result : CoerceOperand(result, expectedType);
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateAddressOfUnary(
+            ImportedTemplateTypedBodyExpressionSummary operandExpression)
+        {
+            if (!TryResolveImportedTypedTemplateAssignmentTarget(operandExpression, out var target))
+            {
+                return null;
+            }
+
+            return BuildAddress(target);
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateDereferenceUnary(MidLevelIrOperand operand, string text)
