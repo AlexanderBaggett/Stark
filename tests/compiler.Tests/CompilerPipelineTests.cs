@@ -16659,6 +16659,40 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Box(i32 Value) {
+                    fn i32 Bump(borrow Box self, i32 delta) {
+                        return self.Value + delta;
+                    }
+                }
+
+                fn i32 Forward<T>(borrow Box box, i32 delta, T tag) {
+                    return box.Bump(delta);
+                }
+
+                fn i32 Run(borrow Box box, i32 delta) {
+                    return Forward(box, delta, delta);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var forward = Assert.Single(plan.Functions, static function => function.TemplateName == "Forward");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, forward.CodeSizeHeuristic);
+        Assert.True(forward.EstimatedBodyCost is > 2);
+    }
+
+    [Fact]
     public void SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-source-generic-mono-plan-pipeline-");
@@ -17405,6 +17439,122 @@ public sealed class CompilerPipelineTests
             Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, forward.CodeSizeHeuristic);
             Assert.True(forward.EstimatedBodyCost is > 2);
             Assert.Equal("__stark_mono_fn_Demo__Facade_Forward__i32", forward.SymbolName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegen()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-member-forwarder-generic-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Box(i32 Value) {
+                    fn i32 Bump(borrow Box self, i32 delta) {
+                        return self.Value + delta;
+                    }
+                }
+
+                public fn i32 Forward<T>(borrow Box box, i32 delta, T tag) {
+                    return box.Bump(delta);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var publishedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Forward");
+            Assert.NotNull(publishedTemplate.Semantics);
+            Assert.NotNull(publishedTemplate.Semantics!.Optimization);
+            Assert.True(publishedTemplate.Semantics.Optimization!.IsSingleReturnMemberCallForwarder);
+            Assert.Equal(0, publishedTemplate.Semantics.Optimization.DirectCallCount);
+            Assert.Equal(1, publishedTemplate.Semantics.Optimization.MemberCallCount);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(borrow Facade.Box box, i32 delta) {
+                        return Facade.Forward(box, delta, delta);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Forward", out var importedSemantics));
+            Assert.NotNull(importedSemantics.OptimizationSummary);
+            Assert.True(importedSemantics.OptimizationSummary!.IsSingleReturnMemberCallForwarder);
+            Assert.Equal(1, importedSemantics.OptimizationSummary.MemberCallCount);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Forward");
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Forward__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported member-call forwarder specialization to emit with alwaysinline.");
         }
         finally
         {

@@ -2123,7 +2123,7 @@ public static class DefaultCompilerPipeline
                 && existing.InlinePreference == InlinePreference.InlineHint
                 && !existing.IsFfi
                 && !existing.IsCold
-                && summary.OptimizationSummary?.IsSingleReturnDirectCallForwarder == true
+                && summary.OptimizationSummary?.IsSingleReturnCallForwarder == true
                 && !recursiveFunctions.Contains(functionName))
             {
                 return InlinePreference.Inline;
@@ -2144,7 +2144,7 @@ public static class DefaultCompilerPipeline
                 return InlinePreference.Inline;
             }
 
-            if (importedSummary?.OptimizationSummary?.IsSingleReturnDirectCallForwarder == true
+            if (importedSummary?.OptimizationSummary?.IsSingleReturnCallForwarder == true
                 && importedDeclarations.TryGetValue(functionName, out var importedWrapperDeclaration)
                 && importedWrapperDeclaration.Declaration.Function is { HasBody: true } importedWrapperFunction
                 && importedWrapperDeclaration.Declaration.Visibility != StarkVisibility.Export
