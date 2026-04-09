@@ -121,11 +121,20 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
     {
         if (module.ManifestPath is not null)
         {
-            if (TryResolveManifestModule(module.ModuleName) is { } manifestModule
-                && PackageImageLoader.TryBuildModuleSource(manifestModule, out sourceText))
+            if (TryResolveManifestModule(module.ModuleName) is { } manifestModule)
             {
-                filePath = manifestModule.ManifestPath;
-                return true;
+                if (PackageImageLoader.TryBuildStructuredModuleDocument(manifestModule, out var structuredDocument))
+                {
+                    sourceText = structuredDocument.ParseResult.SourceText;
+                    filePath = manifestModule.ManifestPath;
+                    return true;
+                }
+
+                if (PackageImageLoader.TryBuildModuleSource(manifestModule, out sourceText))
+                {
+                    filePath = manifestModule.ManifestPath;
+                    return true;
+                }
             }
         }
 

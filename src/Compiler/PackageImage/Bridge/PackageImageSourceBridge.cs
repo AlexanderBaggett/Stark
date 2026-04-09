@@ -636,7 +636,42 @@ internal static partial class PackageImageLoader
         IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
     {
         builder.AppendLine("{");
-        foreach (var statement in typedBody.Statements)
+        if (!TryRenderImportedTypedTemplateStatementList(
+                builder,
+                typedBody.Statements,
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                enumPatternsByOrdinal,
+                aggregatePatternsByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal,
+                indentLevel: 1))
+        {
+            return false;
+        }
+
+        builder.AppendLine("}");
+        return true;
+    }
+
+    private static bool TryRenderImportedTypedTemplateStatementList(
+        StringBuilder builder,
+        IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> statements,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumPatternManifest> enumPatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateAggregatePatternManifest> aggregatePatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        int indentLevel)
+    {
+        foreach (var statement in statements)
         {
             if (!TryRenderImportedTypedTemplateStatement(
                     builder,
@@ -650,13 +685,12 @@ internal static partial class PackageImageLoader
                     directCallsByOrdinal,
                     fieldAccessesByOrdinal,
                     memberCallsByOrdinal,
-                    indentLevel: 1))
+                    indentLevel))
             {
                 return false;
             }
         }
 
-        builder.AppendLine("}");
         return true;
     }
 
@@ -677,25 +711,13 @@ internal static partial class PackageImageLoader
         switch (statement.Kind)
         {
             case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:
-                if (statement.Name is null || statement.StorageClass is null || statement.Type is null || statement.Expression is null)
-                {
-                    return false;
-                }
-
-                AppendIndent(builder, indentLevel);
-                builder.Append(statement.StorageClass);
-                builder.Append(' ');
-                if (statement.IsMutable)
-                {
-                    builder.Append("mut ");
-                }
-
-                builder.Append(statement.Type.DisplayName);
-                builder.Append(' ');
-                builder.Append(statement.Name);
-                builder.Append(" = ");
-                if (!TryRenderImportedTypedTemplateExpression(
-                        statement.Expression,
+            case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
+            case ImportedTemplateTypedBodyStatementKind.Assignment:
+            case ImportedTemplateTypedBodyStatementKind.Return:
+            case ImportedTemplateTypedBodyStatementKind.Break:
+            case ImportedTemplateTypedBodyStatementKind.Continue:
+                if (!TryRenderImportedTypedTemplateSimpleStatementText(
+                        statement,
                         objectCreationsByOrdinal,
                         enumConstructorsByOrdinal,
                         enumCallsByOrdinal,
@@ -703,16 +725,17 @@ internal static partial class PackageImageLoader
                         directCallsByOrdinal,
                         fieldAccessesByOrdinal,
                         memberCallsByOrdinal,
-                        out var localInitializerText))
+                        out var simpleStatementText))
                 {
                     return false;
                 }
 
-                builder.Append(localInitializerText);
+                AppendIndent(builder, indentLevel);
+                builder.Append(simpleStatementText);
                 builder.AppendLine(";");
                 return true;
 
-            case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
+            case ImportedTemplateTypedBodyStatementKind.If:
                 if (statement.Expression is null
                     || !TryRenderImportedTypedTemplateExpression(
                         statement.Expression,
@@ -723,15 +746,283 @@ internal static partial class PackageImageLoader
                         directCallsByOrdinal,
                         fieldAccessesByOrdinal,
                         memberCallsByOrdinal,
-                        out var expressionText))
+                        out var ifConditionText))
                 {
                     return false;
                 }
 
                 AppendIndent(builder, indentLevel);
-                builder.Append(expressionText);
-                builder.AppendLine(";");
+                builder.Append("if (");
+                builder.Append(ifConditionText);
+                builder.Append(") ");
+                if (!TryRenderImportedTypedTemplateStatementBlock(
+                        builder,
+                        statement.ThenBranch,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        enumPatternsByOrdinal,
+                        aggregatePatternsByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        indentLevel))
+                {
+                    return false;
+                }
+
+                if (statement.ElseBranch.Count > 0)
+                {
+                    builder.Append(" else ");
+                    if (!TryRenderImportedTypedTemplateStatementBlock(
+                            builder,
+                            statement.ElseBranch,
+                            objectCreationsByOrdinal,
+                            enumConstructorsByOrdinal,
+                            enumCallsByOrdinal,
+                            enumValuesByOrdinal,
+                            enumPatternsByOrdinal,
+                            aggregatePatternsByOrdinal,
+                            directCallsByOrdinal,
+                            fieldAccessesByOrdinal,
+                            memberCallsByOrdinal,
+                            indentLevel))
+                    {
+                        return false;
+                    }
+                }
+
+                builder.AppendLine();
                 return true;
+
+            case ImportedTemplateTypedBodyStatementKind.While:
+                if (statement.Expression is null
+                    || string.IsNullOrWhiteSpace(statement.LoopBehavior)
+                    || !TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var whileConditionText))
+                {
+                    return false;
+                }
+
+                AppendIndent(builder, indentLevel);
+                builder.Append("while ");
+                builder.Append(statement.LoopBehavior);
+                builder.Append(" (");
+                builder.Append(whileConditionText);
+                builder.Append(") ");
+                if (!TryRenderImportedTypedTemplateStatementBlock(
+                        builder,
+                        statement.Body,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        enumPatternsByOrdinal,
+                        aggregatePatternsByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        indentLevel))
+                {
+                    return false;
+                }
+
+                builder.AppendLine();
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.For:
+                if (statement.Expression is null
+                    || string.IsNullOrWhiteSpace(statement.LoopBehavior)
+                    || !TryRenderImportedTypedTemplateForHeaderText(
+                        statement.Initializer,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var initializerText)
+                    || !TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var forConditionText)
+                    || !TryRenderImportedTypedTemplateForHeaderText(
+                        statement.Iterator,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var iteratorText))
+                {
+                    return false;
+                }
+
+                AppendIndent(builder, indentLevel);
+                builder.Append("for ");
+                builder.Append(statement.LoopBehavior);
+                builder.Append(" (");
+                builder.Append(initializerText);
+                builder.Append("; ");
+                builder.Append(forConditionText);
+                builder.Append("; ");
+                builder.Append(iteratorText);
+                builder.Append(") ");
+                if (!TryRenderImportedTypedTemplateStatementBlock(
+                        builder,
+                        statement.Body,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        enumPatternsByOrdinal,
+                        aggregatePatternsByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        indentLevel))
+                {
+                    return false;
+                }
+
+                builder.AppendLine();
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryRenderImportedTypedTemplateStatementBlock(
+        StringBuilder builder,
+        IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> statements,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumPatternManifest> enumPatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateAggregatePatternManifest> aggregatePatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        int indentLevel)
+    {
+        builder.AppendLine("{");
+        if (!TryRenderImportedTypedTemplateStatementList(
+                builder,
+                statements,
+                objectCreationsByOrdinal,
+                enumConstructorsByOrdinal,
+                enumCallsByOrdinal,
+                enumValuesByOrdinal,
+                enumPatternsByOrdinal,
+                aggregatePatternsByOrdinal,
+                directCallsByOrdinal,
+                fieldAccessesByOrdinal,
+                memberCallsByOrdinal,
+                indentLevel + 1))
+        {
+            return false;
+        }
+
+        AppendIndent(builder, indentLevel);
+        builder.Append('}');
+        return true;
+    }
+
+    private static bool TryRenderImportedTypedTemplateSimpleStatementText(
+        ImportedTemplateTypedBodyStatementSummary statement,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        out string text)
+    {
+        text = string.Empty;
+
+        switch (statement.Kind)
+        {
+            case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:
+                if (statement.Name is null || statement.Type is null || statement.Expression is null)
+                {
+                    return false;
+                }
+
+                if (!TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var initializerText))
+                {
+                    return false;
+                }
+
+                var localBuilder = new StringBuilder();
+                if (statement.IsConstant)
+                {
+                    localBuilder.Append("const ");
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(statement.StorageClass))
+                    {
+                        return false;
+                    }
+
+                    localBuilder.Append(statement.StorageClass);
+                    localBuilder.Append(' ');
+                    if (statement.IsMutable)
+                    {
+                        localBuilder.Append("mut ");
+                    }
+                }
+
+                localBuilder.Append(statement.Type.DisplayName);
+                localBuilder.Append(' ');
+                localBuilder.Append(statement.Name);
+                localBuilder.Append(" = ");
+                localBuilder.Append(initializerText);
+                text = localBuilder.ToString();
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
+                return statement.Expression is not null
+                    && TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out text);
 
             case ImportedTemplateTypedBodyStatementKind.Assignment:
                 if (statement.Expression is null
@@ -769,44 +1060,89 @@ internal static partial class PackageImageLoader
                     return false;
                 }
 
-                AppendIndent(builder, indentLevel);
-                builder.Append(assignmentTargetText);
-                builder.Append(' ');
-                builder.Append(string.IsNullOrEmpty(statement.AssignmentOperator) ? "=" : statement.AssignmentOperator);
-                builder.Append(' ');
-                builder.Append(assignmentValueText);
-                builder.AppendLine(";");
+                text = $"{assignmentTargetText} {(string.IsNullOrEmpty(statement.AssignmentOperator) ? "=" : statement.AssignmentOperator)} {assignmentValueText}";
                 return true;
 
             case ImportedTemplateTypedBodyStatementKind.Return:
-                AppendIndent(builder, indentLevel);
-                builder.Append("return");
-                if (statement.Expression is not null)
+                if (statement.Expression is null)
                 {
-                    if (!TryRenderImportedTypedTemplateExpression(
-                            statement.Expression,
-                            objectCreationsByOrdinal,
-                            enumConstructorsByOrdinal,
-                            enumCallsByOrdinal,
-                            enumValuesByOrdinal,
-                            directCallsByOrdinal,
-                            fieldAccessesByOrdinal,
-                            memberCallsByOrdinal,
-                            out var returnText))
-                    {
-                        return false;
-                    }
-
-                    builder.Append(' ');
-                    builder.Append(returnText);
+                    text = "return";
+                    return true;
                 }
 
-                builder.AppendLine(";");
+                if (!TryRenderImportedTypedTemplateExpression(
+                        statement.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var returnText))
+                {
+                    return false;
+                }
+
+                text = $"return {returnText}";
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.Break:
+                text = "break";
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.Continue:
+                text = "continue";
                 return true;
 
             default:
                 return false;
         }
+    }
+
+    private static bool TryRenderImportedTypedTemplateForHeaderText(
+        IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> statements,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        out string text)
+    {
+        if (statements.Count == 0)
+        {
+            text = string.Empty;
+            return true;
+        }
+
+        var parts = new List<string>(statements.Count);
+        foreach (var statement in statements)
+        {
+            if (statement.Kind is not ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration
+                and not ImportedTemplateTypedBodyStatementKind.ExpressionStatement
+                and not ImportedTemplateTypedBodyStatementKind.Assignment
+                || !TryRenderImportedTypedTemplateSimpleStatementText(
+                    statement,
+                    objectCreationsByOrdinal,
+                    enumConstructorsByOrdinal,
+                    enumCallsByOrdinal,
+                    enumValuesByOrdinal,
+                    directCallsByOrdinal,
+                    fieldAccessesByOrdinal,
+                    memberCallsByOrdinal,
+                    out var part))
+            {
+                text = string.Empty;
+                return false;
+            }
+
+            parts.Add(part);
+        }
+
+        text = string.Join(", ", parts);
+        return true;
     }
 
     private static bool TryRenderImportedTypedTemplateExpression(

@@ -875,9 +875,13 @@ internal sealed class OwnershipValidator
                 continue;
             }
 
-            if (postfixPart.expressionList() is { } expressionList)
+            if (postfixPart.GetChild(0).GetText() == "[")
             {
-                binding = ApplyIndex(binding, expressionList, state, signature, summary);
+                if (postfixPart.expressionList() is { } expressionList)
+                {
+                    binding = ApplyIndex(binding, expressionList, state, signature, summary);
+                }
+
                 continue;
             }
 

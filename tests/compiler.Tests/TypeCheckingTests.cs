@@ -77,6 +77,24 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FloatingPointArithmeticChainsTypeCheckAcrossMixedNumericOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            strictfp finite law f64 Run(f32 left, i32 middle, f64 right, f32 divisor) {
+                return left + middle * right / divisor - 1.0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
     public void ExplicitConversionsPointerOperatorsAndSliceViewsTypeCheck()
     {
         var result = Compile(
@@ -146,6 +164,28 @@ public sealed class TypeCheckingTests
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void EmptyTextSlicesTypeCheckAsSameTextKind()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii SliceAscii(ascii text) {
+                return text[];
+            }
+
+            fn unicode SliceUnicode(unicode text) {
+                return text[];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
     }

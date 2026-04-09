@@ -562,13 +562,15 @@ The expression surface includes:
 - ternary conditional `?:`
 - assignments and compound assignments
 
-Text slices use the existing postfix indexing form with two expressions:
+Text views use the existing postfix indexing form:
 
 ```stark
+text[]
+text[index]
 text[start, length]
 ```
 
-For `ascii` and `unicode`, this produces another zero-copy text view over the
+For `ascii` and `unicode`, these forms produce zero-copy text views over the
 same backing storage.
 
 `{ ... }` is an array initializer, not a slice literal.
@@ -756,6 +758,7 @@ The text runtime contract is:
 - `ascii` is a UTF-8 text view
 - `unicode` is a UTF-32 text view
 - `Ascii` and `Unicode` are the owning text container forms
+- `text[]` returns the full same-kind text view
 - `text[index]` returns a same-kind one-element text view
 - `text[start, length]` returns another zero-copy text view of the same text kind
 - explicit text conversion is required where widening, narrowing, or ownership changes are involved

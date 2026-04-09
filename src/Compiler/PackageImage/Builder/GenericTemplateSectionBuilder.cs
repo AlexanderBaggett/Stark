@@ -561,6 +561,7 @@ internal static partial class PackageImageBuilder
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "for",
                 Expression: forCondition,
+                LoopBehavior: forStatement.loopBehavior().GetText(),
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
                 BodyStatements: forBodyStatements);
@@ -601,6 +602,7 @@ internal static partial class PackageImageBuilder
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "while",
                 Expression: whileCondition,
+                LoopBehavior: whileStatement.loopBehavior().GetText(),
                 BodyStatements: whileBodyStatements);
             return true;
         }

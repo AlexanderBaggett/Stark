@@ -1040,9 +1040,13 @@ internal sealed class SemanticValidator
                 continue;
             }
 
-            if (postfixPart.expressionList() is { } expressionList)
+            if (postfixPart.GetChild(0).GetText() == "[")
             {
-                binding = ApplyIndex(binding, expressionList, scope, function, effects, summary);
+                if (postfixPart.expressionList() is { } expressionList)
+                {
+                    binding = ApplyIndex(binding, expressionList, scope, function, effects, summary);
+                }
+
                 continue;
             }
 

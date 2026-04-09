@@ -269,6 +269,111 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
     }
 
     [Fact]
+    public void ManifestBackedLoopControlGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-structured-loop-control-generic-loading-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 SumWhileControl<T>(i32 count, i32 stopAt, T tag) {
+                    stack mut i32 sum = 0;
+                    stack mut i32 index = 0;
+                    while willexit (index < count) {
+                        index = index + 1;
+                        if (index < 2) {
+                            continue;
+                        }
+                        if (index == stopAt) {
+                            break;
+                        }
+                        sum = sum + index;
+                    }
+                    return sum;
+                }
+
+                public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag) {
+                    stack mut i32 sum = 0;
+                    for willexit (stack mut i32 index = 0; index < count; index = index + 1) {
+                        if (index < 2) {
+                            continue;
+                        }
+                        if (index == stopAt) {
+                            break;
+                        }
+                        sum = sum + index;
+                    }
+                    return sum;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var corruptedManifest = BuildTypedOnlyFacadeManifest(
+                manifest,
+                template => template with
+                {
+                    BodyText = "{ return this is not valid Stark; }"
+                });
+
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 count, i32 stopAt, i32 tag) {
+                        return Facade.SumWhileControl(count, stopAt, tag) + Facade.SumForControl(count, stopAt, tag);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("while willexit (index < count)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("continue;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("break;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            Assert.Contains(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_SumWhileControl__i32");
+            Assert.Contains(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_SumForControl__i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-call-summary-function-fallback-integration-");

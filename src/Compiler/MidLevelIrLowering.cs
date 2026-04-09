@@ -2396,6 +2396,11 @@ internal sealed class MidLevelIrLowerer(
 
             if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
             {
+                if (expression.Args.Count == 1)
+                {
+                    return target;
+                }
+
                 if (expression.Args.Count == 2)
                 {
                     var start = LowerImportedTypedTemplateExpression(expression.Args[1], expectedType: null);
@@ -3268,7 +3273,7 @@ internal sealed class MidLevelIrLowerer(
                 ImportedTemplateTypedBodyExpressionKind.EnumCall => $"enumcall#{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpression))})",
                 ImportedTemplateTypedBodyExpressionKind.EnumValue => $"enumvalue#{expression.Ordinal}",
                 ImportedTemplateTypedBodyExpressionKind.DirectCall => $"{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpression))})",
-                ImportedTemplateTypedBodyExpressionKind.IndexAccess => expression.Args.Count >= 2
+                ImportedTemplateTypedBodyExpressionKind.IndexAccess => expression.Args.Count >= 1
                     ? $"{RenderImportedTypedTemplateExpression(expression.Args[0])}[{string.Join(", ", expression.Args.Skip(1).Select(RenderImportedTypedTemplateExpression))}]"
                     : "index",
                 ImportedTemplateTypedBodyExpressionKind.FieldAccess => $"{RenderImportedTypedTemplateExpression(expression.Args[0])}.{expression.Ordinal}",
@@ -6310,7 +6315,7 @@ internal sealed class MidLevelIrLowerer(
                     continue;
                 }
 
-                if (postfixPart.expressionList() is { } expressionList)
+                if (postfixPart.GetChild(0).GetText() == "[")
                 {
                     if (currentValue is null)
                     {
@@ -6327,9 +6332,17 @@ internal sealed class MidLevelIrLowerer(
                         }
                     }
 
-                    currentValue = LowerIndexAccess(currentValue, expressionList);
-                    if (currentValue is null)
+                    if (postfixPart.expressionList() is { } expressionList)
                     {
+                        currentValue = LowerIndexAccess(currentValue, expressionList);
+                        if (currentValue is null)
+                        {
+                            return false;
+                        }
+                    }
+                    else if (currentValue.Type.Kind is not StarkTypeKind.Ascii and not StarkTypeKind.Unicode)
+                    {
+                        MarkUnsupported(reason: "Index access currently requires at least one index expression.");
                         return false;
                     }
 
@@ -7254,6 +7267,11 @@ internal sealed class MidLevelIrLowerer(
         private MidLevelIrOperand? LowerTextAccess(MidLevelIrOperand target, StarkParser.ExpressionListContext indexes)
         {
             var indexExpressions = indexes.expression();
+            if (indexExpressions.Length == 0)
+            {
+                return target;
+            }
+
             if (indexExpressions.Length == 1)
             {
                 var start = LowerExpressionToOperand(indexExpressions[0]);

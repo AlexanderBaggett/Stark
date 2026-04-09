@@ -3883,6 +3883,16 @@ internal sealed class TypeChecker
             {
                 if (postfixPart.expressionList() is not { } expressionList)
                 {
+                    if (binding.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                    {
+                        binding = new ExpressionBinding(
+                            binding.Type,
+                            IsAssignable: false,
+                            NamedType: ResolveNamedTypeSymbol(binding.Type),
+                            DiagnosticName: binding.DiagnosticName is null ? "text slice" : $"text slice of {binding.DiagnosticName}");
+                        continue;
+                    }
+
                     ReportError("STK3002", "Index access requires at least one index expression.", postfixPart);
                     binding = new ExpressionBinding(StarkTypeSymbols.Error, DiagnosticName: "indexed element");
                     continue;
@@ -4282,6 +4292,15 @@ internal sealed class TypeChecker
         if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
         {
             var indexExpressions = indexes.expression();
+            if (indexExpressions.Length == 0)
+            {
+                return new ExpressionBinding(
+                    target.Type,
+                    IsAssignable: false,
+                    NamedType: ResolveNamedTypeSymbol(target.Type),
+                    DiagnosticName: target.DiagnosticName is null ? "text slice" : $"text slice of {target.DiagnosticName}");
+            }
+
             if (indexExpressions.Length == 1)
             {
                 var indexType = EvaluateExpression(indexExpressions[0], scope, allowFunctionReference: false).Type;

@@ -52,6 +52,30 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task FloatingPointArithmeticChainsCompileAndRunAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            strictfp fn f64 Compute(f32 left, i32 middle, f64 right, f32 divisor) {
+                return left + middle * right / divisor - 1.0;
+            }
+
+            export ffi fn i32 main() {
+                return (i32)Compute(1.5, 2, 3.0, 0.5);
+            }
+            """);
+
+        Assert.Equal(12, exitCode);
+    }
+
+    [Fact]
     public async Task HeapStorageUsesAllocatorLoweringAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -149,6 +173,35 @@ public sealed class MidLevelIrRuntimeTests
 
             export ffi fn i32 main() {
                 return Pick("abc", 1);
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task EmptyTextSlicesPreserveFullViewAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            fn ascii Whole(ascii text) {
+                return text[];
+            }
+
+            export ffi fn i32 main() {
+                switch (Whole("abc")[1]) {
+                    case 'b':
+                        return 7;
+                    default:
+                        return 0;
+                }
             }
             """);
 

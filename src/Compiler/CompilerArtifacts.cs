@@ -448,6 +448,7 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     bool IsMutable = false,
     bool IsConstant = false,
     StarkTypeSymbol? Type = null,
+    string? LoopBehavior = null,
     IReadOnlyList<ImportedTemplateTypedSwitchCaseSummary>? SwitchCaseSummaries = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? InitializerStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? IteratorStatements = null,

@@ -1071,6 +1071,33 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void FloatingPointArithmeticChainsLowerToFloatMirBinaryOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            strictfp finite law f64 Run(f32 left, i32 middle, f64 right, f32 divisor) {
+                return left + middle * right / divisor - 1.0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+        var binaries = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrBinaryRValue>()
+            .ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(binaries, static binary => binary.Operator == MidLevelIrBinaryOperator.Multiply && binary.Type.Kind == StarkTypeKind.Float);
+        Assert.Contains(binaries, static binary => binary.Operator == MidLevelIrBinaryOperator.Divide && binary.Type.Kind == StarkTypeKind.Float);
+        Assert.Contains(binaries, static binary => binary.Operator == MidLevelIrBinaryOperator.Add && binary.Type.Kind == StarkTypeKind.Float);
+        Assert.Contains(binaries, static binary => binary.Operator == MidLevelIrBinaryOperator.Subtract && binary.Type.Kind == StarkTypeKind.Float);
+    }
+
+    [Fact]
     public void CharacterLiteralsLowerToMirStringConstants()
     {
         var result = Compile(
@@ -1536,6 +1563,38 @@ public sealed class MidLevelIrLoweringTests
                 Start.Type.BitWidth: 64,
                 Length.Type.Kind: StarkTypeKind.Integer,
                 Length.Type.BitWidth: 64
+            });
+    }
+
+    [Fact]
+    public void EmptyTextSlicesLowerToIdentityTextOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii SliceAscii(ascii text) {
+                return text[];
+            }
+
+            fn unicode SliceUnicode(unicode text) {
+                return text[];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var functions = GetMir(result).Functions.ToArray();
+
+        Assert.Equal(2, functions.Length);
+        Assert.All(functions, function => Assert.True(function.SupportsDirectCodeGeneration));
+        Assert.All(
+            functions,
+            function =>
+            {
+                Assert.IsType<MidLevelIrParameterOperand>(Assert.Single(function.Blocks).Terminator.Value);
+                Assert.DoesNotContain(
+                    function.Blocks.SelectMany(static block => block.Statements),
+                    static statement => statement.Value is MidLevelIrTextSliceRValue);
             });
     }
 

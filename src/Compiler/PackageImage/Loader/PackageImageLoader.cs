@@ -248,7 +248,13 @@ internal static partial class PackageImageLoader
         {
             Module = module.Module with
             {
-                GenericTemplates = new StarkPackageGenericTemplateSection(renderedTemplates)
+                GenericTemplates = new StarkPackageGenericTemplateSection(renderedTemplates),
+                CompilerSections = module.Module.CompilerSections is null
+                    ? null
+                    : module.Module.CompilerSections with
+                    {
+                        GenericTemplates = new StarkPackageGenericTemplateSection(renderedTemplates)
+                    }
             }
         };
 

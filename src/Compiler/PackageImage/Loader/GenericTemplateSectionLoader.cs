@@ -163,6 +163,7 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.For,
                 expression,
+                LoopBehavior: manifest.LoopBehavior,
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
                 BodyStatements: bodyStatements);
@@ -190,6 +191,7 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.While,
                 expression,
+                LoopBehavior: manifest.LoopBehavior,
                 BodyStatements: bodyStatements);
             return true;
         }

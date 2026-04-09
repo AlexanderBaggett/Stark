@@ -347,6 +347,7 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     bool IsMutable = false,
     bool IsConstant = false,
     StarkPackageTypeReference? Type = null,
+    string? LoopBehavior = null,
     IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>? SwitchCases = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? InitializerStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? IteratorStatements = null,
