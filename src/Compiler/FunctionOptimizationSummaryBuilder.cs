@@ -22,18 +22,22 @@ internal static class FunctionOptimizationSummaryBuilder
         var accumulator = new SummaryAccumulator();
         CountBlock(block, accumulator);
 
-        var forwarderKind = TryGetSingleReturnForwarderKind(block, out var kind)
+        var wrapperKind = TryGetSingleReturnWrapperKind(block, out var kind)
             ? kind
-            : CallForwarderKind.None;
+            : SingleReturnWrapperKind.None;
 
         return new FunctionOptimizationSummary(
             accumulator.DirectCallCount,
             accumulator.MemberCallCount,
+            accumulator.FieldAccessCount,
+            accumulator.IndexAccessCount,
             accumulator.BranchStatementCount,
             accumulator.LoopStatementCount,
             accumulator.ObjectCreationCount,
-            forwarderKind == CallForwarderKind.Direct,
-            forwarderKind == CallForwarderKind.Member);
+            wrapperKind == SingleReturnWrapperKind.DirectCall,
+            wrapperKind == SingleReturnWrapperKind.MemberCall,
+            wrapperKind == SingleReturnWrapperKind.FieldAccess,
+            wrapperKind == SingleReturnWrapperKind.IndexAccess);
     }
 
     private static void CountBlock(StarkParser.BlockContext block, SummaryAccumulator accumulator)
@@ -224,14 +228,27 @@ internal static class FunctionOptimizationSummaryBuilder
                 break;
 
             case StarkParser.PostfixExpressionContext postfixExpression
-                when TryClassifySimpleCall(postfixExpression, out var callKind):
-                if (callKind == CallForwarderKind.Direct)
+                when TryClassifySimplePostfixExpression(
+                    postfixExpression,
+                    out var expressionKind,
+                    out var fieldAccessCount,
+                    out var indexAccessCount):
+                if (expressionKind == SingleReturnWrapperKind.DirectCall)
                 {
                     accumulator.DirectCallCount++;
                 }
-                else if (callKind == CallForwarderKind.Member)
+                else if (expressionKind == SingleReturnWrapperKind.MemberCall)
                 {
                     accumulator.MemberCallCount++;
+                }
+                else if (expressionKind == SingleReturnWrapperKind.FieldAccess)
+                {
+                    accumulator.FieldAccessCount += fieldAccessCount;
+                }
+                else if (expressionKind == SingleReturnWrapperKind.IndexAccess)
+                {
+                    accumulator.FieldAccessCount += fieldAccessCount;
+                    accumulator.IndexAccessCount += indexAccessCount;
                 }
 
                 break;
@@ -243,11 +260,11 @@ internal static class FunctionOptimizationSummaryBuilder
         }
     }
 
-    private static bool TryGetSingleReturnForwarderKind(
+    private static bool TryGetSingleReturnWrapperKind(
         StarkParser.BlockContext block,
-        out CallForwarderKind kind)
+        out SingleReturnWrapperKind kind)
     {
-        kind = CallForwarderKind.None;
+        kind = SingleReturnWrapperKind.None;
 
         if (block.statement().Length != 1
             || block.statement(0).returnStatement()?.expression() is not { } returnExpression
@@ -256,14 +273,18 @@ internal static class FunctionOptimizationSummaryBuilder
             return false;
         }
 
-        return TryClassifySimpleCall(postfixExpression, out kind);
+        return TryClassifySimplePostfixExpression(postfixExpression, out kind, out _, out _);
     }
 
-    private static bool TryClassifySimpleCall(
+    private static bool TryClassifySimplePostfixExpression(
         StarkParser.PostfixExpressionContext expression,
-        out CallForwarderKind kind)
+        out SingleReturnWrapperKind kind,
+        out int fieldAccessCount,
+        out int indexAccessCount)
     {
-        kind = CallForwarderKind.None;
+        kind = SingleReturnWrapperKind.None;
+        fieldAccessCount = 0;
+        indexAccessCount = 0;
 
         if (expression.primaryExpression() is not { } primaryExpression)
         {
@@ -290,18 +311,37 @@ internal static class FunctionOptimizationSummaryBuilder
                 }
 
                 kind = sawPostfixIdentifier
-                    ? CallForwarderKind.Member
-                    : CallForwarderKind.Direct;
+                    ? SingleReturnWrapperKind.MemberCall
+                    : SingleReturnWrapperKind.DirectCall;
                 return true;
+            }
+
+            if (postfixPart.LBRACK() is not null)
+            {
+                indexAccessCount++;
+                continue;
             }
 
             if (postfixPart.Identifier() is not null)
             {
                 sawPostfixIdentifier = true;
+                fieldAccessCount++;
                 continue;
             }
 
             return false;
+        }
+
+        if (indexAccessCount > 0)
+        {
+            kind = SingleReturnWrapperKind.IndexAccess;
+            return true;
+        }
+
+        if (fieldAccessCount > 0)
+        {
+            kind = SingleReturnWrapperKind.FieldAccess;
+            return true;
         }
 
         return false;
@@ -400,6 +440,10 @@ internal static class FunctionOptimizationSummaryBuilder
 
         public int MemberCallCount { get; set; }
 
+        public int FieldAccessCount { get; set; }
+
+        public int IndexAccessCount { get; set; }
+
         public int BranchStatementCount { get; set; }
 
         public int LoopStatementCount { get; set; }
@@ -407,10 +451,12 @@ internal static class FunctionOptimizationSummaryBuilder
         public int ObjectCreationCount { get; set; }
     }
 
-    private enum CallForwarderKind
+    private enum SingleReturnWrapperKind
     {
         None,
-        Direct,
-        Member
+        DirectCall,
+        MemberCall,
+        FieldAccess,
+        IndexAccess
     }
 }

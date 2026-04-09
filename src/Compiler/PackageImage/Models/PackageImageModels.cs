@@ -517,11 +517,15 @@ internal sealed record StarkPackageFunctionSemanticManifest(
 internal sealed record StarkPackageFunctionOptimizationManifest(
     int DirectCallCount,
     int MemberCallCount,
+    int FieldAccessCount,
+    int IndexAccessCount,
     int BranchStatementCount,
     int LoopStatementCount,
     int ObjectCreationCount,
     bool IsSingleReturnDirectCallForwarder,
-    bool IsSingleReturnMemberCallForwarder);
+    bool IsSingleReturnMemberCallForwarder,
+    bool IsSingleReturnFieldAccessWrapper,
+    bool IsSingleReturnIndexAccessWrapper);
 
 internal sealed record StarkPackageConcreteTypeLayoutManifest(
     string QualifiedTypeName,

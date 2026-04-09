@@ -165,11 +165,15 @@ internal static partial class PackageImageBuilder
                 : new StarkPackageFunctionOptimizationManifest(
                     validation.OptimizationSummary.DirectCallCount,
                     validation.OptimizationSummary.MemberCallCount,
+                    validation.OptimizationSummary.FieldAccessCount,
+                    validation.OptimizationSummary.IndexAccessCount,
                     validation.OptimizationSummary.BranchStatementCount,
                     validation.OptimizationSummary.LoopStatementCount,
                     validation.OptimizationSummary.ObjectCreationCount,
                     validation.OptimizationSummary.IsSingleReturnDirectCallForwarder,
-                    validation.OptimizationSummary.IsSingleReturnMemberCallForwarder));
+                    validation.OptimizationSummary.IsSingleReturnMemberCallForwarder,
+                    validation.OptimizationSummary.IsSingleReturnFieldAccessWrapper,
+                    validation.OptimizationSummary.IsSingleReturnIndexAccessWrapper));
         return true;
     }
 }

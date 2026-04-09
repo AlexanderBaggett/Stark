@@ -16693,6 +16693,67 @@ public sealed class CompilerPipelineTests
     }
 
     [Fact]
+    public void RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Inner(i32 Value) { }
+                record Box(Inner Inner) { }
+
+                fn i32 Read<T>(borrow Box box, T tag) {
+                    return box.Inner.Value;
+                }
+
+                fn i32 Run(borrow Box box) {
+                    return Read(box, 0);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var read = Assert.Single(plan.Functions, static function => function.TemplateName == "Read");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, read.CodeSizeHeuristic);
+        Assert.True(read.EstimatedBodyCost is > 2);
+    }
+
+    [Fact]
+    public void RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Box(i32 Value) { }
+
+                fn i32 Read<T>(Box[2] boxes, i32 index, T tag) {
+                    return boxes[index].Value;
+                }
+
+                fn i32 Run(Box[2] boxes, i32 index) {
+                    return Read(boxes, index, index);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var read = Assert.Single(plan.Functions, static function => function.TemplateName == "Read");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, read.CodeSizeHeuristic);
+        Assert.True(read.EstimatedBodyCost is > 2);
+    }
+
+    [Fact]
     public void SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-source-generic-mono-plan-pipeline-");
@@ -17555,6 +17616,232 @@ public sealed class CompilerPipelineTests
                     $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant),
                 "Expected the imported member-call forwarder specialization to emit with alwaysinline.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-field-wrapper-generic-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Inner(i32 Value) { }
+                public record Box(Inner Inner) { }
+
+                public fn i32 Read<T>(borrow Box box, T tag) {
+                    return box.Inner.Value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var publishedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Read");
+            Assert.NotNull(publishedTemplate.Semantics);
+            Assert.NotNull(publishedTemplate.Semantics!.Optimization);
+            Assert.True(publishedTemplate.Semantics.Optimization!.IsSingleReturnFieldAccessWrapper);
+            Assert.Equal(2, publishedTemplate.Semantics.Optimization.FieldAccessCount);
+            Assert.Equal(0, publishedTemplate.Semantics.Optimization.IndexAccessCount);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(borrow Facade.Box box) {
+                        return Facade.Read(box, box.Inner.Value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Read", out var importedSemantics));
+            Assert.NotNull(importedSemantics.OptimizationSummary);
+            Assert.True(importedSemantics.OptimizationSummary!.IsSingleReturnFieldAccessWrapper);
+            Assert.Equal(2, importedSemantics.OptimizationSummary.FieldAccessCount);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Read");
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Read__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported field-access wrapper specialization to emit with alwaysinline.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-index-wrapper-generic-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Box(i32 Value) { }
+
+                public fn i32 Read<T>(Box[2] boxes, i32 index, T tag) {
+                    return boxes[index].Value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var publishedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Read");
+            Assert.NotNull(publishedTemplate.Semantics);
+            Assert.NotNull(publishedTemplate.Semantics!.Optimization);
+            Assert.True(publishedTemplate.Semantics.Optimization!.IsSingleReturnIndexAccessWrapper);
+            Assert.Equal(1, publishedTemplate.Semantics.Optimization.FieldAccessCount);
+            Assert.Equal(1, publishedTemplate.Semantics.Optimization.IndexAccessCount);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(Facade.Box[2] boxes, i32 index) {
+                        return Facade.Read(boxes, index, index);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Read", out var importedSemantics));
+            Assert.NotNull(importedSemantics.OptimizationSummary);
+            Assert.True(importedSemantics.OptimizationSummary!.IsSingleReturnIndexAccessWrapper);
+            Assert.Equal(1, importedSemantics.OptimizationSummary.FieldAccessCount);
+            Assert.Equal(1, importedSemantics.OptimizationSummary.IndexAccessCount);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Read");
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Read__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported index-access wrapper specialization to emit with alwaysinline.");
         }
         finally
         {

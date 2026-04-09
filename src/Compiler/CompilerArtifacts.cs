@@ -1829,13 +1829,21 @@ public sealed record CallMemoryEffectSummary(
 public sealed record FunctionOptimizationSummary(
     int DirectCallCount,
     int MemberCallCount,
+    int FieldAccessCount,
+    int IndexAccessCount,
     int BranchStatementCount,
     int LoopStatementCount,
     int ObjectCreationCount,
     bool IsSingleReturnDirectCallForwarder,
-    bool IsSingleReturnMemberCallForwarder)
+    bool IsSingleReturnMemberCallForwarder,
+    bool IsSingleReturnFieldAccessWrapper,
+    bool IsSingleReturnIndexAccessWrapper)
 {
     public bool IsSingleReturnCallForwarder => IsSingleReturnDirectCallForwarder || IsSingleReturnMemberCallForwarder;
+
+    public bool IsSingleReturnAccessWrapper => IsSingleReturnFieldAccessWrapper || IsSingleReturnIndexAccessWrapper;
+
+    public bool IsSingleReturnInlineWrapper => IsSingleReturnCallForwarder || IsSingleReturnAccessWrapper;
 }
 
 public sealed record FunctionValidationSummary(

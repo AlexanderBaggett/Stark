@@ -3890,6 +3890,67 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ModulePrivateFieldAccessWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Inner(i32 Value) { }
+            record Box(Inner Inner) { }
+
+            fn i32 Read(borrow Box box) {
+                return box.Inner.Value;
+            }
+
+            fn i32 Use(borrow Box box) {
+                return Read(box);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private field-access wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i32 @Read(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModulePrivateIndexAccessWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Box(i32 Value) { }
+
+            fn i32 Read(Box[2] boxes, i32 index) {
+                return boxes[index].Value;
+            }
+
+            fn i32 Use(Box[2] boxes, i32 index) {
+                return Read(boxes, index);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private index-access wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i32 @Read(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HotFunctionsEmitHotAttribute()
     {
         var result = Compile(

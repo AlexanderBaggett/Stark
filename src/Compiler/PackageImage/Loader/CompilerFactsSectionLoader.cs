@@ -513,11 +513,15 @@ internal static partial class PackageImageLoader
             : new FunctionOptimizationSummary(
                 functionSemantic.Optimization.DirectCallCount,
                 functionSemantic.Optimization.MemberCallCount,
+                functionSemantic.Optimization.FieldAccessCount,
+                functionSemantic.Optimization.IndexAccessCount,
                 functionSemantic.Optimization.BranchStatementCount,
                 functionSemantic.Optimization.LoopStatementCount,
                 functionSemantic.Optimization.ObjectCreationCount,
                 functionSemantic.Optimization.IsSingleReturnDirectCallForwarder,
-                functionSemantic.Optimization.IsSingleReturnMemberCallForwarder);
+                functionSemantic.Optimization.IsSingleReturnMemberCallForwarder,
+                functionSemantic.Optimization.IsSingleReturnFieldAccessWrapper,
+                functionSemantic.Optimization.IsSingleReturnIndexAccessWrapper);
 
         summary = new ImportedFunctionSemanticSummary(
             functionSemantic.QualifiedResolvedName,
