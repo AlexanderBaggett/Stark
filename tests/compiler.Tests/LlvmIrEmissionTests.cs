@@ -4074,6 +4074,75 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ModulePrivateTerminalIfSelectionWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 ChooseBranch(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+                if (takeLeft) {
+                    return left;
+                } else if (takeMiddle) {
+                    return middle;
+                } else {
+                    return right;
+                }
+            }
+
+            fn i32 Use(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+                return ChooseBranch(takeLeft, takeMiddle, left, middle, right);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@ChooseBranch\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private terminal-if selection wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i32 @ChooseBranch(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModulePrivateTerminalSwitchSelectionWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 ChooseSwitch(i32 selector, i32 left, i32 middle, i32 right) {
+                switch (selector) {
+                    case 0:
+                        return left;
+                    case 1:
+                        return middle;
+                    default:
+                        return right;
+                }
+            }
+
+            fn i32 Use(i32 selector, i32 left, i32 middle, i32 right) {
+                return ChooseSwitch(selector, left, middle, right);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@ChooseSwitch\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private terminal-switch selection wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i32 @ChooseSwitch(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HotFunctionsEmitHotAttribute()
     {
         var result = Compile(

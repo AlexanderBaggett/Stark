@@ -178,7 +178,8 @@ internal static partial class PackageImageBuilder
                     validation.OptimizationSummary.IsSingleReturnAddressOfWrapper,
                     validation.OptimizationSummary.IsSingleReturnDereferenceWrapper,
                     validation.OptimizationSummary.IsSingleReturnBinaryOperatorWrapper,
-                    validation.OptimizationSummary.IsSingleReturnComparisonWrapper));
+                    validation.OptimizationSummary.IsSingleReturnComparisonWrapper,
+                    validation.OptimizationSummary.IsTerminalSelectionWrapper));
         return true;
     }
 }

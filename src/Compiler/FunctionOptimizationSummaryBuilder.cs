@@ -25,6 +25,7 @@ internal static class FunctionOptimizationSummaryBuilder
         var wrapperKind = TryGetSingleReturnWrapperKind(block, out var kind)
             ? kind
             : SingleReturnWrapperKind.None;
+        var isTerminalSelectionWrapper = TryIsTerminalSelectionWrapper(block);
 
         return new FunctionOptimizationSummary(
             accumulator.DirectCallCount,
@@ -42,7 +43,8 @@ internal static class FunctionOptimizationSummaryBuilder
             wrapperKind == SingleReturnWrapperKind.AddressOf,
             wrapperKind == SingleReturnWrapperKind.Dereference,
             wrapperKind == SingleReturnWrapperKind.BinaryOperator,
-            wrapperKind == SingleReturnWrapperKind.Comparison);
+            wrapperKind == SingleReturnWrapperKind.Comparison,
+            isTerminalSelectionWrapper);
     }
 
     private static void CountBlock(StarkParser.BlockContext block, SummaryAccumulator accumulator)
@@ -278,6 +280,110 @@ internal static class FunctionOptimizationSummaryBuilder
         }
 
         return TryClassifySimpleReturnWrapperExpression(returnExpression, out kind);
+    }
+
+    private static bool TryIsTerminalSelectionWrapper(StarkParser.BlockContext block)
+    {
+        return block.statement().Length == 1
+            && TryIsTerminalSelectionStatement(block.statement(0));
+    }
+
+    private static bool TryIsTerminalSelectionStatement(StarkParser.StatementContext statement)
+    {
+        if (statement.block() is { } block)
+        {
+            return block.statement().Length == 1
+                && TryIsTerminalSelectionStatement(block.statement(0));
+        }
+
+        if (statement.returnStatement()?.expression() is { } returnExpression)
+        {
+            return TryIsSimpleInlineLeafExpression(returnExpression);
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            return TryIsTerminalSelectionIfStatement(ifStatement);
+        }
+
+        if (statement.switchStatement() is { } switchStatement)
+        {
+            return TryIsTerminalSelectionSwitchStatement(switchStatement);
+        }
+
+        return false;
+    }
+
+    private static bool TryIsTerminalSelectionIfStatement(StarkParser.IfStatementContext ifStatement)
+    {
+        return ifStatement.statement().Length == 2
+            && TryIsSimpleInlineConditionExpression(ifStatement.expression())
+            && TryIsTerminalSelectionStatement(ifStatement.statement(0))
+            && TryIsTerminalSelectionStatement(ifStatement.statement(1));
+    }
+
+    private static bool TryIsTerminalSelectionSwitchStatement(StarkParser.SwitchStatementContext switchStatement)
+    {
+        if (!TryIsSimpleInlineConditionExpression(switchStatement.expression()))
+        {
+            return false;
+        }
+
+        foreach (var section in switchStatement.switchSection())
+        {
+            foreach (var label in section.switchLabel())
+            {
+                if (label.whenClause()?.expression() is { } whenExpression
+                    && !TryIsSimpleInlineConditionExpression(whenExpression))
+                {
+                    return false;
+                }
+            }
+
+            if (section.statement().Length != 1 || !TryIsTerminalSelectionStatement(section.statement(0)))
+            {
+                return false;
+            }
+        }
+
+        return switchStatement.switchSection().Length != 0;
+    }
+
+    private static bool TryIsSimpleInlineConditionExpression(StarkParser.ExpressionContext expression)
+    {
+        return TryClassifySimpleReturnWrapperExpression(expression, out _)
+            || TryIsSimpleInlineLeafExpression(expression);
+    }
+
+    private static bool TryIsSimpleInlineLeafExpression(StarkParser.ExpressionContext expression)
+    {
+        if (TryClassifySimpleReturnWrapperExpression(expression, out _))
+        {
+            return true;
+        }
+
+        return TryGetSimpleUnaryExpression(expression) is { } unaryExpression
+            && TryIsSimpleInlineLeafUnaryExpression(unaryExpression);
+    }
+
+    private static bool TryIsSimpleInlineLeafUnaryExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        if (TryClassifySimpleReturnWrapperUnary(expression, out _))
+        {
+            return true;
+        }
+
+        return TryGetSimplePostfixExpression(expression) is { } postfixExpression
+            && postfixExpression.postfixPart().Length == 0
+            && TryIsSimpleInlineLeafPrimary(postfixExpression.primaryExpression());
+    }
+
+    private static bool TryIsSimpleInlineLeafPrimary(StarkParser.PrimaryExpressionContext expression)
+    {
+        return expression.literal() is not null
+            || expression.Identifier() is not null
+            || expression.qualifiedName() is not null
+            || (expression.expression() is { } groupedExpression && TryIsSimpleInlineLeafExpression(groupedExpression));
     }
 
     private static bool TryClassifySimpleReturnWrapperExpression(

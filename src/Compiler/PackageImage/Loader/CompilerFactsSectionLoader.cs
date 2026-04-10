@@ -526,7 +526,8 @@ internal static partial class PackageImageLoader
                 functionSemantic.Optimization.IsSingleReturnAddressOfWrapper,
                 functionSemantic.Optimization.IsSingleReturnDereferenceWrapper,
                 functionSemantic.Optimization.IsSingleReturnBinaryOperatorWrapper,
-                functionSemantic.Optimization.IsSingleReturnComparisonWrapper);
+                functionSemantic.Optimization.IsSingleReturnComparisonWrapper,
+                functionSemantic.Optimization.IsTerminalSelectionWrapper);
 
         summary = new ImportedFunctionSemanticSummary(
             functionSemantic.QualifiedResolvedName,

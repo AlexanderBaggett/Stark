@@ -1547,7 +1547,7 @@ public static class DefaultCompilerPipeline
                 return MonomorphizationCodeSizeHeuristic.ReduceCodeSize;
             }
 
-            if (info.OptimizationSummary?.IsSingleReturnInlineWrapper == true)
+            if (info.OptimizationSummary?.IsInlineWrapperLike == true)
             {
                 return MonomorphizationCodeSizeHeuristic.InlineSmallBody;
             }
@@ -2123,7 +2123,7 @@ public static class DefaultCompilerPipeline
                 && existing.InlinePreference == InlinePreference.InlineHint
                 && !existing.IsFfi
                 && !existing.IsCold
-                && summary.OptimizationSummary?.IsSingleReturnInlineWrapper == true
+                && summary.OptimizationSummary?.IsInlineWrapperLike == true
                 && !recursiveFunctions.Contains(functionName))
             {
                 return InlinePreference.Inline;
@@ -2144,7 +2144,7 @@ public static class DefaultCompilerPipeline
                 return InlinePreference.Inline;
             }
 
-            if (importedSummary?.OptimizationSummary?.IsSingleReturnInlineWrapper == true
+            if (importedSummary?.OptimizationSummary?.IsInlineWrapperLike == true
                 && importedDeclarations.TryGetValue(functionName, out var importedWrapperDeclaration)
                 && importedWrapperDeclaration.Declaration.Function is { HasBody: true } importedWrapperFunction
                 && importedWrapperDeclaration.Declaration.Visibility != StarkVisibility.Export

@@ -530,7 +530,8 @@ internal sealed record StarkPackageFunctionOptimizationManifest(
     bool IsSingleReturnAddressOfWrapper,
     bool IsSingleReturnDereferenceWrapper,
     bool IsSingleReturnBinaryOperatorWrapper,
-    bool IsSingleReturnComparisonWrapper);
+    bool IsSingleReturnComparisonWrapper,
+    bool IsTerminalSelectionWrapper);
 
 internal sealed record StarkPackageConcreteTypeLayoutManifest(
     string QualifiedTypeName,

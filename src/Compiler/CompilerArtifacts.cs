@@ -1842,7 +1842,8 @@ public sealed record FunctionOptimizationSummary(
     bool IsSingleReturnAddressOfWrapper,
     bool IsSingleReturnDereferenceWrapper,
     bool IsSingleReturnBinaryOperatorWrapper,
-    bool IsSingleReturnComparisonWrapper)
+    bool IsSingleReturnComparisonWrapper,
+    bool IsTerminalSelectionWrapper)
 {
     public bool IsSingleReturnCallForwarder => IsSingleReturnDirectCallForwarder || IsSingleReturnMemberCallForwarder;
 
@@ -1856,6 +1857,8 @@ public sealed record FunctionOptimizationSummary(
 
     public bool IsSingleReturnInlineWrapper =>
         IsSingleReturnCallForwarder || IsSingleReturnAccessWrapper || IsSingleReturnUnaryOrConversionWrapper || IsSingleReturnOperatorWrapper;
+
+    public bool IsInlineWrapperLike => IsSingleReturnInlineWrapper || IsTerminalSelectionWrapper;
 }
 
 public sealed record FunctionValidationSummary(

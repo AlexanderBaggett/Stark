@@ -300,6 +300,75 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
         Assert.True(isBelow.EstimatedBodyCost is > 2);
     }
 
+    [Fact]
+    public void RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32 ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag) {
+                    if (takeLeft) {
+                        return left;
+                    } else if (takeMiddle) {
+                        return middle;
+                    } else {
+                        return right;
+                    }
+                }
+
+                fn i32 Run(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+                    return ChooseBranch(takeLeft, takeMiddle, left, middle, right, right);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var chooseBranch = Assert.Single(plan.Functions, static function => function.TemplateName == "ChooseBranch");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, chooseBranch.CodeSizeHeuristic);
+        Assert.True(chooseBranch.EstimatedBodyCost is > 2);
+    }
+
+    [Fact]
+    public void RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32 ChooseSwitch<T>(i32 selector, i32 left, i32 middle, i32 right, T tag) {
+                    switch (selector) {
+                        case 0:
+                            return left;
+                        case 1:
+                            return middle;
+                        default:
+                            return right;
+                    }
+                }
+
+                fn i32 Run(i32 selector, i32 left, i32 middle, i32 right) {
+                    return ChooseSwitch(selector, left, middle, right, right);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var chooseSwitch = Assert.Single(plan.Functions, static function => function.TemplateName == "ChooseSwitch");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, chooseSwitch.CodeSizeHeuristic);
+        Assert.True(chooseSwitch.EstimatedBodyCost is > 2);
+    }
+
 
     [Fact]
     public void SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols()
