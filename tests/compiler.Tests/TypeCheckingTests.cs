@@ -151,6 +151,36 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ConstGlobalAggregateProjectionsCanBindToFrozenParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            struct Holder {
+                Box Item;
+            }
+
+            const Holder Current = new Holder() { Item = new Box() { Value = 7 } };
+
+            fn i32 Read(frozen Box box) {
+                return 7;
+            }
+
+            fn i32 Run() {
+                return Read(Current.Item);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void ExplicitLiteralTextConversionsTypeCheck()
     {
         var result = Compile(

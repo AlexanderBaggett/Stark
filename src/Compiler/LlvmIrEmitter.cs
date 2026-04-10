@@ -2972,15 +2972,23 @@ internal sealed class LlvmIrEmitter
             ssaFunction,
             _stringConstants,
             ResolveGlobalSymbolName,
+            IsConstGlobalName,
             MapType,
             TryGetConcreteTypeLayout,
             ResolveNamedTypeSymbol,
             _enumLayoutModel.Layouts,
             GetAllocatorSizeType(),
+            _debugInfo.EmptyTupleRef,
             debugFunction);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);
+    }
+
+    private bool IsConstGlobalName(string globalName)
+    {
+        return _typeModel.Globals.TryGetValue(globalName, out var global)
+            && global.IsConst;
     }
 
     private DebugFunctionContext? TryCreateDebugFunctionContext(
@@ -5558,13 +5566,16 @@ internal sealed class LlvmIrEmitter
         private readonly SsaFunction _ssaFunction;
         private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
         private readonly Func<string, string> _mapGlobalSymbolName;
+        private readonly Func<string, bool> _isConstGlobalName;
         private readonly Func<StarkTypeSymbol, string> _mapType;
         private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
         private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
         private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _enumLayouts;
         private readonly string _allocatorSizeType;
+        private readonly string _emptyMetadataRef;
         private readonly DebugFunctionContext? _debugFunction;
         private readonly HashSet<string> _referencedValueNames;
+        private readonly IReadOnlyDictionary<string, SsaRValue> _valueDefinitions;
         private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _localStorageClasses;
         private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
@@ -5579,11 +5590,13 @@ internal sealed class LlvmIrEmitter
             SsaFunction ssaFunction,
             IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> stringConstants,
             Func<string, string> mapGlobalSymbolName,
+            Func<string, bool> isConstGlobalName,
             Func<StarkTypeSymbol, string> mapType,
             Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
             Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedTypeSymbol,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
             string allocatorSizeType,
+            string emptyMetadataRef,
             DebugFunctionContext? debugFunction)
         {
             _builder = builder;
@@ -5593,13 +5606,16 @@ internal sealed class LlvmIrEmitter
             _ssaFunction = ssaFunction;
             _stringConstants = stringConstants;
             _mapGlobalSymbolName = mapGlobalSymbolName;
+            _isConstGlobalName = isConstGlobalName;
             _mapType = mapType;
             _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
             _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
             _enumLayouts = enumLayouts;
             _allocatorSizeType = allocatorSizeType;
+            _emptyMetadataRef = emptyMetadataRef;
             _debugFunction = debugFunction;
             _referencedValueNames = CollectReferencedValueNames(ssaFunction);
+            _valueDefinitions = CollectValueDefinitions(ssaFunction);
             _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
         }
 
@@ -5695,7 +5711,8 @@ internal sealed class LlvmIrEmitter
                     AppendLine($"  {result} = add {MapType(use.Type)} {FormatValue(use.Value)}, 0");
                     return;
                 case SsaLoadGlobalRValue load:
-                    AppendLine($"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(_mapGlobalSymbolName(load.GlobalName))}");
+                    AppendLine(
+                        $"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(_mapGlobalSymbolName(load.GlobalName))}{GetInvariantLoadMetadataSuffix(load.GlobalName)}");
                     return;
                 case SsaLoadLocalRValue loadLocal:
                     EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
@@ -5741,7 +5758,8 @@ internal sealed class LlvmIrEmitter
                     EmitSliceElementAddress(result, sliceElementAddress);
                     return;
                 case SsaLoadIndirectRValue loadIndirect:
-                    AppendLine($"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}");
+                    AppendLine(
+                        $"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}");
                     return;
                 case SsaUnaryRValue unary:
                     EmitUnary(result, unary);
@@ -6690,7 +6708,8 @@ internal sealed class LlvmIrEmitter
             }
 
             var loadedValue = $"%{EscapeIdentifier(CreateAbiTempName("copy_load"))}";
-            AppendLine($"  {loadedValue} = load {MapType(copyMemory.CopyType)}, ptr {FormatValue(copyMemory.SourceAddress)}");
+            AppendLine(
+                $"  {loadedValue} = load {MapType(copyMemory.CopyType)}, ptr {FormatValue(copyMemory.SourceAddress)}{GetInvariantLoadMetadataSuffix(copyMemory.SourceAddress)}");
             AppendLine($"  store {MapType(copyMemory.CopyType)} {loadedValue}, ptr {FormatValue(copyMemory.DestinationAddress)}");
         }
 
@@ -6748,7 +6767,8 @@ internal sealed class LlvmIrEmitter
             {
                 var sourceLeafAddress = EmitScalarizedAggregateLeafAddress(sourceAddress, copyType, leaf.Indices, "copy_src");
                 var loadedLeaf = $"%{EscapeIdentifier(CreateAbiTempName("copy_scalar_load"))}";
-                AppendLine($"  {loadedLeaf} = load {MapType(leaf.Type)}, ptr {sourceLeafAddress}");
+                AppendLine(
+                    $"  {loadedLeaf} = load {MapType(leaf.Type)}, ptr {sourceLeafAddress}{GetInvariantLoadMetadataSuffix(sourceAddress)}");
                 var destinationLeafAddress = EmitScalarizedAggregateLeafAddress(destinationAddress, copyType, leaf.Indices, "copy_dest");
                 AppendLine($"  store {MapType(leaf.Type)} {loadedLeaf}, ptr {destinationLeafAddress}");
             }
@@ -7295,6 +7315,55 @@ internal sealed class LlvmIrEmitter
             };
         }
 
+        private string GetInvariantLoadMetadataSuffix(string globalName)
+        {
+            return _isConstGlobalName(globalName)
+                ? $", !invariant.load {_emptyMetadataRef}"
+                : string.Empty;
+        }
+
+        private string GetInvariantLoadMetadataSuffix(SsaValue address)
+        {
+            return IsConstGlobalAddress(address)
+                ? $", !invariant.load {_emptyMetadataRef}"
+                : string.Empty;
+        }
+
+        private bool IsConstGlobalAddress(SsaValue value)
+        {
+            return IsConstGlobalAddress(value, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private bool IsConstGlobalAddress(SsaValue value, ISet<string> visitedValueNames)
+        {
+            return value switch
+            {
+                SsaGlobalAddressValue globalAddress => _isConstGlobalName(globalAddress.GlobalName),
+                SsaValueReference reference => ResolveConstGlobalAddress(reference, visitedValueNames),
+                _ => false
+            };
+        }
+
+        private bool ResolveConstGlobalAddress(SsaValueReference reference, ISet<string> visitedValueNames)
+        {
+            if (!visitedValueNames.Add(reference.Name)
+                || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+            {
+                return false;
+            }
+
+            return definition switch
+            {
+                SsaUseRValue use => IsConstGlobalAddress(use.Value, visitedValueNames),
+                SsaFieldAddressRValue fieldAddress => IsConstGlobalAddress(fieldAddress.Address, visitedValueNames),
+                SsaElementAddressRValue elementAddress => IsConstGlobalAddress(elementAddress.Address, visitedValueNames),
+                SsaConvertRValue convert when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
+                                            && convert.TargetType.Kind == StarkTypeKind.RawPointer
+                    => IsConstGlobalAddress(convert.Operand, visitedValueNames),
+                _ => false
+            };
+        }
+
         private static string FormatFloatLiteral(SsaFloatConstant floating)
         {
             if (!double.TryParse(
@@ -7635,6 +7704,24 @@ internal sealed class LlvmIrEmitter
             }
         }
 
+        private static IReadOnlyDictionary<string, SsaRValue> CollectValueDefinitions(SsaFunction function)
+        {
+            var definitions = new Dictionary<string, SsaRValue>(StringComparer.Ordinal);
+
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaValueInstruction valueInstruction)
+                    {
+                        definitions[valueInstruction.ResultName] = valueInstruction.Value;
+                    }
+                }
+            }
+
+            return definitions;
+        }
+
         private static Dictionary<string, string> CollectLocalStorageClasses(SsaFunction function)
         {
             var storageClasses = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -7756,6 +7843,8 @@ internal sealed class LlvmIrEmitter
         }
 
         public bool Enabled => true;
+
+        public string EmptyTupleRef => _emptyTupleRef;
 
         public DebugFunctionContext CreateFunctionContext(
             string sourceName,

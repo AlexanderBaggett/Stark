@@ -148,8 +148,6 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 1. Types
    1. Integers
       1. i +  one of the following (essentially powers of 2 with 1 step in between)
-         1. 2
-         2. 4
          4. 8
          6. 16
          8. 24

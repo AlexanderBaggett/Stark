@@ -19,9 +19,9 @@ public sealed class ParserSmokeTests
             export import Core.Math
             module Demo.Api
 
-            public finite law i32 Add(i32 left, i32 right);
-            internal inline hot fn void Trace(rawptr<i8> message);
-            export ffi fn void Send(rawmutptr<i8> buffer);
+            public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
+            internal inline hot fn void Trace(rawptr<i8[-128 127]> message);
+            export ffi fn void Send(rawmutptr<i8[-128 127]> buffer);
             """
         },
         {
@@ -29,7 +29,7 @@ public sealed class ParserSmokeTests
             """
             module System.Syscall
 
-            public ffi asm(x86_64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+            public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
                 in("rax") number,
                 in("rdi") arg1,
                 in("rsi") arg2,
@@ -47,7 +47,7 @@ public sealed class ParserSmokeTests
             module Shapes
 
             public struct Widget {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
                 Widget() { }
                 fn void Reset() { return; }
                 drop {
@@ -55,14 +55,14 @@ public sealed class ParserSmokeTests
                 }
             }
 
-            public record Point(i32 X, i32 Y) {
+            public record Point(i32[-2147483648 2147483647] X, i32[-2147483648 2147483647] Y) {
                 mut drop {
                     self.X = 0;
                 }
             }
 
             public trait Comparable<T> {
-                law i32 Compare(T other);
+                law i32[-2147483648 2147483647] Compare(T other);
             }
 
             public doctrine Numbers<T> {
@@ -82,11 +82,11 @@ public sealed class ParserSmokeTests
 
             enum Token {
                 End,
-                Integer(i32),
-                Move { X: i32, Y: i32 },
+                Integer(i32[-2147483648 2147483647]),
+                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            finite law i32 Use(Result<i32, ascii> result, Token token) {
+            finite law i32[-2147483648 2147483647] Use(Result<i32[-2147483648 2147483647], ascii> result, Token token) {
                 stack Token end = Token.End;
                 stack Token integer = Token.Integer(5);
                 stack Token moveToken = Token.Move { X: 1, Y: 2 };
@@ -107,16 +107,16 @@ public sealed class ParserSmokeTests
             """
             module Memory
 
-            public const i32 Answer = 42;
-            internal static rawptr<i8> Buffer = null;
+            public const i32[-2147483648 2147483647] Answer = 42;
+            internal static rawptr<i8[-128 127]> Buffer = null;
             export static i32[0 255] Limit = 255;
 
             public finite void Accept(
-                borrow i8[] input,
+                borrow i8[-128 127][] input,
                 frozen ascii name,
                 shared i32[0 10] state,
-                out i8[16] output,
-                init rawmutptr<i8> rawBuffer)
+                out i8[-128 127][16] output,
+                init rawmutptr<i8[-128 127]> rawBuffer)
             {
                 return;
             }
@@ -143,14 +143,14 @@ public sealed class ParserSmokeTests
             module Flow
 
             struct Widget {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            finite law i32 Run() {
-                const i32 start = 0;
-                stack mut i32 counter = start;
+            finite law i32[-2147483648 2147483647] Run() {
+                const i32[-2147483648 2147483647] start = 0;
+                stack mut i32[-2147483648 2147483647] counter = start;
                 stack Widget item = new Widget() { Value = 1 };
-                stack i32[3] values = {1, 2, 3};
+                stack i32[-2147483648 2147483647][3] values = {1, 2, 3};
                 stack f32 power = 2.0 ** 3.0;
 
                 if w9 (counter == 0) {
@@ -165,7 +165,7 @@ public sealed class ParserSmokeTests
                     counter += 1;
                 }
 
-                for willexit (stack mut i32 i = 0; i < 3; i += 1) {
+                for willexit (stack mut i32[-2147483648 2147483647] i = 0; i < 3; i += 1) {
                     switch w1 (i) {
                         case 0:
                             continue;
@@ -186,9 +186,9 @@ public sealed class ParserSmokeTests
             """
             module Patterns
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            finite law i32 Run(Pair value) {
+            finite law i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -203,10 +203,10 @@ public sealed class ParserSmokeTests
             """
             module Patterns
 
-            record Pair(i32 Left, i32 Right) { }
-            record Outer(Pair Values, i32 Tail) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
 
-            finite law i32 Run(Outer value) {
+            finite law i32[-2147483648 2147483647] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -222,12 +222,12 @@ public sealed class ParserSmokeTests
             module Globals
 
             struct Inner {
-                i32[2] Pair;
+                i32[-2147483648 2147483647][2] Pair;
             }
 
             struct Outer {
                 Inner Node;
-                i32[3] View;
+                i32[-2147483648 2147483647][3] View;
             }
 
             const Outer Frozen = {
@@ -260,12 +260,12 @@ public sealed class ParserSmokeTests
                 return left + right;
             }
 
-            finite law i32 Wrap(i32 left, i32 right) {
+            finite law i32[-2147483648 2147483647] Wrap(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 left +%= right;
                 return -%left +% right *% 2;
             }
 
-            finite law i32 Saturate(i32 left, i32 right) {
+            finite law i32[-2147483648 2147483647] Saturate(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 left +|= right;
                 return left +| right *| 2;
             }
@@ -277,15 +277,15 @@ public sealed class ParserSmokeTests
             module UnsafeDemo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            static i32 Counter = 0;
+            static i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32 Run(rawmutptr<i32> input, i64 bits) {
+            fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> input, i64[-9223372036854775808 9223372036854775807] bits) {
                 stack mut Box box = new Box() { Value = 1 };
-                *(&(box.Value)) = (i32)bits;
-                stack rawptr<i32> ptrAlias = (rawptr<i32>)input;
+                *(&(box.Value)) = (i32[-2147483648 2147483647])bits;
+                stack rawptr<i32[-2147483648 2147483647]> ptrAlias = (rawptr<i32[-2147483648 2147483647]>)input;
                 Counter = *ptrAlias;
                 return *(&Counter);
             }
@@ -307,7 +307,7 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            law finite i32 Add(i32 left, i32 right);
+            law finite i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
             """
         },
         {
@@ -332,7 +332,7 @@ public sealed class ParserSmokeTests
             module Demo
 
             fn void Run() {
-                i32 value = 0;
+                i32[-2147483648 2147483647] value = 0;
             }
             """
         },
@@ -361,8 +361,8 @@ public sealed class ParserSmokeTests
             module Demo
 
             struct Widget {
-                i32 Value;
-                Widget(i32 value) : base(value) {
+                i32[-2147483648 2147483647] Value;
+                Widget(i32[-2147483648 2147483647] value) : base(value) {
                     return;
                 }
             }
@@ -374,7 +374,7 @@ public sealed class ParserSmokeTests
             module Demo
 
             fn void Run() {
-                stack [i32; 3] values = {1, 2, 3};
+                stack [i32[-2147483648 2147483647]; 3] values = {1, 2, 3};
             }
             """
         },
@@ -384,10 +384,10 @@ public sealed class ParserSmokeTests
             module Demo
 
             struct Boxed {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run(Boxed value) {
+            fn i32[-2147483648 2147483647] Run(Boxed value) {
                 switch (value) {
                     case Boxed { Value: 1 }:
                         return 1;

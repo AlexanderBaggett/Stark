@@ -1722,4 +1722,54 @@ public sealed class CompilerPipelineEmitLlvmTests
             }
         }
     }
+
+    [Fact]
+    public void ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Box {
+                    i32 Value;
+                }
+
+                const Box Current = new Box() { Value = 5 };
+
+                fn i32 Run() {
+                    stack i32 local = 3;
+                    stack rawptr<i32> localPtr = &local;
+                    stack rawptr<frozen i32> constPtr = &(Current.Value);
+                    return (*localPtr) + (*constPtr);
+                }
+                """,
+                Path.Combine(Path.GetTempPath(), "ConstInvariantLoad.stark")),
+            new CompilerOptions(StopAfterPassId: "emit-llvm"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+
+        var match = System.Text.RegularExpressions.Regex.Match(
+            llvmModule.Text,
+            @"define[^\r\n]*@Run\([^\r\n]*\)[^\r\n]*\r?\n\{(?<body>.*?)^\}",
+            System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        Assert.True(match.Success, "Expected a concrete LLVM definition for Run.");
+
+        var body = match.Groups["body"].Value;
+        Assert.True(
+            System.Text.RegularExpressions.Regex.Matches(
+                body,
+                @"load i32, ptr %v\d+",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count == 2,
+            "Expected exactly two i32 loads in Run: one local and one const-derived.");
+        Assert.True(
+            System.Text.RegularExpressions.Regex.Matches(
+                body,
+                @"load i32, ptr %v\d+, !invariant\.load !\d+",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count == 1,
+            "Expected exactly one invariant-marked load in Run.");
+    }
 }

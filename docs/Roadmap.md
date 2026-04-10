@@ -321,8 +321,8 @@ This is the most important remaining compiler milestone.
   - [x] enforce immutable-binding vs mutable-rebinding rules
   - [x] define `const` as a fully frozen reachable object graph
   - [x] diagnostics that distinguish illegal rebinding from illegal mutation
-- [ ] Deep freeze alias semantics for `const` globals
-  - [ ] projections from `const` graphs behave as frozen/readonly values, not merely root-guarded globals
+- [x] Deep freeze alias semantics for `const` globals
+  - [x] projections from `const` graphs behave as frozen/readonly values, not merely root-guarded globals
   - [x] safe code cannot strengthen const-derived raw aliases into `rawmutptr`
   - [x] safe code cannot erase const-derived readonly raw alias provenance through integer conversions
   - [x] regression tests for `const` escape hatches through explicit conversions
@@ -1033,6 +1033,103 @@ Goal: add non-essential language surface after the first release without slowing
     - [x] direct-import tests that no longer synthesize fake source when rich package-image sections are present
     - [x] end-to-end tests for imported generic specialization from package images
     - [x] compatibility tests for the temporary legacy manifest bridge while both paths coexist
+
+## Major LLVM IR Emission Optimizations Available
+
+- [ ] Emit full Stark definedness, nullability, and value-range contracts in LLVM IR
+  - [ ] add `noundef` on parameters and returns wherever Stark guarantees fully defined values
+  - [ ] emit `!range` contracts for `bool`, all Stark integer values, and enum discriminants
+  - [ ] distinguish non-null safe borrows/views from nullable raw-pointer/FFI paths with `nonnull`, `dereferenceable`, and `dereferenceable_or_null`
+
+- [ ] Emit integer UB-backed arithmetic flags for ordinary Stark arithmetic
+  - [ ] add `nsw` / `nuw` on ordinary add/sub/mul where Stark overflow is undefined behavior
+  - [ ] add proven `nsw` / `nuw` on shifts and `exact` on division or shift-right when proof facts justify it
+  - [ ] keep wrapping and saturating operators on the explicit non-UB lowering path with no incorrect flags
+
+- [ ] Emit stronger GEP flags and pointer-arithmetic facts from Stark indexing rules
+  - [ ] preserve `inbounds` only where object-bound guarantees are actually sound
+  - [ ] add `nuw` / `nusw` on GEPs when Stark index and range facts prove non-wrapping address arithmetic
+  - [ ] carry the stronger flags through fixed-array, slice, text, field, and nested projection lowering
+
+- [ ] Emit instruction-level alignment aggressively, not just parameter-level alignment
+  - [ ] add target-aware `align` on `alloca`, `load`, `store`, `memcpy`, and `memset`
+  - [ ] keep static allocas in the function entry block so LLVM can treat them as fixed frame slots
+  - [ ] propagate known alignment through typed field/index projections instead of dropping it after address formation
+
+- [ ] Emit immutable-data metadata for `const`, frozen, and once-initialized readonly storage
+  - [ ] expand `!invariant.load` across all truly immutable loads, not just the simplest const-rooted cases
+  - [ ] emit `llvm.invariant.start` for runtime-initialized storage that becomes permanently immutable after startup
+  - [ ] preserve invariance through field/index chains and package-image-backed imported readonly data
+
+- [ ] Emit conservative Stark TBAA for typed loads and stores
+  - [ ] build a Stark TBAA tree for scalars, text units, slices, fixed arrays, and aggregate fields
+  - [ ] attach struct-path TBAA to typed field and element accesses
+  - [ ] suppress or drop TBAA when raw-pointer casts or pointer-integer escapes destroy the type-based alias guarantee
+
+- [ ] Emit scoped noalias metadata from ownership and borrow exclusivity, not only parameter attributes
+  - [ ] lower unique borrows, `out`, `init`, fresh result slots, and non-overlapping exclusive regions into `!alias.scope` / `!noalias`
+  - [ ] preserve those scoped alias guarantees through inlining, monomorphization, and wrapper elimination
+  - [ ] attach scoped metadata to hot-loop memory accesses when Stark exclusivity proves disjointness
+
+- [ ] Emit richer allocator and fresh-allocation facts in LLVM IR
+  - [ ] annotate allocator declarations with `allocsize`, `allocalign`, `noalias`, `nonnull`, and `nounwind`
+  - [ ] add call-result `align`, `dereferenceable`, `noundef`, and `noalias` when heap or arena allocation size/alignment is known
+  - [ ] preserve freshness facts for constructors and runtime helpers that produce unique storage
+
+- [ ] Emit branch prediction metadata directly from Stark source contracts
+  - [ ] lower `wN` branch and switch annotations into LLVM branch-weight metadata
+  - [ ] derive likely/unlikely weights from `hot`, `cold`, trap/error edges, and other explicit Stark intent signals
+  - [ ] use `llvm.expect` only where it is a better match than plain branch-weight metadata
+
+- [ ] Emit fast-math flags by default and strict floating-point lowering for `strictfp`
+  - [ ] attach aggressive fast-math flags to ordinary floating-point instructions and calls
+  - [ ] lower `strictfp` functions through constrained floating-point intrinsics or an equivalently strict LLVM surface
+  - [ ] ensure the optimizer-visible IR matches Stark's default fast-math contract instead of silently using generic strict operations
+
+- [ ] Emit contraction-friendly floating-point canonical forms
+  - [ ] form `llvm.fmuladd` or equivalent fused-friendly IR when Stark semantics allow multiply-add contraction
+  - [ ] reserve `llvm.fma` for explicit APIs or semantics that require a guaranteed fused operation
+  - [ ] add regression tests that ordinary floating-point kernels pick the optimizer-friendly form under non-`strictfp`
+
+- [ ] Emit stronger global linkage, visibility, and preemption facts
+  - [ ] prefer `private`, `internal`, `linkonce_odr`, and comdat aggressively under Stark visibility and monomorphization rules
+  - [ ] emit `dso_local` and other non-preemptable forms wherever the Stark package/runtime model makes them sound
+  - [ ] extend `unnamed_addr` / `local_unnamed_addr` to address-insignificant constants, helpers, and functions
+
+- [ ] Emit optimizer-only imported bodies from package images
+  - [ ] materialize imported package-image function bodies as `available_externally` when they should exist for optimization but not final ownership
+  - [ ] feed imported generics, wrappers, and helper bodies to LLVM without forcing duplicate final definitions
+  - [ ] combine package-image body publication with linkage rules that still permit dead stripping and internalization
+
+- [ ] Emit vectorization-friendly layout and constant-data alignment choices
+  - [ ] over-align global numeric arrays, lookup tables, and other SIMD-friendly readonly blocks
+  - [ ] preserve high alignment on stack and heap objects whose element type and usage justify vector loads/stores
+  - [ ] tune constant/table layout so LLVM can merge, hoist, and vectorize accesses more aggressively
+
+- [ ] Emit tail-call markers and specialized calling conventions where Stark semantics make them profitable
+  - [ ] keep the fast internal calling convention path fully consistent across declarations, definitions, and direct calls
+  - [ ] add `tail`, `musttail`, or `notail` markers when Stark recursion/state-machine structure makes the choice provably correct
+  - [ ] use `coldcc`, `preserve_mostcc`, `preserve_nonecc`, or similar specialized conventions for traps, runtime helpers, and dispatch loops when they materially help
+
+- [ ] Emit trap-centric no-exception failure IR everywhere Stark guarantees no recovery
+  - [ ] lower unrecoverable failure to `llvm.trap`, abort helpers, and `unreachable` rather than exception-shaped control flow
+  - [ ] mark panic/assert/trap helpers `cold`, `noreturn`, and maximally non-throwing
+  - [ ] ensure unsupported foreign unwinding never causes conservative EH lowering in ordinary Stark code paths
+
+- [ ] Preserve pointer provenance aggressively in emitted LLVM IR
+  - [ ] avoid frontend-generated `ptrtoint` / `inttoptr` sequences for internal address arithmetic when GEP or other provenance-preserving IR is possible
+  - [ ] use provenance-preserving intrinsics such as `llvm.ptrmask` if Stark later exposes tagged-pointer patterns
+  - [ ] keep alias-analysis-friendly provenance through package-image-backed generic instantiations and wrapper lowering
+
+- [ ] Emit enum-tag and constrained-integer metadata plus optimization-friendly internal representations
+  - [ ] minimize internal discriminant width when Stark's enum layout contract permits it
+  - [ ] emit discriminant and constrained-integer range facts on loads, stores, calls, returns, and switches
+  - [ ] choose tag encodings that favor common empty/default fast paths where the language contract leaves the representation open
+
+- [ ] Use `llvm.assume` only for mid-function facts that cannot be expressed at the boundary
+  - [ ] add targeted `llvm.assume` for post-check facts such as proven non-null, alignment, or value-range narrowing
+  - [ ] prefer attributes and metadata first, and keep `llvm.assume` for facts discovered after control-flow refinement
+  - [ ] add regression tests proving the assumptions are only emitted when the source semantics make them airtight
 
 ## Suggested Near-Term Execution Order
 

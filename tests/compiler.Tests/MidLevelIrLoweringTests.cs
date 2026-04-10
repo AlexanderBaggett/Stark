@@ -1995,6 +1995,60 @@ public sealed class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void ConstGlobalAddressesLowerToFrozenMirAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            const Box Current = new Box() { Value = 5 };
+
+            fn rawptr<frozen Box> BoxPtr() {
+                return &Current;
+            }
+
+            fn rawptr<frozen i32> FieldPtr() {
+                return &(Current.Value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var mir = GetMir(result);
+        var boxPtr = Assert.Single(mir.Functions, static function => function.Name == "BoxPtr");
+        var fieldPtr = Assert.Single(mir.Functions, static function => function.Name == "FieldPtr");
+
+        Assert.True(boxPtr.SupportsDirectCodeGeneration);
+        Assert.True(fieldPtr.SupportsDirectCodeGeneration);
+
+        var returnedBoxAddress = Assert.IsType<MidLevelIrGlobalAddressOperand>(Assert.Single(boxPtr.Blocks).Terminator.Value);
+        Assert.Equal(StarkTypeKind.RawPointer, returnedBoxAddress.Type.Kind);
+        Assert.False(returnedBoxAddress.Type.IsMutablePointer);
+        Assert.NotNull(returnedBoxAddress.Type.ElementType);
+        Assert.Equal(StarkAccessKind.Frozen, returnedBoxAddress.Type.ElementType!.AccessKind);
+
+        var fieldStatements = fieldPtr.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.Contains(
+            fieldStatements,
+            static statement => statement.Value is MidLevelIrFieldAddressRValue
+            {
+                Type.Kind: StarkTypeKind.RawPointer,
+                Type.IsMutablePointer: false,
+                Type.ElementType.AccessKind: StarkAccessKind.Frozen
+            });
+
+        var returnedFieldAddress = Assert.IsType<MidLevelIrLocalOperand>(Assert.Single(fieldPtr.Blocks).Terminator.Value);
+        Assert.Equal(StarkTypeKind.RawPointer, returnedFieldAddress.Type.Kind);
+        Assert.False(returnedFieldAddress.Type.IsMutablePointer);
+        Assert.NotNull(returnedFieldAddress.Type.ElementType);
+        Assert.Equal(StarkAccessKind.Frozen, returnedFieldAddress.Type.ElementType!.AccessKind);
+    }
+
+    [Fact]
     public void FrozenSliceAddressesLowerToReadonlyMirAddresses()
     {
         var result = Compile(

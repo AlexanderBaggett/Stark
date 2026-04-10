@@ -13,7 +13,7 @@ public sealed class ParserConformanceTests
             export import Core.Text
             module Demo.Api
 
-            public fn i32 Sum(i32 left, i32 right,) {
+            public fn i32[-2147483648 2147483647] Sum(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right,) {
                 return left + right;
             }
             """
@@ -24,13 +24,13 @@ public sealed class ParserConformanceTests
             module Models
 
             record Pair<T>(T Left, T Right) {
-                mut i32 Count;
+                mut i32[-2147483648 2147483647] Count;
 
                 Pair(T left, T right) {
                     ;
                 }
 
-                fn i32 Width() {
+                fn i32[-2147483648 2147483647] Width() {
                     return 2;
                 }
 
@@ -40,7 +40,7 @@ public sealed class ParserConformanceTests
             }
 
             struct Buffer {
-                rawptr<i8> Ptr;
+                rawptr<i8[-128 127]> Ptr;
 
                 mut drop {
                     self.Ptr = null;
@@ -53,7 +53,7 @@ public sealed class ParserConformanceTests
             """
             module Types
 
-            public alias Byte = i8;
+            public alias Byte = i8[-128 127];
             internal alias BufferView<T> = borrow T[];
             """
         },
@@ -77,9 +77,9 @@ public sealed class ParserConformanceTests
             module Types
 
             fn void Accept(
-                borrow rawptr<i8>[] buffers,
-                shared Matrix<Vector<i32[4]>> table,
-                out i32[4][2] lanes,
+                borrow rawptr<i8[-128 127]>[] buffers,
+                shared Matrix<Vector<i32[-2147483648 2147483647][4]>> table,
+                out i32[-2147483648 2147483647][4][2] lanes,
                 frozen i32[0 255][] levels)
             {
                 return;
@@ -102,7 +102,7 @@ public sealed class ParserConformanceTests
 
                 for non-deterministic (; flag; ) ;
 
-                for willexit (stack mut i32 i = 0; i < 4; i += 1, i += 2) {
+                for willexit (stack mut i32[-2147483648 2147483647] i = 0; i < 4; i += 1, i += 2) {
                     continue;
                 }
             }
@@ -113,7 +113,7 @@ public sealed class ParserConformanceTests
             """
             module Branching
 
-            fn i32 Pick(i32 state) {
+            fn i32[-2147483648 2147483647] Pick(i32[-2147483648 2147483647] state) {
                 switch w99 (state) {
                     case 0:
                     case 1:
@@ -132,18 +132,18 @@ public sealed class ParserConformanceTests
             module Access
 
             struct Leaf {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct Node {
                 Leaf[2] Leaves;
             }
 
-            fn Node GetNode(i32 index, i32 count,) {
+            fn Node GetNode(i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] count,) {
                 return new Node();
             }
 
-            fn i32 Read() {
+            fn i32[-2147483648 2147483647] Read() {
                 return GetNode(1, 2,).Leaves[0].Value;
             }
             """
@@ -153,8 +153,8 @@ public sealed class ParserConformanceTests
             """
             module Operators
 
-            fn i32 Compute(i32 left, i32 middle, i32 right, bool flag) {
-                stack mut i32 value = left + middle * right << 1;
+            fn i32[-2147483648 2147483647] Compute(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, bool flag) {
+                stack mut i32[-2147483648 2147483647] value = left + middle * right << 1;
                 value &= left ^ middle | right;
                 value = flag ? value : left;
                 return ~value;
@@ -167,7 +167,7 @@ public sealed class ParserConformanceTests
             import Core.Math
             module Demo
 
-            fn i32 Read() {
+            fn i32[-2147483648 2147483647] Read() {
                 return Core.Math.Constants.Value;
             }
             """
@@ -178,12 +178,12 @@ public sealed class ParserConformanceTests
             module Init
 
             struct Item {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run() {
                 stack Item item = new Item() { Value = 1, };
-                stack i32[3] numbers = { 1, 2, 3, };
+                stack i32[-2147483648 2147483647][3] numbers = { 1, 2, 3, };
             }
             """
         },
@@ -192,7 +192,7 @@ public sealed class ParserConformanceTests
             """
             module Interop
 
-            export ffi fn rawptr<rawmutptr<i8>> Transform(rawptr<rawptr<i8>> input);
+            export ffi fn rawptr<rawmutptr<i8[-128 127]>> Transform(rawptr<rawptr<i8[-128 127]>> input);
             """
         },
         {
@@ -201,6 +201,36 @@ public sealed class ParserConformanceTests
             module Ranges
 
             fn void Accept(i32[-10 10][4] buckets) {
+                return;
+            }
+            """
+        },
+        {
+            "all supported integer and floating point widths parse in source types",
+            """
+            module Scalars
+
+            fn void Accept(
+                i8[-128 127] a,
+                i16[-32768 32767] b,
+                i24[-8388608 8388607] c,
+                i32[-2147483648 2147483647] d,
+                i48[-140737488355328 140737488355327] e,
+                i64[-9223372036854775808 9223372036854775807] f,
+                i96[-1 1] g,
+                i128[-1 1] h,
+                i192[-1 1] i,
+                i256[-1 1] j,
+                i384[-1 1] k,
+                i512[-1 1] l,
+                i768[-1 1] m,
+                i1024[-1 1] n,
+                f16 half,
+                f32 single,
+                f64 doubleValue,
+                f80 extended,
+                f128 quad)
+            {
                 return;
             }
             """
@@ -228,7 +258,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn i32 Sum(i32 left = 1, i32 right) {
+            fn i32[-2147483648 2147483647] Sum(i32[-2147483648 2147483647] left = 1, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
             """
@@ -242,11 +272,31 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "bare integer widths are not valid source types",
+            """
+            module Demo
+
+            fn i32 Run(i32 value) {
+                return value;
+            }
+            """
+        },
+        {
+            "unsupported numeric width spellings are not valid builtin types",
+            """
+            module Demo
+
+            fn void Run(i40[0 1] count, f256 amount) {
+                return;
+            }
+            """
+        },
+        {
             "type is no longer the alias declaration keyword",
             """
             module Demo
 
-            type Bytes = i8;
+            type Bytes = i8[-128 127];
             """
         },
         {
@@ -255,7 +305,7 @@ public sealed class ParserConformanceTests
             module Demo
 
             doctrine Numbers {
-                fn i32 Identity(i32 value);
+                fn i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value);
             }
             """
         },
@@ -264,7 +314,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn i32 Run(i32 value) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     case var:
                         return 1;
@@ -290,7 +340,7 @@ public sealed class ParserConformanceTests
             module Demo
 
             fn void Run(bool flag) {
-                for willexit (stack i32 i = 0) {
+                for willexit (stack i32[-2147483648 2147483647] i = 0) {
                     ;
                 }
             }
@@ -314,7 +364,7 @@ public sealed class ParserConformanceTests
             module Demo
 
             struct Item {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run() {
@@ -327,7 +377,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Run(rawptr<i32 value) {
+            fn void Run(rawptr<i32[-2147483648 2147483647] value) {
                 return;
             }
             """
@@ -357,7 +407,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Write(i32 left, i32 right) {
+            fn void Write(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return;
             }
 

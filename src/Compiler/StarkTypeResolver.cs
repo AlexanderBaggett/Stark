@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using Antlr4.Runtime;
 using Stark.Parsing;
@@ -215,15 +216,12 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
         }
 
-        var simpleType = ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
-        if (type.rangeConstraint() is { } rangeConstraint && simpleType.Kind == StarkTypeKind.Integer)
+        if (type.integerType() is { } integerType)
         {
-            var min = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(0));
-            var max = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(1));
-            simpleType = StarkTypeSymbols.Integer(simpleType.BitWidth!.Value, min, max);
+            return ResolveIntegerType(integerType);
         }
 
-        return simpleType;
+        return ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
     }
 
     private StarkTypeSymbol ResolveConversionNonArrayType(StarkParser.ConversionNonArrayTypeContext type, ISet<string>? genericParameters, string? currentModuleName)
@@ -234,15 +232,12 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
         }
 
-        var builtinType = ResolveBuiltinType(type.builtinType());
-        if (type.rangeConstraint() is { } rangeConstraint && builtinType.Kind == StarkTypeKind.Integer)
+        if (type.integerType() is { } integerType)
         {
-            var min = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(0));
-            var max = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(1));
-            builtinType = StarkTypeSymbols.Integer(builtinType.BitWidth!.Value, min, max);
+            return ResolveIntegerType(integerType);
         }
 
-        return builtinType;
+        return ResolveBuiltinType(type.builtinType());
     }
 
     public StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters = null, string? currentModuleName = null)
@@ -280,6 +275,15 @@ internal sealed class StarkTypeResolver
         }
 
         return ResolveQualifiedType(qualifiedName, genericParameters, simpleType.Start, currentModuleName);
+    }
+
+    private static StarkTypeSymbol ResolveIntegerType(StarkParser.IntegerTypeContext integerType)
+    {
+        var width = int.Parse(integerType.INTEGER_TYPE().GetText()[1..], CultureInfo.InvariantCulture);
+        var rangeConstraint = integerType.rangeConstraint();
+        var min = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(0));
+        var max = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(1));
+        return StarkTypeSymbols.Integer(width, min, max);
     }
 
     private bool TryResolveTypeAlias(
@@ -527,8 +531,7 @@ internal sealed class StarkTypeResolver
             "unicode" => StarkTypeSymbols.Unicode,
             "Ascii" => StarkTypeSymbols.OwnedAscii,
             "Unicode" => StarkTypeSymbols.OwnedUnicode,
-            _ when text.StartsWith("i", StringComparison.Ordinal) => StarkTypeSymbols.Integer(int.Parse(text[1..])),
-            _ when text.StartsWith("f", StringComparison.Ordinal) => StarkTypeSymbols.Float(int.Parse(text[1..])),
+            _ when text.StartsWith("f", StringComparison.Ordinal) => StarkTypeSymbols.Float(int.Parse(text[1..], CultureInfo.InvariantCulture)),
             _ => StarkTypeSymbols.Error
         };
     }

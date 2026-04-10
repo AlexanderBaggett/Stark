@@ -11,8 +11,8 @@ public sealed class ParserEdgeCaseTests
             """
             module Types
 
-            fn Matrix<Vector<rawptr<i8>>> Project(
-                Matrix<Vector<rawptr<i8>>> table,
+            fn Matrix<Vector<rawptr<i8[-128 127]>>> Project(
+                Matrix<Vector<rawptr<i8[-128 127]>>> table,
                 i32[-10 10][] ranges)
             {
                 return table;
@@ -25,14 +25,14 @@ public sealed class ParserEdgeCaseTests
             module Trailing
 
             struct Node {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn Node Build(Node node, i32 count,) {
+            fn Node Build(Node node, i32[-2147483648 2147483647] count,) {
                 return new Node() { Value = count, };
             }
 
-            fn i32 Read() {
+            fn i32[-2147483648 2147483647] Read() {
                 return Build(new Node(), 1,).Value;
             }
             """
@@ -44,7 +44,7 @@ public sealed class ParserEdgeCaseTests
 
             fn void Run(bool flag) {
                 while infinite (flag) {
-                    for non-deterministic (stack i32 i = 0; i < 1; i += 1) {
+                    for non-deterministic (stack i32[-2147483648 2147483647] i = 0; i < 1; i += 1) {
                         continue;
                     }
                 }
@@ -57,14 +57,14 @@ public sealed class ParserEdgeCaseTests
             module Access
 
             struct Leaf {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct Node {
                 Leaf[2] Leaves;
             }
 
-            fn i32 Read() {
+            fn i32[-2147483648 2147483647] Read() {
                 return new Node().Leaves[0].Value;
             }
             """
@@ -90,7 +90,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Write(i32 left, i32 right) {
+            fn void Write(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return;
             }
 
@@ -104,7 +104,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Run(rawptr<rawmutptr<i8> value) {
+            fn void Run(rawptr<rawmutptr<i8[-128 127]> value) {
                 return;
             }
             """
@@ -147,7 +147,7 @@ public sealed class ParserEdgeCaseTests
             module Demo
 
             struct Item {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run() {

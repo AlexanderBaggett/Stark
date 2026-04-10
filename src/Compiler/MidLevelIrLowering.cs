@@ -7594,7 +7594,7 @@ internal sealed class MidLevelIrLowerer(
                 return null;
             }
 
-            var projectedType = ProjectFrozenView(target.Type, field.Type);
+            var projectedType = ProjectProjectionType(target, field.Type);
 
             return EmitTemporary(
                 new MidLevelIrExtractFieldRValue(
@@ -7613,7 +7613,7 @@ internal sealed class MidLevelIrLowerer(
             StarkTypeSymbol fieldType,
             string displayFieldName)
         {
-            var projectedType = ProjectFrozenView(target.Type, fieldType);
+            var projectedType = ProjectProjectionType(target, fieldType);
             return EmitRequiredTemporary(
                 new MidLevelIrExtractFieldRValue(
                     target,
@@ -7632,6 +7632,7 @@ internal sealed class MidLevelIrLowerer(
             }
 
             var current = target;
+            var currentUsesFrozenProjectionSemantics = UsesFrozenProjectionSemantics(current);
 
             foreach (var indexExpression in indexes.expression())
             {
@@ -7639,7 +7640,9 @@ internal sealed class MidLevelIrLowerer(
                 {
                     if (TryResolveConstantArrayIndex(current.Type, indexExpression, out var constantIndex, out var resolvedElementType))
                     {
-                        var elementType = ProjectFrozenView(current.Type, resolvedElementType);
+                        var elementType = currentUsesFrozenProjectionSemantics
+                            ? StarkTypeSymbols.FreezeReachableView(resolvedElementType)
+                            : ProjectFrozenView(current.Type, resolvedElementType);
                         var extracted = EmitTemporary(
                             new MidLevelIrExtractIndexRValue(
                                 current,
@@ -7653,6 +7656,7 @@ internal sealed class MidLevelIrLowerer(
                         }
 
                         current = extracted;
+                        currentUsesFrozenProjectionSemantics = current.Type.AccessKind == StarkAccessKind.Frozen;
                         continue;
                     }
 
@@ -7662,7 +7666,9 @@ internal sealed class MidLevelIrLowerer(
                         return null;
                     }
 
-                    var projectedElementType = ProjectFrozenView(current.Type, current.Type.ElementType);
+                    var projectedElementType = currentUsesFrozenProjectionSemantics
+                        ? StarkTypeSymbols.FreezeReachableView(current.Type.ElementType)
+                        : ProjectFrozenView(current.Type, current.Type.ElementType);
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
                     {
@@ -7703,12 +7709,15 @@ internal sealed class MidLevelIrLowerer(
                     }
 
                     current = loaded;
+                    currentUsesFrozenProjectionSemantics = current.Type.AccessKind == StarkAccessKind.Frozen;
                     continue;
                 }
 
                 if (current.Type.Kind == StarkTypeKind.Slice && current.Type.ElementType is not null)
                 {
-                    var elementType = ProjectFrozenView(current.Type, current.Type.ElementType);
+                    var elementType = currentUsesFrozenProjectionSemantics
+                        ? StarkTypeSymbols.FreezeReachableView(current.Type.ElementType)
+                        : ProjectFrozenView(current.Type, current.Type.ElementType);
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
                     {
@@ -7740,6 +7749,7 @@ internal sealed class MidLevelIrLowerer(
                     }
 
                     current = loaded;
+                    currentUsesFrozenProjectionSemantics = current.Type.AccessKind == StarkAccessKind.Frozen;
                     continue;
                 }
 
@@ -7779,6 +7789,7 @@ internal sealed class MidLevelIrLowerer(
                     }
 
                     current = loaded;
+                    currentUsesFrozenProjectionSemantics = current.Type.AccessKind == StarkAccessKind.Frozen;
                     continue;
                 }
 
@@ -8736,7 +8747,8 @@ internal sealed class MidLevelIrLowerer(
             }
 
             var path = new List<PlacePathSegment>();
-            var currentType = root?.Type;
+            var rootProjectionType = root is null ? null : ProjectRootType(root);
+            var currentType = rootProjectionType;
             var supportsAddressModel = SupportsAddressModel(root);
             var usesAddressModel = false;
 
@@ -8764,7 +8776,8 @@ internal sealed class MidLevelIrLowerer(
                     }
 
                     currentName = null;
-                    currentType = root.Type;
+                    rootProjectionType = ProjectRootType(root);
+                    currentType = rootProjectionType;
                     supportsAddressModel = SupportsAddressModel(root);
                     continue;
                 }
@@ -8894,7 +8907,8 @@ internal sealed class MidLevelIrLowerer(
                     return false;
                 }
 
-                currentType = root.Type;
+                rootProjectionType = ProjectRootType(root);
+                currentType = rootProjectionType;
             }
 
             if (IsBorrowParameterRoot(root))
@@ -8902,8 +8916,15 @@ internal sealed class MidLevelIrLowerer(
                 usesAddressModel = true;
             }
 
-            var targetType = currentType ?? root.Type;
-            target = new PlaceTarget(root.Text, RootAddress: null, root.Type, targetType, path, usesAddressModel, GetAddressMutability(root));
+            var targetType = currentType ?? rootProjectionType ?? root.Type;
+            target = new PlaceTarget(
+                root.Text,
+                RootAddress: null,
+                rootProjectionType ?? root.Type,
+                targetType,
+                path,
+                usesAddressModel,
+                GetAddressMutability(root));
             return true;
         }
 
@@ -9336,9 +9357,9 @@ internal sealed class MidLevelIrLowerer(
             MidLevelIrOperand? currentAddress = target.RootAddress
                 ?? currentValue switch
                 {
-                    MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, local.Type),
-                    MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, parameter.Type),
-                    MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, global.Type),
+                    MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, target.RootType),
+                    MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, target.RootType),
+                    MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, target.RootType),
                     _ => null
                 };
             var currentType = target.RootType;
@@ -11185,6 +11206,28 @@ internal sealed class MidLevelIrLowerer(
                 ? global.IsMutable && CanMutateThroughType(global.Type)
                 : true;
             return new MidLevelIrGlobalAddressOperand(name, type, AddressType(type, isMutable));
+        }
+
+        private bool UsesFrozenProjectionSemantics(MidLevelIrOperand operand)
+        {
+            return operand.Type.AccessKind == StarkAccessKind.Frozen
+                || operand is MidLevelIrGlobalOperand global
+                    && TryResolveGlobal(global.Name, out var binding)
+                    && binding.IsConst;
+        }
+
+        private StarkTypeSymbol ProjectRootType(MidLevelIrOperand operand)
+        {
+            return UsesFrozenProjectionSemantics(operand)
+                ? StarkTypeSymbols.FreezeReachableView(operand.Type)
+                : operand.Type;
+        }
+
+        private StarkTypeSymbol ProjectProjectionType(MidLevelIrOperand source, StarkTypeSymbol projectedType)
+        {
+            return UsesFrozenProjectionSemantics(source)
+                ? StarkTypeSymbols.FreezeReachableView(projectedType)
+                : ProjectFrozenView(source.Type, projectedType);
         }
 
         private static bool ShouldAddressLocal(StarkTypeSymbol type, string storageClass)

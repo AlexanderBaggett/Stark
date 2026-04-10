@@ -644,7 +644,7 @@ public sealed class TypeTypingDiagnosticsTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3002", "rawptr<i32>", "rawmutptr<i32>", "strengthen pointer mutability");
+        AssertDiagnostic(result, "STK3002", "rawptr<frozen i32>", "rawmutptr<i32>", "strengthen pointer mutability");
     }
 
     [Fact]
@@ -662,7 +662,51 @@ public sealed class TypeTypingDiagnosticsTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3002", "rawptr<i32>", "i64", "erase readonly pointer provenance");
+        AssertDiagnostic(result, "STK3002", "rawptr<frozen i32>", "i64", "erase readonly pointer provenance");
+    }
+
+    [Fact]
+    public void ConstFieldDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            const Box Current = new Box() { Value = 1 };
+
+            fn void Run() {
+                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&Current.Value);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<frozen i32>", "rawmutptr<i32>", "strengthen pointer mutability");
+    }
+
+    [Fact]
+    public void ConstFieldDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32 Value;
+            }
+
+            const Box Current = new Box() { Value = 1 };
+
+            fn void Run() {
+                stack i64 bits = (i64)(&Current.Value);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<frozen i32>", "i64", "erase readonly pointer provenance");
     }
 
     [Fact]

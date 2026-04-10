@@ -1195,7 +1195,14 @@ internal sealed class SemanticValidator
             return new ValidationValue(
                 globalType.Type,
                 IsAssignable: isMutable,
-                RootSymbol: new VariableSymbol(name, globalType.Type, SymbolOrigin.Global, LocalStorageClass.Static, isMutable, IsConstant: !isMutable),
+                RootSymbol: new VariableSymbol(
+                    name,
+                    globalType.Type,
+                    SymbolOrigin.Global,
+                    LocalStorageClass.Static,
+                    isMutable,
+                    IsConstant: !isMutable,
+                    BindingKind: globalType.BindingKind),
                 NamedType: ResolveNamedTypeSymbol(globalType.Type));
         }
 
@@ -1693,6 +1700,7 @@ internal sealed class SemanticValidator
 
         var currentType = target.Type;
         var currentIsAssignable = target.IsAssignable;
+        var currentUsesFrozenProjectionSemantics = UsesFrozenProjectionSemantics(target);
         foreach (var indexExpression in indexes.expression())
         {
             EvaluateExpression(indexExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
@@ -1703,7 +1711,10 @@ internal sealed class SemanticValidator
             }
 
             currentIsAssignable &= currentType.AccessKind != StarkAccessKind.Frozen;
-            currentType = ProjectFrozenView(currentType, currentType.ElementType);
+            currentType = currentUsesFrozenProjectionSemantics
+                ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
+                : ProjectFrozenView(currentType, currentType.ElementType);
+            currentUsesFrozenProjectionSemantics = currentType.AccessKind == StarkAccessKind.Frozen;
         }
 
         return new ValidationValue(
@@ -1735,7 +1746,14 @@ internal sealed class SemanticValidator
                 return new ValidationValue(
                     globalType.Type,
                     IsAssignable: isMutable,
-                    RootSymbol: new VariableSymbol(qualifiedName, globalType.Type, SymbolOrigin.Global, LocalStorageClass.Static, isMutable, IsConstant: !isMutable),
+                    RootSymbol: new VariableSymbol(
+                        qualifiedName,
+                        globalType.Type,
+                        SymbolOrigin.Global,
+                        LocalStorageClass.Static,
+                        isMutable,
+                        IsConstant: !isMutable,
+                        BindingKind: globalType.BindingKind),
                     NamedType: ResolveNamedTypeSymbol(globalType.Type));
             }
 
@@ -1789,7 +1807,7 @@ internal sealed class SemanticValidator
 
         if (namedType.Fields.TryGetValue(memberName, out var field))
         {
-            var projectedType = ProjectFrozenView(target.Type, field.Type);
+            var projectedType = ProjectProjectionType(target, field.Type);
             return new ValidationValue(
                 projectedType,
                 IsAssignable: target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen,
@@ -1905,7 +1923,10 @@ internal sealed class SemanticValidator
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
-        var pointerType = StarkTypeSymbols.RawPointer(operand.Type, operand.IsAssignable);
+        var pointeeType = UsesFrozenProjectionSemantics(operand)
+            ? StarkTypeSymbols.FreezeReachableView(operand.Type)
+            : operand.Type;
+        var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAssignable);
         return new ValidationValue(
             pointerType,
             RootSymbol: operand.RootSymbol,
@@ -3029,6 +3050,19 @@ internal sealed class SemanticValidator
             : projectedType;
     }
 
+    private static bool UsesFrozenProjectionSemantics(ValidationValue value)
+    {
+        return value.Type.AccessKind == StarkAccessKind.Frozen
+            || value.RootSymbol?.BindingKind == GlobalBindingKind.Const;
+    }
+
+    private static StarkTypeSymbol ProjectProjectionType(ValidationValue source, StarkTypeSymbol projectedType)
+    {
+        return UsesFrozenProjectionSemantics(source)
+            ? StarkTypeSymbols.FreezeReachableView(projectedType)
+            : ProjectFrozenView(source.Type, projectedType);
+    }
+
     private static bool IsMemoryBackedType(StarkTypeSymbol type)
     {
         return type.Kind switch
@@ -3384,7 +3418,8 @@ internal sealed class SemanticValidator
         SymbolOrigin Origin,
         LocalStorageClass StorageClass,
         bool IsMutable,
-        bool IsConstant);
+        bool IsConstant,
+        GlobalBindingKind? BindingKind = null);
 
     private sealed record ValidationValue(
         StarkTypeSymbol Type,

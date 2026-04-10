@@ -281,7 +281,8 @@ typeQualifier
 
 nonArrayType
     : rawPointerType
-    | simpleType rangeConstraint?
+    | integerType
+    | simpleType
     ;
 
 rawPointerType
@@ -294,13 +295,16 @@ simpleType
     | qualifiedName typeArgumentList?
     ;
 
+integerType
+    : INTEGER_TYPE rangeConstraint
+    ;
+
 builtinType
     : BOOL
     | ASCII
     | UNICODE
     | ASCIISTRING
     | UNICODESTRING
-    | INTEGER_TYPE
     | FLOAT_TYPE
     ;
 
@@ -550,7 +554,8 @@ conversionType
 
 conversionNonArrayType
     : rawPointerType
-    | builtinType rangeConstraint?
+    | integerType
+    | builtinType
     ;
 
 powerExpression
@@ -729,10 +734,35 @@ WEIGHT_LITERAL
     ;
 
 INTEGER_TYPE
-    : 'i' DIGIT+
+    : 'i8'
+    | 'i16'
+    | 'i24'
+    | 'i32'
+    | 'i48'
+    | 'i64'
+    | 'i96'
+    | 'i128'
+    | 'i192'
+    | 'i256'
+    | 'i384'
+    | 'i512'
+    | 'i768'
+    | 'i1024'
     ;
 
 FLOAT_TYPE
+    : 'f16'
+    | 'f32'
+    | 'f64'
+    | 'f80'
+    | 'f128'
+    ;
+
+INVALID_INTEGER_TYPE
+    : 'i' DIGIT+
+    ;
+
+INVALID_FLOAT_TYPE
     : 'f' DIGIT+
     ;
 

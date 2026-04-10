@@ -3164,7 +3164,7 @@ internal sealed class TypeChecker
         }
 
         var fieldType = EnsureMonomorphizedType(publishedFieldAccess.FieldType, Location(postfixPart));
-        var projectedType = ProjectFrozenView(target.Type, fieldType);
+        var projectedType = ProjectProjectionType(target, fieldType);
         var isAssignable = target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen;
         binding = new ExpressionBinding(
             projectedType,
@@ -4352,6 +4352,7 @@ internal sealed class TypeChecker
 
         var currentType = target.Type;
         var currentIsAssignable = target.IsAssignable;
+        var currentUsesFrozenProjectionSemantics = UsesFrozenProjectionSemantics(target);
 
         foreach (var indexExpression in indexes.expression())
         {
@@ -4367,7 +4368,10 @@ internal sealed class TypeChecker
             if (currentType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Slice && currentType.ElementType is not null)
             {
                 currentIsAssignable &= currentType.AccessKind != StarkAccessKind.Frozen;
-                currentType = ProjectFrozenView(currentType, currentType.ElementType);
+                currentType = currentUsesFrozenProjectionSemantics
+                    ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
+                    : ProjectFrozenView(currentType, currentType.ElementType);
+                currentUsesFrozenProjectionSemantics = currentType.AccessKind == StarkAccessKind.Frozen;
                 continue;
             }
 
@@ -4375,6 +4379,7 @@ internal sealed class TypeChecker
             {
                 currentIsAssignable &= currentType.IsMutablePointer;
                 currentType = currentType.ElementType;
+                currentUsesFrozenProjectionSemantics = currentType.AccessKind == StarkAccessKind.Frozen;
                 continue;
             }
 
@@ -4505,7 +4510,7 @@ internal sealed class TypeChecker
         if (namedType.TryGetField(memberName, out var field, out var fieldIndex))
         {
             RecordFieldAccess(field.Name, fieldIndex, field.Type, context);
-            var projectedType = ProjectFrozenView(target.Type, field.Type);
+            var projectedType = ProjectProjectionType(target, field.Type);
             var isAssignable = target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen;
             return new ExpressionBinding(
                 projectedType,
@@ -5379,7 +5384,10 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        var pointerType = StarkTypeSymbols.RawPointer(operand.Type, operand.IsAssignable);
+        var pointeeType = UsesFrozenProjectionSemantics(operand)
+            ? StarkTypeSymbols.FreezeReachableView(operand.Type)
+            : operand.Type;
+        var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAssignable);
         return new ExpressionBinding(pointerType, NamedType: ResolveNamedTypeSymbol(pointerType));
     }
 
@@ -5723,6 +5731,19 @@ internal sealed class TypeChecker
     private static string DescribeFrozenMutationError(string targetDescription)
     {
         return $"Cannot mutate {targetDescription} through a frozen value.";
+    }
+
+    private static bool UsesFrozenProjectionSemantics(ExpressionBinding binding)
+    {
+        return binding.Type.AccessKind == StarkAccessKind.Frozen
+            || binding.RootGlobalBindingKind == GlobalBindingKind.Const;
+    }
+
+    private static StarkTypeSymbol ProjectProjectionType(ExpressionBinding source, StarkTypeSymbol projectedType)
+    {
+        return UsesFrozenProjectionSemantics(source)
+            ? StarkTypeSymbols.FreezeReachableView(projectedType)
+            : ProjectFrozenView(source.Type, projectedType);
     }
 
     private static StarkTypeSymbol ProjectFrozenView(StarkTypeSymbol sourceType, StarkTypeSymbol projectedType)

@@ -399,6 +399,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitSimpleType([NotNull] StarkParser.SimpleTypeContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.integerType"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitIntegerType([NotNull] StarkParser.IntegerTypeContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.builtinType"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

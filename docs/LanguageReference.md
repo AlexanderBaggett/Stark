@@ -154,23 +154,50 @@ The builtin type families are:
 - `unicode`
 - `Ascii`
 - `Unicode`
-- integer widths written as `iN`
-- floating-point widths written as `fN`
+- integer widths:
+  - `i8`
+  - `i16`
+  - `i24`
+  - `i32`
+  - `i48`
+  - `i64`
+  - `i96`
+  - `i128`
+  - `i192`
+  - `i256`
+  - `i384`
+  - `i512`
+  - `i768`
+  - `i1024`
+- floating-point widths:
+  - `f16`
+  - `f32`
+  - `f64`
+  - `f80`
+  - `f128`
 
 Examples:
 
-- `i32`
-- `i64`
+- `i32[0 255]`
+- `i64[-9223372036854775808 9223372036854775807]`
+- `i128[0 340282366920938463463374607431768211455]`
+- `f16`
 - `f32`
 - `f64`
+- `f80`
+- `f128`
 
-Range-constrained integers are written as:
+Integer source types are always written as explicit ranged forms over one of the supported widths.
+
+For example:
 
 ```stark
 i32[0 255]
 ```
 
-Integer types may be written either as ordinary width-based forms such as `i32` or as explicit range-constrained forms such as `i32[0 255]`.
+Bare width names such as `i32` are convenient family labels in prose, but they are not the full Stark integer source form by themselves. The source-level type must carry an explicit range.
+
+Floating-point source types use the bare width form directly. Stark supports the full scalar floating-point width set exposed by LLVM: `f16`, `f32`, `f64`, `f80`, and `f128`.
 
 `void` is not a first-class Stark value type. It is valid only as a function return type.
 
