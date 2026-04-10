@@ -770,7 +770,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
-    public void UnsupportedMirLoweringProducesStructuredWarningLogs()
+    public void VoidCallsUsedAsValuesFailDuringTypeCheckingBeforeMirLowering()
     {
         var pipeline = DefaultCompilerPipeline.Create();
 
@@ -784,30 +784,25 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             fn bool Run(bool flag) {
                 return (flag ? A() : A()) == (flag ? A() : A());
-            }
+                }
             """));
 
-        Assert.True(result.Succeeded);
-        var log = Assert.Single(result.Logs, log =>
-            log.Category == "lowering"
-            && log.EventId == "unsupported-lowering"
-            && log.Stage == "lower-mir"
-            && log.SymbolName == "Run"
-            && log.Operation == "LowerPostfixExpression");
-
-        Assert.Equal(DiagnosticSeverity.Warning, log.Severity);
-        Assert.Equal(CompilerLogKind.Gap, log.Kind);
-        Assert.Equal(CompilerLogOutcome.Unsupported, log.Outcome);
-        Assert.NotNull(log.Data);
-        Assert.Equal("Demo", log.Data["module"]);
-        Assert.Equal("Direct MIR lowering stopped in 'LowerPostfixExpression'.", log.Message);
-        Assert.Equal("lower-postfix-expression", log.Data["feature"]);
-        Assert.Equal("StarkCfg", log.Data["bodyLoweringKind"]);
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Stage == "type-check"
+                && diagnostic.Message.Contains("Operator '==' cannot compare 'void' and 'void'.", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            result.Logs,
+            log => log.Category == "lowering"
+                && log.EventId == "unsupported-lowering"
+                && log.Stage == "lower-mir");
     }
 
 
     [Fact]
-    public void EmitLlvmModesConvertUnsupportedMirLoweringIntoStableDiagnostics()
+    public void EmitLlvmModesReportTypeDiagnosticsBeforeLoweringForVoidCallsUsedAsValues()
     {
         var pipeline = DefaultCompilerPipeline.Create();
 
@@ -831,9 +826,9 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.False(result.Succeeded);
         Assert.Contains(
             result.Diagnostics,
-            diagnostic => diagnostic.Code == "STK5000"
-                && diagnostic.Stage == "lower-mir"
-                && diagnostic.Message.Contains("Code generation does not yet support this construct (lower-postfix-expression).", StringComparison.Ordinal));
+            diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Stage == "type-check"
+                && diagnostic.Message.Contains("Operator '==' cannot compare 'void' and 'void'.", StringComparison.Ordinal));
         Assert.False(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? _));
     }
 
@@ -882,6 +877,214 @@ public sealed class CompilerPipelineFullIntegrationTests
                     }
 
                     return 0;
+                }
+                """),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Logs,
+            log => log.Category == "lowering"
+                && log.EventId == "unsupported-lowering"
+                && log.Stage == "lower-mir");
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+    }
+
+    [Fact]
+    public void NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogs()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Inner {
+                    i32[2] Pair;
+                }
+
+                struct Outer {
+                    i32 Score;
+                    Inner Node;
+                }
+
+                fn i32 MakeScore() {
+                    return 9;
+                }
+
+                fn i32 MakeLeft() {
+                    return 4;
+                }
+
+                fn i32 MakeRight() {
+                    return 7;
+                }
+
+                export ffi fn i32 main() {
+                    stack Outer outer = new Outer() {
+                        Score = MakeScore(),
+                        Node = { Pair = { MakeLeft(), MakeRight() } }
+                    };
+                    stack i32[3] buffer = { 1, 2, 3 };
+                    stack i32 total = outer.Node.Pair[0] + outer.Node.Pair[1] + outer.Score + buffer[2];
+                    return total;
+                }
+                """),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Logs,
+            log => log.Category == "lowering"
+                && log.EventId == "unsupported-lowering"
+                && log.Stage == "lower-mir");
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+    }
+
+    [Fact]
+    public void SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogs()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+                record Label(ascii Tag, unicode Word) { }
+
+                enum Token {
+                    None,
+                    Pair(i32, i32),
+                }
+
+                export ffi fn i32 main() {
+                    stack Many lessLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+                    stack Many lessRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
+
+                    stack i32[3] sameLeft = { 1, 2, 3 };
+                    stack i32[3] sameRight = { 1, 2, 3 };
+                    stack i32[3] greaterLeft = { 1, 2, 4 };
+                    stack i32[3] greaterRight = { 1, 2, 3 };
+
+                    stack i32[3] leftValues = { 1, 2, 3 };
+                    stack i32[3] rightValues = { 1, 2, 3 };
+                    stack i32[] leftView = leftValues;
+                    stack i32[] rightView = rightValues;
+
+                    if (lessLeft < lessRight
+                        && sameLeft == sameRight
+                        && greaterLeft > greaterRight
+                        && "cab!"[1, 2] == "zab?"[1, 2]
+                        && "cab!"[1, 2] < "cac?"[1, 2]
+                        && ((unicode)"caf\u00E9!")[0, 4] != ((unicode)"cafe?")[0, 4]
+                        && leftView != rightView
+                        && new Label() { Tag = "cab!"[1, 2], Word = ((unicode)"caf\u00E9!")[0, 4] }
+                            == new Label() { Tag = "zab?"[1, 2], Word = ((unicode)"caf\u00E9?")[0, 4] }
+                        && Token.Pair(1, 2) > Token.Pair(1, 1)) {
+                        return 7;
+                    }
+
+                    return 0;
+                }
+                """),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Logs,
+            log => log.Category == "lowering"
+                && log.EventId == "unsupported-lowering"
+                && log.Stage == "lower-mir");
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+    }
+
+    [Fact]
+    public void ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogs()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Box {
+                    i32 Value;
+                }
+
+                fn i32 Next() {
+                    return 7;
+                }
+
+                fn Box MakeBox(i32 value) {
+                    return new Box() { Value = value };
+                }
+
+                export ffi fn i32 main() {
+                    stack mut Box box = new Box() { Value = 1 };
+                    box.Value + 2;
+                    MakeBox(Next());
+                    new Box() { Value = Next() };
+                    true ? MakeBox(3) : MakeBox(4);
+                    return box.Value;
+                }
+                """),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Logs,
+            log => log.Category == "lowering"
+                && log.EventId == "unsupported-lowering"
+                && log.Stage == "lower-mir");
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+    }
+
+    [Fact]
+    public void NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogs()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Cell {
+                    i32 Value;
+                }
+
+                struct Holder {
+                    Cell[2] Cells;
+                }
+
+                export ffi fn i32 main() {
+                    stack mut Holder holder = new Holder() {
+                        Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
+                    };
+                    stack i32 index = 1;
+                    holder.Cells[index].Value += 4;
+
+                    stack i32[3] values = { 1, 2, 3 };
+                    stack i32[] view = values;
+                    view[0] = holder.Cells[index].Value;
+
+                    return holder.Cells[index].Value + view[0];
                 }
                 """),
             new CompilerOptions(

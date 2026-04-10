@@ -29,8 +29,6 @@ These are the constructs that still make it through parsing and type checking
 and then stop in `lower-mir`. Surface restrictions that are rejected earlier do
 not belong in this list.
 
-- Initializer gaps: unsupported variable initializer shapes; some object or array initializers still do not materialize a MIR value; variable initializers that cannot lower to a MIR operand.
-- Assignment and expression gaps: assignment targets or values that cannot be resolved or coerced; expression statements that are neither assignments, rvalues, operands, nor the current ternary call-statement subset.
-- Operator and type gaps: equality and ordered comparison still fall back outside the current scalar, text, same-kind fixed-array, same-kind slice, and scalarizable aggregate support.
-- Name and call gaps: void-valued direct, member, and postfix calls cannot appear in value position.
-- Place and update gaps: aggregate reads and writes still fall back when field or index paths cannot be resolved.
+There are no currently documented source-level MIR lowering gaps. Newly
+discovered constructs that pass parsing and type checking but still stop in
+`lower-mir` should be recorded here with a focused repro and regression test.

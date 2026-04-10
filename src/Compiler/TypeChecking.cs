@@ -6102,6 +6102,11 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (left.Kind == StarkTypeKind.Void || right.Kind == StarkTypeKind.Void)
+        {
+            return false;
+        }
+
         if (left.Kind == StarkTypeKind.Null && right.Kind == StarkTypeKind.RawPointer)
         {
             return true;

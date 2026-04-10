@@ -474,7 +474,7 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task LogFiltersRenderHumanReadableStructuredWarnings()
+    public async Task EmitMirModeReportsTypeErrorsInsteadOfLoweringWarningsForVoidCallsUsedAsValues()
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
@@ -496,20 +496,18 @@ public sealed class CompilerCliTests
             stdout,
             stderr);
 
-        Assert.Equal(0, exitCode);
-        Assert.Contains("mir module Demo", stdout.ToString());
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
 
         var text = stderr.ToString();
-        Assert.Contains("Direct MIR lowering stopped in 'LowerPostfixExpression'.", text, StringComparison.Ordinal);
-        Assert.Contains("[warn gap lowering stage=lower-mir symbol=Run", text, StringComparison.Ordinal);
-        Assert.Contains("op=LowerPostfixExpression", text, StringComparison.Ordinal);
-        Assert.Contains("outcome=unsupported", text, StringComparison.Ordinal);
-        Assert.Contains("feature=lower-postfix-expression", text, StringComparison.Ordinal);
+        Assert.Contains("error STK3002 [type-check]", text, StringComparison.Ordinal);
+        Assert.Contains("Operator '==' cannot compare 'void' and 'void'.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("[warn gap lowering stage=lower-mir", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Starting pass", text, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task EmitLlvmModeFailsWithStableUnsupportedLoweringDiagnostic()
+    public async Task EmitLlvmModeFailsWithTypeDiagnosticForVoidCallsUsedAsValues()
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
@@ -534,8 +532,8 @@ public sealed class CompilerCliTests
         Assert.Equal(1, exitCode);
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
-        Assert.Contains("error STK5000 [lower-mir]", text, StringComparison.Ordinal);
-        Assert.Contains("Code generation does not yet support this construct (lower-postfix-expression).", text, StringComparison.Ordinal);
+        Assert.Contains("error STK3002 [type-check]", text, StringComparison.Ordinal);
+        Assert.Contains("Operator '==' cannot compare 'void' and 'void'.", text, StringComparison.Ordinal);
         Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
     }
 

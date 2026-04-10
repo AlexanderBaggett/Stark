@@ -861,6 +861,27 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void VoidReturningCallsCannotBeComparedAsValues()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void A() {
+                return;
+            }
+
+            fn bool Run(bool flag) {
+                return (flag ? A() : A()) == (flag ? A() : A());
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Operator '==' cannot compare 'void' and 'void'");
+    }
+
+    [Fact]
     public void TextAccessRejectsMoreThanTwoIndices()
     {
         var result = Compile(
