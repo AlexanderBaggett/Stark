@@ -39,3 +39,21 @@ If you ever are unsure about how something should be done, provide options with 
 -----------------------
 
 You are a [role] who specializes in [topic]
+
+
+
+
+Hi there, This is the Stark Language Repo. 
+It's a language focused on peformance. Ideally performance matching or beating C and Rust via not allowing unperformant constructs, and through constraints which allow for guarantees that we can make to the LLVM backend.
+
+The language is syntactically semilar to C#, but more restrictive than Rust. 
+
+Read the the documents in the docs folder. Be careful about the compiler.StandardLibraryTests, they take a look time to run.
+
+You can read the project structure and the names of source files, but do not try to read the source files or run the tests yet, theres too many and you'll just burn context.
+
+Also follow the instructions in AIInstructions.md
+
+And when you are ready to work, let me know .
+
+

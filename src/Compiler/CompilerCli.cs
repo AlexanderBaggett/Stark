@@ -589,7 +589,7 @@ internal static class CompilerCli
             await File.WriteAllTextAsync(manifestPath, manifest.ToJson());
 
             await stdout.WriteLineAsync($"Emitted static library: {toolchainResult.OutputPath}");
-            await stdout.WriteLineAsync($"Emitted package manifest: {manifestPath}");
+            await stdout.WriteLineAsync($"Emitted package image: {manifestPath}");
             return 0;
         }
         finally
@@ -971,7 +971,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-llvm   Print emitted LLVM IR");
         await stdout.WriteLineAsync("  --emit-obj    Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --compile-only Compile LLVM IR to an object file");
-        await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package manifest");
+        await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package image");
         await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps");
         await stdout.WriteLineAsync("  --emit-package Emit a Stark package image without linker/archive steps");
         await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image");

@@ -505,6 +505,19 @@ internal sealed record StarkPackageParameterMemoryEffectsManifest(
     bool Writes,
     string CaptureKind);
 
+internal sealed record StarkPackageCallArgumentMemoryEffectsManifest(
+    int ArgumentIndex,
+    string? CallerParameterName,
+    string? CalleeParameterName,
+    bool Reads,
+    bool Writes,
+    string CaptureKind);
+
+internal sealed record StarkPackageFunctionCallManifest(
+    string CalleeName,
+    StarkPackageFunctionMemoryEffectsManifest MemoryEffects,
+    IReadOnlyList<StarkPackageCallArgumentMemoryEffectsManifest> Arguments);
+
 internal sealed record StarkPackageFunctionSemanticManifest(
     string QualifiedResolvedName,
     string DeclaredKind,
@@ -512,6 +525,7 @@ internal sealed record StarkPackageFunctionSemanticManifest(
     IReadOnlyList<string> CalledFunctions,
     StarkPackageFunctionMemoryEffectsManifest? MemoryEffects = null,
     IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null,
+    IReadOnlyList<StarkPackageFunctionCallManifest>? Calls = null,
     StarkPackageFunctionOptimizationManifest? Optimization = null);
 
 internal sealed record StarkPackageFunctionOptimizationManifest(
@@ -531,6 +545,8 @@ internal sealed record StarkPackageFunctionOptimizationManifest(
     bool IsSingleReturnDereferenceWrapper,
     bool IsSingleReturnBinaryOperatorWrapper,
     bool IsSingleReturnComparisonWrapper,
+    bool IsSingleReturnAggregateConstructionWrapper,
+    bool IsSimpleLocalUpdateWrapper,
     bool IsTerminalSelectionWrapper);
 
 internal sealed record StarkPackageConcreteTypeLayoutManifest(

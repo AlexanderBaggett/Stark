@@ -976,7 +976,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted static library:", stdout.ToString());
-            Assert.Contains("Emitted package manifest:", stdout.ToString());
+            Assert.Contains("Emitted package image:", stdout.ToString());
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 0);
@@ -987,9 +987,17 @@ public sealed class CompilerCliTests
             Assert.Equal("Facade", root.GetProperty("RootModule").GetString());
             Assert.Contains(
                 root.GetProperty("Modules").EnumerateArray(),
-                module => module.GetProperty("ModuleName").GetString() == "Facade"
-                          && module.GetProperty("ReExports").EnumerateArray().Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math")
-                          && module.GetProperty("Functions").EnumerateArray().Any(function => function.GetProperty("SymbolName").GetString() == "Facade.Double"));
+                module =>
+                {
+                    if (module.GetProperty("ModuleName").GetString() != "Facade")
+                    {
+                        return false;
+                    }
+
+                    var sourceSurface = module.GetProperty("SourceSurface");
+                    return sourceSurface.GetProperty("ReExports").EnumerateArray().Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math")
+                           && sourceSurface.GetProperty("Functions").EnumerateArray().Any(function => function.GetProperty("SymbolName").GetString() == "Facade.Double");
+                });
         }
         finally
         {

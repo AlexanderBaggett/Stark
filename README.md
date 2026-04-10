@@ -10,8 +10,8 @@ The repository currently contains:
 - MIR and SSA lowering
 - LLVM IR emission
 - native executable emission through Clang
-- static library emission with a package manifest
-- manifest-backed Stark package imports without source files
+- static library emission with a package image
+- package-image-backed Stark package imports without source files
 
 ## Status
 
@@ -21,7 +21,7 @@ Stark can currently:
 - lower core control flow and scalar expressions to LLVM IR
 - compile a native `Hello World`
 - emit MIR, SSA, LLVM IR, or a native executable from the CLI
-- emit a static library plus a package manifest from the CLI
+- emit a static library plus a package image from the CLI
 - emit object files from the CLI
 
 The active implementation checklist lives in [docs/Roadmap.md](./docs/Roadmap.md).
@@ -73,9 +73,11 @@ printf 'module Demo\nfn i32 Main() { return 1; }\n' | dotnet run --project src -
 
 For LLVM-based output modes, Stark will attempt to detect the host target triple and data layout from `clang` automatically.
 
-`--emit-lib` produces a static library archive and a sidecar package manifest named `<basename>.starkpkg.json`.
+`--emit-lib` produces a static library archive and a sidecar package image named `<basename>.starkpkg.json`.
 
-When a source file is not present, Stark will also resolve imports from matching `.starkpkg.json` manifests in the module search directory and link the referenced static library during `--emit-exe`.
+That `.starkpkg.json` file is Stark's compiler-owned package image.
+
+When a source file is not present, Stark will also resolve imports from matching `.starkpkg.json` package images in the module search directory and link the referenced static library during `--emit-exe`.
 
 Additional module/package search roots can be supplied with `-I <dir>` or `--search-dir <dir>`. Stark also honors `STARK_PATH`, split with the platform path separator.
 
@@ -89,7 +91,7 @@ Build it with:
 ./scripts/build-stdlib.sh
 ```
 
-That emits a manifest-backed package into `stdlib/dist/` by default. Applications can then consume it with `-I stdlib/dist`.
+That emits a package-image-backed package into `stdlib/dist/` by default. Applications can then consume it with `-I stdlib/dist`.
 
 ## Minimal Hello World
 
@@ -138,6 +140,7 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 - [docs/BorrowerSystem.md](./docs/BorrowerSystem.md)
 - [docs/ModulesAndVisibility.md](./docs/ModulesAndVisibility.md)
 - [docs/CompilerPipeline.md](./docs/CompilerPipeline.md)
+- [docs/PackageImage.md](./docs/PackageImage.md)
 - [docs/StandardLibrary.md](./docs/StandardLibrary.md)
 - [docs/UnsupportedFeatures.md](./docs/UnsupportedFeatures.md)
 - [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md)

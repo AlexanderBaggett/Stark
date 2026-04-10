@@ -739,6 +739,33 @@ internal static partial class PackageImageLoader
     {
         switch (statement.Kind)
         {
+            case ImportedTemplateTypedBodyStatementKind.Block:
+                AppendIndent(builder, indentLevel);
+                if (!TryRenderImportedTypedTemplateStatementBlock(
+                        builder,
+                        statement.Body,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        enumPatternsByOrdinal,
+                        aggregatePatternsByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        indentLevel))
+                {
+                    return false;
+                }
+
+                builder.AppendLine();
+                return true;
+
+            case ImportedTemplateTypedBodyStatementKind.Empty:
+                AppendIndent(builder, indentLevel);
+                builder.AppendLine(";");
+                return true;
+
             case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:
             case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
             case ImportedTemplateTypedBodyStatementKind.Assignment:
@@ -869,8 +896,7 @@ internal static partial class PackageImageLoader
                 return true;
 
             case ImportedTemplateTypedBodyStatementKind.For:
-                if (statement.Expression is null
-                    || string.IsNullOrWhiteSpace(statement.LoopBehavior)
+                if (string.IsNullOrWhiteSpace(statement.LoopBehavior)
                     || !TryRenderImportedTypedTemplateForHeaderText(
                         statement.Initializer,
                         objectCreationsByOrdinal,
@@ -881,16 +907,6 @@ internal static partial class PackageImageLoader
                         fieldAccessesByOrdinal,
                         memberCallsByOrdinal,
                         out var initializerText)
-                    || !TryRenderImportedTypedTemplateExpression(
-                        statement.Expression,
-                        objectCreationsByOrdinal,
-                        enumConstructorsByOrdinal,
-                        enumCallsByOrdinal,
-                        enumValuesByOrdinal,
-                        directCallsByOrdinal,
-                        fieldAccessesByOrdinal,
-                        memberCallsByOrdinal,
-                        out var forConditionText)
                     || !TryRenderImportedTypedTemplateForHeaderText(
                         statement.Iterator,
                         objectCreationsByOrdinal,
@@ -911,7 +927,24 @@ internal static partial class PackageImageLoader
                 builder.Append(" (");
                 builder.Append(initializerText);
                 builder.Append("; ");
-                builder.Append(forConditionText);
+                if (statement.Expression is not null)
+                {
+                    if (!TryRenderImportedTypedTemplateExpression(
+                            statement.Expression,
+                            objectCreationsByOrdinal,
+                            enumConstructorsByOrdinal,
+                            enumCallsByOrdinal,
+                            enumValuesByOrdinal,
+                            directCallsByOrdinal,
+                            fieldAccessesByOrdinal,
+                            memberCallsByOrdinal,
+                            out var forConditionText))
+                    {
+                        return false;
+                    }
+
+                    builder.Append(forConditionText);
+                }
                 builder.Append("; ");
                 builder.Append(iteratorText);
                 builder.Append(") ");

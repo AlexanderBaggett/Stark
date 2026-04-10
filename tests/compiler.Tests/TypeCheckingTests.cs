@@ -669,6 +669,43 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void GenericMethodsOnGenericTypesRecordConcreteInstantiationTriggers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box<T> {
+                T Value;
+
+                fn T Echo(borrow Box<T> self, T value) {
+                    return value;
+                }
+            }
+
+            fn i32 Run() {
+                stack Box<i32> box = new Box<i32>() { Value = 1 };
+                stack i32 value = 42;
+                return box.Echo(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var trigger = Assert.Single(typeCheckModel.InstantiationTriggers);
+        Assert.Equal("Box.Echo", trigger.FunctionName);
+        Assert.Equal(["i32"], trigger.TypeArguments.Select(static type => type.DisplayName));
+        Assert.True(trigger.Signature.IsGenericInstantiation);
+        Assert.Equal("i32", trigger.Signature.ReturnType.DisplayName);
+        Assert.Equal(2, trigger.Signature.Parameters.Count);
+        Assert.Equal("borrow Box<i32>", trigger.Signature.Parameters[0].Type.DisplayName);
+        Assert.Equal("i32", trigger.Signature.Parameters[1].Type.DisplayName);
+    }
+
+    [Fact]
     public void RepeatedGenericFunctionCallsReuseOneCachedInstantiationTrigger()
     {
         var result = Compile(

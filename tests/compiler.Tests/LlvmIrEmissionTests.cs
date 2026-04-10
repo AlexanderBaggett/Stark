@@ -3819,7 +3819,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
-        Assert.Contains("define fastcc i32 @Use() nounwind willreturn mustprogress nosync nofree memory(none) inlinehint", llvm);
+        Assert.Contains("define fastcc i32 @Use() nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
         Assert.Contains("call fastcc i32 @Add(i32 1, i32 2)", llvm);
     }
 
@@ -4140,6 +4140,109 @@ public sealed class LlvmIrEmissionTests
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private terminal-switch selection wrapper to emit with alwaysinline.");
         Assert.Contains("call fastcc i32 @ChooseSwitch(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModulePrivateObjectConstructionWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Inner {
+                i32 Value;
+            }
+
+            struct Outer {
+                Inner Item;
+                i32 Count;
+            }
+
+            fn Outer Wrap(i32 value, i32 count) {
+                return new Outer() {
+                    Item = { Value = value },
+                    Count = count
+                };
+            }
+
+            fn Outer Use(i32 value, i32 count) {
+                return Wrap(value, count);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Wrap\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private object-construction wrapper to emit with alwaysinline.");
+    }
+
+    [Fact]
+    public void ModulePrivateEnumConstructionWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Boxed {
+                None,
+                Value { Data: i32, Tag: i32 },
+            }
+
+            fn Boxed Wrap(i32 value, i32 tag) {
+                return Boxed.Value { Data: value, Tag: tag };
+            }
+
+            fn Boxed Use(i32 value, i32 tag) {
+                return Wrap(value, tag);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Wrap\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private enum-construction wrapper to emit with alwaysinline.");
+    }
+
+    [Fact]
+    public void ModulePrivateLocalUpdateWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Inner(i32 Value) { }
+            record Box(Inner Inner) { }
+
+            fn i32 Bump(borrow Box box, i32 delta) {
+                stack mut i32 current = box.Inner.Value;
+                current += delta;
+                return current;
+            }
+
+            fn i32 Use(borrow Box box, i32 delta) {
+                return Bump(box, delta);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@Bump\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private local-update wrapper to emit with alwaysinline.");
     }
 
     [Fact]

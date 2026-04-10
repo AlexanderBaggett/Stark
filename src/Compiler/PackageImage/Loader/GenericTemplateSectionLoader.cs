@@ -48,6 +48,32 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        if (string.Equals(manifest.Kind, "block", StringComparison.Ordinal))
+        {
+            var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
+            foreach (var bodyStatement in manifest.BodyStatements ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateStatement(bodyStatement, out var builtBodyStatement))
+                {
+                    return false;
+                }
+
+                bodyStatements.Add(builtBodyStatement);
+            }
+
+            summary = new ImportedTemplateTypedBodyStatementSummary(
+                ImportedTemplateTypedBodyStatementKind.Block,
+                BodyStatements: bodyStatements);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "empty", StringComparison.Ordinal))
+        {
+            summary = new ImportedTemplateTypedBodyStatementSummary(
+                ImportedTemplateTypedBodyStatementKind.Empty);
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "local-variable", StringComparison.Ordinal))
         {
             if (manifest.Name is null || manifest.StorageClass is null || manifest.Type is null)
@@ -122,11 +148,6 @@ internal static partial class PackageImageLoader
 
         if (string.Equals(manifest.Kind, "for", StringComparison.Ordinal))
         {
-            if (expression is null)
-            {
-                return false;
-            }
-
             var initializerStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.InitializerStatements ?? []).Count);
             foreach (var initializerStatement in manifest.InitializerStatements ?? [])
             {
@@ -162,7 +183,7 @@ internal static partial class PackageImageLoader
 
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.For,
-                expression,
+                Expression: expression!,
                 LoopBehavior: manifest.LoopBehavior,
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
@@ -301,11 +322,6 @@ internal static partial class PackageImageLoader
             return false;
         }
 
-        if (manifest.Statements is not { Count: > 0 })
-        {
-            return false;
-        }
-
         ImportedTemplateTypedBodyExpressionSummary? expression = null;
         if (manifest.Expression is not null
             && !TryBuildImportedTypedTemplateExpression(manifest.Expression, out expression))
@@ -342,8 +358,8 @@ internal static partial class PackageImageLoader
             members.Add(builtMember);
         }
 
-        var statements = new List<ImportedTemplateTypedBodyStatementSummary>(manifest.Statements.Count);
-        foreach (var statement in manifest.Statements)
+        var statements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.Statements ?? []).Count);
+        foreach (var statement in manifest.Statements ?? [])
         {
             if (!TryBuildImportedTypedTemplateStatement(statement, out var builtStatement))
             {

@@ -316,7 +316,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, buildExitCode);
             Assert.Contains("Emitted static library:", buildStdout.ToString());
-            Assert.Contains("Emitted package manifest:", buildStdout.ToString());
+            Assert.Contains("Emitted package image:", buildStdout.ToString());
             AssertCompilerLogsEmitted(buildStderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
@@ -326,8 +326,18 @@ public sealed class MultiFileIntegrationTests
                 Assert.Equal("Facade", manifest.RootElement.GetProperty("RootModule").GetString());
                 Assert.Contains(
                     manifest.RootElement.GetProperty("Modules").EnumerateArray(),
-                    module => module.GetProperty("ModuleName").GetString() == "Facade"
-                              && module.GetProperty("ReExports").EnumerateArray().Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math"));
+                    module =>
+                    {
+                        if (module.GetProperty("ModuleName").GetString() != "Facade")
+                        {
+                            return false;
+                        }
+
+                        return module.GetProperty("SourceSurface")
+                            .GetProperty("ReExports")
+                            .EnumerateArray()
+                            .Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math");
+                    });
             }
 
             File.Delete(mathPath);
@@ -422,7 +432,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, buildExitCode);
             Assert.Contains("Emitted static library:", buildStdout.ToString());
-            Assert.Contains("Emitted package manifest:", buildStdout.ToString());
+            Assert.Contains("Emitted package image:", buildStdout.ToString());
             AssertCompilerLogsEmitted(buildStderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));

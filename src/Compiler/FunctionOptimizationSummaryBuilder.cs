@@ -25,6 +25,7 @@ internal static class FunctionOptimizationSummaryBuilder
         var wrapperKind = TryGetSingleReturnWrapperKind(block, out var kind)
             ? kind
             : SingleReturnWrapperKind.None;
+        var isSimpleLocalUpdateWrapper = TryIsSimpleLocalUpdateWrapper(block);
         var isTerminalSelectionWrapper = TryIsTerminalSelectionWrapper(block);
 
         return new FunctionOptimizationSummary(
@@ -44,6 +45,8 @@ internal static class FunctionOptimizationSummaryBuilder
             wrapperKind == SingleReturnWrapperKind.Dereference,
             wrapperKind == SingleReturnWrapperKind.BinaryOperator,
             wrapperKind == SingleReturnWrapperKind.Comparison,
+            wrapperKind == SingleReturnWrapperKind.AggregateConstruction,
+            isSimpleLocalUpdateWrapper,
             isTerminalSelectionWrapper);
     }
 
@@ -280,6 +283,143 @@ internal static class FunctionOptimizationSummaryBuilder
         }
 
         return TryClassifySimpleReturnWrapperExpression(returnExpression, out kind);
+    }
+
+    private static bool TryIsSimpleLocalUpdateWrapper(StarkParser.BlockContext block)
+    {
+        var statements = block.statement();
+        if (statements.Length < 3
+            || statements[^1].returnStatement()?.expression() is not { } returnExpression
+            || !TryGetReturnedLocalName(returnExpression, out var localName)
+            || statements[0].localVariableDeclaration() is not { } declaration
+            || !TryGetSimpleDeclaredLocal(declaration, localName, out var hasInitializer, out var initializer)
+            || (hasInitializer && initializer is not null && !TryIsSimpleAssignmentValue(initializer))
+            || (!hasInitializer && statements.Length < 4))
+        {
+            return false;
+        }
+
+        for (var index = 1; index < statements.Length - 1; index++)
+        {
+            if (!TryIsSimpleLocalUpdateStatement(statements[index], localName))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryGetReturnedLocalName(
+        StarkParser.ExpressionContext expression,
+        out string localName)
+    {
+        localName = string.Empty;
+
+        if (TryGetSimpleUnaryExpression(expression) is not { } unaryExpression
+            || TryGetSimplePostfixExpression(unaryExpression) is not { } postfixExpression
+            || postfixExpression.postfixPart().Length != 0
+            || postfixExpression.primaryExpression().Identifier() is not { } identifier)
+        {
+            return false;
+        }
+
+        localName = identifier.GetText();
+        return true;
+    }
+
+    private static bool TryGetSimpleDeclaredLocal(
+        StarkParser.LocalVariableDeclarationContext declaration,
+        string localName,
+        out bool hasInitializer,
+        out StarkParser.AssignmentExpressionContext? initializer)
+    {
+        hasInitializer = false;
+        initializer = null;
+
+        if (declaration.MUT() is null)
+        {
+            return false;
+        }
+
+        var declarators = declaration.variableDeclarators().variableDeclarator();
+        if (declarators.Length != 1)
+        {
+            return false;
+        }
+
+        var declarator = declarators[0];
+        if (!string.Equals(declarator.Identifier().GetText(), localName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (declarator.variableInitializer() is { } variableInitializer)
+        {
+            if (variableInitializer.expression() is not { } initializerExpression)
+            {
+                return false;
+            }
+
+            hasInitializer = true;
+            initializer = initializerExpression.assignmentExpression();
+        }
+
+        return true;
+    }
+
+    private static bool TryIsSimpleLocalUpdateStatement(
+        StarkParser.StatementContext statement,
+        string localName)
+    {
+        return statement.expressionStatement()?.expression() is { } expression
+            && TryIsSimpleLocalUpdateExpression(expression.assignmentExpression(), localName);
+    }
+
+    private static bool TryIsSimpleLocalUpdateExpression(
+        StarkParser.AssignmentExpressionContext expression,
+        string localName)
+    {
+        return expression.assignmentOperator() is not null
+            && expression.unaryExpression() is { } target
+            && TryIsSimpleLocalAssignmentTarget(target, localName)
+            && expression.assignmentExpression() is { } value
+            && TryIsSimpleAssignmentValue(value);
+    }
+
+    private static bool TryIsSimpleLocalAssignmentTarget(
+        StarkParser.UnaryExpressionContext expression,
+        string localName)
+    {
+        return TryGetSimplePostfixExpression(expression) is { } postfixExpression
+            && postfixExpression.postfixPart().Length == 0
+            && string.Equals(
+                postfixExpression.primaryExpression().Identifier()?.GetText(),
+                localName,
+                StringComparison.Ordinal);
+    }
+
+    private static bool TryIsSimpleAssignmentValue(StarkParser.AssignmentExpressionContext expression)
+    {
+        return expression.assignmentOperator() is null
+            && expression.conditionalExpression() is { } conditionalExpression
+            && TryIsSimpleInlineConditionalExpression(conditionalExpression);
+    }
+
+    private static bool TryIsSimpleInlineConditionalExpression(
+        StarkParser.ConditionalExpressionContext expression)
+    {
+        if (expression.expression().Length == 0)
+        {
+            return TryClassifySimpleReturnLogicalOrExpression(expression.logicalOrExpression(), out _)
+                || TryIsSimpleLeafLogicalOrExpression(expression.logicalOrExpression());
+        }
+
+        return expression.expression().Length == 2
+            && (TryClassifySimpleReturnLogicalOrExpression(expression.logicalOrExpression(), out _)
+                || TryIsSimpleLeafLogicalOrExpression(expression.logicalOrExpression()))
+            && TryIsSimpleInlineConditionExpression(expression.expression(0))
+            && TryIsSimpleInlineConditionExpression(expression.expression(1));
     }
 
     private static bool TryIsTerminalSelectionWrapper(StarkParser.BlockContext block)
@@ -630,7 +770,17 @@ internal static class FunctionOptimizationSummaryBuilder
 
         if (TryGetSimplePostfixExpression(expression) is { } postfixExpression)
         {
-            return TryClassifySimplePostfixExpression(postfixExpression, out kind, out _, out _);
+            if (TryClassifySimplePostfixExpression(postfixExpression, out kind, out _, out _))
+            {
+                return true;
+            }
+
+            if (postfixExpression.postfixPart().Length == 0
+                && TryIsAggregateConstructionPrimary(postfixExpression.primaryExpression()))
+            {
+                kind = SingleReturnWrapperKind.AggregateConstruction;
+                return true;
+            }
         }
 
         if (expression.conversionType() is not null
@@ -790,10 +940,23 @@ internal static class FunctionOptimizationSummaryBuilder
         return expression.Identifier() is not null || expression.qualifiedName() is not null;
     }
 
+    private static bool TryIsAggregateConstructionPrimary(StarkParser.PrimaryExpressionContext expression)
+    {
+        return expression.objectCreationExpression() is not null
+            || expression.enumConstructorExpression() is not null
+            || expression.genericEnumCaseReference() is not null;
+    }
+
     private static bool TryIsSimpleLeafLogicalAndExpression(StarkParser.LogicalAndExpressionContext expression)
     {
         return expression.bitwiseOrExpression().Length == 1
             && TryIsSimpleLeafBitwiseOrExpression(expression.bitwiseOrExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafLogicalOrExpression(StarkParser.LogicalOrExpressionContext expression)
+    {
+        return expression.logicalAndExpression().Length == 1
+            && TryIsSimpleLeafLogicalAndExpression(expression.logicalAndExpression(0));
     }
 
     private static bool TryIsSimpleLeafBitwiseOrExpression(StarkParser.BitwiseOrExpressionContext expression)
@@ -965,6 +1128,7 @@ internal static class FunctionOptimizationSummaryBuilder
         AddressOf,
         Dereference,
         BinaryOperator,
-        Comparison
+        Comparison,
+        AggregateConstruction
     }
 }

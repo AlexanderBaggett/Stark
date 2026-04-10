@@ -113,12 +113,17 @@ internal static partial class PackageImageBuilder
                 StringComparer.Ordinal);
 
         return DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
-            .Where(static function => function.HasBody && function.TypeParameters is not null && function.Visibility is StarkVisibility.Public or StarkVisibility.Export)
+            .Where(static function => function.HasBody && function.Visibility is StarkVisibility.Public or StarkVisibility.Export)
             .Select(function =>
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, function.Name);
-                var functionSignature = typeModel.Functions[lookupName];
+                if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature)
+                    || !functionSignature.IsGeneric)
+                {
+                    return null;
+                }
+
                 deferredTriggersByFunction.TryGetValue(lookupName, out var deferredTriggers);
                 deferredTypeTriggersByFunction.TryGetValue(lookupName, out var deferredTypeTriggers);
                 objectCreationsByFunction.TryGetValue(lookupName, out var objectCreations);
@@ -197,6 +202,8 @@ internal static partial class PackageImageBuilder
                     FieldAccesses: BuildPublishedTemplateFieldAccesses(module, function.Body, fieldAccesses),
                     MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls));
             })
+            .Where(static template => template is not null)
+            .Cast<StarkPackageFunctionTemplateManifest>()
             .OrderBy(static template => template.QualifiedResolvedName, StringComparer.Ordinal)
             .ThenBy(static template => template.OverloadKey, StringComparer.Ordinal)
             .ToArray();
@@ -233,7 +240,9 @@ internal static partial class PackageImageBuilder
         var statements = block.statement();
         if (statements.Length == 0)
         {
-            return null;
+            return returnType.Kind == StarkTypeKind.Void
+                ? new StarkPackageTypedTemplateBodyManifest([])
+                : null;
         }
 
         var localDeclarationsByLocation = (localDeclarations ?? [])
@@ -349,6 +358,8 @@ internal static partial class PackageImageBuilder
         for (var index = 0; index < publishedStatements.Count - 1; index++)
         {
             if (!string.Equals(publishedStatements[index].Kind, "local-variable", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "block", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "empty", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "expression", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "switch", StringComparison.Ordinal)
@@ -367,6 +378,8 @@ internal static partial class PackageImageBuilder
         StarkPackageTypedTemplateStatementManifest statement)
     {
         return string.Equals(statement.Kind, "local-variable", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "block", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "empty", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "expression", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "assignment", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "switch", StringComparison.Ordinal)
@@ -443,6 +456,48 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
     {
+        if (statement.block() is { } block)
+        {
+            if (!TryBuildPublishedTypedTemplateStatementList(
+                    module,
+                    block.statement(),
+                    namedTypes,
+                    literalsByLocation,
+                    localDeclarationsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var blockStatements))
+            {
+                publishedStatements = [];
+                return false;
+            }
+
+            publishedStatements =
+            [
+                new StarkPackageTypedTemplateStatementManifest(
+                    Kind: "block",
+                    BodyStatements: blockStatements)
+            ];
+            return true;
+        }
+
+        if (statement.emptyStatement() is not null)
+        {
+            publishedStatements =
+            [
+                new StarkPackageTypedTemplateStatementManifest(Kind: "empty")
+            ];
+            return true;
+        }
+
         if (statement.localVariableDeclaration() is { } localVariable)
         {
             if (!localDeclarationsByLocation.TryGetValue(
@@ -625,21 +680,6 @@ internal static partial class PackageImageBuilder
         }
 
         if (statement.forStatement() is { } forStatement
-            && forStatement.forCondition() is { } forConditionClause
-            && TryBuildPublishedTypedTemplateExpression(
-                module,
-                forConditionClause.expression(),
-                namedTypes,
-                literalsByLocation,
-                conversionsByLocation,
-                objectCreationOrdinals,
-                enumConstructorOrdinals,
-                enumCallOrdinals,
-                enumValueOrdinals,
-                directCallOrdinals,
-                memberCallOrdinals,
-                fieldAccessOrdinals,
-                out var forCondition)
             && TryBuildPublishedTypedTemplateForInitializerStatements(
                 module,
                 forStatement.forInitializer(),
@@ -669,6 +709,20 @@ internal static partial class PackageImageBuilder
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var iteratorStatements)
+            && TryGetPublishedTypedTemplateForCondition(
+                module,
+                forStatement,
+                namedTypes,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var forCondition)
             && TryBuildPublishedTypedTemplateBranchStatement(
                 module,
                 forStatement.statement(),
@@ -926,6 +980,12 @@ internal static partial class PackageImageBuilder
             return statement.Expression is not null || returnType.Kind == StarkTypeKind.Void;
         }
 
+        if (string.Equals(statement.Kind, "block", StringComparison.Ordinal))
+        {
+            return statement.BodyStatements is { Count: > 0 }
+                && CanUseTypedTemplateStatementListAsTerminal(statement.BodyStatements, returnType);
+        }
+
         if (string.Equals(statement.Kind, "if", StringComparison.Ordinal))
         {
             return CanUseTypedTemplateIfAsTerminal(statement, returnType);
@@ -1001,7 +1061,6 @@ internal static partial class PackageImageBuilder
         foreach (var section in sections)
         {
             if (section.switchLabel().Length == 0
-                || section.statement().Length == 0
                 || !TryBuildPublishedTypedTemplateStatementList(
                     module,
                     section.statement(),
@@ -1648,6 +1707,44 @@ internal static partial class PackageImageBuilder
             memberCallOrdinals,
             fieldAccessOrdinals,
             out iteratorStatements);
+    }
+
+    private static bool TryGetPublishedTypedTemplateForCondition(
+        LoadedModuleDocument module,
+        StarkParser.ForStatementContext forStatement,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, LiteralTypingRecord> literalsByLocation,
+        IReadOnlyDictionary<string, ConversionTypingRecord> conversionsByLocation,
+        IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, PublishedTypedTemplateObjectCreationLookup> objectCreationOrdinals,
+        IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> enumConstructorOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> enumCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> enumValueOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
+        IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
+        out StarkPackageTypedTemplateExpressionManifest? condition)
+    {
+        condition = null;
+
+        if (forStatement.forCondition() is not { } forConditionClause)
+        {
+            return true;
+        }
+
+        return TryBuildPublishedTypedTemplateExpression(
+            module,
+            forConditionClause.expression(),
+            namedTypes,
+            literalsByLocation,
+            conversionsByLocation,
+            objectCreationOrdinals,
+            enumConstructorOrdinals,
+            enumCallOrdinals,
+            enumValueOrdinals,
+            directCallOrdinals,
+            memberCallOrdinals,
+            fieldAccessOrdinals,
+            out condition!);
     }
 
     private static bool TryBuildPublishedTypedTemplateAssignmentStatementList(

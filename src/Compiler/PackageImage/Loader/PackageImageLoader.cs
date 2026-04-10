@@ -44,7 +44,7 @@ internal static partial class PackageImageLoader
                     new CompilerDiagnostic(
                         Code: "STK7100",
                         Severity: DiagnosticSeverity.Error,
-                        Message: "Package image JSON could not be parsed into a Stark package manifest.",
+                        Message: "Package image JSON could not be parsed into a Stark package image document.",
                         Stage: "package-image",
                         Location: new SourceLocation(manifestPath, 1, 1))
                 ];

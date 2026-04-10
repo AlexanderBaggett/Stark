@@ -519,7 +519,11 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             var bridgeOnlyManifest = BuildTypedOnlyFacadeManifest(
                 manifest,
                 template => template.QualifiedResolvedName == "Facade.Relay"
-                    ? template with { TypedBody = null }
+                    ? template with
+                    {
+                        TypedBody = null,
+                        BodyText = "{ return view; }"
+                    }
                     : template);
 
             File.WriteAllText(manifestPath, bridgeOnlyManifest.ToJson());

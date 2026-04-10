@@ -846,7 +846,7 @@ Goal: Stark is pleasant to work on and pleasant to use.
 - [x] top-level design docs exist
 - [x] grammar exists in source control
 - [x] minimal getting-started guide in `README.md`
-- [ ] roadmap kept up to date as work lands
+- [x] roadmap kept up to date as work lands
 - [x] standard library roadmap expanded in `StandardLibrary.md`
   - [x] module-by-module stdlib surface plan
   - [x] runtime/allocator/IO dependency map
@@ -944,17 +944,17 @@ Goal: add non-essential language surface after the first release without slowing
   - [x] recursive and nested generic specialization expansion during lowering
   - [x] end-to-end generic body regression coverage
 - [ ] Compiler-owned package image architecture
-  - [ ] Reframe the current package manifest as a broader package image artifact rather than a lossy package index
-  - [ ] Define the package image principles and invariants
-    - [ ] keep the artifact text-based and diffable in Git
-    - [ ] do not add an embedded format-version field; the compiler and image format evolve together in source control
-    - [ ] make the image sectioned so new compiler data can be added without collapsing into one flat record type
-    - [ ] make direct compiler loading the primary path instead of reconstructing fake Stark source from lossy strings
+  - [x] Reframe the current package manifest as a broader package image artifact rather than a lossy package index
+  - [x] Define the package image principles and invariants
+    - [x] keep the artifact text-based and diffable in Git
+    - [x] do not add an embedded format-version field; the compiler and image format evolve together in source control
+    - [x] make the image sectioned so new compiler data can be added without collapsing into one flat record type
+    - [x] make direct compiler loading the primary path instead of reconstructing fake Stark source from lossy strings
   - [ ] Design a Stark-native, near-homoiconic package image syntax
-    - [ ] represent package and module boundaries explicitly
+    - [x] represent package and module boundaries explicitly
     - [x] represent exported and public source surface explicitly
     - [x] represent typed compiler-owned sections explicitly rather than hiding them inside string fields
-    - [ ] define which sections are human-authored, compiler-emitted, or compiler-only
+    - [x] define which sections are human-authored, compiler-emitted, or compiler-only
   - [ ] Add structured typed-interface sections
     - [x] encode types structurally instead of rendering them as plain strings
     - [x] encode functions, methods, globals, types, and aliases with visibility, generics, modifiers, and symbol names
@@ -986,48 +986,49 @@ Goal: add non-essential language surface after the first release without slowing
     - [x] publish typed direct-call target facts needed for imported generic type checking and MIR lowering
     - [x] publish typed field-access facts needed for imported generic type checking and MIR lowering
     - [x] publish typed member-call target facts needed for imported generic type checking and MIR lowering
-    - [x] publish a first typed template-body subset for public/export generic functions and methods covering simple helper bodies such as literal returns, explicit conversion returns, unary operator returns including direct raw-pointer dereference and address-of over the same supported addressable target subset, binary operator returns including exponentiation, equality and ordered comparison chains with once-evaluated semantics, conditional returns including binary/logical conditions, object-creation returns including supported nested object-initializer and fixed-array member initializers, named enum-constructor returns including literal payload members, enum-call returns, enum-value returns, direct-call returns, member-call returns, field-access returns, simple index-access returns over already-supported MIR indexable families, including the full currently supported text postfix bracket family (`text[]`, `text[index]`, and `text[start, length]`), simple chained field/index/member receiver forms, grouped-expression receiver forms, and direct-call-result or object-creation-result receiver forms, discarded supported expression statements for void or non-void temporaries, assignment expressions over the same supported local and named-root field/index target subset as published assignment statements plus raw-pointer dereference-root targets including projected field/index chains rooted at `*expr`, explicit `return;` in void helpers, local `const` helpers, grouped local variable declarators including uninitialized declarators, object-initializer variable initializers, and other supported initializers, grouped local constant declarators with supported initializers, simple local-update helpers with supported local reassignment and simple `if`/`else`, `while`, or `for` control flow, including grouped `for`-initializer local declarators with uninitialized declarators, object-initializer variable initializers, or other supported initializers plus structural `break` and `continue` inside the loop subset, terminal non-void `if`/`else` chains whose branches all return, and simple switch-pattern helpers over already-published enum and aggregate pattern facts, including literal field tests and nested enum/aggregate field subpatterns, that end in a return or other terminal structured control-flow return
-    - [ ] publish typed template bodies for exported or public generic functions and methods
-    - [ ] preserve enough local, type, and effect information to specialize imported generics without reparsing source text
+    - [x] publish the initial typed template-body milestone for public/export generic functions and methods
+    - [x] publish typed template bodies for exported or public generic functions and methods
+    - [x] preserve enough local, type, and effect information to specialize imported generics without reparsing source text
     - [ ] define explicit rules for which templates are published and which stay package-private
     - [ ] ensure the template-body representation is suitable for future optimization passes, not just minimal code generation
   - [ ] Integrate package images into module loading and the compiler pipeline
     - [x] load package image data directly into compiler artifacts
     - [x] prefer package-image loading over synthetic source reconstruction whenever rich sections are available
     - [x] let the temporary source bridge use authored source-surface overload identity to recover published generic template bodies even when declaration emission still uses canonical typed-interface spellings
-    - [x] carry published overload identity and generic-body availability directly in typed-interface function and method entries so structured loading and temporary bridge recovery no longer require source-surface function/type entries for the supported imported generic path
-    - [x] omit duplicated raw generic body text from package images when the published typed template body already covers the supported imported specialization path, and keep textual bridge fallback only for templates that still need it
-    - [x] let the temporary source bridge omit imported generic body text when a published typed template body is sufficient for downstream type checking and MIR lowering, including simple module-qualified direct-call helpers and receiver-style member-call helpers, and keep that supported imported generic subset declaration-only during structured package-image loading instead of re-rendering fake source bodies
+    - [x] carry published overload identity and generic-body availability directly in typed-interface function and method entries so structured loading and temporary bridge recovery no longer require source-surface function/type entries for imported generic declarations
+    - [x] omit duplicated raw generic body text from package images when the published typed template body covers imported specialization, and keep textual bridge fallback only for legacy manifests that predate typed template publication
+    - [x] let the temporary source bridge omit imported generic body text when published typed template bodies are available for downstream type checking and MIR lowering, and keep imported generic declarations declaration-only during structured package-image loading instead of re-rendering fake source bodies
     - [x] preserve authored hot/cold/inline modifier identity directly in typed-interface loading and temporary bridge reconstruction so imported planning and declaration recovery do not depend on compiler-fact sections for that surface
     - [x] centralize source-surface fallback so explicit source-surface sections win over legacy flat surface fields, while older flat source-surface data still preserves authored overload identity when explicit sections are missing
     - [x] emit new package images with explicit source-surface sections as the primary surface representation instead of duplicating authored surface data into legacy flat fields
     - [x] emit new package images with explicit compiler sections as the primary compiler-owned representation instead of duplicating typed interface, compiler facts, and generic templates into legacy flat fields
-    - [ ] keep legacy manifest reconstruction only as a temporary bridge while the package-image path is being completed
-    - [ ] remove synthetic-source dependence from manifest-backed generic, alias, doctrine, and trait imports once the package-image path is complete
+    - [x] keep legacy manifest reconstruction only as a temporary bridge while the package-image path is being completed
+    - [x] remove synthetic-source dependence from manifest-backed generic, alias, doctrine, and trait imports once the package-image path is complete
       - [x] resolve imported public/export type aliases from package-image typed-interface facts instead of reparsed bridge alias declarations
       - [x] resolve imported public/export globals from package-image typed-interface facts instead of reparsed bridge global declarations
       - [x] resolve imported public/export named type shape and record primary-constructor data from package-image typed-interface facts instead of reparsed bridge type declarations
       - [x] resolve imported explicit struct and record constructor signatures from package-image typed-interface facts instead of relying on bridge constructor declarations
       - [x] resolve imported trait/doctrine method signatures from package-image typed-interface facts instead of reparsed bridge declarations
-  - [ ] Use package images to finish generic code generation across package boundaries
+  - [x] Use package images to finish generic code generation across package boundaries
     - [x] emit consumer-owned specializations from imported generic template bodies
     - [x] support recursive and nested specialization expansion when templates come from package images
     - [x] define ownership, linkage, and dedup rules when one package publishes templates and another package owns concrete specializations
     - [x] ensure the package-boundary generic path stays zero-cost at runtime and does not introduce fallback indirection
-  - [ ] Use package images to improve optimizer capability
+  - [x] Use package images to improve optimizer capability
     - [x] use imported concrete layout facts during monomorphization planning so manifest-backed large by-value generic instantiations do not get treated like trivially inline helpers
     - [x] let specialization planning consume imported effect, ABI, and layout facts directly instead of re-deriving them from stringly data
     - [x] publish weighted generic body-cost summaries so imported monomorphization planning does not rely only on top-level statement count
-    - [x] publish structural optimization summaries for generic templates so imported direct/member-call, field/index-access, simple binary/comparison wrappers, terminal `if`/`switch` selector wrappers, and simple explicit-conversion or unary pointer-wrapper planning plus module-private inline promotion can use preserved call/access/operator/branch/unary/loop/object-creation shape instead of relying only on scalar body cost
+    - [x] publish structural optimization summaries for generic templates so imported direct/member-call, field/index-access, aggregate-construction wrappers, simple local-update wrappers, simple binary/comparison wrappers, terminal `if`/`switch` selector wrappers, and simple explicit-conversion or unary pointer-wrapper planning plus module-private inline promotion can use preserved call/access/object-construction/operator/branch/unary/loop/object-creation shape instead of relying only on scalar body cost
     - [x] extend caller-clone lowering from imported doctrine members to imported top-level law-style helpers and root-owned package-backed specialization symbols
-    - [ ] preserve enough information for future cross-package inlining or richer package-aware optimizations beyond the current caller-clone, effective-kind, semantic-summary, and structural optimization-summary surface
+    - [x] preserve enough information for future cross-package inlining or richer package-aware optimizations beyond the current caller-clone, effective-kind, semantic-summary, and structural optimization-summary surface
+    - [x] preserve resolved interprocedural call memory/capture summaries in package images so imported packages keep richer optimizer facts than just callee sets, effective kinds, and wrapper classifications
     - [x] keep package publication from throwing away semantic, call-graph, and planning facts that are expensive for the compiler to recover later
-  - [ ] Tooling, inspection, and diagnostics for package images
+  - [x] Tooling, inspection, and diagnostics for package images
     - [x] emit package images from the CLI and standard-library packaging flow
     - [x] add a readable dump or inspect mode for package images
     - [x] add diagnostics for missing required sections, malformed structured facts, or unsupported package-image content
-    - [ ] document the package image as a compiler-owned source artifact rather than a narrow distribution manifest
-  - [ ] Test coverage for package images
+    - [x] document the package image as a compiler-owned source artifact rather than a narrow distribution manifest
+  - [x] Test coverage for package images
     - [x] writer or loader round-trip tests for rich package images
     - [x] direct-import tests that no longer synthesize fake source when rich package-image sections are present
     - [x] end-to-end tests for imported generic specialization from package images

@@ -587,14 +587,14 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 
 ### Packaging checks
 
-- verify the package manifest stays in sync with exported module names
+- verify the package image stays in sync with exported module names
 - verify the package output location can be overridden
 - verify the package remains usable from a clean consumer project with no source dependency
 
 ## Packaging Plan
 
 - `scripts/build-stdlib.sh` remains the canonical build entry point
-- the script emits both the archive and the package manifest
+- the script emits both the archive and the package image
 - package output is compatible with the compiler's `-I` lookup path
 - packaging changes preserve the ability to build the stdlib in isolation from application code
 

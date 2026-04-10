@@ -1375,4 +1375,351 @@ public sealed class CompilerPipelineEmitLlvmTests
             }
         }
     }
+
+    [Fact]
+    public void ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-object-construction-wrapper-generic-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Inner<T> {
+                    T Value;
+                }
+
+                public struct Outer<T> {
+                    Inner<T> Item;
+                    i32 Count;
+                }
+
+                public fn Outer<T> Wrap<T>(T value, i32 count, T tag) {
+                    return new Outer<T>() {
+                        Item = { Value = value },
+                        Count = count
+                    };
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var publishedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Wrap");
+            Assert.NotNull(publishedTemplate.Semantics);
+            Assert.NotNull(publishedTemplate.Semantics!.Optimization);
+            Assert.True(publishedTemplate.Semantics.Optimization!.IsSingleReturnAggregateConstructionWrapper);
+            Assert.Equal(1, publishedTemplate.Semantics.Optimization.ObjectCreationCount);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn Facade.Outer<i32> Run(i32 value, i32 count) {
+                        return Facade.Wrap(value, count, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Wrap", out var importedSemantics));
+            Assert.NotNull(importedSemantics.OptimizationSummary);
+            Assert.True(importedSemantics.OptimizationSummary!.IsSingleReturnAggregateConstructionWrapper);
+            Assert.Equal(1, importedSemantics.OptimizationSummary.ObjectCreationCount);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Wrap");
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Wrap__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported object-construction wrapper specialization to emit with alwaysinline.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-enum-construction-wrapper-generic-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public enum Boxed<T> {
+                    None,
+                    Value { Data: T, Tag: i32 },
+                }
+
+                public fn Boxed<T> Wrap<T>(T value, i32 tag, T marker) {
+                    return Boxed<T>.Value { Data: value, Tag: tag };
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var publishedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Wrap");
+            Assert.NotNull(publishedTemplate.Semantics);
+            Assert.NotNull(publishedTemplate.Semantics!.Optimization);
+            Assert.True(publishedTemplate.Semantics.Optimization!.IsSingleReturnAggregateConstructionWrapper);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn Facade.Boxed<i32> Run(i32 value, i32 tag) {
+                        return Facade.Wrap(value, tag, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Wrap", out var importedSemantics));
+            Assert.NotNull(importedSemantics.OptimizationSummary);
+            Assert.True(importedSemantics.OptimizationSummary!.IsSingleReturnAggregateConstructionWrapper);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Wrap");
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Wrap__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported enum-construction wrapper specialization to emit with alwaysinline.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-local-update-wrapper-generic-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public record Inner(i32 Value) { }
+                public record Box(Inner Inner) { }
+
+                public fn i32 Bump<T>(borrow Box box, i32 delta, T tag) {
+                    stack mut i32 current = box.Inner.Value;
+                    current += delta;
+                    return current;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var publishedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Bump");
+            Assert.NotNull(publishedTemplate.Semantics);
+            Assert.NotNull(publishedTemplate.Semantics!.Optimization);
+            Assert.True(publishedTemplate.Semantics.Optimization!.IsSimpleLocalUpdateWrapper);
+            Assert.Equal(2, publishedTemplate.Semantics.Optimization.FieldAccessCount);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            CompilerSections = module.CompilerSections! with
+                            {
+                                CompilerFacts = module.CompilerSections.CompilerFacts! with
+                                {
+                                    FunctionSemantics = []
+                                }
+                            }
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(borrow Facade.Box box, i32 delta) {
+                        return Facade.Bump(box, delta, delta);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Bump", out var importedSemantics));
+            Assert.NotNull(importedSemantics.OptimizationSummary);
+            Assert.True(importedSemantics.OptimizationSummary!.IsSimpleLocalUpdateWrapper);
+            Assert.Equal(2, importedSemantics.OptimizationSummary.FieldAccessCount);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Bump");
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Bump__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported local-update wrapper specialization to emit with alwaysinline.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
 }

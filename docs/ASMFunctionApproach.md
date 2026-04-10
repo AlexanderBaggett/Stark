@@ -47,4 +47,4 @@ public ffi asm(x86_64) fn i64 Syscall0(i64 number)
 }
 ```
 
-For package boundaries, Stark should preserve the selected asm declaration in the package manifest as structured asm metadata. A dependent module can then reconstruct the declaration for syntax-model/type-check/target-selection purposes, while `emit-llvm` still treats manifest-backed asm functions as external ABI declarations and links the packaged library rather than re-emitting the inline asm body in the consumer.
+For package boundaries, Stark should preserve the selected asm declaration in the package image as structured asm metadata. A dependent module can then reconstruct the declaration for syntax-model/type-check/target-selection purposes, while `emit-llvm` still treats manifest-backed asm functions as external ABI declarations and links the packaged library rather than re-emitting the inline asm body in the consumer.

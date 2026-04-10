@@ -1,0 +1,8 @@
+- Do complete tasks, end-to-end. No caveats, no "I left some feature unfinished" no "I didn't lower this piece"
+- No execuses. Your context will autocompact, so don't worry about how long it takes or how much effort it is.
+- If it takes 2 minutes that's fine. If it takes 2 hours thats also fine. 
+- No more talk of manageable slices, when you are assigned a task or pick a task, commit to it fully no matter how much effor it is, no matter how long it takes.
+- If your task requires modification of the entire compiler pipeline, so be it, do it anyway.
+- only pick unchecked roadmap items or clearly unsupported items as work targets.
+- Do not expand the description of an already-checked task except for obvious typo-level clarification.
+- If you find a checked item was overstated, I’ll call that out explicitly instead of silently treating it as open work.

@@ -11,7 +11,7 @@ It re-exports:
 - `System.Text`
 
 It also imports internal runtime support and the `System.Syscall` module during package build, but `System.Syscall` is not re-exported through `System`.
-Internal runtime modules such as `System.Runtime.Buffer` are compiled into the package implementation, but they are not part of the public package manifest or supported import surface.
+Internal runtime modules such as `System.Runtime.Buffer` are compiled into the package implementation, but they are not part of the public package image or supported import surface.
 
 ## Example
 

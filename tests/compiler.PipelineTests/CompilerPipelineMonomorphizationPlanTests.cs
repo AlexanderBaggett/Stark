@@ -369,6 +369,112 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
         Assert.True(chooseSwitch.EstimatedBodyCost is > 2);
     }
 
+    [Fact]
+    public void RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Inner<T> {
+                    T Value;
+                }
+
+                struct Outer<T> {
+                    Inner<T> Item;
+                    i32 Count;
+                }
+
+                fn Outer<T> Wrap<T>(T value, i32 count, T tag) {
+                    return new Outer<T>() {
+                        Item = { Value = value },
+                        Count = count
+                    };
+                }
+
+                fn Outer<i32> Run(i32 value, i32 count) {
+                    return Wrap(value, count, value);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var wrap = Assert.Single(plan.Functions, static function => function.TemplateName == "Wrap");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, wrap.CodeSizeHeuristic);
+        Assert.NotNull(wrap.EstimatedBodyCost);
+    }
+
+    [Fact]
+    public void RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                enum Boxed<T> {
+                    None,
+                    Value { Data: T, Tag: i32 },
+                }
+
+                fn Boxed<T> Wrap<T>(T value, i32 tag, T marker) {
+                    return Boxed<T>.Value { Data: value, Tag: tag };
+                }
+
+                fn Boxed<i32> Run(i32 value, i32 tag) {
+                    return Wrap(value, tag, value);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var wrap = Assert.Single(plan.Functions, static function => function.TemplateName == "Wrap");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, wrap.CodeSizeHeuristic);
+        Assert.NotNull(wrap.EstimatedBodyCost);
+    }
+
+    [Fact]
+    public void RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Inner(i32 Value) { }
+                record Box(Inner Inner) { }
+
+                fn i32 Bump<T>(borrow Box box, i32 delta, T tag) {
+                    stack mut i32 current = box.Inner.Value;
+                    current += delta;
+                    return current;
+                }
+
+                fn i32 Run(borrow Box box, i32 delta) {
+                    return Bump(box, delta, delta);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var bump = Assert.Single(plan.Functions, static function => function.TemplateName == "Bump");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, bump.CodeSizeHeuristic);
+        Assert.True(bump.EstimatedBodyCost is > 2);
+    }
+
 
     [Fact]
     public void SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols()
@@ -603,7 +709,7 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
 
 
     [Fact]
-    public void ManifestBackedComplexSingleStatementGenericBodiesUseEstimatedBodyCostForPlanning()
+    public void ManifestBackedTerminalSelectionGenericBodiesUseOptimizationSummaryForPlanning()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-body-cost-generic-mono-plan-pipeline-");
         var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
@@ -668,10 +774,113 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
             Assert.NotNull(plan);
 
             var function = Assert.Single(plan.Functions);
-            Assert.Equal(MonomorphizationCodeSizeHeuristic.SpecializeDefault, function.CodeSizeHeuristic);
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
             Assert.Equal(1, function.EstimatedTopLevelStatementCount);
             Assert.Equal(templateSummary.EstimatedBodyCost, function.EstimatedBodyCost);
             Assert.Equal(MonomorphizationLinkageKind.InternalSingleOwner, function.Linkage);
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Classify__i32", function.SymbolName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedGenericPlanningUsesPublishedTemplateSummaryWhenImportedBridgeBodyIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-template-summary-corrupted-bridge-plan-");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32 Classify<T>(i32 value, T tag) {
+                    switch (value) {
+                        case 0:
+                            return 10;
+                        case 1:
+                            return 11;
+                        case 2:
+                            return 12;
+                        default:
+                            return value;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var resolvedPackageModule = new ResolvedPackageModule(
+                Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json"),
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                manifest,
+                facadeModule);
+
+            Assert.True(PackageImageLoader.TryBuildModuleDocument(resolvedPackageModule, out var importedDocument));
+            Assert.NotNull(importedDocument.PackageImageFacts);
+            Assert.True(importedDocument.PackageImageFacts!.FunctionTemplates.TryGetValue("Facade.Classify", out var templateSummary));
+            Assert.Equal(1, templateSummary.TopLevelStatementCount);
+            Assert.True(templateSummary.EstimatedBodyCost is > 2);
+            Assert.True(templateSummary.OptimizationSummary?.IsTerminalSelectionWrapper);
+
+            var corruptedSourceText = importedDocument.ParseResult.SourceText.Replace(
+                "public fn i32 Classify<T>(i32 value, T tag);",
+                """
+                public fn i32 Classify<T>(i32 value, T tag) {
+                    stack mut i32 total = value;
+                    total = total + 1;
+                    total = total + 2;
+                    return total;
+                }
+                """,
+                StringComparison.Ordinal);
+            Assert.NotEqual(importedDocument.ParseResult.SourceText, corruptedSourceText);
+
+            var corruptedDocument = importedDocument with
+            {
+                ParseResult = StarkSyntax.ParseCompilationUnit(corruptedSourceText)
+            };
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run(i32 value) {
+                        return Facade.Classify(value, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "monomorphization-plan",
+                    ModuleResolver: new DocumentOnlyModuleResolver(corruptedDocument)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+
+            var function = Assert.Single(plan.Functions);
+            Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, function.CodeSizeHeuristic);
+            Assert.Equal(1, function.EstimatedTopLevelStatementCount);
+            Assert.Equal(templateSummary.EstimatedBodyCost, function.EstimatedBodyCost);
             Assert.Equal("__stark_mono_fn_Demo__Facade_Classify__i32", function.SymbolName);
         }
         finally

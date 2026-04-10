@@ -427,7 +427,7 @@ internal static class FunctionOverloadFacts
         var receiverOffset = receiverType is null ? 0 : 1;
 
         if (receiverType is not null
-            && ContainsGenericParameter(candidate.Parameters[0].Type, genericParameters)
+            && ContainsGenericParameter(SubstituteType(candidate.Parameters[0].Type, substitution), genericParameters)
             && !TryInferTypeArguments(candidate.Parameters[0].Type, receiverType, genericParameters, substitution))
         {
             return false;
@@ -435,7 +435,7 @@ internal static class FunctionOverloadFacts
 
         for (var index = 0; index < argumentTypes.Count; index++)
         {
-            var parameterType = candidate.Parameters[index + receiverOffset].Type;
+            var parameterType = SubstituteType(candidate.Parameters[index + receiverOffset].Type, substitution);
             if (ContainsGenericParameter(parameterType, genericParameters)
                 && !TryInferTypeArguments(
                     parameterType,
@@ -474,11 +474,6 @@ internal static class FunctionOverloadFacts
         if (TryGetDirectGenericParameterName(parameterType, genericParameters, out var directGenericParameter))
         {
             return TryBindGenericParameter(directGenericParameter, argumentType, substitution);
-        }
-
-        if (!TypeCompatibilityFacts.AreQualifiersAssignable(parameterType, argumentType))
-        {
-            return false;
         }
 
         var strippedParameterType = StripQualifiers(parameterType);

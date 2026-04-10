@@ -4655,6 +4655,70 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void PackageManifestIncludesStructuredSemanticCallFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-semantic-calls-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32 Value;
+                }
+
+                public fn void Touch(borrow mut Box box) {
+                    box.Value = 1;
+                    return;
+                }
+
+                public fn void Outer(borrow mut Box box) {
+                    Touch(box);
+                    return;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var semantics = facadeModule.CompilerFacts!.FunctionSemantics;
+            Assert.NotNull(semantics);
+
+            var outer = Assert.Single(semantics!, static summary => summary.QualifiedResolvedName == "Facade.Outer");
+            Assert.Contains("Facade.Touch", outer.CalledFunctions);
+            var call = Assert.Single(outer.Calls!);
+            Assert.Equal("Facade.Touch", call.CalleeName);
+            Assert.True(call.MemoryEffects.WritesArgumentMemory);
+            Assert.False(call.MemoryEffects.ReadsOtherMemory);
+            var argument = Assert.Single(call.Arguments);
+            Assert.Equal(0, argument.ArgumentIndex);
+            Assert.Equal("box", argument.CallerParameterName);
+            Assert.Equal("box", argument.CalleeParameterName);
+            Assert.True(argument.Writes);
+            Assert.Equal("none", argument.CaptureKind);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void PackageManifestIncludesGenericTemplateBodySections()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-templates-pipeline-");
@@ -4719,6 +4783,69 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void PackageManifestPublishesTypedTemplateBodiesForMethodsOnGenericTypes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-generic-type-method-template-body-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box<T> {
+                    T Value;
+
+                    fn T Echo(borrow Box<T> self, T fallback) {
+                        return self.Value;
+                    }
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var boxType = Assert.Single(facadeModule.TypedInterface!.Types, static type => type.QualifiedName == "Facade.Box");
+            var echoMethod = Assert.Single(boxType.Methods!, static method => method.QualifiedResolvedName == "Facade.Box.Echo");
+            Assert.Null(echoMethod.GenericParameters);
+            Assert.True(echoMethod.HasGenericTemplateBody);
+
+            var echoTemplate = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.Box.Echo");
+            Assert.Null(echoTemplate.BodyText);
+            Assert.NotNull(echoTemplate.TypedBody);
+            Assert.Equal(1, echoTemplate.TopLevelStatementCount);
+
+            var publishedReturn = Assert.Single(echoTemplate.TypedBody!.Statements);
+            Assert.Equal("return", publishedReturn.Kind);
+            Assert.Equal("field-access", publishedReturn.Expression.Kind);
+            var receiver = Assert.Single(publishedReturn.Expression.Arguments!);
+            Assert.Equal("name", receiver.Kind);
+            Assert.Equal("self", receiver.Name);
+
+            var json = manifest.ToJson();
+            Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"Facade.Box.Echo\"", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageManifestIncludesGenericTemplateSemanticSummaries()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-semantics-pipeline-");
@@ -4756,6 +4883,68 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.True(boxParameter.GuaranteedReadOnly);
             Assert.Equal(4, boxParameter.DereferenceableBytes);
             Assert.Equal(4, boxParameter.AlignmentBytes);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void PackageManifestIncludesGenericTemplateSemanticCallFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-semantic-calls-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32 Value;
+                }
+
+                public fn void Reset(borrow mut Box box) {
+                    box.Value = 0;
+                    return;
+                }
+
+                public fn void Touch<T>(borrow mut Box box, T tag) {
+                    Reset(box);
+                    return;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static function => function.QualifiedResolvedName == "Facade.Touch");
+
+            Assert.NotNull(template.Semantics);
+            Assert.Contains("Facade.Reset", template.Semantics!.CalledFunctions);
+            var call = Assert.Single(template.Semantics.Calls!);
+            Assert.Equal("Facade.Reset", call.CalleeName);
+            Assert.True(call.MemoryEffects.WritesArgumentMemory);
+            var argument = Assert.Single(call.Arguments);
+            Assert.Equal(0, argument.ArgumentIndex);
+            Assert.Equal("box", argument.CallerParameterName);
+            Assert.Equal("box", argument.CalleeParameterName);
+            Assert.True(argument.Writes);
+            Assert.Equal("none", argument.CaptureKind);
         }
         finally
         {
@@ -5061,6 +5250,106 @@ public sealed class CompilerPipelineFullIntegrationTests
             var json = manifest.ToJson();
             Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
             Assert.Contains("\"object-initializer\"", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void PackageManifestPublishesEmptyBlockAndOpenEndedLoopTypedTemplateBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-empty-block-loop-template-body-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn void NoOp<T>(T tag) { }
+
+                public fn i32 KeepValue<T>(i32 value, T tag) {
+                    ;
+                    return value;
+                }
+
+                public fn i32 NestedScope<T>(i32 value, T tag) {
+                    {
+                        ;
+                    }
+
+                    return value;
+                }
+
+                public fn i32 CountTo<T>(i32 count, T tag) {
+                    stack mut i32 index = 0;
+                    for willexit (;;) {
+                        if (index == count) {
+                            break;
+                        }
+
+                        index = index + 1;
+                    }
+
+                    return index;
+                }
+
+                public fn i32 EmptySwitch<T>(i32 value, T tag) {
+                    switch (value) {
+                        case 0:
+                    }
+
+                    return value;
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var noOp = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.NoOp");
+            Assert.Null(noOp.BodyText);
+            Assert.NotNull(noOp.TypedBody);
+            Assert.Empty(noOp.TypedBody!.Statements);
+
+            var keepValue = Assert.Single(facadeModule.GenericTemplates.Functions, static template => template.QualifiedResolvedName == "Facade.KeepValue");
+            Assert.Equal(["empty", "return"], keepValue.TypedBody!.Statements.Select(static statement => statement.Kind));
+
+            var nestedScope = Assert.Single(facadeModule.GenericTemplates.Functions, static template => template.QualifiedResolvedName == "Facade.NestedScope");
+            Assert.Equal("block", nestedScope.TypedBody!.Statements[0].Kind);
+            Assert.NotNull(nestedScope.TypedBody.Statements[0].BodyStatements);
+            Assert.Equal("empty", Assert.Single(nestedScope.TypedBody.Statements[0].BodyStatements!).Kind);
+
+            var countTo = Assert.Single(facadeModule.GenericTemplates.Functions, static template => template.QualifiedResolvedName == "Facade.CountTo");
+            var loop = Assert.Single(countTo.TypedBody!.Statements, static statement => statement.Kind == "for");
+            Assert.Null(loop.Expression);
+            Assert.NotNull(loop.BodyStatements);
+
+            var emptySwitch = Assert.Single(facadeModule.GenericTemplates.Functions, static template => template.QualifiedResolvedName == "Facade.EmptySwitch");
+            var switchStatement = Assert.Single(emptySwitch.TypedBody!.Statements, static statement => statement.Kind == "switch");
+            Assert.NotNull(switchStatement.SwitchCases);
+            Assert.Single(switchStatement.SwitchCases!);
+            Assert.Empty(Assert.Single(switchStatement.SwitchCases!).Statements ?? []);
+
+            var json = manifest.ToJson();
+            Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"empty\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"block\"", json, StringComparison.Ordinal);
         }
         finally
         {
@@ -7864,6 +8153,111 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.NotNull(typeCheckModel);
             Assert.Contains("Facade.PublicPair", typeCheckModel.TypeAliases.Keys);
             Assert.Equal("Facade.Pair", typeCheckModel.TypeAliases["Facade.PublicPair"].TargetType.DisplayName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void ManifestBackedAliasDoctrineAndTraitImportsResolveFromPackageImageFactsWhenImportedParseTreeIsEmpty()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-empty-parse-import-facts-pipeline-");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Pair {
+                    i32 Left;
+                    i32 Right;
+                }
+
+                public alias PublicPair = Pair;
+
+                public doctrine Numbers {
+                    finite law i32 Double(i32 value) {
+                        return value + value;
+                    }
+                }
+
+                public trait Comparable {
+                    law i32 Compare(i32 other);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var resolvedPackageModule = new ResolvedPackageModule(
+                Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json"),
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                manifest,
+                facadeModule);
+
+            Assert.True(PackageImageLoader.TryBuildModuleDocument(resolvedPackageModule, out var importedDocument));
+            Assert.NotNull(importedDocument.PackageImageFacts);
+            Assert.Contains("Facade.PublicPair", importedDocument.PackageImageFacts!.TypeAliases.Keys);
+            Assert.Contains("Facade.Numbers.Double", importedDocument.PackageImageFacts.FunctionSignatures.Keys);
+            Assert.Contains("Facade.Comparable.Compare", importedDocument.PackageImageFacts.FunctionSignatures.Keys);
+
+            var emptyParseDocument = importedDocument with
+            {
+                ParseResult = StarkSyntax.ParseCompilationUnit(
+                    """
+                    module Facade
+                    """)
+            };
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32 Run() {
+                        stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
+                        return Facade.Numbers.Double(pair.Left);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new DocumentOnlyModuleResolver(emptyParseDocument),
+                    StopAfterPassId: "type-check"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+
+            Assert.Contains("Facade.PublicPair", typeCheckModel.TypeAliases.Keys);
+            Assert.Equal("Facade.Pair", typeCheckModel.TypeAliases["Facade.PublicPair"].TargetType.DisplayName);
+
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.Numbers", out var doctrineType));
+            Assert.NotNull(doctrineType);
+            Assert.Equal(DeclarationKind.Doctrine, doctrineType.Kind);
+            Assert.True(typeCheckModel.Functions.ContainsKey("Facade.Numbers.Double"));
+
+            Assert.True(typeCheckModel.NamedTypes.TryGetValue("Facade.Comparable", out var traitType));
+            Assert.NotNull(traitType);
+            Assert.Equal(DeclarationKind.Trait, traitType.Kind);
+            Assert.True(typeCheckModel.Functions.ContainsKey("Facade.Comparable.Compare"));
         }
         finally
         {

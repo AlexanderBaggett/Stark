@@ -605,7 +605,8 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                var genericParameters = GetGenericParameterNames(functionSyntax.TypeParameters);
+                var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, functionSyntax);
+                var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
                 var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
                 ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
                 var isAbiBoundary = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal))
@@ -640,7 +641,7 @@ internal sealed class TypeChecker
                     returnType,
                     parameters,
                     SourceName: sourceQualifiedName,
-                    GenericParameterNames: genericParameters?.ToArray());
+                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
                 RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
             }
         }
@@ -978,6 +979,11 @@ internal sealed class TypeChecker
     {
         foreach (var module in _loadedModules.Modules.Values)
         {
+            if (module.IsPackageImageImport)
+            {
+                continue;
+            }
+
             foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
                 var qualifiedName = QualifyName(module, functionSyntax.Name);
@@ -4518,7 +4524,7 @@ internal sealed class TypeChecker
                     : target.AssignmentErrorMessage);
         }
 
-        var methodSourceName = $"{namedType.Name}.{memberName}";
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
         if (namedType.Kind == DeclarationKind.Doctrine
             && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {

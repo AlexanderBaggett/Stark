@@ -39,16 +39,19 @@ internal static partial class PackageImageLoader
             foreach (var method in type.Methods ?? [])
             {
                 var qualifiedResolvedName = method.QualifiedResolvedName ?? method.QualifiedName;
+                var genericParameterNames = FunctionGenericParameterFacts.CombineGenericParameterNames(
+                    type.GenericParameters,
+                    method.GenericParameters);
                 loadedFunctionSignatures[qualifiedResolvedName] = new TypedFunctionSignature(
                     qualifiedResolvedName,
                     BuildTypeSymbol(method.ReturnType, module.Module.ModuleName, localNamedTypes),
                     method.Parameters
                         .Select(parameter => new TypedParameterSymbol(
                             parameter.Name,
-                            BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
-                        .ToArray(),
+                        BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
+                    .ToArray(),
                     SourceName: method.QualifiedName,
-                    GenericParameterNames: method.GenericParameters?.Count > 0 ? method.GenericParameters.ToArray() : null);
+                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
             }
         }
 
@@ -508,6 +511,41 @@ internal static partial class PackageImageLoader
                 functionSemantic.MemoryEffects.ReadsOtherMemory,
                 functionSemantic.MemoryEffects.WritesOtherMemory);
 
+        List<CallMemoryEffectSummary>? calls = null;
+        if (functionSemantic.Calls is { } publishedCalls)
+        {
+            calls = new List<CallMemoryEffectSummary>(publishedCalls.Count);
+            foreach (var call in publishedCalls)
+            {
+                var arguments = new List<CallArgumentMemoryEffectSummary>(call.Arguments.Count);
+                foreach (var argument in call.Arguments)
+                {
+                    if (!TryParseParameterCaptureKind(argument.CaptureKind, out var captureKind))
+                    {
+                        return false;
+                    }
+
+                    arguments.Add(new CallArgumentMemoryEffectSummary(
+                        argument.ArgumentIndex,
+                        argument.CallerParameterName,
+                        argument.CalleeParameterName,
+                        argument.Reads,
+                        argument.Writes,
+                        captureKind));
+                }
+
+                calls.Add(new CallMemoryEffectSummary(
+                    call.CalleeName,
+                    new FunctionMemoryEffectSummary(
+                        call.MemoryEffects.ReadsArgumentMemory,
+                        call.MemoryEffects.WritesArgumentMemory,
+                        call.MemoryEffects.CapturesArgumentMemory,
+                        call.MemoryEffects.ReadsOtherMemory,
+                        call.MemoryEffects.WritesOtherMemory),
+                    arguments));
+            }
+        }
+
         var optimizationSummary = functionSemantic.Optimization is null
             ? null
             : new FunctionOptimizationSummary(
@@ -527,6 +565,8 @@ internal static partial class PackageImageLoader
                 functionSemantic.Optimization.IsSingleReturnDereferenceWrapper,
                 functionSemantic.Optimization.IsSingleReturnBinaryOperatorWrapper,
                 functionSemantic.Optimization.IsSingleReturnComparisonWrapper,
+                functionSemantic.Optimization.IsSingleReturnAggregateConstructionWrapper,
+                functionSemantic.Optimization.IsSimpleLocalUpdateWrapper,
                 functionSemantic.Optimization.IsTerminalSelectionWrapper);
 
         summary = new ImportedFunctionSemanticSummary(
@@ -536,6 +576,7 @@ internal static partial class PackageImageLoader
             functionSemantic.CalledFunctions,
             memoryEffects,
             parameters,
+            calls,
             optimizationSummary);
         return true;
     }

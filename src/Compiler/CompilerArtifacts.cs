@@ -295,7 +295,14 @@ public sealed record LoadedModuleDocument(
     ResolvedModuleReference Reference,
     ParseResult ParseResult,
     SyntaxModel SyntaxModel,
-    LoadedPackageImageFacts? PackageImageFacts = null);
+    LoadedPackageImageFacts? PackageImageFacts = null)
+{
+    public bool IsPackageImageImport => !Reference.IsRoot && PackageImageFacts is not null;
+
+    public bool HasPublishedFunctionSemantics => PackageImageFacts?.HasPublishedFunctionSemantics == true;
+
+    public bool HasPublishedTypedTemplateBodies => PackageImageFacts?.HasPublishedTypedTemplateBodies == true;
+}
 
 public sealed record ImportedFunctionTemplateSummary(
     int? TopLevelStatementCount,
@@ -327,6 +334,8 @@ public sealed record ImportedFunctionTemplateSummary(
     public FunctionMemoryEffectSummary? MemoryEffects => SemanticSummary?.MemoryEffects;
 
     public IReadOnlyList<ParameterMemoryEffectSummary> Parameters => SemanticSummary?.Parameters ?? [];
+
+    public IReadOnlyList<CallMemoryEffectSummary> Calls => SemanticSummary?.Calls ?? [];
 
     public IReadOnlyList<ImportedDeferredFunctionInstantiationSummary> DeferredInstantiations =>
         DeferredFunctionInstantiations ?? [];
@@ -373,6 +382,8 @@ public sealed record ImportedFunctionTemplateSummary(
 
 public enum ImportedTemplateTypedBodyStatementKind
 {
+    Block,
+    Empty,
     LocalVariableDeclaration,
     ExpressionStatement,
     Assignment,
@@ -476,7 +487,7 @@ public sealed record ImportedTemplateTypedSwitchCaseSummary(
 
 public sealed record ImportedTemplateTypedBodyStatementSummary(
     ImportedTemplateTypedBodyStatementKind Kind,
-    ImportedTemplateTypedBodyExpressionSummary Expression = null!,
+    ImportedTemplateTypedBodyExpressionSummary? Expression = null,
     string? Name = null,
     string? AssignmentOperator = null,
     string? StorageClass = null,
@@ -614,7 +625,14 @@ public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, ConcreteTypeLayout> ConcreteLayouts,
     IReadOnlyDictionary<string, EnumLayoutSymbol> EnumLayouts,
     IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> FunctionSemantics,
-    IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates);
+    IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates)
+{
+    public bool HasPublishedFunctionSemantics => FunctionSemantics.Count > 0;
+
+    public bool HasPublishedTypedTemplateBodies =>
+        FunctionTemplates.Count > 0
+        && FunctionTemplates.Values.All(static template => template.TypedBody is not null);
+}
 
 public sealed record LoadedModuleSet(
     string RootModuleName,
@@ -1843,6 +1861,8 @@ public sealed record FunctionOptimizationSummary(
     bool IsSingleReturnDereferenceWrapper,
     bool IsSingleReturnBinaryOperatorWrapper,
     bool IsSingleReturnComparisonWrapper,
+    bool IsSingleReturnAggregateConstructionWrapper,
+    bool IsSimpleLocalUpdateWrapper,
     bool IsTerminalSelectionWrapper)
 {
     public bool IsSingleReturnCallForwarder => IsSingleReturnDirectCallForwarder || IsSingleReturnMemberCallForwarder;
@@ -1856,9 +1876,16 @@ public sealed record FunctionOptimizationSummary(
         IsSingleReturnBinaryOperatorWrapper || IsSingleReturnComparisonWrapper;
 
     public bool IsSingleReturnInlineWrapper =>
-        IsSingleReturnCallForwarder || IsSingleReturnAccessWrapper || IsSingleReturnUnaryOrConversionWrapper || IsSingleReturnOperatorWrapper;
+        IsSingleReturnCallForwarder
+        || IsSingleReturnAccessWrapper
+        || IsSingleReturnUnaryOrConversionWrapper
+        || IsSingleReturnOperatorWrapper
+        || IsSingleReturnAggregateConstructionWrapper;
 
-    public bool IsInlineWrapperLike => IsSingleReturnInlineWrapper || IsTerminalSelectionWrapper;
+    public bool IsInlineWrapperLike =>
+        IsSingleReturnInlineWrapper
+        || IsSimpleLocalUpdateWrapper
+        || IsTerminalSelectionWrapper;
 }
 
 public sealed record FunctionValidationSummary(
@@ -1883,8 +1910,11 @@ public sealed record ImportedFunctionSemanticSummary(
     IReadOnlyList<string> CalledFunctions,
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
+    IReadOnlyList<CallMemoryEffectSummary>? CallSummaries = null,
     FunctionOptimizationSummary? OptimizationSummary = null)
 {
+    public IReadOnlyList<CallMemoryEffectSummary> Calls => CallSummaries ?? [];
+
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
 }
 

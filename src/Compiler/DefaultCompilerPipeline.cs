@@ -1470,6 +1470,16 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.Modules.Values)
             {
+                var importedTemplateInfos = !module.Reference.IsRoot
+                    ? module.PackageImageFacts?.FunctionTemplates
+                    : null;
+
+                if (!module.Reference.IsRoot
+                    && importedTemplateInfos is { Count: > 0 })
+                {
+                    continue;
+                }
+
                 foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var overloadKey = FunctionOverloadFacts.BuildOverloadKey(functionSyntax.ParameterList);
@@ -1489,6 +1499,12 @@ public static class DefaultCompilerPipeline
                             module.SyntaxModel,
                             functionSyntax.DisplaySourceName,
                             overloadKey));
+                    if (importedTemplateInfos?.ContainsKey(resolvedName) == true)
+                    {
+                        // Imported generic planning should trust the published package-image
+                        // summary instead of re-deriving cost from reparsed bridge text.
+                        continue;
+                    }
 
                     infos.TryAdd(
                         resolvedName,
@@ -2457,12 +2473,23 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
             {
-                if (module.PackageImageFacts is { FunctionSemantics.Count: > 0 } packageImageFacts)
+                if (module.HasPublishedFunctionSemantics)
                 {
+                    var packageImageFacts = module.PackageImageFacts!;
                     foreach (var (qualifiedName, summary) in packageImageFacts.FunctionSemantics)
                     {
                         callGraph[qualifiedName] = summary.CalledFunctions.ToHashSet(StringComparer.Ordinal);
                     }
+
+                    foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                    {
+                        var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                            module,
+                            FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                        callGraph.TryAdd(qualifiedName, new HashSet<string>(StringComparer.Ordinal));
+                    }
+
+                    continue;
                 }
 
                 var localFunctionsBySourceName = module.SyntaxModel.Declarations
@@ -2969,10 +2996,27 @@ public static class DefaultCompilerPipeline
 
             foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
             {
+                if (module.PackageImageFacts is { FunctionSignatures.Count: > 0 } packageImageFacts)
+                {
+                    foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                    {
+                        var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                            module,
+                            FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                        if (packageImageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature))
+                        {
+                            functions[qualifiedName] = signature;
+                        }
+                    }
+
+                    continue;
+                }
+
                 foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
-                    var genericParameters = resolver.GetGenericParameterNames(declaration.TypeParameters);
+                    var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, declaration);
+                    var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
                     var parameters = declaration.ParameterList.parameter()
                         .Select(parameter => new TypedParameterSymbol(
                             parameter.Identifier().GetText(),
@@ -2983,7 +3027,7 @@ public static class DefaultCompilerPipeline
                         resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
                         parameters,
                         SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
-                        GenericParameterNames: genericParameters?.ToArray());
+                        GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
                 }
             }
 

@@ -101,11 +101,8 @@ internal sealed class MidLevelIrLowerer(
                 BodyLoweringKind: function.BodyLoweringKind);
         }
 
-        var body = loweringContext.Declaration.Body.block();
-        var functionLocation = new SourceLocation(
-            loweringContext.FilePath,
-            loweringContext.Declaration.NameToken.Line,
-            loweringContext.Declaration.NameToken.Column + 1);
+        var body = loweringContext.ParsedBody;
+        var functionLocation = loweringContext.Location;
 
         using var builder = new FunctionMirBuilder(
             function,
@@ -465,12 +462,49 @@ internal sealed class MidLevelIrLowerer(
 
         foreach (var module in loadedModules.Modules.Values)
         {
-            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+            if (!module.HasPublishedTypedTemplateBodies)
             {
-                var qualifiedName = module.Reference.IsRoot
-                    ? declaration.Name
-                    : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
-                functions[qualifiedName] = new FunctionLoweringContext(module.SyntaxModel.ModuleName, module.Reference.FilePath, declaration);
+                foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+                {
+                    var qualifiedName = module.Reference.IsRoot
+                        ? declaration.Name
+                        : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
+                    functions[qualifiedName] = new FunctionLoweringContext(
+                        module.SyntaxModel.ModuleName,
+                        module.Reference.FilePath,
+                        declaration,
+                        new SourceLocation(
+                            module.Reference.FilePath,
+                            declaration.NameToken.Line,
+                            declaration.NameToken.Column + 1),
+                        declaration.Body.block());
+                }
+            }
+
+            if (module.Reference.IsRoot
+                || module.PackageImageFacts is not { FunctionTemplates.Count: > 0 } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            {
+                var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                    module,
+                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                if (functions.ContainsKey(qualifiedName)
+                    || !packageImageFacts.FunctionTemplates.TryGetValue(qualifiedName, out var templateSummary)
+                    || templateSummary.TypedBody is null)
+                {
+                    continue;
+                }
+
+                functions[qualifiedName] = new FunctionLoweringContext(
+                    module.SyntaxModel.ModuleName,
+                    module.Reference.FilePath,
+                    ParsedDeclaration: null,
+                    SourceLocation.Synthetic(module.Reference.FilePath),
+                    ParsedBody: null);
             }
         }
 
@@ -508,9 +542,27 @@ internal sealed class MidLevelIrLowerer(
 
         foreach (var module in loadedModules.Modules.Values)
         {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { FunctionSignatures.Count: > 0 } packageImageFacts)
+            {
+                foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                {
+                    var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                        module,
+                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                    if (packageImageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature))
+                    {
+                        functions[qualifiedName] = signature;
+                    }
+                }
+
+                continue;
+            }
+
             foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
-                var genericParameters = resolver.GetGenericParameterNames(declaration.TypeParameters);
+                var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, declaration);
+                var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
                 var qualifiedName = QualifyName(module, declaration.Name);
                 var parameters = declaration.ParameterList.parameter()
                     .Select(parameter => new TypedParameterSymbol(
@@ -522,7 +574,7 @@ internal sealed class MidLevelIrLowerer(
                     resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
                     parameters,
                     SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
-                    GenericParameterNames: genericParameters?.ToArray());
+                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
             }
         }
 
@@ -583,7 +635,12 @@ internal sealed class MidLevelIrLowerer(
             : $"{module.SyntaxModel.ModuleName}.{localName}";
     }
 
-    private sealed record FunctionLoweringContext(string ModuleName, string? FilePath, DeclaredFunctionSyntax Declaration);
+    private sealed record FunctionLoweringContext(
+        string ModuleName,
+        string? FilePath,
+        DeclaredFunctionSyntax? ParsedDeclaration,
+        SourceLocation Location,
+        StarkParser.BlockContext? ParsedBody);
     private sealed record DestructorLoweringContext(
         string QualifiedTypeName,
         string ModuleName,
@@ -1070,6 +1127,10 @@ internal sealed class MidLevelIrLowerer(
 
                 switch (statement.Kind)
                 {
+                    case ImportedTemplateTypedBodyStatementKind.Block:
+                        return TryLowerImportedTypedTemplateBlock(statement);
+                    case ImportedTemplateTypedBodyStatementKind.Empty:
+                        return TryLowerImportedTypedTemplateEmpty();
                     case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:
                         return TryLowerImportedTypedTemplateLocalVariable(statement);
                     case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
@@ -1098,6 +1159,16 @@ internal sealed class MidLevelIrLowerer(
             {
                 _currentStatementLocation = previousStatementLocation;
             }
+        }
+
+        private bool TryLowerImportedTypedTemplateBlock(ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            return TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true);
+        }
+
+        private static bool TryLowerImportedTypedTemplateEmpty()
+        {
+            return true;
         }
 
         private bool TryLowerImportedTypedTemplateLocalVariable(ImportedTemplateTypedBodyStatementSummary statement)
@@ -2367,20 +2438,22 @@ internal sealed class MidLevelIrLowerer(
                 CurrentBlock = conditionBlock;
                 if (statement.Expression is null)
                 {
-                    return false;
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bodyBlock.Id]);
                 }
-
-                var condition = LowerImportedTypedTemplateExpression(statement.Expression, StarkTypeSymbols.Bool);
-                if (condition is null)
+                else
                 {
-                    return false;
-                }
+                    var condition = LowerImportedTypedTemplateExpression(statement.Expression, StarkTypeSymbols.Bool);
+                    if (condition is null)
+                    {
+                        return false;
+                    }
 
-                CurrentBlock.Terminator = new MidLevelIrTerminator(
-                    MidLevelIrTerminatorKind.Branch,
-                    [bodyBlock.Id, exitBlock.Id],
-                    ConditionText: RenderImportedTypedTemplateExpression(statement.Expression),
-                    Condition: condition);
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Branch,
+                        [bodyBlock.Id, exitBlock.Id],
+                        ConditionText: RenderImportedTypedTemplateExpression(statement.Expression),
+                        Condition: condition);
+                }
 
                 _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
                 _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
@@ -6008,10 +6081,11 @@ internal sealed class MidLevelIrLowerer(
 
             if (arguments.argument().Length != signature.Parameters.Count
                 || !_functionsByName.TryGetValue(signature.Name, out var functionContext)
-                || !functionContext.Declaration.HasBody
-                || functionContext.Declaration.Body.block() is not { } body
-                || !FunctionKindFacts.IsLaw(functionContext.Declaration.DeclaredKind)
-                || functionContext.Declaration.TypeParameters is not null)
+                || functionContext.ParsedDeclaration is not { } parsedFunction
+                || !parsedFunction.HasBody
+                || parsedFunction.Body.block() is not { } body
+                || !FunctionKindFacts.IsLaw(parsedFunction.DeclaredKind)
+                || parsedFunction.TypeParameters is not null)
             {
                 return false;
             }

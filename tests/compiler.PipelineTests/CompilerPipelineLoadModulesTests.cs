@@ -121,6 +121,229 @@ public sealed class CompilerPipelineLoadModulesTests
 
 
     [Fact]
+    public void ManifestBackedModulesPreservePublishedSemanticCallFactsFromCompilerFactSections()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-semantic-calls-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32 Value;
+                }
+
+                public fn void Touch(borrow mut Box box) {
+                    box.Value = 1;
+                    return;
+                }
+
+                public fn void Outer(borrow mut Box box) {
+                    Touch(box);
+                    return;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run(borrow mut Facade.Box box) {
+                        Facade.Outer(box);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "load-modules"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Outer", out var outer));
+            Assert.Contains("Facade.Touch", outer.CalledFunctions);
+            var call = Assert.Single(outer.Calls);
+            Assert.Equal("Facade.Touch", call.CalleeName);
+            Assert.True(call.MemoryEffects.WritesArgumentMemory);
+            var argument = Assert.Single(call.Arguments);
+            Assert.Equal(0, argument.ArgumentIndex);
+            Assert.Equal("box", argument.CallerParameterName);
+            Assert.Equal("box", argument.CalleeParameterName);
+            Assert.True(argument.Writes);
+            Assert.Equal(ParameterCaptureKind.None, argument.CaptureKind);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void ManifestBackedModulesPreservePublishedGenericTemplateSemanticCallFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-template-semantic-calls-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32 Value;
+                }
+
+                public fn void Reset(borrow mut Box box) {
+                    box.Value = 0;
+                    return;
+                }
+
+                public fn void Touch<T>(borrow mut Box box, T tag) {
+                    Reset(box);
+                    return;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run() {
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "load-modules"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+
+            Assert.True(importedModule.PackageImageFacts!.FunctionTemplates.TryGetValue("Facade.Touch", out var template));
+            Assert.Contains("Facade.Reset", template.CalledFunctions);
+            var call = Assert.Single(template.Calls);
+            Assert.Equal("Facade.Reset", call.CalleeName);
+            Assert.True(call.MemoryEffects.WritesArgumentMemory);
+            var argument = Assert.Single(call.Arguments);
+            Assert.Equal(0, argument.ArgumentIndex);
+            Assert.Equal("box", argument.CallerParameterName);
+            Assert.Equal("box", argument.CalleeParameterName);
+            Assert.True(argument.Writes);
+            Assert.Equal(ParameterCaptureKind.None, argument.CaptureKind);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void PackageImageDocumentResolversLoadStructuredImportsWithoutAnySourceText()
     {
         var bitsModule = new StarkPackageModuleManifest(

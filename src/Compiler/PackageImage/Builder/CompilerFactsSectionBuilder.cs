@@ -160,6 +160,28 @@ internal static partial class PackageImageBuilder
                     parameter.Writes,
                     parameter.CaptureKind.ToString().ToLowerInvariant()))
                 .ToArray(),
+            Calls: validation.Calls is { Count: > 0 }
+                ? validation.Calls
+                    .Select(call => new StarkPackageFunctionCallManifest(
+                        QualifyPublishedCalledFunctionName(module, call.CalleeName),
+                        new StarkPackageFunctionMemoryEffectsManifest(
+                            call.MemoryEffects.ReadsArgumentMemory,
+                            call.MemoryEffects.WritesArgumentMemory,
+                            call.MemoryEffects.CapturesArgumentMemory,
+                            call.MemoryEffects.ReadsOtherMemory,
+                            call.MemoryEffects.WritesOtherMemory),
+                        call.Arguments
+                            .OrderBy(static argument => argument.ArgumentIndex)
+                            .Select(argument => new StarkPackageCallArgumentMemoryEffectsManifest(
+                                argument.ArgumentIndex,
+                                argument.CallerParameterName,
+                                argument.CalleeParameterName,
+                                argument.Reads,
+                                argument.Writes,
+                                argument.CaptureKind.ToString().ToLowerInvariant()))
+                            .ToArray()))
+                    .ToArray()
+                : null,
             Optimization: validation.OptimizationSummary is null
                 ? null
                 : new StarkPackageFunctionOptimizationManifest(
@@ -179,6 +201,8 @@ internal static partial class PackageImageBuilder
                     validation.OptimizationSummary.IsSingleReturnDereferenceWrapper,
                     validation.OptimizationSummary.IsSingleReturnBinaryOperatorWrapper,
                     validation.OptimizationSummary.IsSingleReturnComparisonWrapper,
+                    validation.OptimizationSummary.IsSingleReturnAggregateConstructionWrapper,
+                    validation.OptimizationSummary.IsSimpleLocalUpdateWrapper,
                     validation.OptimizationSummary.IsTerminalSelectionWrapper));
         return true;
     }
