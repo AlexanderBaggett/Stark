@@ -25,10 +25,12 @@ These modes fail with a stable `STK5000` diagnostic when direct code generation 
 
 ## Current MIR Lowering Gaps
 
+These are the constructs that still make it through parsing and type checking
+and then stop in `lower-mir`. Surface restrictions that are rejected earlier do
+not belong in this list.
+
 - Initializer gaps: unsupported variable initializer shapes; some object or array initializers still do not materialize a MIR value; variable initializers that cannot lower to a MIR operand.
-- Assignment and expression gaps: assignment targets or values that cannot be resolved or coerced; conditional expressions outside the current ternary-only shape; expression statements that are neither assignments, rvalues, operands, nor the current ternary call-statement subset.
-- Operator and type gaps: bitwise and shift operators still require integer operands; ordered comparison lowering now also supports same-kind fixed arrays and same-kind scalarizable `struct`/`record`/`enum` aggregates whose element types are ordered-comparable, and equality and inequality also support same-kind `ascii`/`unicode`, same-kind slices, and scalarizable aggregates over those leaf families.
-- Name and call gaps: function names and function groups do not lower as first-class operands yet; void-valued direct, member, and postfix calls cannot appear in value position.
-- Aggregate construction gaps: object initializers require resolved named fields; primary object creation only supports matched primary constructors; enum named constructors require named-field variants with complete payloads; enum positional constructors require exact arity; array initializers only lower for fixed arrays.
-- Place and update gaps: aggregate reads and writes still fall back when field or index paths, or address materialization, cannot be resolved.
-- Indexing gaps: slice and raw-pointer indexing require integer indices; indexing is only supported for fixed arrays, raw pointers, slices, `ascii`, and `unicode`; text postfix brackets currently support `text[]`, `text[index]`, and `text[start, length]`.
+- Assignment and expression gaps: assignment targets or values that cannot be resolved or coerced; expression statements that are neither assignments, rvalues, operands, nor the current ternary call-statement subset.
+- Operator and type gaps: equality and ordered comparison still fall back outside the current scalar, text, same-kind fixed-array, same-kind slice, and scalarizable aggregate support.
+- Name and call gaps: void-valued direct, member, and postfix calls cannot appear in value position.
+- Place and update gaps: aggregate reads and writes still fall back when field or index paths cannot be resolved.

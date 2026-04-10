@@ -41,6 +41,28 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void TupleLikeEnumConstructorsRejectArityMismatchDuringTypeChecking()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                End,
+                Pair(i32, i32),
+            }
+
+            fn void Run() {
+                stack Token token = Token.Pair(1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3009", "Enum constructor 'Token.Pair' expects 2 arguments but received 1");
+    }
+
+    [Fact]
     public void ObjectInitializersRejectDuplicateMembers()
     {
         var result = Compile(
@@ -76,6 +98,27 @@ public sealed class TypeTypingDiagnosticsTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3006", "Object initializer member 'Left'", "already supplied by the constructor");
+    }
+
+    [Fact]
+    public void FunctionNamesAreRejectedAsRuntimeValuesDuringTypeChecking()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32 Add(i32 left, i32 right) {
+                return left + right;
+            }
+
+            fn void Run() {
+                Add;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3012", "Function 'Add' must be called before its value can be used");
     }
 
     [Fact]

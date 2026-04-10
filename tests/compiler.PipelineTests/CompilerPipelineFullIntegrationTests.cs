@@ -4719,6 +4719,117 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void PackageManifestPublishesOnlyApiVisibleGenericTemplateBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-publication-rules-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                fn T LocalIdentity<T>(T value) {
+                    return value;
+                }
+
+                internal fn T InternalIdentity<T>(T value) {
+                    return value;
+                }
+
+                public fn T PublicIdentity<T>(T value) {
+                    return value;
+                }
+
+                public fn i32 ConcreteIdentity(i32 value) {
+                    return value;
+                }
+
+                struct LocalBox<T> {
+                    T Value;
+
+                    fn T Echo(borrow LocalBox<T> self, T fallback) {
+                        return self.Value;
+                    }
+                }
+
+                internal struct InternalBox<T> {
+                    T Value;
+
+                    fn T Echo(borrow InternalBox<T> self, T fallback) {
+                        return self.Value;
+                    }
+                }
+
+                public struct PublicBox<T> {
+                    T Value;
+
+                    fn T Echo(borrow PublicBox<T> self, T fallback) {
+                        return self.Value;
+                    }
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            Assert.NotNull(facadeModule.TypedInterface);
+            Assert.DoesNotContain(facadeModule.TypedInterface!.Functions, static function => function.QualifiedResolvedName == "Facade.LocalIdentity");
+            Assert.DoesNotContain(facadeModule.TypedInterface.Functions, static function => function.QualifiedResolvedName == "Facade.InternalIdentity");
+
+            var publicIdentity = Assert.Single(
+                facadeModule.TypedInterface.Functions,
+                static function => function.QualifiedResolvedName == "Facade.PublicIdentity");
+            Assert.True(publicIdentity.HasGenericTemplateBody);
+
+            var concreteIdentity = Assert.Single(
+                facadeModule.TypedInterface.Functions,
+                static function => function.QualifiedResolvedName == "Facade.ConcreteIdentity");
+            Assert.False(concreteIdentity.HasGenericTemplateBody);
+
+            Assert.DoesNotContain(facadeModule.TypedInterface.Types, static type => type.QualifiedName == "Facade.LocalBox");
+            Assert.DoesNotContain(facadeModule.TypedInterface.Types, static type => type.QualifiedName == "Facade.InternalBox");
+
+            var publicBox = Assert.Single(
+                facadeModule.TypedInterface.Types,
+                static type => type.QualifiedName == "Facade.PublicBox");
+            var publicEcho = Assert.Single(
+                publicBox.Methods!,
+                static method => method.QualifiedResolvedName == "Facade.PublicBox.Echo");
+            Assert.True(publicEcho.HasGenericTemplateBody);
+
+            var templates = facadeModule.GenericTemplates!.Functions
+                .Select(static template => template.QualifiedResolvedName)
+                .ToArray();
+            Assert.Contains("Facade.PublicIdentity", templates);
+            Assert.Contains("Facade.PublicBox.Echo", templates);
+            Assert.DoesNotContain("Facade.LocalIdentity", templates);
+            Assert.DoesNotContain("Facade.InternalIdentity", templates);
+            Assert.DoesNotContain("Facade.ConcreteIdentity", templates);
+            Assert.DoesNotContain("Facade.LocalBox.Echo", templates);
+            Assert.DoesNotContain("Facade.InternalBox.Echo", templates);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void PackageManifestIncludesGenericTemplateBodySections()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-templates-pipeline-");

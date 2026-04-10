@@ -914,7 +914,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [x] grammar and syntax-model support
   - [x] semantic identity and ABI rules
   - [x] visibility and export behavior
-- [ ] Generic function/type instantiation strategy
+- [x] Generic function/type instantiation strategy
   - [x] function instantiation triggers
   - [x] type instantiation triggers
   - [x] cross-module instantiation ownership
@@ -922,7 +922,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [x] Generic type parameter handling beyond basic shape support in `v1.1`
   - [x] bind generic parameters on all declaration kinds that support them
   - [x] substitute generic parameters through fields, returns, and locals
-  - [ ] instantiate generic functions and types at use sites
+  - [x] instantiate generic functions and types at use sites
     - [x] instantiate generic types at use sites for source modules and manifest-backed consumers
     - [x] recursively expand nested generic type layouts from source and manifest-backed use sites
 - [x] Monomorphization planning
@@ -943,30 +943,30 @@ Goal: add non-essential language surface after the first release without slowing
   - [x] consumer-owned package-image-backed specialization emission
   - [x] recursive and nested generic specialization expansion during lowering
   - [x] end-to-end generic body regression coverage
-- [ ] Compiler-owned package image architecture
+- [x] Compiler-owned package image architecture
   - [x] Reframe the current package manifest as a broader package image artifact rather than a lossy package index
   - [x] Define the package image principles and invariants
     - [x] keep the artifact text-based and diffable in Git
     - [x] do not add an embedded format-version field; the compiler and image format evolve together in source control
     - [x] make the image sectioned so new compiler data can be added without collapsing into one flat record type
     - [x] make direct compiler loading the primary path instead of reconstructing fake Stark source from lossy strings
-  - [ ] Design a Stark-native, near-homoiconic package image syntax
+  - [x] Design a Stark-native, near-homoiconic package image syntax
     - [x] represent package and module boundaries explicitly
     - [x] represent exported and public source surface explicitly
     - [x] represent typed compiler-owned sections explicitly rather than hiding them inside string fields
     - [x] define which sections are human-authored, compiler-emitted, or compiler-only
-  - [ ] Add structured typed-interface sections
+  - [x] Add structured typed-interface sections
     - [x] encode types structurally instead of rendering them as plain strings
     - [x] encode functions, methods, globals, types, and aliases with visibility, generics, modifiers, and symbol names
     - [x] preserve primary-constructor type shape across package boundaries so imported generic bodies can construct published records without source
     - [x] encode re-exports and other package-boundary dependency surface directly
     - [x] preserve enough surface information that docs, tooling, and diagnostics do not need to recover it from lowered compiler facts
-  - [ ] Add compiler fact sections
+  - [x] Add compiler fact sections
     - [x] carry function effects and calling-convention facts across package boundaries
     - [x] carry ABI-lowering facts that should survive package publication
     - [x] carry aggregate and enum layout facts needed for downstream lowering and optimization
     - [x] carry ownership and borrow-related facts that are required for downstream validation or optimization
-  - [ ] Add generic template body sections
+  - [x] Add generic template body sections
     - [x] publish compiler-owned generic template body sections for exported or public generic functions and methods as a bridge
     - [x] publish structured template planning facts needed for imported generic code-size heuristics
     - [x] publish deferred generic instantiation patterns needed for recursive imported specialization planning
@@ -989,9 +989,9 @@ Goal: add non-essential language surface after the first release without slowing
     - [x] publish the initial typed template-body milestone for public/export generic functions and methods
     - [x] publish typed template bodies for exported or public generic functions and methods
     - [x] preserve enough local, type, and effect information to specialize imported generics without reparsing source text
-    - [ ] define explicit rules for which templates are published and which stay package-private
-    - [ ] ensure the template-body representation is suitable for future optimization passes, not just minimal code generation
-  - [ ] Integrate package images into module loading and the compiler pipeline
+    - [x] define explicit rules for which templates are published and which stay package-private
+    - [x] ensure the template-body representation is suitable for future optimization passes, not just minimal code generation
+  - [x] Integrate package images into module loading and the compiler pipeline
     - [x] load package image data directly into compiler artifacts
     - [x] prefer package-image loading over synthetic source reconstruction whenever rich sections are available
     - [x] let the temporary source bridge use authored source-surface overload identity to recover published generic template bodies even when declaration emission still uses canonical typed-interface spellings

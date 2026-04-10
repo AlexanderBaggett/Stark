@@ -113,13 +113,13 @@ internal static partial class PackageImageBuilder
                 StringComparer.Ordinal);
 
         return DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
-            .Where(static function => function.HasBody && function.Visibility is StarkVisibility.Public or StarkVisibility.Export)
+            .Where(static function => GenericTemplatePublicationPolicy.HasPublishedApiVisibility(function.Visibility) && function.HasBody)
             .Select(function =>
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, function.Name);
                 if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature)
-                    || !functionSignature.IsGeneric)
+                    || !GenericTemplatePublicationPolicy.ShouldPublishTypedTemplateBody(function, functionSignature))
                 {
                     return null;
                 }

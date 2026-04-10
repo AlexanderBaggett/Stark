@@ -89,6 +89,54 @@ That means:
 Direct compiler loading is the primary model.
 Synthetic-source reconstruction is temporary bridge behavior.
 
+## Generic Template Publication Rules
+
+The `generic-templates` section is part of Stark's published package API
+surface, not a dump of every generic body in a package.
+
+A generic function or method template body is published only when all of the
+following are true:
+
+- the declaration is published at package boundary visibility (`public` or `export`)
+- the declaration has a real body
+- the typed function signature is generic, including methods that are generic by
+  virtue of their enclosing generic type
+
+That means:
+
+- `module` and `internal` generic functions stay package-private
+- methods on `module` or `internal` types stay package-private with their
+  containing type
+- non-generic functions and methods do not get generic template entries
+- declarations without bodies do not advertise a published generic template body
+
+The typed-interface `HasGenericTemplateBody` flag follows the same rule.
+It means a body is actually published in the package image, not merely that the
+original source declaration happened to contain a body.
+
+## Optimization-Ready Template Representation
+
+The typed template-body representation is intended to support future
+package-aware optimization passes, not just the minimum information needed to
+reconstruct or lower imported code.
+
+In addition to the structured statement and expression tree, the package image
+preserves optimizer-relevant facts such as:
+
+- top-level statement count and estimated body cost
+- semantic summaries, including effective kind, memory effects, and called-function sets
+- structural optimization summaries for wrapper-like and terminal-control-flow helpers
+- per-call memory and capture facts
+- typed local declaration facts
+- typed conversion facts
+- typed direct-call, member-call, and field-access targets
+- typed object-creation and initializer-member facts
+- typed enum constructor, enum call, enum value, enum pattern, and aggregate pattern facts
+
+That richer surface lets future cross-package inlining and other package-aware
+optimizations reason about imported generic bodies from structured package-image
+data instead of treating the template section as a minimal codegen-only bridge.
+
 ## Why This Is Not Just A Manifest
 
 A narrow package manifest would normally answer only questions like:

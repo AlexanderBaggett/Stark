@@ -76,6 +76,7 @@ internal static partial class PackageImageBuilder
                             typedFunctions.Add(BuildTypedFunctionManifest(
                                 declaration.Function,
                                 functionManifest,
+                                declaration.Visibility,
                                 resolvedLookupName,
                                 typeModel,
                                 module.SyntaxModel.ModuleName));

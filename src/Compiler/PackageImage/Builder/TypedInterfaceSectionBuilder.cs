@@ -52,6 +52,7 @@ internal static partial class PackageImageBuilder
     private static StarkPackageTypedFunctionManifest BuildTypedFunctionManifest(
         FunctionDeclarationModel declarationFunction,
         StarkPackageFunctionManifest manifest,
+        StarkVisibility declarationVisibility,
         string lookupName,
         TypeCheckModel typeModel,
         string moduleName)
@@ -76,7 +77,10 @@ internal static partial class PackageImageBuilder
             manifest.GenericParameters,
             QualifiedResolvedName: QualifyPublishedResolvedName(moduleName, lookupName),
             PublishedOverloadKey: declarationFunction.PublishedOverloadKey ?? FunctionOverloadFacts.BuildOverloadKey(declarationFunction.Parameters),
-            HasGenericTemplateBody: declarationFunction.HasBody && function.IsGeneric,
+            HasGenericTemplateBody: GenericTemplatePublicationPolicy.ShouldPublishTypedTemplateBody(
+                declarationVisibility,
+                declarationFunction,
+                function),
             IsHot: manifest.IsHot,
             IsCold: manifest.IsCold,
             InlinePreference: manifest.InlinePreference,
@@ -418,7 +422,10 @@ internal static partial class PackageImageBuilder
                     GenericParameters: declaration.Function.GenericParams.Count == 0 ? null : declaration.Function.GenericParams.ToArray(),
                     QualifiedResolvedName: QualifyPublishedResolvedName(module.SyntaxModel.ModuleName, lookupName),
                     PublishedOverloadKey: declaration.Function.PublishedOverloadKey ?? FunctionOverloadFacts.BuildOverloadKey(declaration.Function.Parameters),
-                    HasGenericTemplateBody: declaration.Function.HasBody && function.IsGeneric,
+                    HasGenericTemplateBody: GenericTemplatePublicationPolicy.ShouldPublishTypedTemplateBody(
+                        declaration.Visibility,
+                        declaration.Function,
+                        function),
                     IsHot: declaration.Function.Modifiers.IsHot,
                     IsCold: declaration.Function.Modifiers.IsCold,
                     InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),

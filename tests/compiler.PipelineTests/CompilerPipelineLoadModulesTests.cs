@@ -571,4 +571,150 @@ public sealed class CompilerPipelineLoadModulesTests
         Assert.Contains(importedFacade.SyntaxModel.Imports, static import => import.ModuleName == "Math" && !import.IsReExport);
         Assert.Contains(importedFacade.SyntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "Forward");
     }
+
+    [Fact]
+    public void ManifestBackedModulesPreserveOptimizationReadyGenericTemplateFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-template-optimization-facts-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box<T> {
+                    T Value;
+                }
+
+                public fn Box<T> Wrap<T>(T value) {
+                    stack T copy = value;
+                    return new Box<T>() { Value = copy };
+                }
+
+                public fn T Read<T>(borrow Box<T> box) {
+                    return box.Value;
+                }
+
+                public fn T Forward<T>(borrow Box<T> box) {
+                    return Read(box);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run() {
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "load-modules"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+
+            Assert.True(importedModule.PackageImageFacts!.FunctionTemplates.TryGetValue("Facade.Wrap", out var wrap));
+            Assert.NotNull(wrap.TypedBody);
+            Assert.Equal(2, wrap.TopLevelStatementCount);
+            Assert.True(wrap.EstimatedBodyCost is > 0);
+            Assert.NotNull(wrap.OptimizationSummary);
+            Assert.Equal(1, wrap.OptimizationSummary!.ObjectCreationCount);
+            var local = Assert.Single(wrap.LocalDeclarations);
+            Assert.Equal("var", local.Kind);
+            Assert.Equal("T", local.Type.NamedType);
+            var objectCreation = Assert.Single(wrap.ObjectCreations);
+            Assert.Contains("Facade.Box", objectCreation.CreatedType.DisplayName, StringComparison.Ordinal);
+            Assert.Null(objectCreation.Constructor);
+            var initializerMember = Assert.Single(objectCreation.InitializerMembers);
+            Assert.Equal("Value", initializerMember.FieldName);
+            Assert.Equal(0, initializerMember.FieldIndex);
+            Assert.Equal("T", initializerMember.FieldType.NamedType);
+
+            Assert.True(importedModule.PackageImageFacts.FunctionTemplates.TryGetValue("Facade.Read", out var read));
+            Assert.NotNull(read.TypedBody);
+            Assert.NotNull(read.OptimizationSummary);
+            Assert.True(read.OptimizationSummary!.IsSingleReturnFieldAccessWrapper);
+            var fieldAccess = Assert.Single(read.FieldAccesses);
+            Assert.Equal("Value", fieldAccess.FieldName);
+            Assert.Equal(0, fieldAccess.FieldIndex);
+            Assert.Equal("T", fieldAccess.FieldType.NamedType);
+
+            Assert.True(importedModule.PackageImageFacts.FunctionTemplates.TryGetValue("Facade.Forward", out var forward));
+            Assert.NotNull(forward.TypedBody);
+            Assert.NotNull(forward.OptimizationSummary);
+            Assert.True(forward.OptimizationSummary!.IsSingleReturnDirectCallForwarder);
+            Assert.Contains("Facade.Read", forward.CalledFunctions);
+            var directCall = Assert.Single(forward.DirectCalls);
+            Assert.Equal(0, directCall.Ordinal);
+            Assert.Equal("Facade.Read", directCall.Signature.Name);
+            Assert.Equal("T", directCall.Signature.ReturnType.NamedType);
+            var parameter = Assert.Single(directCall.Signature.Parameters);
+            Assert.Equal("box", parameter.Name);
+            Assert.Contains("Facade.Box", parameter.Type.DisplayName, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
 }
