@@ -528,7 +528,9 @@ internal sealed record StarkPackageFunctionOptimizationManifest(
     bool IsSingleReturnIndexAccessWrapper,
     bool IsSingleReturnConversionWrapper,
     bool IsSingleReturnAddressOfWrapper,
-    bool IsSingleReturnDereferenceWrapper);
+    bool IsSingleReturnDereferenceWrapper,
+    bool IsSingleReturnBinaryOperatorWrapper,
+    bool IsSingleReturnComparisonWrapper);
 
 internal sealed record StarkPackageConcreteTypeLayoutManifest(
     string QualifiedTypeName,

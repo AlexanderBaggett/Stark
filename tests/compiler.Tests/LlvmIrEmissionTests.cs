@@ -4012,6 +4012,68 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ModulePrivateBinaryOperatorWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Inner(i32 Value) { }
+            record Box(Inner Inner) { }
+
+            fn i32 AddDelta(borrow Box box, i32 delta) {
+                return box.Inner.Value + delta;
+            }
+
+            fn i32 Use(borrow Box box, i32 delta) {
+                return AddDelta(box, delta);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@AddDelta\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private binary-operator wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i32 @AddDelta(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModulePrivateComparisonWrappersEmitAlwaysInline()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Inner(i32 Value) { }
+            record Box(Inner Inner) { }
+
+            fn bool IsBelow(borrow Box box, i32 limit) {
+                return box.Inner.Value < limit;
+            }
+
+            fn bool Use(borrow Box box, i32 limit) {
+                return IsBelow(box, limit);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.IsMatch(
+                llvm,
+                @"define[^\r\n]*@IsBelow\([^\r\n]*alwaysinline",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+            "Expected the module-private comparison wrapper to emit with alwaysinline.");
+        Assert.Contains("call fastcc i1 @IsBelow(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HotFunctionsEmitHotAttribute()
     {
         var result = Compile(

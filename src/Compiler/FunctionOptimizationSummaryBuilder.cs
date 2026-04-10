@@ -40,7 +40,9 @@ internal static class FunctionOptimizationSummaryBuilder
             wrapperKind == SingleReturnWrapperKind.IndexAccess,
             wrapperKind == SingleReturnWrapperKind.Conversion,
             wrapperKind == SingleReturnWrapperKind.AddressOf,
-            wrapperKind == SingleReturnWrapperKind.Dereference);
+            wrapperKind == SingleReturnWrapperKind.Dereference,
+            wrapperKind == SingleReturnWrapperKind.BinaryOperator,
+            wrapperKind == SingleReturnWrapperKind.Comparison);
     }
 
     private static void CountBlock(StarkParser.BlockContext block, SummaryAccumulator accumulator)
@@ -283,8 +285,235 @@ internal static class FunctionOptimizationSummaryBuilder
         out SingleReturnWrapperKind kind)
     {
         kind = SingleReturnWrapperKind.None;
-        return TryGetSimpleUnaryExpression(expression) is { } unaryExpression
-            && TryClassifySimpleReturnWrapperUnary(unaryExpression, out kind);
+        return TryClassifySimpleReturnOperatorExpression(expression, out kind)
+            || (TryGetSimpleUnaryExpression(expression) is { } unaryExpression
+                && TryClassifySimpleReturnWrapperUnary(unaryExpression, out kind));
+    }
+
+    private static bool TryClassifySimpleReturnOperatorExpression(
+        StarkParser.ExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null
+            || assignment.conditionalExpression() is not { } conditionalExpression
+            || conditionalExpression.expression().Length != 0)
+        {
+            return false;
+        }
+
+        return TryClassifySimpleReturnLogicalOrExpression(conditionalExpression.logicalOrExpression(), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnLogicalOrExpression(
+        StarkParser.LogicalOrExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.logicalAndExpression().Length > 1)
+        {
+            if (expression.logicalAndExpression().All(TryIsSimpleLeafLogicalAndExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.logicalAndExpression().Length == 1
+            && TryClassifySimpleReturnLogicalAndExpression(expression.logicalAndExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnLogicalAndExpression(
+        StarkParser.LogicalAndExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.bitwiseOrExpression().Length > 1)
+        {
+            if (expression.bitwiseOrExpression().All(TryIsSimpleLeafBitwiseOrExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.bitwiseOrExpression().Length == 1
+            && TryClassifySimpleReturnBitwiseOrExpression(expression.bitwiseOrExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnBitwiseOrExpression(
+        StarkParser.BitwiseOrExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.bitwiseXorExpression().Length > 1)
+        {
+            if (expression.bitwiseXorExpression().All(TryIsSimpleLeafBitwiseXorExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.bitwiseXorExpression().Length == 1
+            && TryClassifySimpleReturnBitwiseXorExpression(expression.bitwiseXorExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnBitwiseXorExpression(
+        StarkParser.BitwiseXorExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.bitwiseAndExpression().Length > 1)
+        {
+            if (expression.bitwiseAndExpression().All(TryIsSimpleLeafBitwiseAndExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.bitwiseAndExpression().Length == 1
+            && TryClassifySimpleReturnBitwiseAndExpression(expression.bitwiseAndExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnBitwiseAndExpression(
+        StarkParser.BitwiseAndExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.equalityExpression().Length > 1)
+        {
+            if (expression.equalityExpression().All(TryIsSimpleLeafEqualityExpression))
+            {
+                kind = SingleReturnWrapperKind.Comparison;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.equalityExpression().Length == 1
+            && TryClassifySimpleReturnEqualityExpression(expression.equalityExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnEqualityExpression(
+        StarkParser.EqualityExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.relationalExpression().Length > 1)
+        {
+            if (expression.relationalExpression().All(TryIsSimpleLeafRelationalExpression))
+            {
+                kind = SingleReturnWrapperKind.Comparison;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.relationalExpression().Length == 1
+            && TryClassifySimpleReturnRelationalExpression(expression.relationalExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnRelationalExpression(
+        StarkParser.RelationalExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.shiftExpression().Length > 1)
+        {
+            if (expression.shiftExpression().All(TryIsSimpleLeafShiftExpression))
+            {
+                kind = SingleReturnWrapperKind.Comparison;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.shiftExpression().Length == 1
+            && TryClassifySimpleReturnShiftExpression(expression.shiftExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnShiftExpression(
+        StarkParser.ShiftExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.additiveExpression().Length > 1)
+        {
+            if (expression.additiveExpression().All(TryIsSimpleLeafAdditiveExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.additiveExpression().Length == 1
+            && TryClassifySimpleReturnAdditiveExpression(expression.additiveExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnAdditiveExpression(
+        StarkParser.AdditiveExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.multiplicativeExpression().Length > 1)
+        {
+            if (expression.multiplicativeExpression().All(TryIsSimpleLeafMultiplicativeExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return expression.multiplicativeExpression().Length == 1
+            && TryClassifySimpleReturnMultiplicativeExpression(expression.multiplicativeExpression(0), out kind);
+    }
+
+    private static bool TryClassifySimpleReturnMultiplicativeExpression(
+        StarkParser.MultiplicativeExpressionContext expression,
+        out SingleReturnWrapperKind kind)
+    {
+        kind = SingleReturnWrapperKind.None;
+
+        if (expression.unaryExpression().Length > 1)
+        {
+            if (expression.unaryExpression().All(TryIsSimpleLeafUnaryExpression))
+            {
+                kind = SingleReturnWrapperKind.BinaryOperator;
+                return true;
+            }
+
+            return false;
+        }
+
+        return false;
     }
 
     private static bool TryClassifySimpleReturnWrapperUnary(
@@ -455,6 +684,66 @@ internal static class FunctionOptimizationSummaryBuilder
         return expression.Identifier() is not null || expression.qualifiedName() is not null;
     }
 
+    private static bool TryIsSimpleLeafLogicalAndExpression(StarkParser.LogicalAndExpressionContext expression)
+    {
+        return expression.bitwiseOrExpression().Length == 1
+            && TryIsSimpleLeafBitwiseOrExpression(expression.bitwiseOrExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafBitwiseOrExpression(StarkParser.BitwiseOrExpressionContext expression)
+    {
+        return expression.bitwiseXorExpression().Length == 1
+            && TryIsSimpleLeafBitwiseXorExpression(expression.bitwiseXorExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafBitwiseXorExpression(StarkParser.BitwiseXorExpressionContext expression)
+    {
+        return expression.bitwiseAndExpression().Length == 1
+            && TryIsSimpleLeafBitwiseAndExpression(expression.bitwiseAndExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafBitwiseAndExpression(StarkParser.BitwiseAndExpressionContext expression)
+    {
+        return expression.equalityExpression().Length == 1
+            && TryIsSimpleLeafEqualityExpression(expression.equalityExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafEqualityExpression(StarkParser.EqualityExpressionContext expression)
+    {
+        return expression.relationalExpression().Length == 1
+            && TryIsSimpleLeafRelationalExpression(expression.relationalExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafRelationalExpression(StarkParser.RelationalExpressionContext expression)
+    {
+        return expression.shiftExpression().Length == 1
+            && TryIsSimpleLeafShiftExpression(expression.shiftExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafShiftExpression(StarkParser.ShiftExpressionContext expression)
+    {
+        return expression.additiveExpression().Length == 1
+            && TryIsSimpleLeafAdditiveExpression(expression.additiveExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafAdditiveExpression(StarkParser.AdditiveExpressionContext expression)
+    {
+        return expression.multiplicativeExpression().Length == 1
+            && TryIsSimpleLeafMultiplicativeExpression(expression.multiplicativeExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafMultiplicativeExpression(StarkParser.MultiplicativeExpressionContext expression)
+    {
+        return expression.unaryExpression().Length == 1
+            && TryIsSimpleLeafUnaryExpression(expression.unaryExpression(0));
+    }
+
+    private static bool TryIsSimpleLeafUnaryExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        return TryClassifySimpleReturnWrapperUnary(expression, out _)
+            || TryGetSimplePostfixExpression(expression) is not null;
+    }
+
     private static StarkParser.UnaryExpressionContext? TryGetSimpleUnaryExpression(StarkParser.ExpressionContext expression)
     {
         var assignment = expression.assignmentExpression();
@@ -568,6 +857,8 @@ internal static class FunctionOptimizationSummaryBuilder
         IndexAccess,
         Conversion,
         AddressOf,
-        Dereference
+        Dereference,
+        BinaryOperator,
+        Comparison
     }
 }

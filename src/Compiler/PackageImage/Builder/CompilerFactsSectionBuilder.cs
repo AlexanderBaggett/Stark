@@ -176,7 +176,9 @@ internal static partial class PackageImageBuilder
                     validation.OptimizationSummary.IsSingleReturnIndexAccessWrapper,
                     validation.OptimizationSummary.IsSingleReturnConversionWrapper,
                     validation.OptimizationSummary.IsSingleReturnAddressOfWrapper,
-                    validation.OptimizationSummary.IsSingleReturnDereferenceWrapper));
+                    validation.OptimizationSummary.IsSingleReturnDereferenceWrapper,
+                    validation.OptimizationSummary.IsSingleReturnBinaryOperatorWrapper,
+                    validation.OptimizationSummary.IsSingleReturnComparisonWrapper));
         return true;
     }
 }

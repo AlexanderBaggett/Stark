@@ -238,6 +238,70 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
 
 
     [Fact]
+    public void RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Inner(i32 Value) { }
+                record Box(Inner Inner) { }
+
+                fn i32 AddDelta<T>(borrow Box box, i32 delta, T tag) {
+                    return box.Inner.Value + delta;
+                }
+
+                fn i32 Run(borrow Box box, i32 delta) {
+                    return AddDelta(box, delta, delta);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var addDelta = Assert.Single(plan.Functions, static function => function.TemplateName == "AddDelta");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, addDelta.CodeSizeHeuristic);
+        Assert.True(addDelta.EstimatedBodyCost is > 2);
+    }
+
+
+    [Fact]
+    public void RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Inner(i32 Value) { }
+                record Box(Inner Inner) { }
+
+                fn bool IsBelow<T>(borrow Box box, i32 limit, T tag) {
+                    return box.Inner.Value < limit;
+                }
+
+                fn bool Run(borrow Box box, i32 limit) {
+                    return IsBelow(box, limit, limit);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "monomorphization-plan"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+        Assert.NotNull(plan);
+
+        var isBelow = Assert.Single(plan.Functions, static function => function.TemplateName == "IsBelow");
+        Assert.Equal(MonomorphizationCodeSizeHeuristic.InlineSmallBody, isBelow.CodeSizeHeuristic);
+        Assert.True(isBelow.EstimatedBodyCost is > 2);
+    }
+
+
+    [Fact]
     public void SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-source-generic-mono-plan-pipeline-");
