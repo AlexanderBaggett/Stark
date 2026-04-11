@@ -24,13 +24,13 @@ Stark can currently:
 - emit a static library plus a package image from the CLI
 - emit object files from the CLI
 
-The active implementation checklist lives in [docs/Roadmap.md](./docs/Roadmap.md).
+The active implementation checklist lives in [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md).
 
-Known unsupported or partial language, lowering, runtime, and standard-library areas are tracked in [docs/UnsupportedFeatures.md](./docs/UnsupportedFeatures.md).
+Known unsupported or partial language, lowering, runtime, and standard-library areas are tracked in [docs/Userfacing/UnsupportedFeatures.md](./docs/Userfacing/UnsupportedFeatures.md).
 
 The current `v1.0` release baseline is defined in [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md).
 
-The current standard-library release baseline is defined in [docs/StandardLibraryBaseline.md](./docs/StandardLibraryBaseline.md).
+The current standard-library release baseline is defined in [docs/StandardLibrary/StandardLibraryBaseline.md](./docs/StandardLibrary/StandardLibraryBaseline.md).
 
 Pre-release notes currently live in [docs/ReleaseNotes.md](./docs/ReleaseNotes.md).
 
@@ -135,18 +135,19 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 
 ## Key Docs
 
-- [docs/LanguageReference.md](./docs/LanguageReference.md)
-- [docs/general-idea.md](./docs/general-idea.md)
-- [docs/BorrowerSystem.md](./docs/BorrowerSystem.md)
-- [docs/ModulesAndVisibility.md](./docs/ModulesAndVisibility.md)
-- [docs/CompilerPipeline.md](./docs/CompilerPipeline.md)
-- [docs/PackageImage.md](./docs/PackageImage.md)
-- [docs/StandardLibrary.md](./docs/StandardLibrary.md)
-- [docs/UnsupportedFeatures.md](./docs/UnsupportedFeatures.md)
+- [docs/Userfacing/LanguageReference.md](./docs/Userfacing/LanguageReference.md)
+- [docs/Internals/LanguageInternals.md](./docs/Internals/LanguageInternals.md)
+- [docs/Userfacing/general-idea.md](./docs/Userfacing/general-idea.md)
+- [docs/Userfacing/BorrowerSystem.md](./docs/Userfacing/BorrowerSystem.md)
+- [docs/Userfacing/ModulesAndVisibility.md](./docs/Userfacing/ModulesAndVisibility.md)
+- [docs/Internals/CompilerPipeline.md](./docs/Internals/CompilerPipeline.md)
+- [docs/Internals/PackageImage.md](./docs/Internals/PackageImage.md)
+- [docs/StandardLibrary/StandardLibrary.md](./docs/StandardLibrary/StandardLibrary.md)
+- [docs/Userfacing/UnsupportedFeatures.md](./docs/Userfacing/UnsupportedFeatures.md)
 - [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md)
 - [docs/V1LoweringContract.md](./docs/V1LoweringContract.md)
-- [docs/StandardLibraryBaseline.md](./docs/StandardLibraryBaseline.md)
+- [docs/StandardLibrary/StandardLibraryBaseline.md](./docs/StandardLibrary/StandardLibraryBaseline.md)
 - [docs/ReleaseNotes.md](./docs/ReleaseNotes.md)
 - [docs/ReleaseProcess.md](./docs/ReleaseProcess.md)
-- [docs/Roadmap.md](./docs/Roadmap.md)
+- [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md)
 - [samples/README.md](./samples/README.md)

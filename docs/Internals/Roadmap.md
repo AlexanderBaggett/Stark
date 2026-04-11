@@ -26,9 +26,9 @@ For roadmap items with nested sub-checklists:
 ## Current Baseline
 
 - [x] Core language design documents exist:
-  - `general-idea.md`
-  - `BorrowerSystem.md`
-  - `ModulesAndVisibility.md`
+  - `Userfacing/general-idea.md`
+  - `Userfacing/BorrowerSystem.md`
+  - `Userfacing/ModulesAndVisibility.md`
   - `CompilerPipeline.md`
 - [x] ANTLR grammar exists in `Stark.g4`
 - [x] .NET parser host exists and builds
@@ -614,7 +614,7 @@ Goal: unlock the language surface the standard library wants before the stdlib i
 ## Milestone 7: Standard Library
 
 Goal: replace the current libc-backed stdlib slice with a cross-platform `System` package that hides platform boundaries behind Stark APIs.
-- Remember to reference StandardLibrary.md
+- Remember to reference `../StandardLibrary/StandardLibrary.md`
 - [x] Define the public `System` module layout
   - [x] `System`
   - [x] `System.Console`
@@ -847,7 +847,7 @@ Goal: Stark is pleasant to work on and pleasant to use.
 - [x] grammar exists in source control
 - [x] minimal getting-started guide in `README.md`
 - [x] roadmap kept up to date as work lands
-- [x] standard library roadmap expanded in `StandardLibrary.md`
+- [x] standard library roadmap expanded in `../StandardLibrary/StandardLibrary.md`
   - [x] module-by-module stdlib surface plan
   - [x] runtime/allocator/IO dependency map
   - [x] tests and packaging plan per stdlib area

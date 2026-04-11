@@ -39,14 +39,14 @@ User code calls `System.Console` or `System.IO.*` and never touches platform sys
 
 The current public module references live here:
 
-- [System](stdlib/System.md)
-- [System.BitOperations](stdlib/System.BitOperations.md)
-- [System.Console](stdlib/System.Console.md)
-- [System.IO](stdlib/System.IO.md)
-- [System.IO.File](stdlib/System.IO.File.md)
-- [System.IO.Path](stdlib/System.IO.Path.md)
-- [System.Math](stdlib/System.Math.md)
-- [System.Text](stdlib/System.Text.md)
+- [System](./System.md)
+- [System.BitOperations](./System.BitOperations.md)
+- [System.Console](./System.Console.md)
+- [System.IO](./System.IO.md)
+- [System.IO.File](./System.IO.File.md)
+- [System.IO.Path](./System.IO.Path.md)
+- [System.Math](./System.Math.md)
+- [System.Text](./System.Text.md)
 
 ## Module Layout
 

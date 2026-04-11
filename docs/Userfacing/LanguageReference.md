@@ -1,12 +1,11 @@
 # Stark Language Reference
 
-Remember this languge aims to be faster than idiomatic C or Rust on most projects, we must chose the best posible optimization strategy and explore optimization opportunities.
+This document describes the user-facing Stark language.
+It defines the source-level contract: how Stark code is written, what constructs exist, and what behavior programmers can rely on.
 
-This document is the consolidated reference for Stark.
+Compiler strategy, specialization planning, backend behavior, and other implementation details are documented separately in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
-It defines the source-level Stark language contract.
-
-[Roadmap.md](./Roadmap.md) tracks milestone ordering and work sequencing. This document defines the language itself.
+[Roadmap.md](../Internals/Roadmap.md) tracks milestone ordering and work sequencing. This document defines the language itself.
 
 ## 1. Design Goals
 
@@ -17,8 +16,8 @@ The core design priorities are:
 - speed and predictable low-level behavior over convenience
 - explicitness over hidden work
 - restrictions that enable stronger optimization
-- ownership and effect rules that allow the frontend to derive strong LLVM facts
-- a default closed-world model with minimal visibility
+- ownership and effect rules that let the compiler prove stronger facts
+- a default preference for static dispatch and minimal visibility
 
 Stark is intentionally more restrictive than mainstream systems languages when that restriction helps produce better code.
 
@@ -126,8 +125,7 @@ Rules:
 
 - `inline`, `noinline`, and `inlinehint` are mutually exclusive
 - `hot` and `cold` are mutually exclusive
-- non-`ffi` internal Stark functions use an internal fast calling convention
-- `ffi` marks a foreign-facing function boundary and disables the default internal calling convention behavior
+- `ffi` marks a foreign-facing function boundary
 - `strictfp` selects strict IEEE-style floating-point semantics for the function
 
 ### 5.3 Declarations and Bodies
@@ -197,7 +195,7 @@ i32[0 255]
 
 Bare width names such as `i32` are convenient family labels in prose, but they are not the full Stark integer source form by themselves. The source-level type must carry an explicit range.
 
-Floating-point source types use the bare width form directly. Stark supports the full scalar floating-point width set exposed by LLVM: `f16`, `f32`, `f64`, `f80`, and `f128`.
+Floating-point source types use the bare width form directly. Stark supports `f16`, `f32`, `f64`, `f80`, and `f128`.
 
 `void` is not a first-class Stark value type. It is valid only as a function return type.
 
@@ -249,23 +247,6 @@ Generic type parameters may appear on functions, `struct` declarations, `record`
 
 Generic parameters participate in name resolution and type substitution.
 
-Generic instantiation is monomorphized by default.
-
-#### Generic Specialization Strategy
-
-When a generic function or type is used with concrete type arguments, Stark normally creates a concrete specialized version for that use.
-In everyday terms, `Identity<i32>` and `Identity<f64>` are treated as separate concrete instantiations when a body is available.
-
-This is a speed-first design.
-Stark prefers direct specialized code by default, and only gets more conservative in a few cases such as declaration-only imports or situations where extra duplication is unlikely to help and may start to hurt instruction-cache locality.
-
-The compiler may keep a fallback ABI path for imported declarations whose bodies are unavailable.
-It may also use a more aggressive caller-specific cloning strategy for some tiny imported helpers, but that is an optimization detail, not part of the language's correctness rules.
-
-To help make those planning choices, the compiler computes a small deterministic body-complexity score for generic function bodies.
-That score is only a planning hint.
-It does not affect type checking, program meaning, or semantic correctness.
-
 Type aliases introduce alternate names for existing types.
 
 The source form is:
@@ -279,6 +260,8 @@ A type alias does not by itself create a distinct runtime type or ABI identity.
 The declaration keyword is `alias`.
 Like other top-level declarations, aliases may be module-private, `internal`, `public`, or `export`.
 `public` and `export` aliases are published as part of the package-facing Stark surface.
+
+Compiler implementation details for generic instantiation and specialization are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
 ## 7. Ownership, Borrowing, and Lifetime Rules
 
@@ -314,6 +297,8 @@ Destruction is intentionally restricted:
 
 - trivial/POD-like destruction is the default
 - safe destructors do not panic, synchronize, or allocate
+
+For a fuller explanation of the borrowing model and its design rationale, see [BorrowerSystem.md](./BorrowerSystem.md).
 
 ## 8. Data Declarations
 
@@ -470,7 +455,6 @@ Doctrines have the following properties:
 - no runtime dispatch representation
 - members may be referenced directly through their qualified doctrine name
 - static dispatch by default
-- specialization-friendly in the closed-world model
 
 ## 9. Globals and Storage Classes
 
@@ -840,15 +824,14 @@ The runtime contract is:
 
 ## 15. Closed-World Bias
 
-Stark is designed around closed-world optimization by default.
+Stark is designed with a closed-world bias.
+For ordinary Stark code, that mostly means the language leans toward static structure and explicit boundaries.
 
-The source model assumes:
+The programmer-facing consequences are:
 
 - static dispatch by default
 - restrictive visibility by default
-- limited externally visible symbols
-- internalization-friendly code generation
-- generic instantiation is monomorphized by default
-- specialization is an explicit closed-world optimization tool
+- most declarations are intended to stay inside module or package boundaries unless deliberately exposed
+- open-world and dynamic patterns are explicit choices, not the default style
 
-Dynamic dispatch and open-world behavior are explicit concessions, not the default model.
+Compiler strategy details for how Stark uses this model are documented in [LanguageInternals.md](../Internals/LanguageInternals.md).

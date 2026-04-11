@@ -52,3 +52,5 @@ BasicAgentCommand.txt
 .tmp-mir.txt
 .tmp-check.csx
 tests/tmp
+docs/ignore
+BasicAgentCommands.txt

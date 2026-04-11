@@ -4,7 +4,7 @@ This document defines the versioned Stark standard-library baseline for the firs
 
 It is intentionally narrower than every internal stdlib source file present in the repository. Only the public baseline below is part of the first release promise.
 
-For the language-side release cut line, see [V1ReleaseSubset.md](./V1ReleaseSubset.md). For unsupported or incomplete areas, see [UnsupportedFeatures.md](./UnsupportedFeatures.md).
+For the language-side release cut line, see [V1ReleaseSubset.md](../Userfacing/V1ReleaseSubset.md). For unsupported or incomplete areas, see [UnsupportedFeatures.md](../Userfacing/UnsupportedFeatures.md).
 
 ## Versioning Scheme
 
@@ -57,7 +57,7 @@ Within the `v1.0.x` line, Stark promises the following for the baseline modules 
 The first release baseline does not promise stability for:
 
 - undocumented internal modules
-- unsupported features listed in [UnsupportedFeatures.md](./UnsupportedFeatures.md)
+- unsupported features listed in [UnsupportedFeatures.md](../Userfacing/UnsupportedFeatures.md)
 - ABI behavior for surfaces explicitly excluded from `v1.0`, such as Stark enums across `ffi` or `export` boundaries
 - future post-`v1.0` expansions that are not part of the baseline module list above
 
@@ -67,11 +67,11 @@ The baseline package identity is:
 
 - root module: `System`
 - package artifact: host-appropriate static library plus sidecar `.starkpkg.json` manifest
-- primary supported release platform: `x86_64` Linux as defined in [V1ReleaseSubset.md](./V1ReleaseSubset.md)
+- primary supported release platform: `x86_64` Linux as defined in [V1ReleaseSubset.md](../Userfacing/V1ReleaseSubset.md)
 
 For `v1.0`, the versioned baseline is defined by:
 
 1. the release tag
 2. this module list
-3. the public docs under `docs/stdlib/`
+3. the public docs under `docs/StandardLibrary/`
 4. the compatibility promise above

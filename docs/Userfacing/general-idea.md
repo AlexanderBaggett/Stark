@@ -52,7 +52,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - can assign branch weights for performance tuning w1, w99 etc
 
 ## Pointers
-- Safe code follows the borrower model from `BorrowerSystem.md`
+- Safe code follows the borrower model from [BorrowerSystem.md](./BorrowerSystem.md)
 - Safe borrows are non-null and non-owning
 - Raw pointers exist only for FFI or explicit low-level escape hatches
 - Pointers to pointers are only permitted through raw pointers at FFI boundaries
@@ -73,10 +73,10 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - array indices are pointer-width (no poison values or widening)
 
 # Borrower System
-- See markdown document BorrowerSystem.md
+- See [BorrowerSystem.md](./BorrowerSystem.md)
 
 # Modules and Visibility
-- See markdown document ModulesAndVisibility.md 
+- See [ModulesAndVisibility.md](./ModulesAndVisibility.md)
 
 ## Structs
 - Regular Structs C# syntax

@@ -2,7 +2,7 @@
 
 Stark is still pre-`2.0`. This page lists user-visible language, lowering, runtime, and standard-library areas that are not supported yet, plus the current diagnostic contract for those gaps.
 
-For the active release checklist, see [Roadmap.md](./Roadmap.md). For pre-release notes, see [ReleaseNotes.md](./ReleaseNotes.md).
+For the active release checklist, see [Roadmap.md](../Internals/Roadmap.md). For pre-release notes, see [ReleaseNotes.md](./ReleaseNotes.md).
 
 ## Code Generation Contract
 
