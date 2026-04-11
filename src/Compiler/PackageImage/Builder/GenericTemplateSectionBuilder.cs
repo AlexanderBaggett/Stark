@@ -163,7 +163,7 @@ internal static partial class PackageImageBuilder
                         ? GetContextSourceText(module.ParseResult, function.Body)
                         : null,
                     TopLevelStatementCount: function.Body.block()?.statement().Length,
-                    EstimatedBodyCost: GenericTemplateBodyCostEstimator.Estimate(function.Body),
+                    EstimatedBodyCost: GenericTemplateBodyComplexityEstimator.Estimate(function.Body),
                     Semantics: validationModel is not null
                         && TryBuildPublishedFunctionSemanticManifest(
                             module,

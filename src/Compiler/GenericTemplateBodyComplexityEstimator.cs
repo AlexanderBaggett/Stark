@@ -2,7 +2,7 @@ using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal static class GenericTemplateBodyCostEstimator
+internal static class GenericTemplateBodyComplexityEstimator
 {
     public static int? Estimate(StarkParser.FunctionBodyContext? functionBody)
     {

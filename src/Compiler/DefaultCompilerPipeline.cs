@@ -1502,7 +1502,7 @@ public static class DefaultCompilerPipeline
                     if (importedTemplateInfos?.ContainsKey(resolvedName) == true)
                     {
                         // Imported generic planning should trust the published package-image
-                        // summary instead of re-deriving cost from reparsed bridge text.
+                        // summary instead of re-deriving complexity from reparsed bridge text.
                         continue;
                     }
 
@@ -1514,14 +1514,14 @@ public static class DefaultCompilerPipeline
                             declaration.Function.Modifiers.IsCold,
                             declaration.Function.Modifiers.InlinePreference,
                             functionSyntax.Body.block()?.statement().Length,
-                            GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body),
+                            GenericTemplateBodyComplexityEstimator.Estimate(functionSyntax.Body),
                             FunctionOptimizationSummaryBuilder.Build(functionSyntax.Body)));
 
                     if (infos.TryGetValue(resolvedName, out var existing))
                     {
                         var syntaxTopLevelStatementCount = functionSyntax.Body.block()?.statement().Length;
-                        var syntaxEstimatedBodyCost = functionSyntax.HasBody
-                            ? GenericTemplateBodyCostEstimator.Estimate(functionSyntax.Body)
+                        var syntaxEstimatedBodyComplexity = functionSyntax.HasBody
+                            ? GenericTemplateBodyComplexityEstimator.Estimate(functionSyntax.Body)
                             : null;
                         var syntaxOptimizationSummary = functionSyntax.HasBody
                             ? FunctionOptimizationSummaryBuilder.Build(functionSyntax.Body)
@@ -1533,7 +1533,7 @@ public static class DefaultCompilerPipeline
                             IsCold: declaration.Function.Modifiers.IsCold,
                             InlinePreference: declaration.Function.Modifiers.InlinePreference,
                             TopLevelStatementCount: syntaxTopLevelStatementCount ?? existing.TopLevelStatementCount,
-                            EstimatedBodyCost: syntaxEstimatedBodyCost ?? existing.EstimatedBodyCost,
+                            EstimatedBodyCost: syntaxEstimatedBodyComplexity ?? existing.EstimatedBodyCost,
                             OptimizationSummary: syntaxOptimizationSummary ?? existing.OptimizationSummary);
                     }
                 }
@@ -1569,8 +1569,8 @@ public static class DefaultCompilerPipeline
             }
 
             if (info.InlinePreference == InlinePreference.Inline
-                || (info.EstimatedBodyCost is { } estimatedBodyCost
-                    && estimatedBodyCost <= (info.IsHot ? 4 : 2))
+                || (info.EstimatedBodyCost is { } estimatedBodyComplexity
+                    && estimatedBodyComplexity <= (info.IsHot ? 4 : 2))
                 || (info.EstimatedBodyCost is null
                     && info.TopLevelStatementCount is { } topLevelStatementCount
                     && topLevelStatementCount <= (info.IsHot ? 4 : 2)))

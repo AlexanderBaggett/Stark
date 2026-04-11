@@ -251,6 +251,21 @@ Generic parameters participate in name resolution and type substitution.
 
 Generic instantiation is monomorphized by default.
 
+#### Generic Specialization Strategy
+
+When a generic function or type is used with concrete type arguments, Stark normally creates a concrete specialized version for that use.
+In everyday terms, `Identity<i32>` and `Identity<f64>` are treated as separate concrete instantiations when a body is available.
+
+This is a speed-first design.
+Stark prefers direct specialized code by default, and only gets more conservative in a few cases such as declaration-only imports or situations where extra duplication is unlikely to help and may start to hurt instruction-cache locality.
+
+The compiler may keep a fallback ABI path for imported declarations whose bodies are unavailable.
+It may also use a more aggressive caller-specific cloning strategy for some tiny imported helpers, but that is an optimization detail, not part of the language's correctness rules.
+
+To help make those planning choices, the compiler computes a small deterministic body-complexity score for generic function bodies.
+That score is only a planning hint.
+It does not affect type checking, program meaning, or semantic correctness.
+
 Type aliases introduce alternate names for existing types.
 
 The source form is:

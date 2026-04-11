@@ -1092,14 +1092,14 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] add regression tests that ordinary floating-point kernels pick the optimizer-friendly form under non-`strictfp`
 
 - [ ] Emit stronger global linkage, visibility, and preemption facts
-  - [ ] prefer `private`, `internal`, `linkonce_odr`, and comdat aggressively under Stark visibility and monomorphization rules
+  - [x] prefer `private`, `internal`, `linkonce_odr`, and comdat aggressively under Stark visibility and monomorphization rules
   - [ ] emit `dso_local` and other non-preemptable forms wherever the Stark package/runtime model makes them sound
   - [ ] extend `unnamed_addr` / `local_unnamed_addr` to address-insignificant constants, helpers, and functions
 
 - [ ] Emit optimizer-only imported bodies from package images
   - [ ] materialize imported package-image function bodies as `available_externally` when they should exist for optimization but not final ownership
-  - [ ] feed imported generics, wrappers, and helper bodies to LLVM without forcing duplicate final definitions
-  - [ ] combine package-image body publication with linkage rules that still permit dead stripping and internalization
+  - [x] feed imported generics, wrappers, and helper bodies to LLVM without forcing duplicate final definitions
+  - [x] combine package-image body publication with linkage rules that still permit dead stripping and internalization
 
 - [ ] Emit vectorization-friendly layout and constant-data alignment choices
   - [ ] over-align global numeric arrays, lookup tables, and other SIMD-friendly readonly blocks
@@ -1107,7 +1107,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] tune constant/table layout so LLVM can merge, hoist, and vectorize accesses more aggressively
 
 - [ ] Emit tail-call markers and specialized calling conventions where Stark semantics make them profitable
-  - [ ] keep the fast internal calling convention path fully consistent across declarations, definitions, and direct calls
+  - [x] keep the fast internal calling convention path fully consistent across declarations, definitions, and direct calls
   - [ ] add `tail`, `musttail`, or `notail` markers when Stark recursion/state-machine structure makes the choice provably correct
   - [ ] use `coldcc`, `preserve_mostcc`, `preserve_nonecc`, or similar specialized conventions for traps, runtime helpers, and dispatch loops when they materially help
 
@@ -1122,7 +1122,7 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] keep alias-analysis-friendly provenance through package-image-backed generic instantiations and wrapper lowering
 
 - [ ] Emit enum-tag and constrained-integer metadata plus optimization-friendly internal representations
-  - [ ] minimize internal discriminant width when Stark's enum layout contract permits it
+  - [x] minimize internal discriminant width when Stark's enum layout contract permits it
   - [ ] emit discriminant and constrained-integer range facts on loads, stores, calls, returns, and switches
   - [ ] choose tag encodings that favor common empty/default fast paths where the language contract leaves the representation open
 

@@ -711,7 +711,7 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
     [Fact]
     public void ManifestBackedTerminalSelectionGenericBodiesUseOptimizationSummaryForPlanning()
     {
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-body-cost-generic-mono-plan-pipeline-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-body-complexity-generic-mono-plan-pipeline-");
         var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
         var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
 
