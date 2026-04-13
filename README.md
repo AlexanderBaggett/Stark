@@ -147,7 +147,5 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 - [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md)
 - [docs/V1LoweringContract.md](./docs/V1LoweringContract.md)
 - [docs/StandardLibrary/StandardLibraryBaseline.md](./docs/StandardLibrary/StandardLibraryBaseline.md)
-- [docs/ReleaseNotes.md](./docs/ReleaseNotes.md)
-- [docs/ReleaseProcess.md](./docs/ReleaseProcess.md)
 - [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md)
 - [samples/README.md](./samples/README.md)

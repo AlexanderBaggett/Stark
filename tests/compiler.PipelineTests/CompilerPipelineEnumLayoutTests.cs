@@ -21,13 +21,13 @@ public sealed class CompilerPipelineEnumLayoutTests
                 module Facade
 
                 public struct Padded {
-                    i8 Small;
-                    i32 Value;
+                    i8[-128 127] Small;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public enum Token {
                     End,
-                    Move { X: i32, Y: i32 },
+                    Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
                 }
                 """,
                 facadePath));

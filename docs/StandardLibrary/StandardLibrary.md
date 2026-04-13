@@ -64,9 +64,11 @@ Repository source layout:
 - `stdlib/src/System/Math.stark`
 - `stdlib/src/System/Runtime.stark`
 - `stdlib/src/System/Runtime/Buffer.stark`
+- `stdlib/src/System/Runtime/ConsoleInput.stark`
 - `stdlib/src/System/Runtime/Platform.stark`
 - `stdlib/src/System/Runtime/Platform/Linux.stark`
 - `stdlib/src/System/Runtime/Platform/Windows.stark`
+- `stdlib/src/System/Syscall.stark`
 
 Public module surface:
 
@@ -86,10 +88,19 @@ Internal modules:
 - `System.Runtime.Platform`
 - `System.Runtime.Platform.Linux`
 - `System.Runtime.Platform.Windows`
+- `System.Syscall`
 
-`System.stark` is a pure package root that re-exports the public submodules:
+The repository also currently contains `System.Runtime.ConsoleInput` as a staged
+internal helper source file. The active console-input implementation currently
+lives in `System.Console`, so `System.Runtime.ConsoleInput` is not part of the
+current packaged module graph.
+
+`System.stark` re-exports the public submodules and imports internal runtime and
+syscall support needed during package build:
 
 ```stark
+import System.Runtime
+import System.Syscall
 export import System.BitOperations
 export import System.Console
 export import System.IO

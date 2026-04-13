@@ -11,7 +11,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Run(i32 value) {
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     case 1:
                         return 10;
@@ -39,8 +39,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 value) {
-                stack i32 result = 0;
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                stack i32[-2147483648 2147483647] result = 0;
                 switch (value) {
                     case 1:
                         result = 10;
@@ -84,7 +84,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Run(i32 value, bool allow) {
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 10;
@@ -109,7 +109,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Run(i32 value, bool allow) {
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case _ when allow:
                         return 10;
@@ -134,7 +134,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Run(i32 value, bool allow) {
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1:
                     case _ when allow:
@@ -162,7 +162,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Run(i32 value, bool allow) {
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -190,7 +190,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Run(i32 value, bool allow) {
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -224,9 +224,9 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            finite law i32 Run(Pair value) {
+            finite law i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -259,16 +259,118 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+
+            finite law i32[-2147483648 2147483647] Run(Pair value) {
+                switch (value) {
+                    case Pair capture:
+                        return capture.Right;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "capture");
+        var captureBlock = Assert.Single(
+            function.Blocks,
+            static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_agg_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.Contains("switch_agg_match", captureBlock.Label, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
+
+            finite law i32[-2147483648 2147483647] Run(Outer value) {
+                switch (value) {
+                    case Outer(Pair capture, var tail):
+                        return tail;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "capture");
+        var captureBlock = Assert.Single(
+            function.Blocks,
+            static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_agg_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.Contains("switch_agg_match", captureBlock.Label, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                Empty,
+                Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+            }
+
+            fn i32[-2147483648 2147483647] Run(Token value) {
+                switch (value) {
+                    case Token.Pair capture:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions);
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "capture");
+        var captureBlock = Assert.Single(
+            function.Blocks,
+            static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.DoesNotContain(
+            function.Blocks.Where(static block => block.Label.Contains("switch_test", StringComparison.Ordinal)),
+            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
+        Assert.Contains("switch_agg_match", captureBlock.Label, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelection()
     {
         var result = Compile(
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
-            record Outer(Pair Values, i32 Tail) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
 
-            finite law i32 Run(Outer value) {
+            finite law i32[-2147483648 2147483647] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -310,11 +412,11 @@ public sealed partial class MidLevelIrLoweringTests
 
             enum Token {
                 End,
-                Integer(i32),
-                Move { X: i32, Y: i32 },
+                Integer(i32[-2147483648 2147483647]),
+                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            fn i32 Run(Token token) {
+            fn i32[-2147483648 2147483647] Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;
@@ -347,14 +449,14 @@ public sealed partial class MidLevelIrLoweringTests
 
             enum Status {
                 Ok,
-                Err(i32),
+                Err(i32[-2147483648 2147483647]),
             }
 
             fn Status Next() {
                 return Status.Ok;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 switch (Next()) {
                     case Status.Ok:
                         return 1;
@@ -380,7 +482,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(ascii value, bool allow) {
+            fn i32[-2147483648 2147483647] Run(ascii value, bool allow) {
                 switch (value) {
                     case "ab":
                         return 1;
@@ -414,7 +516,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(ascii value) {
+            fn i32[-2147483648 2147483647] Run(ascii value) {
                 switch (value) {
                     case "":
                         return 0;
@@ -460,7 +562,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(unicode value) {
+            fn i32[-2147483648 2147483647] Run(unicode value) {
                 switch (value) {
                     case "\u03c0":
                         return 1;
@@ -486,7 +588,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(f32 value, bool allow) {
+            fn i32[-2147483648 2147483647] Run(f32 value, bool allow) {
                 switch (value) {
                     case 1.5:
                         return 1;
@@ -513,7 +615,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run(rawptr<i32> value) {
+            fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> value) {
                 switch (value) {
                     case null:
                         return 1;
@@ -542,7 +644,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             record Label(ascii Tag, unicode Word) { }
 
-            fn i32 Run(Label value) {
+            fn i32[-2147483648 2147483647] Run(Label value) {
                 switch (value) {
                     case Label("ab", var word):
                         return word == (unicode)"cat" ? 7 : 3;
@@ -576,7 +678,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Text { Tag: ascii, Word: unicode },
             }
 
-            fn i32 Run(Token value) {
+            fn i32[-2147483648 2147483647] Run(Token value) {
                 switch (value) {
                     case Token.Text { Tag: "ab", Word: var word }:
                         return word == (unicode)"cat" ? 7 : 3;

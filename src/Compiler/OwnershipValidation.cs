@@ -1160,7 +1160,7 @@ internal sealed class OwnershipValidator
     {
         if (pattern.VAR() is not null && pattern.Identifier() is { } capture)
         {
-            if (switchValue.Type.Kind != StarkTypeKind.Named)
+            if (!IsEnumSwitchType(switchValue.Type))
             {
                 state.Declare(new VariableInfo(
                     capture.GetText(),
@@ -1218,8 +1218,23 @@ internal sealed class OwnershipValidator
         }
 
         var suffix = aggregatePattern.aggregatePatternSuffix();
-        if (suffix is null || suffix.Identifier() is not null)
+        if (suffix is null)
         {
+            return;
+        }
+
+        if (suffix.Identifier() is { } capture)
+        {
+            state.Declare(new VariableInfo(
+                capture.GetText(),
+                switchType,
+                StorageClass.None,
+                VariableOrigin.Local,
+                IsMutable: false,
+                IsConstant: false,
+                BorrowLifetime.None,
+                DeclarationLocation: Location(capture.Symbol)),
+                isInitialized: true);
             return;
         }
 
@@ -1292,8 +1307,23 @@ internal sealed class OwnershipValidator
 
         NarrowSwitchValueToEnumCase(switchValue, state, enumType, variant);
 
-        if (variant.IsUnit || suffix is null || suffix.Identifier() is not null)
+        if (variant.IsUnit || suffix is null)
         {
+            return true;
+        }
+
+        if (suffix.Identifier() is { } capture)
+        {
+            state.Declare(new VariableInfo(
+                capture.GetText(),
+                switchValue.Type,
+                StorageClass.None,
+                VariableOrigin.Local,
+                IsMutable: false,
+                IsConstant: false,
+                switchValue.BorrowLifetime,
+                DeclarationLocation: Location(capture.Symbol)),
+                isInitialized: true);
             return true;
         }
 
@@ -1434,6 +1464,14 @@ internal sealed class OwnershipValidator
     private StarkTypeSymbol ResolvePatternSimpleType(StarkParser.SimpleTypeContext simpleType)
     {
         return _typeResolver.ResolveSimpleType(simpleType, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
+    }
+
+    private bool IsEnumSwitchType(StarkTypeSymbol switchType)
+    {
+        return switchType.Kind == StarkTypeKind.Named
+            && switchType.NamedType is not null
+            && _typeModel.NamedTypes.TryGetValue(switchType.NamedType, out var namedType)
+            && namedType.Kind == DeclarationKind.Enum;
     }
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)

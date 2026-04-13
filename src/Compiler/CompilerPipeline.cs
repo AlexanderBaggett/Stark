@@ -7,6 +7,7 @@ public sealed record CompilationInput(string SourceText, string? FilePath = null
 public enum CompilerOptimizationLevel
 {
     O0,
+    Og,
     O1,
     O2,
     O3

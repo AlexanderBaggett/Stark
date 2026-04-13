@@ -12,10 +12,10 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
@@ -47,8 +47,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32 Count() {
-                stack mut i32 value = 0;
+            fn i32[-2147483648 2147483647] Count() {
+                stack mut i32[-2147483648 2147483647] value = 0;
 
                 while willexit (value < 3) {
                     value += 1;
@@ -76,7 +76,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn retborrow Box Echo(retborrow Box value) {
@@ -109,8 +109,8 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Pair {
-                i8 Tag;
-                i32 Value;
+                i8[-128 127] Tag;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Inspect(borrow Pair pair) {
@@ -137,7 +137,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Touch(borrow mut Box box) {
@@ -177,12 +177,12 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32 ReadGlobal() {
+            fn i32[-2147483648 2147483647] ReadGlobal() {
                 return Counter;
             }
 
@@ -216,11 +216,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            law i32 Use() {
+            law i32[-2147483648 2147483647] Use() {
                 return Add(1, 2);
             }
             """);
@@ -235,11 +235,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32 Step(i32 value) {
+            fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
                 return value + 1;
             }
 
-            finite i32 Use(i32 value) {
+            finite i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
                 return Step(value);
             }
             """);
@@ -254,12 +254,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            law void Touch(i32[] view) {
+            law void Touch(i32[-2147483648 2147483647][] view) {
                 view[0] = 1;
                 return;
             }
 
-            law void Outer(i32[] view) {
+            law void Outer(i32[-2147483648 2147483647][] view) {
                 Touch(view);
                 return;
             }

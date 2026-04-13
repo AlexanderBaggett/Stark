@@ -289,6 +289,9 @@ internal static class FunctionOverloadFacts
         return coreType.Kind switch
         {
             StarkTypeKind.Named when coreType.NamedType is not null => coreType.NamedType,
+            StarkTypeKind.Integer when coreType.BitWidth is int bitWidth
+                                        && StarkTypeSymbols.IsFullSignedIntegerRange(bitWidth, coreType.RangeMin, coreType.RangeMax)
+                => $"i{bitWidth}",
             StarkTypeKind.RawPointer when coreType.ElementType is not null
                 => $"{(coreType.IsMutablePointer ? "rawmutptr" : "rawptr")}<{BuildCanonicalTypeKey(coreType.ElementType)}>",
             StarkTypeKind.FixedArray when coreType.ElementType is not null

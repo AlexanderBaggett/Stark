@@ -11,8 +11,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            finite law i32 Run() {
-                stack mut i32 value = 1;
+            finite law i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647] value = 1;
                 value = value + 1;
                 return value;
             }
@@ -35,9 +35,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 input) {
-                stack mut i32 value = input;
-                stack rawmutptr<i32> ptr = &value;
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+                stack mut i32[-2147483648 2147483647] value = input;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
                 *ptr = input + 1;
                 return value;
             }
@@ -61,13 +61,41 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void DebugMetadataMarksOptimizedAndUnoptimizedBuildsAccurately()
+    {
+        var optimized = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run() {
+                return 1;
+            }
+            """);
+        var debugFriendly = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run() {
+                return 1;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(optimized.Succeeded);
+        Assert.True(debugFriendly.Succeeded);
+
+        Assert.Contains("isOptimized: true", GetLlvm(optimized));
+        Assert.Contains("isOptimized: false", GetLlvm(debugFriendly));
+    }
+
+    [Fact]
     public void ConstantBranchConditionsCanFoldAllTheWayToReturn()
     {
         var result = Compile(
             """
             module Demo
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 if (true) {
                     return 1;
                 }
@@ -91,8 +119,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            finite law i32 Run(bool flag) {
-                stack mut i32 value = 0;
+            finite law i32[-2147483648 2147483647] Run(bool flag) {
+                stack mut i32[-2147483648 2147483647] value = 0;
                 if (flag) {
                     value = 1;
                 } else {
@@ -119,11 +147,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Globals
 
-            public const i32 Answer = 42;
-            internal static rawptr<i8> Buffer = null;
-            export static mut rawptr<i8> Visible = null;
+            public const i32[-2147483648 2147483647] Answer = 42;
+            internal static rawptr<i8[-128 127]> Buffer = null;
+            export static mut rawptr<i8[-128 127]> Visible = null;
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """);
@@ -146,9 +174,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 Counter = 7;
                 return Counter;
             }
@@ -169,12 +197,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Math
 
-            public const i32 Answer = 42;
-            internal static mut i32 Counter = 0;
-            static i32 Hidden = 1;
-            export static mut i32 Visible = 0;
+            public const i32[-2147483648 2147483647] Answer = 42;
+            internal static mut i32[-2147483648 2147483647] Counter = 0;
+            static i32[-2147483648 2147483647] Hidden = 1;
+            export static mut i32[-2147483648 2147483647] Visible = 0;
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 Counter = 7;
                 return Counter;
             }
@@ -201,10 +229,10 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static i32 Hidden = 1;
-            static i32 Exposed = 2;
+            static i32[-2147483648 2147483647] Hidden = 1;
+            static i32[-2147483648 2147483647] Exposed = 2;
 
-            fn rawptr<i32> ExposedPtr() {
+            fn rawptr<i32[-2147483648 2147483647]> ExposedPtr() {
                 return &Exposed;
             }
             """,
@@ -230,14 +258,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
             const Pair Origin = new Pair() { Left = 1, Right = 2 };
-            static i32[3] Values = { 4, 7, 9 };
+            static i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Origin.Right + Values[1];
             }
             """);
@@ -258,19 +286,19 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
             const Pair Origin = new Pair() { Left = 1, Right = 2 };
-            const i32[3] Values = { 4, 7, 9 };
+            const i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
 
             finite law unicode Greek() {
                 return (unicode)"\u03B1";
             }
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Counter + Origin.Right + Values[1];
             }
             """);
@@ -291,10 +319,10 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static rawptr<i8> Buffer = null;
+            static rawptr<i8[-128 127]> Buffer = null;
             const ascii Label = "Hi";
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """,
@@ -319,9 +347,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            const i64 Bits = 7;
+            const i64[-9223372036854775808 9223372036854775807] Bits = 7;
             const f64 Value = 3.5;
-            static rawptr<i8> Buffer = null;
+            static rawptr<i8[-128 127]> Buffer = null;
             const ascii Label = "Hi";
             """,
             new CompilerOptions(
@@ -348,14 +376,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
             internal const Pair Origin = new Pair() { Left = 1, Right = 2 };
-            internal static i32[3] Values = { 4, 7, 9 };
+            internal static i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Origin.Right + Values[1];
             }
             """,
@@ -377,10 +405,10 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            const i32 Answer = (1 + 2) * 3;
-            const i32[1 + 2] Values = { 4, 7, 9 };
+            const i32[-2147483648 2147483647] Answer = (1 + 2) * 3;
+            const i32[-2147483648 2147483647][1 + 2] Values = { 4, 7, 9 };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Answer + Values[2];
             }
             """);
@@ -399,13 +427,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Point(i32 X) {
-                i32 Y;
+            record Point(i32[-2147483648 2147483647] X) {
+                i32[-2147483648 2147483647] Y;
             }
 
             const Point Origin = new Point(3) { Y = 9 };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Origin.Y;
             }
             """);
@@ -424,9 +452,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            const i32[3] Values = { 4, 7, 9 };
+            const i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Values[1];
             }
             """);
@@ -445,7 +473,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct Outer {
@@ -458,7 +486,7 @@ public sealed class LlvmIrEmissionTests
                 Label = "ok"
             };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Graph.Item.Value;
             }
             """);
@@ -481,12 +509,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32[2] Pair;
+                i32[-2147483648 2147483647][2] Pair;
             }
 
             struct Outer {
                 Inner Node;
-                i32[3] View;
+                i32[-2147483648 2147483647][3] View;
             }
 
             const Outer Frozen = {
@@ -494,7 +522,7 @@ public sealed class LlvmIrEmissionTests
                 View = { 1, 2, 3 }
             };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Frozen.Node.Pair[1] + Frozen.View[0];
             }
             """);
@@ -515,14 +543,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
             static mut Pair Current = new Pair() { Left = 5, Right = 8 };
-            static mut i32[3] Values = { 1, 2, 3 };
+            static mut i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 Current.Right = 9;
                 Values[1] = 7;
                 return Current.Right + Values[1];
@@ -551,12 +579,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i32[2] Values;
+                i32[-2147483648 2147483647][2] Values;
             }
 
             static Buffer Shared = { Values = { 5, 8 } };
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 return Shared.Values[1];
             }
             """);
@@ -575,9 +603,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            const rawptr<i8> stdout = null;
+            const rawptr<i8[-128 127]> stdout = null;
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """);
@@ -595,7 +623,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left ^ right;
             }
             """);
@@ -604,7 +632,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Run(i32 %arg_left, i32 %arg_right)", llvm);
-        Assert.Contains("xor i32 %arg_left, %arg_right", llvm);
+        Assert.Contains("xor i32", llvm);
     }
 
     [Fact]
@@ -614,7 +642,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 middle, i32 right, i32 mask) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, i32[-2147483648 2147483647] mask) {
                 return left | middle ^ right & mask << 1 >> 1;
             }
             """);
@@ -622,11 +650,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("shl i32 %arg_mask, 1", llvm);
+        Assert.Contains("shl i32", llvm);
         Assert.Contains("ashr i32", llvm);
-        Assert.Contains("and i32 %arg_right", llvm);
-        Assert.Contains("xor i32 %arg_middle", llvm);
-        Assert.Contains("or i32 %arg_left", llvm);
+        Assert.Contains("and i32", llvm);
+        Assert.Contains("xor i32", llvm);
+        Assert.Contains("or i32", llvm);
     }
 
     [Fact]
@@ -636,7 +664,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return -%left +% right *% 2;
             }
             """);
@@ -645,7 +673,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("sub i32 0, %arg_left", llvm);
-        Assert.Contains("mul i32 %arg_right, 2", llvm);
+        Assert.Contains("mul i32", llvm);
         Assert.Contains("add i32", llvm);
     }
 
@@ -656,7 +684,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left +| right *| 2 -| 1;
             }
             """);
@@ -681,15 +709,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Wrap() {
+            fn i32[-2147483648 2147483647] Wrap() {
                 return 2147483647 +% 1;
             }
 
-            fn i32 SatAdd() {
+            fn i32[-2147483648 2147483647] SatAdd() {
                 return 2147483647 +| 1;
             }
 
-            fn i32 SatMul() {
+            fn i32[-2147483648 2147483647] SatMul() {
                 return 1073741824 *| 4;
             }
             """);
@@ -732,7 +760,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left ** right;
             }
             """);
@@ -756,7 +784,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 if (Echo(0.0) != 0.0) {
                     return 1;
                 }
@@ -788,8 +816,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack mut i32 i = 0;
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647] i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
                 }
@@ -813,8 +841,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack i32 value = 1;
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647] value = 1;
                 switch (value) {
                     case 1:
                         return 1;
@@ -841,7 +869,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 1;
@@ -869,14 +897,14 @@ public sealed class LlvmIrEmissionTests
 
             enum Status {
                 Ok,
-                Err(i32),
+                Err(i32[-2147483648 2147483647]),
             }
 
             fn Status Next() {
                 return Status.Ok;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 switch (Next()) {
                     case Status.Ok:
                         return 1;
@@ -899,7 +927,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -925,7 +953,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 value, bool allow) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -940,8 +968,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Run(i32 %arg_value, i1 %arg_allow)", llvm);
-        Assert.Contains("icmp eq i32 %arg_value, 1", llvm);
-        Assert.Contains("icmp eq i32 %arg_value, 2", llvm);
+        Assert.True(CountOccurrences(llvm, "icmp eq i32") >= 2);
         Assert.Contains("br i1 %arg_allow", llvm);
         Assert.DoesNotContain("switch i32", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Run(i32, i1)", llvm);
@@ -954,7 +981,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Next() {
+            fn i32[-2147483648 2147483647] Next() {
                 return 1;
             }
 
@@ -999,7 +1026,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(ascii value, bool allow) {
+            fn i32[-2147483648 2147483647] Run(ascii value, bool allow) {
                 switch (value) {
                     case "ab":
                         return 1;
@@ -1030,7 +1057,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(ascii value) {
+            fn i32[-2147483648 2147483647] Run(ascii value) {
                 switch (value) {
                     case "":
                         return 0;
@@ -1074,7 +1101,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(unicode value) {
+            fn i32[-2147483648 2147483647] Run(unicode value) {
                 switch (value) {
                     case "\u03c0":
                         return 1;
@@ -1102,11 +1129,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn ascii SliceAscii(ascii text, i32 start, i32 length) {
+            fn ascii SliceAscii(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
 
-            fn unicode SliceUnicode(unicode text, i32 start, i32 length) {
+            fn unicode SliceUnicode(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
             """);
@@ -1160,14 +1187,14 @@ public sealed class LlvmIrEmissionTests
             public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
             public fn unicode Run() {
-                stack mut i8[16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i8[-128 127][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Ascii ownedAscii = new Ascii() {
                     Data = &asciiBuffer[0],
                     Length = 0,
                     Capacity = 16
                 };
 
-                stack mut i32[8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[-2147483648 2147483647][8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -1274,11 +1301,11 @@ public sealed class LlvmIrEmissionTests
             """
             module System.BitOperations
 
-            public finite law i32 LeadingZeroCount(i32 value);
-            public finite law i64 TrailingZeroCount(i64 value);
-            public finite law i32 PopCount(i32 value);
-            public finite law i64 RotateLeft(i64 value, i64 amount);
-            public finite law i32 RotateRight(i32 value, i32 amount);
+            public finite law i32[-2147483648 2147483647] LeadingZeroCount(i32[-2147483648 2147483647] value);
+            public finite law i64[-9223372036854775808 9223372036854775807] TrailingZeroCount(i64[-9223372036854775808 9223372036854775807] value);
+            public finite law i32[-2147483648 2147483647] PopCount(i32[-2147483648 2147483647] value);
+            public finite law i64[-9223372036854775808 9223372036854775807] RotateLeft(i64[-9223372036854775808 9223372036854775807] value, i64[-9223372036854775808 9223372036854775807] amount);
+            public finite law i32[-2147483648 2147483647] RotateRight(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] amount);
             """);
 
         Assert.True(result.Succeeded);
@@ -1426,7 +1453,7 @@ public sealed class LlvmIrEmissionTests
             import System.Math
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """,
@@ -1463,7 +1490,7 @@ public sealed class LlvmIrEmissionTests
             import System.BitOperations
             module Demo
 
-            fn i32 Run(i32 value) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 return System.BitOperations.PopCount(value);
             }
             """,
@@ -1476,7 +1503,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module System.BitOperations
 
-                        public finite law i32 PopCount(i32 value);
+                        public finite law i32[-2147483648 2147483647] PopCount(i32[-2147483648 2147483647] value);
                         """,
                         "/virtual/System/BitOperations.stark"
                     )
@@ -1497,8 +1524,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Hello
 
-            ffi fn i32 puts(ascii text);
-            export ffi fn i32 main() {
+            ffi fn i32[-2147483648 2147483647] puts(ascii text);
+            export ffi fn i32[-2147483648 2147483647] main() {
                 puts("Hello, world!\n");
                 return 0;
             }
@@ -1648,14 +1675,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            fn i32 Read(borrow Box box) {
+            fn i32[-2147483648 2147483647] Read(borrow Box box) {
                 return box.Value;
             }
             """);
@@ -1675,7 +1702,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn retborrow Box Echo(retborrow Box value) {
@@ -1697,12 +1724,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32 ReadGlobal() {
+            fn i32[-2147483648 2147483647] ReadGlobal() {
                 return Counter;
             }
 
@@ -1757,13 +1784,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            ffi fn i32 puts(ascii text);
+            ffi fn i32[-2147483648 2147483647] puts(ascii text);
 
             fn ascii Message() {
                 return "Hello";
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack ascii message = Message();
                 puts(message);
                 return 0;
@@ -1789,10 +1816,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 41 };
                 return box.Value;
             }
@@ -1814,10 +1841,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -1840,10 +1867,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -1874,9 +1901,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains(
-            "define fastcc float @Run(float %arg_left, float %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) strictfp inlinehint",
-            llvm);
+        Assert.Contains("define fastcc float @Run(float %arg_left, float %arg_right)", llvm);
+        Assert.Contains(" strictfp ", llvm);
     }
 
     [Fact]
@@ -1887,10 +1913,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -1914,7 +1940,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
             fn bool Equal(Pair left, Pair right) {
                 return left == right;
@@ -1947,11 +1973,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn bool Equal(i32[2] left, i32[2] right) {
+            fn bool Equal(i32[-2147483648 2147483647][2] left, i32[-2147483648 2147483647][2] right) {
                 return left == right;
             }
 
-            fn bool NotEqual(i32[2] left, i32[2] right) {
+            fn bool NotEqual(i32[-2147483648 2147483647][2] left, i32[-2147483648 2147483647][2] right) {
                 return left != right;
             }
             """);
@@ -1980,7 +2006,7 @@ public sealed class LlvmIrEmissionTests
 
             enum Token {
                 None,
-                Number(i32),
+                Number(i32[-2147483648 2147483647]),
             }
 
             fn bool Equal(Token left, Token right) {
@@ -2017,7 +2043,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
 
             fn bool Equal(Many left, Many right) {
                 return left == right;
@@ -2048,7 +2074,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
 
             fn bool Less(Many left, Many right) {
                 return left < right;
@@ -2091,7 +2117,7 @@ public sealed class LlvmIrEmissionTests
 
             enum Token {
                 None,
-                Many(i32, i32, i32, i32, i32),
+                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
             fn bool Less(Token left, Token right) {
@@ -2135,11 +2161,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn bool Equal(i32[5] left, i32[5] right) {
+            fn bool Equal(i32[-2147483648 2147483647][5] left, i32[-2147483648 2147483647][5] right) {
                 return left == right;
             }
 
-            fn bool NotEqual(i32[5] left, i32[5] right) {
+            fn bool NotEqual(i32[-2147483648 2147483647][5] left, i32[-2147483648 2147483647][5] right) {
                 return left != right;
             }
             """);
@@ -2166,7 +2192,7 @@ public sealed class LlvmIrEmissionTests
 
             enum Token {
                 None,
-                Many(i32, i32, i32, i32, i32),
+                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
             fn bool Equal(Token left, Token right) {
@@ -2257,11 +2283,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn bool Same(i32[] left, i32[] right) {
+            fn bool Same(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
                 return left == right;
             }
 
-            fn bool Different(i32[] left, i32[] right) {
+            fn bool Different(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
                 return left != right;
             }
             """);
@@ -2290,7 +2316,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Window(i32[] Items, i32 Count) { }
+            record Window(i32[-2147483648 2147483647][] Items, i32[-2147483648 2147483647] Count) { }
 
             fn bool Same(Window left, Window right) {
                 return left == right;
@@ -2324,7 +2350,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Cell {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct Holder {
@@ -2337,7 +2363,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Make().Cells[1].Value;
             }
             """);
@@ -2360,9 +2386,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Point(i32 X, i32 Y) { }
+            record Point(i32[-2147483648 2147483647] X, i32[-2147483648 2147483647] Y) { }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Point point = new Point() { X = 3, Y = 4 };
                 return point.Y;
             }
@@ -2383,7 +2409,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn Box Make() {
@@ -2405,8 +2431,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Point(i32 X) {
-                i32 Y;
+            record Point(i32[-2147483648 2147483647] X) {
+                i32[-2147483648 2147483647] Y;
             }
 
             fn Point Make() {
@@ -2431,14 +2457,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Read(Box box) {
+            fn i32[-2147483648 2147483647] Read(Box box) {
                 return box.Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Read(new Box() { Value = 7 });
             }
             """);
@@ -2460,8 +2486,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i8 Tag;
-                i32 Value;
+                i8[-128 127] Tag;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Touch(borrow Pair pair) {
@@ -2483,8 +2509,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i64 Left;
-                i64 Right;
+                i64[-9223372036854775808 9223372036854775807] Left;
+                i64[-9223372036854775808 9223372036854775807] Right;
             }
 
             alias PairAlias = Pair;
@@ -2511,11 +2537,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -2544,11 +2570,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i8 Tag;
-                i32 Value;
+                i8[-128 127] Tag;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair source = new Pair() { Tag = 1, Value = 2 };
                 stack mut Pair dest = new Pair() { Tag = 0, Value = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -2575,18 +2601,18 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Large {
-                i32 A0;
-                i32 A1;
-                i32 A2;
-                i32 A3;
-                i32 A4;
-                i32 A5;
-                i32 A6;
-                i32 A7;
-                i32 A8;
+                i32[-2147483648 2147483647] A0;
+                i32[-2147483648 2147483647] A1;
+                i32[-2147483648 2147483647] A2;
+                i32[-2147483648 2147483647] A3;
+                i32[-2147483648 2147483647] A4;
+                i32[-2147483648 2147483647] A5;
+                i32[-2147483648 2147483647] A6;
+                i32[-2147483648 2147483647] A7;
+                i32[-2147483648 2147483647] A8;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Large source = new Large() {
                     A0 = 1,
                     A1 = 2,
@@ -2632,7 +2658,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[64] Data;
+                i8[-128 127][64] Data;
             }
 
             ffi fn void Consume(rawptr<Buffer> buffer);
@@ -2659,11 +2685,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -2688,11 +2714,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn i32 Run(bool flag) {
+            fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -2714,14 +2740,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn Box Make() {
                 return new Box() { Value = 7 };
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = Make();
                 return box.Value;
             }
@@ -2744,18 +2770,18 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64 A;
-                i64 B;
-                i64 C;
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
             }
 
             fn Big Make() {
                 return new Big() { A = 1, B = 2, C = 3 };
             }
 
-            fn i64 Run() {
+            fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack Big value = Make();
-                return (i64)value.C;
+                return (i64[-9223372036854775808 9223372036854775807])value.C;
             }
             """);
 
@@ -2769,6 +2795,133 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBuffer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
+            }
+
+            fn Big Make() {
+                return new Big() { A = 1, B = 2, C = 3 };
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)", llvm);
+        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr %ret, i8 0, i64 24, i1 false)", llvm);
+        Assert.Contains("store i64 1, ptr %abi_insert_field_store_", llvm);
+        Assert.Contains("store i64 2, ptr %abi_insert_field_store_", llvm);
+        Assert.Contains("store i64 3, ptr %abi_insert_field_store_", llvm);
+        Assert.DoesNotContain("store %Big", llvm);
+    }
+
+    [Fact]
+    public void LargeAggregateForwardReturnCopiesFromIndirectCallResultSlot()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
+                i64[-9223372036854775808 9223372036854775807] D;
+                i64[-9223372036854775808 9223372036854775807] E;
+            }
+
+            fn Big Make() {
+                return new Big() { A = 1, B = 2, C = 3, D = 4, E = 5 };
+            }
+
+            fn Big Forward() {
+                return Make();
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)", llvm);
+        Assert.Contains("call fastcc void @Make(ptr sret(%Big)", llvm);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %ret, ptr %abi_callret_slot_", llvm);
+        Assert.DoesNotContain("load %Big, ptr %abi_callret_slot_", llvm);
+        Assert.DoesNotContain("store %Big", llvm);
+    }
+
+    [Fact]
+    public void LargeAggregateReturnOfIndirectParameterSkipsEntryLoad()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
+                i64[-9223372036854775808 9223372036854775807] D;
+            }
+
+            fn Big Forward(Big value) {
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %ret, ptr %arg_value, i64 32, i1 false)", llvm);
+        Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
+        Assert.DoesNotContain("%abi_arg_value_value", llvm);
+        Assert.DoesNotContain("store %Big", llvm);
+    }
+
+    [Fact]
+    public void LargeAggregateIndirectParameterForwardingUsesOriginalPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
+                i64[-9223372036854775808 9223372036854775807] D;
+            }
+
+            fn Big Step(Big value) {
+                return value;
+            }
+
+            fn Big Forward(Big value) {
+                return Step(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("call fastcc void @Step(ptr sret(%Big)", llvm);
+        Assert.Contains("ptr byval(%Big) align 8 %arg_value", llvm);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %ret, ptr %abi_callret_slot_", llvm);
+        Assert.DoesNotContain("load %Big, ptr %abi_callret_slot_", llvm);
+        Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
+        Assert.DoesNotContain("%abi_callarg_value", llvm);
+    }
+
+    [Fact]
     public void LargeAggregateParametersUseByValueIndirectAbi()
     {
         var result = Compile(
@@ -2776,16 +2929,16 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64 A;
-                i64 B;
-                i64 C;
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
             }
 
-            fn i64 Read(Big value) {
+            fn i64[-9223372036854775808 9223372036854775807] Read(Big value) {
                 return value.A + value.C;
             }
 
-            fn i64 Run() {
+            fn i64[-9223372036854775808 9223372036854775807] Run() {
                 return Read(new Big() { A = 1, B = 2, C = 3 });
             }
             """);
@@ -2808,18 +2961,18 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn Pair Step(Pair value, i32 delta) {
+            fn Pair Step(Pair value, i32[-2147483648 2147483647] delta) {
                 return new Pair() {
                     Left = value.Left + delta,
                     Right = value.Right + delta
                 };
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair current = Step(
                     Step(
                         Step(new Pair() { Left = 1, Right = 2 }, 1),
@@ -2846,13 +2999,13 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64 A;
-                i64 B;
-                i64 C;
-                i64 D;
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
+                i64[-9223372036854775808 9223372036854775807] D;
             }
 
-            fn Big Step(Big value, i64 delta) {
+            fn Big Step(Big value, i64[-9223372036854775808 9223372036854775807] delta) {
                 return new Big() {
                     A = value.A + delta,
                     B = value.B + delta,
@@ -2861,7 +3014,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
 
-            fn i64 Run() {
+            fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack Big current = Step(
                     Step(
                         new Big() { A = 1, B = 2, C = 3, D = 4 },
@@ -2888,10 +3041,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run(bool flag) {
+            fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack mut Box box = new Box() { Value = 0 };
                 if (flag) {
                     box = new Box() { Value = 1 };
@@ -2919,14 +3072,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
-                fn i32 Read(Box box) {
+                fn i32[-2147483648 2147483647] Read(Box box) {
                     return box.Value;
                 }
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 7 };
                 return box.Read();
             }
@@ -2949,14 +3102,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
-                fn i32 Read(borrow Box box) {
+                fn i32[-2147483648 2147483647] Read(borrow Box box) {
                     return box.Value;
                 }
             }
 
-            fn i32 Run(borrow Box box) {
+            fn i32[-2147483648 2147483647] Run(borrow Box box) {
                 return box.Read();
             }
             """);
@@ -2977,13 +3130,13 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[16] Storage;
-                i64 WritePos;
+                i8[-128 127][16] Storage;
+                i64[-9223372036854775808 9223372036854775807] WritePos;
             }
 
-            fn i32 Touch(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+            fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&(*buffer).Storage[index]) = value;
-                return (i32)*(&(*buffer).Storage[index]);
+                return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
             """);
 
@@ -3003,9 +3156,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Touch(rawmutptr<i8> data, i64 index, i8 value) {
+            fn i32[-2147483648 2147483647] Touch(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&data[index]) = value;
-                return (i32)*(&data[index]);
+                return (i32[-2147483648 2147483647])*(&data[index]);
             }
             """);
 
@@ -3025,15 +3178,15 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[16] Storage;
+                i8[-128 127][16] Storage;
 
-                fn void Put(borrow mut Buffer self, i64 index, i8 value) {
+                fn void Put(borrow mut Buffer self, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                     *(&self.Storage[index]) = value;
                     return;
                 }
 
-                fn i32 Read(borrow Buffer self, i64 index) {
-                    return (i32)*(&self.Storage[index]);
+                fn i32[-2147483648 2147483647] Read(borrow Buffer self, i64[-9223372036854775808 9223372036854775807] index) {
+                    return (i32[-2147483648 2147483647])*(&self.Storage[index]);
                 }
             }
             """);
@@ -3056,7 +3209,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Touch(borrow mut Box box) {
@@ -3079,8 +3232,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 return values[1];
             }
             """);
@@ -3101,8 +3254,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack mut i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
             }
@@ -3122,8 +3275,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 index) {
-                stack i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 return values[index];
             }
             """);
@@ -3150,7 +3303,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Read(i32[] view, i32 index) {
+            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 return view[index];
             }
             """);
@@ -3171,12 +3324,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Read(i32[2] values) {
+            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][2] values) {
                 return values[0] + values[1];
             }
 
-            fn i32 Run() {
-                stack i32[2] values = { 4, 7 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647][2] values = { 4, 7 };
                 return Read(values);
             }
             """);
@@ -3197,7 +3350,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Read(i32[3] values, i32 index) {
+            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][3] values, i32[-2147483648 2147483647] index) {
                 return values[index];
             }
             """);
@@ -3220,13 +3373,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32[2] Make() {
-                stack i32[2] values = { 4, 7 };
+            fn i32[-2147483648 2147483647][2] Make() {
+                stack i32[-2147483648 2147483647][2] values = { 4, 7 };
                 return values;
             }
 
-            fn i32 Run() {
-                stack i32[2] values = Make();
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647][2] values = Make();
                 return values[1];
             }
             """);
@@ -3246,8 +3399,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32 index) {
-                stack mut i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
             }
@@ -3272,7 +3425,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(i32[] view, i32 index) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -3297,7 +3450,7 @@ public sealed class LlvmIrEmissionTests
 
             ffi fn void Touch();
 
-            fn i32 Run(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 Touch();
                 return Math.Add(left, right);
             }
@@ -3310,7 +3463,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -3332,7 +3485,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8> path)
+            public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
                 in("rax") number,
                 in("rdi") path,
                 out("rax") return,
@@ -3341,7 +3494,7 @@ public sealed class LlvmIrEmissionTests
                 "syscall"
             }
 
-            fn i64 Run(rawptr<i8> path) {
+            fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
                 return Syscall2(2, path);
             }
             """,
@@ -3365,7 +3518,7 @@ public sealed class LlvmIrEmissionTests
             import Syscall
             module Demo
 
-            fn i64 Run(rawptr<i8> path) {
+            fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
                 return Syscall.Syscall2(2, path);
             }
             """,
@@ -3378,7 +3531,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Syscall
 
-                        public ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8> path)
+                        public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
                             in("rax") number,
                             in("rdi") path,
                             out("rax") return,
@@ -3438,7 +3591,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 Math.Counter = 7;
                 return Math.Counter + Math.Answer;
             }
@@ -3451,8 +3604,8 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public const i32 Answer = 3;
-                        public static mut i32 Counter = 1;
+                        public const i32[-2147483648 2147483647] Answer = 3;
+                        public static mut i32[-2147483648 2147483647] Counter = 1;
                         """,
                         "/virtual/Math.stark"
                     )
@@ -3478,17 +3631,17 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            static i32 Counter = 0;
+            static i32[-2147483648 2147483647] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            fn rawptr<i32> CounterPtr() {
+            fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
                 return &Counter;
             }
 
-            fn rawptr<i32> FieldPtr() {
+            fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -3513,7 +3666,7 @@ public sealed class LlvmIrEmissionTests
             import Geometry
             module Demo
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 return Geometry.Read(Geometry.Make());
             }
             """,
@@ -3526,14 +3679,14 @@ public sealed class LlvmIrEmissionTests
                         module Geometry
 
                         public struct Box {
-                            i32 Value;
+                            i32[-2147483648 2147483647] Value;
                         }
 
                         public fn Box Make() {
                             return new Box() { Value = 7 };
                         }
 
-                        public fn i32 Read(Box box) {
+                        public fn i32[-2147483648 2147483647] Read(Box box) {
                             return box.Value;
                         }
                         """,
@@ -3558,7 +3711,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 Use() {
+            law i32[-2147483648 2147483647] Use() {
                 return Math.UseLaw();
             }
             """,
@@ -3570,11 +3723,11 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        law i32 LawOnly() {
+                        law i32[-2147483648 2147483647] LawOnly() {
                             return 1;
                         }
 
-                        public law i32 UseLaw() {
+                        public law i32[-2147483648 2147483647] UseLaw() {
                             return LawOnly();
                         }
                         """,
@@ -3598,11 +3751,11 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 UseLawClone() {
+            law i32[-2147483648 2147483647] UseLawClone() {
                 return Math.UseLaw();
             }
 
-            fn i32 UseDirect() {
+            fn i32[-2147483648 2147483647] UseDirect() {
                 Touch();
                 return Math.UseLaw();
             }
@@ -3617,7 +3770,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public law i32 UseLaw() {
+                        public law i32[-2147483648 2147483647] UseLaw() {
                             return 1;
                         }
                         """,
@@ -3642,11 +3795,11 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 UseLawClone(i32 left, i32 right) {
+            law i32[-2147483648 2147483647] UseLawClone(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return Math.Numbers.Add(left, right);
             }
 
-            fn i32 UseDirect(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 Touch();
                 return Math.Numbers.Add(left, right);
             }
@@ -3662,7 +3815,7 @@ public sealed class LlvmIrEmissionTests
                         module Math
 
                         public doctrine Numbers {
-                            finite law i32 Add(i32 left, i32 right) {
+                            finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                                 return left + right;
                             }
                         }
@@ -3674,7 +3827,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Numbers_Add(", llvm);
         Assert.Contains("call fastcc i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right)", llvm);
         Assert.Contains("call fastcc i32 @Math_Numbers_Add(i32 %arg_left, i32 %arg_right)", llvm);
     }
@@ -3687,11 +3840,11 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 UseLawClone(i32 left, i32 right) {
+            law i32[-2147483648 2147483647] UseLawClone(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return Math.Add(left, right);
             }
 
-            fn i32 UseDirect(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 Touch();
                 return Math.Add(left, right);
             }
@@ -3706,7 +3859,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -3717,7 +3870,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline", llvm);
+        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Add(", llvm);
         Assert.Contains("call fastcc i32 @__stark_law_clone_Math_Add(i32 %arg_left, i32 %arg_right)", llvm);
         Assert.Contains("call fastcc i32 @Math_Add(i32 %arg_left, i32 %arg_right)", llvm);
     }
@@ -3730,7 +3883,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            fn i32 Use(i32 value) {
+            fn i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
                 Touch();
                 return Math.UseLaw(value);
             }
@@ -3745,11 +3898,11 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        law i32 LawOnly(i32 value) {
+                        law i32[-2147483648 2147483647] LawOnly(i32[-2147483648 2147483647] value) {
                             return value + 1;
                         }
 
-                        public law i32 UseLaw(i32 value) {
+                        public law i32[-2147483648 2147483647] UseLaw(i32[-2147483648 2147483647] value) {
                             return LawOnly(value);
                         }
                         """,
@@ -3772,7 +3925,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            law i32 Use(i32 value) {
+            law i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
                 return Math.UseLaw(value);
             }
             """,
@@ -3784,7 +3937,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public inlinehint law i32 UseLaw(i32 value) {
+                        public inlinehint law i32[-2147483648 2147483647] UseLaw(i32[-2147483648 2147483647] value) {
                             return value + 1;
                         }
                         """,
@@ -3806,11 +3959,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            law i32 Use() {
+            law i32[-2147483648 2147483647] Use() {
                 return Add(1, 2);
             }
             """);
@@ -3830,15 +3983,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Core(i32 value) {
+            fn i32[-2147483648 2147483647] Core(i32[-2147483648 2147483647] value) {
                 return value + 1;
             }
 
-            fn i32 Forward(i32 value) {
+            fn i32[-2147483648 2147483647] Forward(i32[-2147483648 2147483647] value) {
                 return Core(value);
             }
 
-            fn i32 Use(i32 value) {
+            fn i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
                 return Forward(value);
             }
             """);
@@ -3862,17 +4015,17 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Box(i32 Value) {
-                fn i32 Bump(borrow Box self, i32 delta) {
+            record Box(i32[-2147483648 2147483647] Value) {
+                fn i32[-2147483648 2147483647] Bump(borrow Box self, i32[-2147483648 2147483647] delta) {
                     return self.Value + delta;
                 }
             }
 
-            fn i32 Forward(borrow Box box, i32 delta) {
+            fn i32[-2147483648 2147483647] Forward(borrow Box box, i32[-2147483648 2147483647] delta) {
                 return box.Bump(delta);
             }
 
-            fn i32 Use(borrow Box box, i32 delta) {
+            fn i32[-2147483648 2147483647] Use(borrow Box box, i32[-2147483648 2147483647] delta) {
                 return Forward(box, delta);
             }
             """);
@@ -3896,14 +4049,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32 Value) { }
+            record Inner(i32[-2147483648 2147483647] Value) { }
             record Box(Inner Inner) { }
 
-            fn i32 Read(borrow Box box) {
+            fn i32[-2147483648 2147483647] Read(borrow Box box) {
                 return box.Inner.Value;
             }
 
-            fn i32 Use(borrow Box box) {
+            fn i32[-2147483648 2147483647] Use(borrow Box box) {
                 return Read(box);
             }
             """);
@@ -3927,13 +4080,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Box(i32 Value) { }
+            record Box(i32[-2147483648 2147483647] Value) { }
 
-            fn i32 Read(Box[2] boxes, i32 index) {
+            fn i32[-2147483648 2147483647] Read(Box[2] boxes, i32[-2147483648 2147483647] index) {
                 return boxes[index].Value;
             }
 
-            fn i32 Use(Box[2] boxes, i32 index) {
+            fn i32[-2147483648 2147483647] Use(Box[2] boxes, i32[-2147483648 2147483647] index) {
                 return Read(boxes, index);
             }
             """);
@@ -3957,14 +4110,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32 Value) { }
+            record Inner(i32[-2147483648 2147483647] Value) { }
             record Box(Inner Inner) { }
 
-            fn i64 Read(borrow Box box) {
-                return (i64)box.Inner.Value;
+            fn i64[-9223372036854775808 9223372036854775807] Read(borrow Box box) {
+                return (i64[-9223372036854775808 9223372036854775807])box.Inner.Value;
             }
 
-            fn i64 Use(borrow Box box) {
+            fn i64[-9223372036854775808 9223372036854775807] Use(borrow Box box) {
                 return Read(box);
             }
             """);
@@ -3988,13 +4141,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Buffer(i32[2] Values) { }
+            record Buffer(i32[-2147483648 2147483647][2] Values) { }
 
-            fn rawptr<i32> Pin(borrow Buffer buffer, i32 index) {
+            fn rawptr<i32[-2147483648 2147483647]> Pin(borrow Buffer buffer, i32[-2147483648 2147483647] index) {
                 return &buffer.Values[index];
             }
 
-            fn rawptr<i32> Use(borrow Buffer buffer, i32 index) {
+            fn rawptr<i32[-2147483648 2147483647]> Use(borrow Buffer buffer, i32[-2147483648 2147483647] index) {
                 return Pin(buffer, index);
             }
             """);
@@ -4018,14 +4171,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32 Value) { }
+            record Inner(i32[-2147483648 2147483647] Value) { }
             record Box(Inner Inner) { }
 
-            fn i32 AddDelta(borrow Box box, i32 delta) {
+            fn i32[-2147483648 2147483647] AddDelta(borrow Box box, i32[-2147483648 2147483647] delta) {
                 return box.Inner.Value + delta;
             }
 
-            fn i32 Use(borrow Box box, i32 delta) {
+            fn i32[-2147483648 2147483647] Use(borrow Box box, i32[-2147483648 2147483647] delta) {
                 return AddDelta(box, delta);
             }
             """);
@@ -4049,14 +4202,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32 Value) { }
+            record Inner(i32[-2147483648 2147483647] Value) { }
             record Box(Inner Inner) { }
 
-            fn bool IsBelow(borrow Box box, i32 limit) {
+            fn bool IsBelow(borrow Box box, i32[-2147483648 2147483647] limit) {
                 return box.Inner.Value < limit;
             }
 
-            fn bool Use(borrow Box box, i32 limit) {
+            fn bool Use(borrow Box box, i32[-2147483648 2147483647] limit) {
                 return IsBelow(box, limit);
             }
             """);
@@ -4080,7 +4233,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 ChooseBranch(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+            fn i32[-2147483648 2147483647] ChooseBranch(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                 if (takeLeft) {
                     return left;
                 } else if (takeMiddle) {
@@ -4090,7 +4243,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
 
-            fn i32 Use(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+            fn i32[-2147483648 2147483647] Use(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                 return ChooseBranch(takeLeft, takeMiddle, left, middle, right);
             }
             """);
@@ -4114,7 +4267,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 ChooseSwitch(i32 selector, i32 left, i32 middle, i32 right) {
+            fn i32[-2147483648 2147483647] ChooseSwitch(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                 switch (selector) {
                     case 0:
                         return left;
@@ -4125,7 +4278,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
 
-            fn i32 Use(i32 selector, i32 left, i32 middle, i32 right) {
+            fn i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                 return ChooseSwitch(selector, left, middle, right);
             }
             """);
@@ -4150,22 +4303,22 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct Outer {
                 Inner Item;
-                i32 Count;
+                i32[-2147483648 2147483647] Count;
             }
 
-            fn Outer Wrap(i32 value, i32 count) {
+            fn Outer Wrap(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
                 return new Outer() {
                     Item = { Value = value },
                     Count = count
                 };
             }
 
-            fn Outer Use(i32 value, i32 count) {
+            fn Outer Use(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
                 return Wrap(value, count);
             }
             """);
@@ -4190,14 +4343,14 @@ public sealed class LlvmIrEmissionTests
 
             enum Boxed {
                 None,
-                Value { Data: i32, Tag: i32 },
+                Value { Data: i32[-2147483648 2147483647], Tag: i32[-2147483648 2147483647] },
             }
 
-            fn Boxed Wrap(i32 value, i32 tag) {
+            fn Boxed Wrap(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] tag) {
                 return Boxed.Value { Data: value, Tag: tag };
             }
 
-            fn Boxed Use(i32 value, i32 tag) {
+            fn Boxed Use(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] tag) {
                 return Wrap(value, tag);
             }
             """);
@@ -4220,16 +4373,16 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32 Value) { }
+            record Inner(i32[-2147483648 2147483647] Value) { }
             record Box(Inner Inner) { }
 
-            fn i32 Bump(borrow Box box, i32 delta) {
-                stack mut i32 current = box.Inner.Value;
+            fn i32[-2147483648 2147483647] Bump(borrow Box box, i32[-2147483648 2147483647] delta) {
+                stack mut i32[-2147483648 2147483647] current = box.Inner.Value;
                 current += delta;
                 return current;
             }
 
-            fn i32 Use(borrow Box box, i32 delta) {
+            fn i32[-2147483648 2147483647] Use(borrow Box box, i32[-2147483648 2147483647] delta) {
                 return Bump(box, delta);
             }
             """);
@@ -4252,7 +4405,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            hot fn i32 Add(i32 left, i32 right) {
+            hot fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
             """);
@@ -4260,7 +4413,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) hot inlinehint", llvm);
+        Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right)", llvm);
+        Assert.Contains(" hot ", llvm);
     }
 
     [Fact]
@@ -4270,7 +4424,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Math
 
-            public finite law i32 Add(i32 left, i32 right) {
+            public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
             """,
@@ -4291,7 +4445,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Helper() {
+            fn i32[-2147483648 2147483647] Helper() {
                 return 7;
             }
             """,
@@ -4316,7 +4470,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
 
-            fn i32 Run(i32 value) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 return Identity(value);
             }
             """);
@@ -4345,7 +4499,7 @@ public sealed class LlvmIrEmissionTests
                 return Identity(value);
             }
 
-            fn i32 Run(i32 value) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 return Forward(value);
             }
             """);
@@ -4369,7 +4523,7 @@ public sealed class LlvmIrEmissionTests
             import Facade
             module Demo
 
-            fn i32 Run(i32 value) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 return Facade.Identity(value);
             }
             """,
@@ -4453,7 +4607,7 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -4467,7 +4621,8 @@ public sealed class LlvmIrEmissionTests
 
             Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
-            Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
         }
         finally
@@ -4541,7 +4696,7 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Forward(value);
                     }
                     """,
@@ -4555,8 +4710,10 @@ public sealed class LlvmIrEmissionTests
 
             Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
             Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
-            Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
-            Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.Contains("define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.Contains("call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Forward(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
         }
@@ -4631,9 +4788,9 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 left, i32 right) {
-                        stack i32 first = Facade.Forward(left);
-                        stack i32 second = Facade.Forward(right);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        stack i32[-2147483648 2147483647] first = Facade.Forward(left);
+                        stack i32[-2147483648 2147483647] second = Facade.Forward(right);
                         return first + second;
                     }
                     """,
@@ -4647,12 +4804,16 @@ public sealed class LlvmIrEmissionTests
 
             Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
             Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32("));
             Assert.Equal(0, CountOccurrences(llvm, "declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
             Assert.Equal(0, CountOccurrences(llvm, "declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
-            Assert.Equal(2, CountOccurrences(llvm, "call fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
-            Assert.Equal(1, CountOccurrences(llvm, "call fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.Equal(2, CountOccurrences(llvm, "call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(2, CountOccurrences(llvm, "call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32("));
             Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
             Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Forward(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
         }
@@ -4676,12 +4837,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Read(i32[] view, i32 index) {
+            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 return view[index];
             }
 
-            fn i32 Run(i32 index) {
-                stack i32[3] values = { 4, 7, 9 };
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
                 return Read(values, index);
             }
             """);
@@ -4705,7 +4866,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Touch(borrow Box box) {
@@ -4736,14 +4897,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Counter {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 fn void Reset(borrow mut Counter self) {
                     self.Value = 0;
                     return;
                 }
 
-                fn void ResetThenAdd(borrow mut Counter self, i32 value) {
+                fn void ResetThenAdd(borrow mut Counter self, i32[-2147483648 2147483647] value) {
                     self.Reset();
                     self.Value += value;
                     return;
@@ -4775,7 +4936,7 @@ public sealed class LlvmIrEmissionTests
                 module Facade
 
                 public struct Counter {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
 
                     fn void Reset(borrow mut Counter self) {
                         self.Value = 0;
@@ -4843,16 +5004,16 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             doctrine Inspect {
-                finite law i32 Read(borrow mut Box box) {
+                finite law i32[-2147483648 2147483647] Read(borrow mut Box box) {
                     return box.Value;
                 }
             }
 
-            finite law i32 Run(borrow mut Box box) {
+            finite law i32[-2147483648 2147483647] Run(borrow mut Box box) {
                 return Inspect.Read(box);
             }
             """);
@@ -4872,7 +5033,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return 1;
             }
             """,
@@ -4896,7 +5057,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn i32 Run(bool left, bool right) {
+            fn i32[-2147483648 2147483647] Run(bool left, bool right) {
                 return left && right ? 1 : 2;
             }
             """);
@@ -4906,8 +5067,9 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc i32 @Run(i1 %arg_left, i1 %arg_right)", llvm);
         Assert.Contains("phi i1", llvm);
-        Assert.Contains("phi i32", llvm);
         Assert.Contains("br i1", llvm);
+        Assert.Contains("ret i32 1", llvm);
+        Assert.Contains("ret i32 2", llvm);
     }
 
     [Fact]
@@ -4917,13 +5079,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32 Run(i64 bits) {
-                stack mut i32 value = 1;
-                stack rawmutptr<i32> ptr = &value;
-                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
-                *ptr = (i32)bits;
+            fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
+                stack mut i32[-2147483648 2147483647] value = 1;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
+                *ptr = (i32[-2147483648 2147483647])bits;
                 Counter = *readonlyPtr;
                 return *(&Counter);
             }

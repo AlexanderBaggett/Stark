@@ -1233,14 +1233,17 @@ internal static partial class PackageImageBuilder
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
         {
+            var wholeCaptureName = genericEnumAggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members = [];
             if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                    module,
-                    literalsByLocation,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    genericEnumAggregatePattern.aggregatePatternSuffix(),
-                    out var members))
+                || (wholeCaptureName is null
+                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        genericEnumAggregatePattern.aggregatePatternSuffix(),
+                        out members)))
             {
                 return false;
             }
@@ -1248,7 +1251,8 @@ internal static partial class PackageImageBuilder
             switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
                 Kind: "enum-pattern",
                 Ordinal: ordinal,
-                Members: members,
+                Name: wholeCaptureName,
+                Members: wholeCaptureName is null ? members : [],
                 GuardExpression: guardExpression,
                 Statements: statements);
             return true;
@@ -1258,13 +1262,16 @@ internal static partial class PackageImageBuilder
         {
             if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
             {
-                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                var enumWholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> enumMembers = [];
+                if (enumWholeCaptureName is null
+                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                         module,
                         literalsByLocation,
                         enumPatternOrdinals,
                         aggregatePatternOrdinals,
                         aggregatePattern.aggregatePatternSuffix(),
-                        out var enumMembers))
+                        out enumMembers))
                 {
                     return false;
                 }
@@ -1272,20 +1279,24 @@ internal static partial class PackageImageBuilder
                 switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
                     Kind: "enum-pattern",
                     Ordinal: enumOrdinal,
-                    Members: enumMembers,
+                    Name: enumWholeCaptureName,
+                    Members: enumWholeCaptureName is null ? enumMembers : [],
                     GuardExpression: guardExpression,
                     Statements: statements);
                 return true;
             }
 
+            var wholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> aggregateMembers = [];
             if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                    module,
-                    literalsByLocation,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    aggregatePattern.aggregatePatternSuffix(),
-                    out var aggregateMembers))
+                || (wholeCaptureName is null
+                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        aggregatePattern.aggregatePatternSuffix(),
+                        out aggregateMembers)))
             {
                 return false;
             }
@@ -1293,7 +1304,8 @@ internal static partial class PackageImageBuilder
             switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
                 Kind: "aggregate-pattern",
                 Ordinal: aggregateOrdinal,
-                Members: aggregateMembers,
+                Name: wholeCaptureName,
+                Members: wholeCaptureName is null ? aggregateMembers : [],
                 GuardExpression: guardExpression,
                 Statements: statements);
             return true;
@@ -1441,14 +1453,17 @@ internal static partial class PackageImageBuilder
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
         {
+            var wholeCaptureName = genericEnumAggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members = [];
             if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                    module,
-                    literalsByLocation,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    genericEnumAggregatePattern.aggregatePatternSuffix(),
-                    out var members))
+                || (wholeCaptureName is null
+                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        genericEnumAggregatePattern.aggregatePatternSuffix(),
+                        out members)))
             {
                 return false;
             }
@@ -1456,7 +1471,8 @@ internal static partial class PackageImageBuilder
             member = new StarkPackageTypedTemplatePatternManifest(
                 "enum-pattern",
                 Ordinal: ordinal,
-                Members: members);
+                Name: wholeCaptureName,
+                Members: wholeCaptureName is null ? members : []);
             return true;
         }
 
@@ -1464,13 +1480,16 @@ internal static partial class PackageImageBuilder
         {
             if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
             {
-                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                var enumWholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> enumMembers = [];
+                if (enumWholeCaptureName is null
+                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                         module,
                         literalsByLocation,
                         enumPatternOrdinals,
                         aggregatePatternOrdinals,
                         aggregatePattern.aggregatePatternSuffix(),
-                        out var enumMembers))
+                        out enumMembers))
                 {
                     return false;
                 }
@@ -1478,18 +1497,22 @@ internal static partial class PackageImageBuilder
                 member = new StarkPackageTypedTemplatePatternManifest(
                     "enum-pattern",
                     Ordinal: enumOrdinal,
-                    Members: enumMembers);
+                    Name: enumWholeCaptureName,
+                    Members: enumWholeCaptureName is null ? enumMembers : []);
                 return true;
             }
 
+            var wholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> aggregateMembers = [];
             if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                    module,
-                    literalsByLocation,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    aggregatePattern.aggregatePatternSuffix(),
-                    out var aggregateMembers))
+                || (wholeCaptureName is null
+                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        aggregatePattern.aggregatePatternSuffix(),
+                        out aggregateMembers)))
             {
                 return false;
             }
@@ -1497,7 +1520,8 @@ internal static partial class PackageImageBuilder
             member = new StarkPackageTypedTemplatePatternManifest(
                 "aggregate-pattern",
                 Ordinal: aggregateOrdinal,
-                Members: aggregateMembers);
+                Name: wholeCaptureName,
+                Members: wholeCaptureName is null ? aggregateMembers : []);
             return true;
         }
 

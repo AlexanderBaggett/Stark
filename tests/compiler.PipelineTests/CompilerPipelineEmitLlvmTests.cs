@@ -87,7 +87,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 left, i32 right, bool takeRight) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, bool takeRight) {
                         return Facade.Choose(left, right, takeRight);
                     }
                     """,
@@ -151,11 +151,11 @@ public sealed class CompilerPipelineEmitLlvmTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Touch<T>(borrow Box box, T tag) {
-                    stack i32 copy = box.Value;
+                    stack i32[-2147483648 2147483647] copy = box.Value;
                     return;
                 }
                 """,
@@ -193,7 +193,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn void Run(borrow Facade.Box box, i32 value) {
+                    fn void Run(borrow Facade.Box box, i32[-2147483648 2147483647] value) {
                         Facade.Touch(box, value);
                         return;
                     }
@@ -258,7 +258,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Math
 
-                public fn i32 AddTag<T>(i32 left, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] AddTag<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
                     return left + right;
                 }
                 """,
@@ -296,7 +296,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Math
                     module Demo
 
-                    law i32 Run(i32 left, i32 right) {
+                    law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Math.AddTag(left, right, left);
                     }
                     """,
@@ -363,13 +363,13 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Box(i32 Value) {
-                    fn i32 Bump(borrow Box self, i32 delta) {
+                public record Box(i32[-2147483648 2147483647] Value) {
+                    fn i32[-2147483648 2147483647] Bump(borrow Box self, i32[-2147483648 2147483647] delta) {
                         return self.Value + delta;
                     }
                 }
 
-                public fn i32 Forward<T>(borrow Box box, i32 delta, T tag) {
+                public fn i32[-2147483648 2147483647] Forward<T>(borrow Box box, i32[-2147483648 2147483647] delta, T tag) {
                     return box.Bump(delta);
                 }
                 """,
@@ -417,7 +417,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow Facade.Box box, i32 delta) {
+                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box, i32[-2147483648 2147483647] delta) {
                         return Facade.Forward(box, delta, delta);
                     }
                     """,
@@ -480,10 +480,10 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32 Read<T>(borrow Box box, T tag) {
+                public fn i32[-2147483648 2147483647] Read<T>(borrow Box box, T tag) {
                     return box.Inner.Value;
                 }
                 """,
@@ -531,7 +531,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow Facade.Box box) {
+                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box) {
                         return Facade.Read(box, box.Inner.Value);
                     }
                     """,
@@ -594,9 +594,9 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Box(i32 Value) { }
+                public record Box(i32[-2147483648 2147483647] Value) { }
 
-                public fn i32 Read<T>(Box[2] boxes, i32 index, T tag) {
+                public fn i32[-2147483648 2147483647] Read<T>(Box[2] boxes, i32[-2147483648 2147483647] index, T tag) {
                     return boxes[index].Value;
                 }
                 """,
@@ -644,7 +644,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Box[2] boxes, i32 index) {
+                    fn i32[-2147483648 2147483647] Run(Facade.Box[2] boxes, i32[-2147483648 2147483647] index) {
                         return Facade.Read(boxes, index, index);
                     }
                     """,
@@ -708,11 +708,11 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i64 Read<T>(borrow Box box, T tag) {
-                    return (i64)box.Inner.Value;
+                public fn i64[-9223372036854775808 9223372036854775807] Read<T>(borrow Box box, T tag) {
+                    return (i64[-9223372036854775808 9223372036854775807])box.Inner.Value;
                 }
                 """,
                 facadePath));
@@ -759,7 +759,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i64 Run(borrow Facade.Box box) {
+                    fn i64[-9223372036854775808 9223372036854775807] Run(borrow Facade.Box box) {
                         return Facade.Read(box, box.Inner.Value);
                     }
                     """,
@@ -821,9 +821,9 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Buffer(i32[2] Values) { }
+                public record Buffer(i32[-2147483648 2147483647][2] Values) { }
 
-                public fn rawptr<i32> Pin<T>(borrow Buffer buffer, i32 index, T tag) {
+                public fn rawptr<i32[-2147483648 2147483647]> Pin<T>(borrow Buffer buffer, i32[-2147483648 2147483647] index, T tag) {
                     return &buffer.Values[index];
                 }
                 """,
@@ -871,7 +871,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn rawptr<i32> Run(borrow Facade.Buffer buffer, i32 index) {
+                    fn rawptr<i32[-2147483648 2147483647]> Run(borrow Facade.Buffer buffer, i32[-2147483648 2147483647] index) {
                         return Facade.Pin(buffer, index, index);
                     }
                     """,
@@ -934,10 +934,10 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32 AddDelta<T>(borrow Box box, i32 delta, T tag) {
+                public fn i32[-2147483648 2147483647] AddDelta<T>(borrow Box box, i32[-2147483648 2147483647] delta, T tag) {
                     return box.Inner.Value + delta;
                 }
                 """,
@@ -985,7 +985,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow Facade.Box box, i32 delta) {
+                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box, i32[-2147483648 2147483647] delta) {
                         return Facade.AddDelta(box, delta, delta);
                     }
                     """,
@@ -1049,10 +1049,10 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn bool IsBelow<T>(borrow Box box, i32 limit, T tag) {
+                public fn bool IsBelow<T>(borrow Box box, i32[-2147483648 2147483647] limit, T tag) {
                     return box.Inner.Value < limit;
                 }
                 """,
@@ -1100,7 +1100,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn bool Run(borrow Facade.Box box, i32 limit) {
+                    fn bool Run(borrow Facade.Box box, i32[-2147483648 2147483647] limit) {
                         return Facade.IsBelow(box, limit, limit);
                     }
                     """,
@@ -1163,7 +1163,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public fn i32 ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
                     if (takeLeft) {
                         return left;
                     } else if (takeMiddle) {
@@ -1215,7 +1215,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                         return Facade.ChooseBranch(takeLeft, takeMiddle, left, middle, right, right);
                     }
                     """,
@@ -1276,7 +1276,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public fn i32 ChooseSwitch<T>(i32 selector, i32 left, i32 middle, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseSwitch<T>(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
                     switch (selector) {
                         case 0:
                             return left;
@@ -1329,7 +1329,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 selector, i32 left, i32 middle, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                         return Facade.ChooseSwitch(selector, left, middle, right, right);
                     }
                     """,
@@ -1396,10 +1396,10 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32 Count;
+                    i32[-2147483648 2147483647] Count;
                 }
 
-                public fn Outer<T> Wrap<T>(T value, i32 count, T tag) {
+                public fn Outer<T> Wrap<T>(T value, i32[-2147483648 2147483647] count, T tag) {
                     return new Outer<T>() {
                         Item = { Value = value },
                         Count = count
@@ -1449,7 +1449,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn Facade.Outer<i32> Run(i32 value, i32 count) {
+                    fn Facade.Outer<i32[-2147483648 2147483647]> Run(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
                         return Facade.Wrap(value, count, value);
                     }
                     """,
@@ -1513,10 +1513,10 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 public enum Boxed<T> {
                     None,
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
-                public fn Boxed<T> Wrap<T>(T value, i32 tag, T marker) {
+                public fn Boxed<T> Wrap<T>(T value, i32[-2147483648 2147483647] tag, T marker) {
                     return Boxed<T>.Value { Data: value, Tag: tag };
                 }
                 """,
@@ -1562,7 +1562,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn Facade.Boxed<i32> Run(i32 value, i32 tag) {
+                    fn Facade.Boxed<i32[-2147483648 2147483647]> Run(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] tag) {
                         return Facade.Wrap(value, tag, value);
                     }
                     """,
@@ -1623,11 +1623,11 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32 Bump<T>(borrow Box box, i32 delta, T tag) {
-                    stack mut i32 current = box.Inner.Value;
+                public fn i32[-2147483648 2147483647] Bump<T>(borrow Box box, i32[-2147483648 2147483647] delta, T tag) {
+                    stack mut i32[-2147483648 2147483647] current = box.Inner.Value;
                     current += delta;
                     return current;
                 }
@@ -1675,7 +1675,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow Facade.Box box, i32 delta) {
+                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box, i32[-2147483648 2147483647] delta) {
                         return Facade.Bump(box, delta, delta);
                     }
                     """,
@@ -1733,15 +1733,15 @@ public sealed class CompilerPipelineEmitLlvmTests
                 module Demo
 
                 struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 const Box Current = new Box() { Value = 5 };
 
-                fn i32 Run() {
-                    stack i32 local = 3;
-                    stack rawptr<i32> localPtr = &local;
-                    stack rawptr<frozen i32> constPtr = &(Current.Value);
+                fn i32[-2147483648 2147483647] Run() {
+                    stack i32[-2147483648 2147483647] local = 3;
+                    stack rawptr<i32[-2147483648 2147483647]> localPtr = &local;
+                    stack rawptr<frozen i32[-2147483648 2147483647]> constPtr = &(Current.Value);
                     return (*localPtr) + (*constPtr);
                 }
                 """,

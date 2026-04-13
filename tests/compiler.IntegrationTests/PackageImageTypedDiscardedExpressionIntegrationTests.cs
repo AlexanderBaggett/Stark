@@ -26,7 +26,7 @@ public sealed class PackageImageTypedDiscardedExpressionIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     value + 1;
                     return value;
                 }
@@ -93,8 +93,8 @@ public sealed class PackageImageTypedDiscardedExpressionIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack i32 tag = 0;
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.Observe(7, tag);
                 }
                 """);

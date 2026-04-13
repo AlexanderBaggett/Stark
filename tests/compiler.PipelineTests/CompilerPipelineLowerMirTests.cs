@@ -56,8 +56,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
-                        stack i32 value = 7;
+                    fn i32[-2147483648 2147483647] Run() {
+                        stack i32[-2147483648 2147483647] value = 7;
                         return Facade.Identity(value);
                     }
                     """,
@@ -101,7 +101,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Box(i32 Dummy) {
+                public record Box(i32[-2147483648 2147483647] Dummy) {
                     fn T Echo<T>(borrow Box self, T value) {
                         return value;
                     }
@@ -152,8 +152,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Box box, i32 value) {
-                        stack i32 echoed = Facade.Relay(box, value);
+                    fn i32[-2147483648 2147483647] Run(Facade.Box box, i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] echoed = Facade.Relay(box, value);
                         return echoed;
                     }
                     """,
@@ -205,7 +205,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Box(i32 Dummy) {
+                public record Box(i32[-2147483648 2147483647] Dummy) {
                     fn T Echo<T>(borrow Box self, T value) {
                         return value;
                     }
@@ -247,8 +247,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Box box, i32 value) {
-                        stack i32 echoed = Facade.Relay(box, value);
+                    fn i32[-2147483648 2147483647] Run(Facade.Box box, i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] echoed = Facade.Relay(box, value);
                         return echoed;
                     }
                     """,
@@ -302,9 +302,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 SumTo<T>(i32 limit, T tag) {
-                    stack mut i32 total = 0, stop = limit;
-                    for willexit (stack mut i32 index = 0, max = stop; index < max; index += 1) {
+                public fn i32[-2147483648 2147483647] SumTo<T>(i32[-2147483648 2147483647] limit, T tag) {
+                    stack mut i32[-2147483648 2147483647] total = 0, stop = limit;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0, max = stop; index < max; index += 1) {
                         total += index;
                     }
 
@@ -352,7 +352,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 SumTo<T>(i32 limit, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 SumTo<T>(i32 limit, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack mut i32 total = 0, stop = limit;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("for willexit (stack mut i32 index = 0, max = stop;", sourceText, StringComparison.Ordinal);
 
@@ -365,8 +365,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 limit) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] limit) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.SumTo(limit, tag);
                     }
                     """,
@@ -416,8 +416,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32 current;
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] current;
                     current = value;
                     return current;
                 }
@@ -463,7 +463,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack mut i32 current;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("current = value;", sourceText, StringComparison.Ordinal);
 
@@ -476,8 +476,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(value, tag);
                     }
                     """,
@@ -528,7 +528,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     value + 1;
                     return value;
                 }
@@ -574,7 +574,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("value + 1;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return value;", sourceText, StringComparison.Ordinal);
 
@@ -587,8 +587,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(value, tag);
                     }
                     """,
@@ -637,8 +637,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 TruncateTyped<T>(f32 value, T tag) {
-                    return (i32)value;
+                public fn i32[-2147483648 2147483647] TruncateTyped<T>(f32 value, T tag) {
+                    return (i32[-2147483648 2147483647])value;
                 }
                 """,
                 facadePath));
@@ -659,7 +659,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 TruncateTyped<T>(f32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 TruncateTyped<T>(f32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return (i32)value;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -671,7 +671,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(f32 value) {
+                    fn i32[-2147483648 2147483647] Run(f32 value) {
                         return Facade.TruncateTyped(value, value);
                     }
                     """,
@@ -725,8 +725,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 AddViaAssign<T>(T tag, i32 left, i32 right) {
-                    stack mut i32 sum = left;
+                public fn i32[-2147483648 2147483647] AddViaAssign<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    stack mut i32[-2147483648 2147483647] sum = left;
                     sum = sum + right;
                     return sum;
                 }
@@ -749,7 +749,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 AddViaAssign<T>(T tag, i32 left, i32 right);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 AddViaAssign<T>(T tag, i32 left, i32 right);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack mut i32 sum = left;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("sum = sum + right;", sourceText, StringComparison.Ordinal);
 
@@ -762,7 +762,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 left, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Facade.AddViaAssign(0, left, right);
                     }
                     """,
@@ -781,11 +781,9 @@ public sealed class CompilerPipelineLowerMirTests
             Assert.True(addViaAssign.HasBody);
             Assert.True(addViaAssign.SupportsDirectCodeGeneration);
             Assert.Contains(addViaAssign.Locals, static local => local.Name == "sum" && local.IsMutable);
-            Assert.Contains(
-                addViaAssign.Blocks.SelectMany(static block => block.Statements),
-                static statement => statement.TargetName == "sum"
-                    && statement.Value is MidLevelIrUseRValue { Operand: MidLevelIrLocalOperand { Name: var operandName } }
-                    && operandName.Contains("bin", StringComparison.Ordinal));
+            Assert.True(
+                addViaAssign.Blocks.SelectMany(static block => block.Statements)
+                    .Count(static statement => statement.TargetName == "sum" && statement.Kind == MidLevelIrStatementKind.Assign) >= 2);
             Assert.Contains(
                 addViaAssign.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
                 static value => value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Add });
@@ -818,8 +816,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 ChooseBranch<T>(bool takeLeft, i32 left, i32 right, T tag) {
-                    stack mut i32 result = 0;
+                public fn i32[-2147483648 2147483647] ChooseBranch<T>(bool takeLeft, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                    stack mut i32[-2147483648 2147483647] result = 0;
                     if (takeLeft) {
                         result = left;
                     } else {
@@ -846,7 +844,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 ChooseBranch<T>(bool takeLeft, i32 left, i32 right, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 ChooseBranch<T>(bool takeLeft, i32 left, i32 right, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("if (takeLeft)", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("result = left;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("result = right;", sourceText, StringComparison.Ordinal);
@@ -860,7 +858,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool takeLeft, i32 left, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(bool takeLeft, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Facade.ChooseBranch(takeLeft, left, right, 0);
                     }
                     """,
@@ -922,7 +920,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
                     if (takeLeft) {
                         return left;
                     } else if (takeMiddle) {
@@ -954,7 +952,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("if (takeLeft)", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return left;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return middle;", sourceText, StringComparison.Ordinal);
@@ -997,7 +995,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
                         return Facade.ChooseTerminal(takeLeft, takeMiddle, left, middle, right, 0);
                     }
                     """,
@@ -1047,9 +1045,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 SumTo<T>(i32 count, T tag) {
-                    stack mut i32 index = 0;
-                    stack mut i32 sum = 0;
+                public fn i32[-2147483648 2147483647] SumTo<T>(i32[-2147483648 2147483647] count, T tag) {
+                    stack mut i32[-2147483648 2147483647] index = 0;
+                    stack mut i32[-2147483648 2147483647] sum = 0;
                     while willexit (index < count) {
                         sum = sum + index;
                         index = index + 1;
@@ -1075,7 +1073,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 SumTo<T>(i32 count, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 SumTo<T>(i32 count, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("while willexit (index < count)", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("sum = sum + index;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("index = index + 1;", sourceText, StringComparison.Ordinal);
@@ -1089,7 +1087,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 count) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count) {
                         return Facade.SumTo(count, 0);
                     }
                     """,
@@ -1153,9 +1151,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 SumFor<T>(i32 count, T tag) {
-                    stack mut i32 sum = 0;
-                    for willexit (stack mut i32 index = 0; index < count; index = index + 1) {
+                public fn i32[-2147483648 2147483647] SumFor<T>(i32[-2147483648 2147483647] count, T tag) {
+                    stack mut i32[-2147483648 2147483647] sum = 0;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
                         sum = sum + index;
                     }
                     return sum;
@@ -1179,7 +1177,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 SumFor<T>(i32 count, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 SumFor<T>(i32 count, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("sum = sum + index;", sourceText, StringComparison.Ordinal);
 
@@ -1192,7 +1190,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 count) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count) {
                         return Facade.SumFor(count, 0);
                     }
                     """,
@@ -1254,9 +1252,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag) {
-                    stack mut i32 sum = 0;
-                    for willexit (stack mut i32 index = 0; index < count; index = index + 1) {
+                public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
+                    stack mut i32[-2147483648 2147483647] sum = 0;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
                         if (index < 2) {
                             continue;
                         }
@@ -1286,7 +1284,7 @@ public sealed class CompilerPipelineLowerMirTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("continue;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("break;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", sourceText, StringComparison.Ordinal);
@@ -1300,7 +1298,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 count, i32 stopAt) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt) {
                         return Facade.SumForControl(count, stopAt, 0);
                     }
                     """,
@@ -1360,7 +1358,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Box(i32 Dummy) {
+                public record Box(i32[-2147483648 2147483647] Dummy) {
                     fn T Echo<T>(borrow Box self, T value) {
                         stack T copy = value;
                         return copy;
@@ -1398,7 +1396,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack Facade.Box box = new Facade.Box(1);
                         return box.Echo(value);
                     }
@@ -1524,8 +1522,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Box<i32> box = new Facade.Box<i32>() { Value = value };
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Box<i32[-2147483648 2147483647]> box = new Facade.Box<i32[-2147483648 2147483647]>() { Value = value };
                         return Facade.Relay(box, value);
                     }
                     """,
@@ -1578,11 +1576,11 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 NextOrdered() {
+                public fn i32[-2147483648 2147483647] NextOrdered() {
                     return 1;
                 }
 
-                public fn i32 NextEquality() {
+                public fn i32[-2147483648 2147483647] NextEquality() {
                     return 1;
                 }
 
@@ -1650,12 +1648,12 @@ public sealed class CompilerPipelineLowerMirTests
                     module Demo
 
                     fn bool RunOrdered() {
-                        stack i32 tag = 0;
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.ObserveOrdered(tag);
                     }
 
                     fn bool RunEquality() {
-                        stack i32 tag = 0;
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.ObserveEquality(tag);
                     }
                     """,
@@ -1727,8 +1725,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag) {
-                    stack mut i32 copy = *ptr;
+                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] copy = *ptr;
                     return *ptr += copy + value;
                 }
                 """,
@@ -1773,7 +1771,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return *ptr += copy + value;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
@@ -1785,9 +1783,9 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack mut i32 current = 5;
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack mut i32[-2147483648 2147483647] current = 5;
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(&current, value, tag);
                     }
                     """,
@@ -1839,13 +1837,13 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Buffer(i32 First, i32[4] Values) { }
+                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
                 public fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -1891,7 +1889,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("(*ptr).First += value;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("(*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;", sourceText, StringComparison.Ordinal);
 
@@ -1904,10 +1902,10 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack mut i32[4] values = { 10, 20, 30, 40 };
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack mut i32[-2147483648 2147483647][4] values = { 10, 20, 30, 40 };
                         stack mut Facade.Buffer buffer = { First = 5, Values = values };
-                        stack i32 tag = 0;
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(&buffer, 2, value, tag);
                     }
                     """,
@@ -1957,14 +1955,14 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Buffer(i32 First, i32[4] Values) { }
+                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32[4] data = { 1, 2, 3, 4 };
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
-                    stack rawmutptr<i32> firstPtr = &buffer.First;
-                    stack rawmutptr<i32> slotPtr = &buffer.Values[2];
-                    stack rawmutptr<i32> aliasPtr = &*slotPtr;
+                    stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;
+                    stack rawmutptr<i32[-2147483648 2147483647]> slotPtr = &buffer.Values[2];
+                    stack rawmutptr<i32[-2147483648 2147483647]> aliasPtr = &*slotPtr;
                     return *aliasPtr = *firstPtr + value;
                 }
                 """,
@@ -2009,7 +2007,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack rawmutptr<i32> firstPtr = &buffer.First;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack rawmutptr<i32> slotPtr = &buffer.Values[2];", sourceText, StringComparison.Ordinal);
 
@@ -2022,8 +2020,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(value, tag);
                     }
                     """,
@@ -2077,7 +2075,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, i32 exponent, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] exponent, T tag) {
                     return value ** exponent;
                 }
                 """,
@@ -2122,7 +2120,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(i32 value, i32 exponent, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, i32 exponent, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return value ** exponent;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
@@ -2134,8 +2132,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value, i32 exponent) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] exponent) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(value, exponent, tag);
                     }
                     """,
@@ -2184,8 +2182,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32 current = 1;
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] current = 1;
                     return current += value;
                 }
                 """,
@@ -2230,7 +2228,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return current += value;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
@@ -2242,8 +2240,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(value, tag);
                     }
                     """,
@@ -2295,9 +2293,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Pair(i32 First, i32 Second) { }
+                public record Pair(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647] Second) { }
 
-                public fn i32 Observe<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     stack Pair pair = { First = value, Second = value + 1 };
                     return pair.First + pair.Second;
                 }
@@ -2343,7 +2341,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 Observe<T>(i32 value, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack Pair pair = { First = value, Second = value + 1 };", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
@@ -2355,8 +2353,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 tag = 0;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(value, tag);
                     }
                     """,
@@ -2414,12 +2412,12 @@ public sealed class CompilerPipelineLowerMirTests
 
                 public fn void NoOp<T>(T tag) { }
 
-                public fn i32 KeepValue<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] KeepValue<T>(i32[-2147483648 2147483647] value, T tag) {
                     ;
                     return value;
                 }
 
-                public fn i32 NestedScope<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] NestedScope<T>(i32[-2147483648 2147483647] value, T tag) {
                     {
                         ;
                     }
@@ -2427,8 +2425,8 @@ public sealed class CompilerPipelineLowerMirTests
                     return value;
                 }
 
-                public fn i32 CountTo<T>(i32 count, T tag) {
-                    stack mut i32 index = 0;
+                public fn i32[-2147483648 2147483647] CountTo<T>(i32[-2147483648 2147483647] count, T tag) {
+                    stack mut i32[-2147483648 2147483647] index = 0;
                     for willexit (;;) {
                         if (index == count) {
                             break;
@@ -2440,7 +2438,7 @@ public sealed class CompilerPipelineLowerMirTests
                     return index;
                 }
 
-                public fn i32 EmptySwitch<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] EmptySwitch<T>(i32[-2147483648 2147483647] value, T tag) {
                     switch (value) {
                         case 0:
                     }
@@ -2502,12 +2500,12 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 count, i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] value) {
                         Facade.NoOp(value);
-                        stack i32 kept = Facade.KeepValue(value, value);
-                        stack i32 scoped = Facade.NestedScope(value, value);
-                        stack i32 counted = Facade.CountTo(count, value);
-                        stack i32 switched = Facade.EmptySwitch(value, value);
+                        stack i32[-2147483648 2147483647] kept = Facade.KeepValue(value, value);
+                        stack i32[-2147483648 2147483647] scoped = Facade.NestedScope(value, value);
+                        stack i32[-2147483648 2147483647] counted = Facade.CountTo(count, value);
+                        stack i32[-2147483648 2147483647] switched = Facade.EmptySwitch(value, value);
                         return kept + scoped + counted + switched;
                     }
                     """,
@@ -2564,9 +2562,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Counter(i32 Value) { }
+                public record Counter(i32[-2147483648 2147483647] Value) { }
 
-                public fn i32 MakeFlag<T>(T value) {
+                public fn i32[-2147483648 2147483647] MakeFlag<T>(T value) {
                     stack Counter counter = new Counter(1);
                     return counter.Value;
                 }
@@ -2588,7 +2586,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.MakeFlag(value);
                     }
                     """,
@@ -2703,7 +2701,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -2830,8 +2828,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 identity = Facade.Identity(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] identity = Facade.Identity(value);
                         return Facade.Forward(identity);
                     }
                     """,
@@ -2937,7 +2935,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.ConstIdentity(value);
                     }
                     """,
@@ -3048,7 +3046,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Relay(value);
                     }
                     """,
@@ -3153,7 +3151,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool takeLeft, i32 left, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(bool takeLeft, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Facade.Choose(takeLeft, left, right);
                     }
                     """,
@@ -3203,7 +3201,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 AddTagged<T>(T tag, i32 left, i32 right) {
+                public fn i32[-2147483648 2147483647] AddTagged<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
                 """,
@@ -3257,7 +3255,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 left, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Facade.AddTagged(0, left, right);
                     }
                     """,
@@ -3412,7 +3410,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 MinTagged<T>(T tag, i32 left, i32 right) {
+                public fn i32[-2147483648 2147483647] MinTagged<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left < right ? left : right;
                 }
                 """,
@@ -3466,7 +3464,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 left, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Facade.MinTagged(0, left, right);
                     }
                     """,
@@ -3570,7 +3568,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -3692,7 +3690,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -3795,9 +3793,9 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack i32 fallback = 0;
-                        return Facade.ReadValue(new Facade.Box<i32>() { Value = value }, fallback);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] fallback = 0;
+                        return Facade.ReadValue(new Facade.Box<i32[-2147483648 2147483647]>() { Value = value }, fallback);
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -3843,13 +3841,13 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Box(i32 Dummy) {
-                    fn i32 Echo(borrow Box self, i32 value) {
+                public record Box(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow Box self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn i32 Forward<T>(Box box, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Forward<T>(Box box, i32[-2147483648 2147483647] value, T tag) {
                     return box.Echo(value);
                 }
                 """,
@@ -3915,7 +3913,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack Facade.Box box = new Facade.Box(1);
                         return Facade.Forward(box, value, value);
                     }
@@ -3963,8 +3961,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record EchoBox(i32 Dummy) {
-                    fn i32 Echo(borrow EchoBox self, i32 value) {
+                public record EchoBox(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow EchoBox self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
@@ -3973,7 +3971,7 @@ public sealed class CompilerPipelineLowerMirTests
                     EchoBox Box;
                 }
 
-                public fn i32 CallHeldEcho<T>(EchoHolder holder, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallHeldEcho<T>(EchoHolder holder, i32[-2147483648 2147483647] value, T tag) {
                     return holder.Box.Echo(value);
                 }
                 """,
@@ -4039,7 +4037,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack Facade.EchoHolder holder = new Facade.EchoHolder() { Box = new Facade.EchoBox(1) };
                         return Facade.CallHeldEcho(holder, value, value);
                     }
@@ -4087,17 +4085,17 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record EchoBox(i32 Dummy) {
-                    fn i32 Echo(borrow EchoBox self, i32 value) {
+                public record EchoBox(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow EchoBox self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn EchoBox MakeEchoBox(i32 dummy) {
+                public fn EchoBox MakeEchoBox(i32[-2147483648 2147483647] dummy) {
                     return new EchoBox(dummy);
                 }
 
-                public fn i32 CallMadeEcho<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallMadeEcho<T>(i32[-2147483648 2147483647] value, T tag) {
                     return MakeEchoBox(1).Echo(value);
                 }
                 """,
@@ -4163,7 +4161,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.CallMadeEcho(value, value);
                     }
                     """,
@@ -4213,13 +4211,13 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record EchoBox(i32 Dummy) {
-                    fn i32 Echo(borrow EchoBox self, i32 value) {
+                public record EchoBox(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow EchoBox self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn i32 CallConstructedEcho<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallConstructedEcho<T>(i32[-2147483648 2147483647] value, T tag) {
                     return new EchoBox(1).Echo(value);
                 }
                 """,
@@ -4285,7 +4283,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.CallConstructedEcho(value, value);
                     }
                     """,
@@ -4335,13 +4333,13 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record EchoBox(i32 Dummy) {
-                    fn i32 Echo(borrow EchoBox self, i32 value) {
+                public record EchoBox(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow EchoBox self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn i32 ChooseEcho<T>(bool takeLeft, EchoBox left, EchoBox right, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseEcho<T>(bool takeLeft, EchoBox left, EchoBox right, i32[-2147483648 2147483647] value, T tag) {
                     return (takeLeft ? left : right).Echo(value);
                 }
                 """,
@@ -4407,7 +4405,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool takeLeft, i32 value) {
+                    fn i32[-2147483648 2147483647] Run(bool takeLeft, i32[-2147483648 2147483647] value) {
                         stack Facade.EchoBox left = new Facade.EchoBox(1);
                         stack Facade.EchoBox right = new Facade.EchoBox(2);
                         return Facade.ChooseEcho(takeLeft, left, right, value, value);
@@ -4457,7 +4455,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record ResetBox(i32 Value) { }
+                public record ResetBox(i32[-2147483648 2147483647] Value) { }
 
                 public fn void ResetValue(borrow mut ResetBox box) {
                     box.Value = 0;
@@ -4528,7 +4526,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow mut Facade.ResetBox box, i32 tag) {
+                    fn i32[-2147483648 2147483647] Run(borrow mut Facade.ResetBox box, i32[-2147483648 2147483647] tag) {
                         Facade.ForwardReset(box, tag);
                         return 0;
                     }
@@ -4576,7 +4574,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record ResetBox(i32 Value) {
+                public record ResetBox(i32[-2147483648 2147483647] Value) {
                     fn void Reset(borrow mut ResetBox self) {
                         self.Value = 0;
                     }
@@ -4647,7 +4645,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow mut Facade.ResetBox box, i32 tag) {
+                    fn i32[-2147483648 2147483647] Run(borrow mut Facade.ResetBox box, i32[-2147483648 2147483647] tag) {
                         Facade.ForwardMethodReset(box, tag);
                         return 0;
                     }
@@ -4695,9 +4693,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record ResetBox(i32 Value) { }
+                public record ResetBox(i32[-2147483648 2147483647] Value) { }
 
-                public fn void ResetValue(borrow mut ResetBox box, i32 next) {
+                public fn void ResetValue(borrow mut ResetBox box, i32[-2147483648 2147483647] next) {
                     box.Value = next;
                 }
 
@@ -4766,7 +4764,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool chooseLeft, borrow mut Facade.ResetBox left, borrow mut Facade.ResetBox right, i32 tag) {
+                    fn i32[-2147483648 2147483647] Run(bool chooseLeft, borrow mut Facade.ResetBox left, borrow mut Facade.ResetBox right, i32[-2147483648 2147483647] tag) {
                         Facade.SelectReset(chooseLeft, left, right, tag);
                         return 0;
                     }
@@ -4823,9 +4821,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Buffer(i32[] Values, i32 Count) { }
+                public record Buffer(i32[-2147483648 2147483647][] Values, i32[-2147483648 2147483647] Count) { }
 
-                public fn void WriteValue<T>(borrow mut Buffer buffer, i32 index, i32 next, T tag) {
+                public fn void WriteValue<T>(borrow mut Buffer buffer, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] next, T tag) {
                     buffer.Count = next;
                     buffer.Values[index] = next;
                 }
@@ -4893,7 +4891,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow mut Facade.Buffer buffer, i32 index, i32 next, i32 tag) {
+                    fn i32[-2147483648 2147483647] Run(borrow mut Facade.Buffer buffer, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] next, i32[-2147483648 2147483647] tag) {
                         Facade.WriteValue(buffer, index, next, tag);
                         return 0;
                     }
@@ -4948,9 +4946,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Buffer(i32[] Values, i32 Count) { }
+                public record Buffer(i32[-2147483648 2147483647][] Values, i32[-2147483648 2147483647] Count) { }
 
-                public fn void AddValue<T>(borrow mut Buffer buffer, i32 index, i32 next, T tag) {
+                public fn void AddValue<T>(borrow mut Buffer buffer, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] next, T tag) {
                     buffer.Count += next;
                     buffer.Values[index] += next;
                 }
@@ -5018,7 +5016,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(borrow mut Facade.Buffer buffer, i32 index, i32 next, i32 tag) {
+                    fn i32[-2147483648 2147483647] Run(borrow mut Facade.Buffer buffer, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] next, i32[-2147483648 2147483647] tag) {
                         Facade.AddValue(buffer, index, next, tag);
                         return 0;
                     }
@@ -5074,7 +5072,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 ReadSliceAt<T>(i32[] view, i32 index, T tag) {
+                public fn i32[-2147483648 2147483647] ReadSliceAt<T>(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index, T tag) {
                     return view[index];
                 }
                 """,
@@ -5140,9 +5138,9 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 index, i32 tag) {
-                        stack i32[3] values = { 4, 7, 9 };
-                        stack i32[] view = values;
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] tag) {
+                        stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
+                        stack i32[-2147483648 2147483647][] view = values;
                         return Facade.ReadSliceAt(view, index, tag);
                     }
                     """,
@@ -5315,7 +5313,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn ascii SliceAsciiWindow<T>(ascii text, i32 start, i32 length, T tag) {
+                public fn ascii SliceAsciiWindow<T>(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length, T tag) {
                     return text[start, length];
                 }
                 """,
@@ -5381,7 +5379,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn ascii Run(i32 start, i32 length) {
+                    fn ascii Run(i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                         return Facade.SliceAsciiWindow("hello", start, length, start);
                     }
                     """,
@@ -5432,7 +5430,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn ascii PickAsciiUnit<T>(ascii text, i32 index, T tag) {
+                public fn ascii PickAsciiUnit<T>(ascii text, i32[-2147483648 2147483647] index, T tag) {
                     return text[index];
                 }
                 """,
@@ -5498,7 +5496,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn ascii Run(i32 index) {
+                    fn ascii Run(i32[-2147483648 2147483647] index) {
                         return Facade.PickAsciiUnit("hello", index, index);
                     }
                     """,
@@ -5551,10 +5549,10 @@ public sealed class CompilerPipelineLowerMirTests
                 module Facade
 
                 public struct SliceBox<T> {
-                    i32[] Values;
+                    i32[-2147483648 2147483647][] Values;
                 }
 
-                public fn i32 ReadBoxSliceAt<T>(SliceBox<T> box, i32 index, T tag) {
+                public fn i32[-2147483648 2147483647] ReadBoxSliceAt<T>(SliceBox<T> box, i32[-2147483648 2147483647] index, T tag) {
                     return box.Values[index];
                 }
                 """,
@@ -5620,10 +5618,10 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 index, i32 tag) {
-                        stack i32[3] values = { 4, 7, 9 };
-                        stack i32[] view = values;
-                        stack Facade.SliceBox<i32> box = new Facade.SliceBox<i32>() { Values = view };
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] tag) {
+                        stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
+                        stack i32[-2147483648 2147483647][] view = values;
+                        stack Facade.SliceBox<i32[-2147483648 2147483647]> box = new Facade.SliceBox<i32[-2147483648 2147483647]>() { Values = view };
                         return Facade.ReadBoxSliceAt(box, index, tag);
                     }
                     """,
@@ -5673,7 +5671,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record ResetBox(i32 Value) { }
+                public record ResetBox(i32[-2147483648 2147483647] Value) { }
 
                 public fn void ResetValue(borrow mut ResetBox box) {
                     box.Value = 0;
@@ -5749,7 +5747,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(bool shouldStop, borrow mut Facade.ResetBox box, i32 tag) {
+                    fn i32[-2147483648 2147483647] Run(bool shouldStop, borrow mut Facade.ResetBox box, i32[-2147483648 2147483647] tag) {
                         Facade.GuardedReset(shouldStop, box, tag);
                         return 0;
                     }
@@ -5853,8 +5851,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn Facade.Box<i32> Run(i32 value) {
-                        return Facade.Wrap(value, new Facade.Box<i32>(0));
+                    fn Facade.Box<i32[-2147483648 2147483647]> Run(i32[-2147483648 2147483647] value) {
+                        return Facade.Wrap(value, new Facade.Box<i32[-2147483648 2147483647]>(0));
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -5906,7 +5904,7 @@ public sealed class CompilerPipelineLowerMirTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32[2] Values;
+                    i32[-2147483648 2147483647][2] Values;
                 }
 
                 public fn Outer<T> Wrap<T>(T value, T tag) {
@@ -5978,8 +5976,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Outer<i32> wrapped = Facade.Wrap(value, value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Outer<i32[-2147483648 2147483647]> wrapped = Facade.Wrap(value, value);
                         return wrapped.Item.Value + wrapped.Values[1];
                     }
                     """,
@@ -6091,12 +6089,12 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Option<i32> result = Facade.Wrap(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Option<i32[-2147483648 2147483647]> result = Facade.Wrap(value);
                         switch (result) {
-                            case Facade.Option<i32>.Some(var payload):
+                            case Facade.Option<i32[-2147483648 2147483647]>.Some(var payload):
                                 return payload;
-                            case Facade.Option<i32>.None:
+                            case Facade.Option<i32[-2147483648 2147483647]>.None:
                                 return 0;
                         }
                     }
@@ -6206,12 +6204,12 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Marker<i32> result = Facade.EmptyLike(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Marker<i32[-2147483648 2147483647]> result = Facade.EmptyLike(value);
                         switch (result) {
-                            case Facade.Marker<i32>.Empty:
+                            case Facade.Marker<i32[-2147483648 2147483647]>.Empty:
                                 return 0;
-                            case Facade.Marker<i32>.Missing:
+                            case Facade.Marker<i32[-2147483648 2147483647]>.Missing:
                                 return 1;
                         }
                     }
@@ -6265,7 +6263,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i8 One<T>(T value) {
+                public fn i8[-128 127] One<T>(T value) {
                     return 1;
                 }
                 """,
@@ -6318,7 +6316,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i8 Run(i32 value) {
+                    fn i8[-128 127] Run(i32[-2147483648 2147483647] value) {
                         return Facade.One(value);
                     }
                     """,
@@ -6366,7 +6364,7 @@ public sealed class CompilerPipelineLowerMirTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
                 public fn Boxed<T> Wrap<T>(T value) {
@@ -6423,10 +6421,10 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Boxed<i32> result = Facade.Wrap(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Boxed<i32[-2147483648 2147483647]> result = Facade.Wrap(value);
                         switch (result) {
-                            case Facade.Boxed<i32>.Value { Data: _, Tag: var tag }:
+                            case Facade.Boxed<i32[-2147483648 2147483647]>.Value { Data: _, Tag: var tag }:
                                 return tag;
                         }
                     }
@@ -6474,8 +6472,8 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 Truncate<T>(f32 value, T tag) {
-                    return (i32)value;
+                public fn i32[-2147483648 2147483647] Truncate<T>(f32 value, T tag) {
+                    return (i32[-2147483648 2147483647])value;
                 }
                 """,
                 facadePath));
@@ -6490,7 +6488,7 @@ public sealed class CompilerPipelineLowerMirTests
             {
                 BodyText = """
                     {
-                        return (i64)value;
+                        return (i64[-9223372036854775808 9223372036854775807])value;
                     }
                     """
             };
@@ -6527,7 +6525,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(f32 value) {
+                    fn i32[-2147483648 2147483647] Run(f32 value) {
                         return Facade.Truncate(value, value);
                     }
                     """,
@@ -6579,7 +6577,7 @@ public sealed class CompilerPipelineLowerMirTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
                 public fn Boxed<T> Wrap<T>(T value) {
@@ -6635,10 +6633,10 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Boxed<i32> boxed = Facade.Wrap(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Boxed<i32[-2147483648 2147483647]> boxed = Facade.Wrap(value);
                         switch (boxed) {
-                            case Facade.Boxed<i32>.Value { Data: var data, Tag: var tag }:
+                            case Facade.Boxed<i32[-2147483648 2147483647]>.Value { Data: var data, Tag: var tag }:
                                 return data + tag;
                         }
                     }
@@ -6750,12 +6748,12 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Option<i32> result = Facade.Wrap(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Option<i32[-2147483648 2147483647]> result = Facade.Wrap(value);
                         switch (result) {
-                            case Facade.Option<i32>.Some(var payload):
+                            case Facade.Option<i32[-2147483648 2147483647]>.Some(var payload):
                                 return payload;
-                            case Facade.Option<i32>.None:
+                            case Facade.Option<i32[-2147483648 2147483647]>.None:
                                 return 0;
                         }
                     }
@@ -6864,12 +6862,12 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Option<i32> result = Facade.EmptyLike(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Option<i32[-2147483648 2147483647]> result = Facade.EmptyLike(value);
                         switch (result) {
-                            case Facade.Option<i32>.Some(var payload):
+                            case Facade.Option<i32[-2147483648 2147483647]>.Some(var payload):
                                 return payload;
-                            case Facade.Option<i32>.None:
+                            case Facade.Option<i32[-2147483648 2147483647]>.None:
                                 return 0;
                         }
                     }
@@ -6925,7 +6923,7 @@ public sealed class CompilerPipelineLowerMirTests
                     Some(T),
                 }
 
-                public fn i32 HasValue<T>(Option<T> value) {
+                public fn i32[-2147483648 2147483647] HasValue<T>(Option<T> value) {
                     switch (value) {
                         case Option<T>.Some(var payload):
                             return 1;
@@ -6988,8 +6986,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        return Facade.HasValue(Facade.Option<i32>.Some(value));
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        return Facade.HasValue(Facade.Option<i32[-2147483648 2147483647]>.Some(value));
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -7036,10 +7034,10 @@ public sealed class CompilerPipelineLowerMirTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
-                public fn i32 ReadTag<T>(Boxed<T> boxed) {
+                public fn i32[-2147483648 2147483647] ReadTag<T>(Boxed<T> boxed) {
                     switch (boxed) {
                         case Boxed<T>.Value { Data: _, Tag: var tag }:
                             return tag;
@@ -7098,8 +7096,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        return Facade.ReadTag(Facade.Boxed<i32>.Value { Data: value, Tag: 7 });
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        return Facade.ReadTag(Facade.Boxed<i32[-2147483648 2147483647]>.Value { Data: value, Tag: 7 });
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -7145,9 +7143,9 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Counter(i32 Value, i32 Count) { }
+                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
 
-                public fn i32 ReadCount<T>(Counter counter, T tag) {
+                public fn i32[-2147483648 2147483647] ReadCount<T>(Counter counter, T tag) {
                     switch (counter) {
                         case Counter(_, var count):
                             return count;
@@ -7206,7 +7204,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.ReadCount(new Facade.Counter(value, 7), value);
                     }
                     """,
@@ -7253,13 +7251,13 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Counter(i32 Value, i32 Count) { }
+                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
 
                 public enum Wrapped<T> {
-                    Value { Data: Counter, Marker: i32 },
+                    Value { Data: Counter, Marker: i32[-2147483648 2147483647] },
                 }
 
-                public fn i32 ReadNestedCount<T>(Wrapped<T> wrapped, T tag) {
+                public fn i32[-2147483648 2147483647] ReadNestedCount<T>(Wrapped<T> wrapped, T tag) {
                     switch (wrapped) {
                         case Wrapped<T>.Value { Data: Counter(7, var count), Marker: 1 }:
                             return count;
@@ -7322,9 +7320,9 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.ReadNestedCount(
-                            Facade.Wrapped<i32>.Value { Data: new Facade.Counter(7, value), Marker: 1 },
+                            Facade.Wrapped<i32[-2147483648 2147483647]>.Value { Data: new Facade.Counter(7, value), Marker: 1 },
                             value);
                     }
                     """,
@@ -7361,6 +7359,121 @@ public sealed class CompilerPipelineLowerMirTests
 
 
     [Fact]
+    public void ManifestBackedGenericBodiesUsePublishedEnumWholeCaptureSwitchPatternFactsWithoutBridgeBodyText()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-enum-whole-capture-facts-generic-body-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public enum Wrapped<T> {
+                    None,
+                    Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                }
+
+                public fn i32[-2147483648 2147483647] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag) {
+                    switch (wrapped) {
+                        case Wrapped<T>.Pair capture:
+                            return 5;
+                        default:
+                            return -2;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.ReadEnumWhole");
+            Assert.Null(template.BodyText);
+            Assert.NotNull(template.TypedBody);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Wrapped<i32[-2147483648 2147483647]> wrapped =
+                            Facade.Wrapped<i32[-2147483648 2147483647]>.Pair(2, value);
+                        return Facade.ReadEnumWhole(wrapped, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ReadEnumWhole__i32");
+            Assert.True(specialized.SupportsDirectCodeGeneration);
+            Assert.Contains(specialized.Locals, static local => local is { Name: "capture", StorageClass: "match" });
+            Assert.Contains(
+                specialized.Blocks,
+                static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                    && block.Statements.Any(static statement => statement.TargetName == "capture"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedGenericBodiesUsePublishedLiteralAndGuardedSwitchFactsWhenBridgeSourceIsCorrupted()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-literal-guard-switch-facts-generic-body-pipeline-");
@@ -7374,7 +7487,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32 ClassifySwitch<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] ClassifySwitch<T>(i32[-2147483648 2147483647] value, T tag) {
                     switch (value) {
                         case 0:
                         case 1:
@@ -7442,7 +7555,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.ClassifySwitch(value, value);
                     }
                     """,
@@ -7496,7 +7609,7 @@ public sealed class CompilerPipelineLowerMirTests
 
                 public struct Pair<T> {
                     T Value;
-                    i32 Count;
+                    i32[-2147483648 2147483647] Count;
                 }
 
                 public fn Pair<T> MakePair<T>(T value) {
@@ -7552,8 +7665,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Pair<i32> pair = Facade.MakePair(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Pair<i32[-2147483648 2147483647]> pair = Facade.MakePair(value);
                         return pair.Count;
                     }
                     """,
@@ -7605,7 +7718,7 @@ public sealed class CompilerPipelineLowerMirTests
 
                 public struct Pair<T> {
                     T Value;
-                    i32 Count;
+                    i32[-2147483648 2147483647] Count;
                 }
 
                 public fn Pair<T> MakePair<T>(T value) {
@@ -7661,8 +7774,8 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
-                        stack Facade.Pair<i32> pair = Facade.MakePair(value);
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack Facade.Pair<i32[-2147483648 2147483647]> pair = Facade.MakePair(value);
                         return pair.Count;
                     }
                     """,
@@ -7769,7 +7882,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Forward(value);
                     }
                     """,
@@ -7873,7 +7986,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Pair<i32> pair) {
+                    fn i32[-2147483648 2147483647] Run(Facade.Pair<i32[-2147483648 2147483647]> pair) {
                         return Facade.ReadValue(pair);
                     }
                     """,
@@ -7920,13 +8033,13 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Box(i32 Dummy) {
-                    fn i32 Echo(borrow Box self, i32 value) {
+                public record Box(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow Box self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn i32 Forward<T>(T tag, Box box, i32 value) {
+                public fn i32[-2147483648 2147483647] Forward<T>(T tag, Box box, i32[-2147483648 2147483647] value) {
                     return box.Echo(value);
                 }
                 """,
@@ -7979,7 +8092,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Box box, i32 value) {
+                    fn i32[-2147483648 2147483647] Run(Facade.Box box, i32[-2147483648 2147483647] value) {
                         return Facade.Forward(value, box, value);
                     }
                     """,
@@ -8100,7 +8213,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Forward(value);
                     }
                     """,
@@ -8155,7 +8268,7 @@ public sealed class CompilerPipelineLowerMirTests
                     return copy;
                 }
 
-                fn i32 Run(i32 value) {
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     return Identity(value);
                 }
                 """),
@@ -8191,7 +8304,7 @@ public sealed class CompilerPipelineLowerMirTests
                     return value;
                 }
 
-                fn i32 Run(i32 value) {
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     return Identity(value);
                 }
                 """),
@@ -8230,7 +8343,7 @@ public sealed class CompilerPipelineLowerMirTests
                     T Value;
                 }
 
-                public alias IntBox = Box<i32>;
+                public alias IntBox = Box<i32[-2147483648 2147483647]>;
                 """,
                 facadePath));
 
@@ -8248,7 +8361,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn Facade.IntBox Make(i32 value) {
+                    fn Facade.IntBox Make(i32[-2147483648 2147483647] value) {
                         stack Facade.IntBox box = { Value = value };
                         return box;
                     }

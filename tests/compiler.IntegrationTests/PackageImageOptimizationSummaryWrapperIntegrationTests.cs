@@ -32,22 +32,22 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32 Count;
+                    i32[-2147483648 2147483647] Count;
                 }
 
                 public enum Boxed<T> {
                     None,
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
-                public fn Outer<T> WrapObject<T>(T value, i32 count, T tag) {
+                public fn Outer<T> WrapObject<T>(T value, i32[-2147483648 2147483647] count, T tag) {
                     return new Outer<T>() {
                         Item = { Value = value },
                         Count = count
                     };
                 }
 
-                public fn Boxed<T> WrapEnum<T>(T value, i32 tag, T marker) {
+                public fn Boxed<T> WrapEnum<T>(T value, i32[-2147483648 2147483647] tag, T marker) {
                     return Boxed<T>.Value { Data: value, Tag: tag };
                 }
                 """);
@@ -133,13 +133,13 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack i32 seed = 40;
-                    stack Facade.Outer<i32> wrapped = Facade.WrapObject(seed, 1, seed);
-                    stack Facade.Boxed<i32> boxed = Facade.WrapEnum(wrapped.Item.Value, wrapped.Count, seed);
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack i32[-2147483648 2147483647] seed = 40;
+                    stack Facade.Outer<i32[-2147483648 2147483647]> wrapped = Facade.WrapObject(seed, 1, seed);
+                    stack Facade.Boxed<i32[-2147483648 2147483647]> boxed = Facade.WrapEnum(wrapped.Item.Value, wrapped.Count, seed);
 
                     switch (boxed) {
-                        case Facade.Boxed<i32>.Value { Data: var data, Tag: var tag }:
+                        case Facade.Boxed<i32[-2147483648 2147483647]>.Value { Data: var data, Tag: var tag }:
                             return data + tag;
                         default:
                             return 1;
@@ -220,11 +220,11 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32 Bump<T>(Box box, i32 delta, T tag) {
-                    stack mut i32 current;
+                public fn i32[-2147483648 2147483647] Bump<T>(Box box, i32[-2147483648 2147483647] delta, T tag) {
+                    stack mut i32[-2147483648 2147483647] current;
                     current = box.Inner.Value;
                     current += delta;
                     return current;
@@ -303,14 +303,14 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                fn i32 Run(Facade.Box box, i32 delta, i32 tag) {
+                fn i32[-2147483648 2147483647] Run(Facade.Box box, i32[-2147483648 2147483647] delta, i32[-2147483648 2147483647] tag) {
                     return Facade.Bump(box, delta, tag);
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(40));
-                    stack i32 delta = 2;
-                    stack i32 tag = 0;
+                    stack i32[-2147483648 2147483647] delta = 2;
+                    stack i32[-2147483648 2147483647] tag = 0;
                     return Run(box, delta, tag);
                 }
                 """);
@@ -388,7 +388,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public fn i32 ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32 left, i32 middle, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
                     if (takeLeft) {
                         return left;
                     } else if (takeMiddle) {
@@ -398,7 +398,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                     }
                 }
 
-                public fn i32 ChooseSwitch<T>(i32 selector, i32 left, i32 middle, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseSwitch<T>(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
                     switch (selector) {
                         case 0:
                             return left;
@@ -492,10 +492,10 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack i32 tag = 0;
-                    stack i32 first = Facade.ChooseBranch(false, true, 1, 40, 9, tag);
-                    stack i32 second = Facade.ChooseSwitch(0, 2, 7, 9, tag);
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack i32[-2147483648 2147483647] tag = 0;
+                    stack i32[-2147483648 2147483647] first = Facade.ChooseBranch(false, true, 1, 40, 9, tag);
+                    stack i32[-2147483648 2147483647] second = Facade.ChooseSwitch(0, 2, 7, 9, tag);
                     return first + second;
                 }
                 """);
@@ -573,14 +573,14 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32 AddDelta<T>(Box box, i32 delta, T tag) {
+                public fn i32[-2147483648 2147483647] AddDelta<T>(Box box, i32[-2147483648 2147483647] delta, T tag) {
                     return box.Inner.Value + delta;
                 }
 
-                public fn bool IsBelow<T>(Box box, i32 limit, T tag) {
+                public fn bool IsBelow<T>(Box box, i32[-2147483648 2147483647] limit, T tag) {
                     return box.Inner.Value < limit;
                 }
                 """);
@@ -668,10 +668,10 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack i32 delta = 2;
-                    stack i32 limit = 50;
-                    stack i32 result = Facade.AddDelta(new Facade.Box(new Facade.Inner(40)), delta, delta);
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack i32[-2147483648 2147483647] delta = 2;
+                    stack i32[-2147483648 2147483647] limit = 50;
+                    stack i32[-2147483648 2147483647] result = Facade.AddDelta(new Facade.Box(new Facade.Inner(40)), delta, delta);
                     if (Facade.IsBelow(new Facade.Box(new Facade.Inner(result - delta)), limit, delta)) {
                         return result;
                     }
@@ -753,11 +753,11 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public record Inner(i32 Value) { }
+                public record Inner(i32[-2147483648 2147483647] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i64 Read<T>(Box box, T tag) {
-                    return (i64)box.Inner.Value;
+                public fn i64[-9223372036854775808 9223372036854775807] Read<T>(Box box, T tag) {
+                    return (i64[-9223372036854775808 9223372036854775807])box.Inner.Value;
                 }
                 """);
 
@@ -833,10 +833,10 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(41));
-                    stack i32 tag = box.Inner.Value;
-                    return (i32)Facade.Read(box, tag) + 1;
+                    stack i32[-2147483648 2147483647] tag = box.Inner.Value;
+                    return (i32[-2147483648 2147483647])Facade.Read(box, tag) + 1;
                 }
                 """);
 

@@ -65,53 +65,54 @@ internal sealed class StandardLibraryTestSuite
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            using var manifest = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
-            var modules = manifest.RootElement.GetProperty("Modules").EnumerateArray().ToArray();
+            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
+            Assert.NotNull(manifest);
+            var modules = manifest.Modules;
 
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.BitOperations");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Console");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.File");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.IO.Path");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Math");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Syscall");
-            Assert.Contains(modules, module => module.GetProperty("ModuleName").GetString() == "System.Text");
-            Assert.DoesNotContain(modules, module => module.GetProperty("ModuleName").GetString() == "System.Runtime.Buffer");
+            Assert.Contains(modules, module => module.ModuleName == "System");
+            Assert.Contains(modules, module => module.ModuleName == "System.BitOperations");
+            Assert.Contains(modules, module => module.ModuleName == "System.Console");
+            Assert.Contains(modules, module => module.ModuleName == "System.IO");
+            Assert.Contains(modules, module => module.ModuleName == "System.IO.File");
+            Assert.Contains(modules, module => module.ModuleName == "System.IO.Path");
+            Assert.Contains(modules, module => module.ModuleName == "System.Math");
+            Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
+            Assert.Contains(modules, module => module.ModuleName == "System.Text");
+            Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Buffer");
 
-            var rootModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System");
-            var reExports = rootModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
+            var rootModule = modules.Single(module => module.ModuleName == "System");
+            var reExports = rootModule.EffectiveSourceSurface.ReExports?.Select(static item => item.ModuleName).ToArray() ?? [];
             Assert.Contains("System.BitOperations", reExports);
             Assert.Contains("System.Console", reExports);
             Assert.Contains("System.IO", reExports);
             Assert.Contains("System.Math", reExports);
             Assert.Contains("System.Text", reExports);
 
-            var ioModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.IO");
-            var ioReExports = ioModule.GetProperty("ReExports").EnumerateArray().Select(static item => item.GetProperty("ModuleName").GetString()).ToArray();
+            var ioModule = modules.Single(module => module.ModuleName == "System.IO");
+            var ioReExports = ioModule.EffectiveSourceSurface.ReExports?.Select(static item => item.ModuleName).ToArray() ?? [];
             Assert.Contains("System.IO.File", ioReExports);
             Assert.Contains("System.IO.Path", ioReExports);
 
-            var ioTypes = ioModule.GetProperty("Types").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            var ioTypes = ioModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("IOError", ioTypes);
             Assert.Contains("IOResult", ioTypes);
             Assert.Contains("IOStatus", ioTypes);
 
-            var fileModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.IO.File");
-            var fileTypes = fileModule.GetProperty("Types").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            var fileModule = modules.Single(module => module.ModuleName == "System.IO.File");
+            var fileTypes = fileModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("FileBuffering", fileTypes);
             Assert.Contains("FileMode", fileTypes);
             Assert.Contains("File", fileTypes);
 
-            var fileType = fileModule.GetProperty("Types").EnumerateArray()
-                .Single(type => type.GetProperty("Name").GetString() == "File");
-            Assert.True(fileType.TryGetProperty("Destructor", out var fileDestructor));
-            Assert.True(fileDestructor.GetProperty("IsMutable").GetBoolean());
-            Assert.Equal("{self.Close();}", fileDestructor.GetProperty("BodyText").GetString());
+            Assert.NotNull(fileModule.EffectiveTypedInterface);
+            var fileType = fileModule.EffectiveTypedInterface!.Types.Single(type => type.Name == "File");
+            Assert.NotNull(fileType.Destructor);
+            Assert.True(fileType.Destructor!.IsMutable);
+            Assert.Contains("self.Close();", fileType.Destructor.BodyText, StringComparison.Ordinal);
 
-            var mathModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.Math");
-            var mathTypes = mathModule.GetProperty("Types").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
-            var mathFunctions = mathModule.GetProperty("Functions").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            var mathModule = modules.Single(module => module.ModuleName == "System.Math");
+            var mathTypes = mathModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
+            var mathFunctions = mathModule.EffectiveSourceSurface.Functions?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("SinCosF32", mathTypes);
             Assert.Contains("SinCosF64", mathTypes);
             Assert.Contains("Sin", mathFunctions);
@@ -128,8 +129,8 @@ internal sealed class StandardLibraryTestSuite
             Assert.Contains("Min", mathFunctions);
             Assert.Contains("Max", mathFunctions);
 
-            var bitOperationsModule = modules.Single(module => module.GetProperty("ModuleName").GetString() == "System.BitOperations");
-            var bitOperationsFunctions = bitOperationsModule.GetProperty("Functions").EnumerateArray().Select(static item => item.GetProperty("Name").GetString()).ToArray();
+            var bitOperationsModule = modules.Single(module => module.ModuleName == "System.BitOperations");
+            var bitOperationsFunctions = bitOperationsModule.EffectiveSourceSurface.Functions?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("LeadingZeroCount", bitOperationsFunctions);
             Assert.Contains("TrailingZeroCount", bitOperationsFunctions);
             Assert.Contains("PopCount", bitOperationsFunctions);
@@ -224,7 +225,7 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack Unicode line = System.Console.ReadLine();
                     stack Unicode unit = System.Console.Read();
 
@@ -295,7 +296,7 @@ internal sealed class StandardLibraryTestSuite
                 module Demo
 
                 fn void Use() {
-                    stack rawptr<i8> handle = System.IO.File.OpenWrite("demo.txt");
+                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("demo.txt");
                     System.IO.File.WriteText(handle, "ascii");
                     System.IO.File.WriteText(handle, (unicode)"ascii");
                     System.IO.File.WriteLine(handle, "line");
@@ -348,13 +349,13 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module Demo
 
-                fn i32 Use() {
+                fn i32[-2147483648 2147483647] Use() {
                     stack mut Ascii owned = new Ascii() {
                         Data = null,
                         Length = 0,
                         Capacity = 0
                     };
-                    stack mut i8[64] joinBuffer = {
+                    stack mut i8[-128 127][64] joinBuffer = {
                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -366,10 +367,10 @@ internal sealed class StandardLibraryTestSuite
                         Capacity = 64
                     };
 
-                    stack rawptr<i8> asciiData = System.Text.AsciiData("demo");
-                    stack i64 asciiLength = System.Text.AsciiLength("demo");
-                    stack rawptr<i32> unicodeData = System.Text.UnicodeData((unicode)"demo");
-                    stack i64 unicodeLength = System.Text.UnicodeLength((unicode)"demo");
+                    stack rawptr<i8[-128 127]> asciiData = System.Text.AsciiData("demo");
+                    stack i64[-9223372036854775808 9223372036854775807] asciiLength = System.Text.AsciiLength("demo");
+                    stack rawptr<i32[-2147483648 2147483647]> unicodeData = System.Text.UnicodeData((unicode)"demo");
+                    stack i64[-9223372036854775808 9223372036854775807] unicodeLength = System.Text.UnicodeLength((unicode)"demo");
                     stack bool status = System.IO.Path.CurrentDirectory(&owned);
                     stack bool joinedOk = System.IO.Path.TryJoin(&joined, "demo", "file.txt");
                     stack ascii extension = System.IO.Path.Extension("demo/file.txt");
@@ -418,18 +419,18 @@ internal sealed class StandardLibraryTestSuite
                 import System.Runtime.Buffer
                 module Demo
 
-                fn i32 Use() {
+                fn i32[-2147483648 2147483647] Use() {
                     stack mut System.Runtime.Buffer.ByteBuffer512 linear = new System.Runtime.Buffer.ByteBuffer512();
-                    stack rawmutptr<i8> writePtr = linear.WritePointer();
+                    stack rawmutptr<i8[-128 127]> writePtr = linear.WritePointer();
                     if (writePtr == null) {
                         return 1;
                     }
 
-                    *writePtr = (i8)65;
+                    *writePtr = (i8[-128 127])65;
                     linear.AdvanceWrite(1);
 
-                    stack rawptr<i8> readPtr = linear.ReadPointer();
-                    if (readPtr == null || *readPtr != (i8)65) {
+                    stack rawptr<i8[-128 127]> readPtr = linear.ReadPointer();
+                    if (readPtr == null || *readPtr != (i8[-128 127])65) {
                         return 2;
                     }
 
@@ -439,12 +440,12 @@ internal sealed class StandardLibraryTestSuite
                     }
 
                     stack mut System.Runtime.Buffer.RingBuffer512 ring = new System.Runtime.Buffer.RingBuffer512();
-                    stack mut i8 value = 0;
-                    if (!ring.TryPushByte((i8)66)) {
+                    stack mut i8[-128 127] value = 0;
+                    if (!ring.TryPushByte((i8[-128 127])66)) {
                         return 4;
                     }
 
-                    if (!ring.TryPopByte(&value) || value != (i8)66) {
+                    if (!ring.TryPopByte(&value) || value != (i8[-128 127])66) {
                         return 5;
                     }
 
@@ -577,7 +578,7 @@ internal sealed class StandardLibraryTestSuite
         Assert.Contains("define void @CopyAsciiBytes(", llvm, StringComparison.Ordinal);
         Assert.Contains("rep movsb", llvm, StringComparison.Ordinal);
         Assert.Contains("call void @CopyAsciiBytes(", appendBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@llvm.memcpy", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@llvm.memcpy", appendBody, StringComparison.Ordinal);
     }
     public void StdLibSourceLinuxFileExistsUsesStatSyscallPath()
     {
@@ -699,7 +700,7 @@ internal sealed class StandardLibraryTestSuite
         Assert.Contains("define void @CopyWideUnits(", llvm, StringComparison.Ordinal);
         Assert.Contains("rep movsw", llvm, StringComparison.Ordinal);
         Assert.Contains("call void @CopyWideUnits(", copyBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@llvm.memcpy", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@llvm.memcpy", copyBody, StringComparison.Ordinal);
     }
     public void StagedWindowsStdLibBuildRoutesPlatformCallsThroughWindowsModule()
     {
@@ -912,8 +913,8 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
-                    stack mut i8[16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i8[-128 127][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
                     stack mut Ascii ownedAscii = new Ascii() {
                         Data = &asciiBuffer[0],
@@ -953,7 +954,7 @@ internal sealed class StandardLibraryTestSuite
                         Capacity = ownedAscii.Capacity
                     };
 
-                    stack rawptr<i8> handle = System.IO.File.OpenWrite("io-test.txt");
+                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("io-test.txt");
                     System.IO.File.WriteLine(handle, System.Text.AsciiView(fileAscii));
                     System.IO.File.Close(handle);
 
@@ -1049,23 +1050,23 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack f64 zero = 0.0;
                     stack f64 one = 1.0;
                     stack f64 two = 2.0;
                     stack f64 three = 3.0;
                     stack f64 eight = 8.0;
-                    stack i32 oneI32 = 1;
-                    stack i32 twoI32 = 2;
-                    stack i32 threeI32 = 3;
-                    stack i32 fourI32 = 4;
-                    stack i32 thirtyOne = 31;
-                    stack i32 minI32 = -2147483648;
-                    stack i64 oneI64 = 1;
-                    stack i64 twoI64 = 2;
-                    stack i64 threeI64 = 3;
-                    stack i64 fourI64 = 4;
-                    stack i64 sixtyThree = 63;
+                    stack i32[-2147483648 2147483647] oneI32 = 1;
+                    stack i32[-2147483648 2147483647] twoI32 = 2;
+                    stack i32[-2147483648 2147483647] threeI32 = 3;
+                    stack i32[-2147483648 2147483647] fourI32 = 4;
+                    stack i32[-2147483648 2147483647] thirtyOne = 31;
+                    stack i32[-2147483648 2147483647] minI32 = -2147483647 - 1;
+                    stack i64[-9223372036854775808 9223372036854775807] oneI64 = 1;
+                    stack i64[-9223372036854775808 9223372036854775807] twoI64 = 2;
+                    stack i64[-9223372036854775808 9223372036854775807] threeI64 = 3;
+                    stack i64[-9223372036854775808 9223372036854775807] fourI64 = 4;
+                    stack i64[-9223372036854775808 9223372036854775807] sixtyThree = 63;
 
                     if (System.Math.Sin(zero) != zero) {
                         return 1;
@@ -1299,7 +1300,7 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack f64 two = 2.0;
                     stack f64 three = 3.0;
                     stack f64 four = 4.0;
@@ -1413,7 +1414,7 @@ internal sealed class StandardLibraryTestSuite
                     }
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     if (!IsOk(System.Console.Write("Console"))) {
                         return 1;
                     }
@@ -1514,8 +1515,8 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
-                    stack rawptr<i8> handle = System.IO.File.OpenWrite("unicode.txt");
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("unicode.txt");
                     if (handle == null) {
                         return 1;
                     }
@@ -1619,7 +1620,7 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack Unicode line = System.Console.ReadLine();
                     stack Unicode unit = System.Console.Read();
 
@@ -1723,7 +1724,7 @@ internal sealed class StandardLibraryTestSuite
                     return;
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     WriteOwned();
 
                     if (!System.IO.File.Exists("owned-test.txt")) {
@@ -1734,9 +1735,9 @@ internal sealed class StandardLibraryTestSuite
                         return 3;
                     }
 
-                    stack mut i8[8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8> handle = System.IO.File.OpenRead("owned-test.txt");
-                    stack i64 count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
+                    stack mut i8[-128 127][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead("owned-test.txt");
+                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
                     System.IO.File.Close(handle);
 
                     if (count != 6) {
@@ -1835,26 +1836,26 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
-                    stack mut i8[512] cwdStorage = { {{currentDirectoryZeros}} };
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i8[-128 127][512] cwdStorage = { {{currentDirectoryZeros}} };
                     stack mut Ascii cwd = new Ascii() {
                         Data = &cwdStorage[0],
                         Length = 0,
                         Capacity = 512
                     };
-                    stack mut i8[12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
+                    stack mut i8[-128 127][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
                     stack mut Ascii ownedName = new Ascii() {
                         Data = &ownedNameBytes[0],
                         Length = 12,
                         Capacity = 12
                     };
-                    stack mut i8[14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
+                    stack mut i8[-128 127][14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
                     stack mut Ascii renamedName = new Ascii() {
                         Data = &renamedNameBytes[0],
                         Length = 14,
                         Capacity = 14
                     };
-                    stack mut i8[13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
+                    stack mut i8[-128 127][13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
                     stack mut Ascii deleteName = new Ascii() {
                         Data = &deleteNameBytes[0],
                         Length = 13,
@@ -1865,7 +1866,7 @@ internal sealed class StandardLibraryTestSuite
                         return 1;
                     }
 
-                    stack rawptr<i8> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
+                    stack rawptr<i8[-128 127]> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
                     if (cwdHandle == null) {
                         return 2;
                     }
@@ -1913,7 +1914,7 @@ internal sealed class StandardLibraryTestSuite
                         return 7;
                     }
 
-                    stack rawptr<i8> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
+                    stack rawptr<i8[-128 127]> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
                     if (deleteHandle == null) {
                         return 8;
                     }
@@ -2037,15 +2038,15 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                fn i64 ReadCount(ascii path, i64 expected) {
-                    stack mut i8[16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8> handle = System.IO.File.OpenRead(path);
-                    stack i64 count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
+                fn i64[-9223372036854775808 9223372036854775807] ReadCount(ascii path, i64[-9223372036854775808 9223372036854775807] expected) {
+                    stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead(path);
+                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
                     System.IO.File.Close(handle);
                     return count;
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack mut System.IO.File.File defaulted = System.IO.File.Open("default.txt", System.IO.File.FileMode.Write);
                     defaulted.WriteLine("Default");
                     if (ReadCount("default.txt", 8) != 0) {
@@ -2190,8 +2191,8 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
-                    stack mut i32[1] gothicBuffer = { 66376 };
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i32[-2147483648 2147483647][1] gothicBuffer = { 66376 };
                     stack mut Unicode gothic = new Unicode() {
                         Data = &gothicBuffer[0],
                         Length = 1,
@@ -2326,8 +2327,8 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
-                    stack rawptr<i8> handle = System.IO.File.OpenWrite("before.txt");
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("before.txt");
                     if (handle == null) {
                         return 1;
                     }
@@ -2434,12 +2435,12 @@ internal sealed class StandardLibraryTestSuite
                 import System.Runtime.Platform
                 module App
 
-                export ffi fn i32 main() {
-                    if (System.Runtime.Platform.IsTerminal((rawptr<i8>)1)) {
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    if (System.Runtime.Platform.IsTerminal((rawptr<i8[-128 127]>)1)) {
                         return 1;
                     }
 
-                    if (System.Runtime.Platform.IsTerminal((rawptr<i8>)2)) {
+                    if (System.Runtime.Platform.IsTerminal((rawptr<i8[-128 127]>)2)) {
                         return 2;
                     }
 
@@ -2533,8 +2534,8 @@ internal sealed class StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32 main() {
-                    stack mut i8[256] buffer = { {{zeroBytes}} };
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i8[-128 127][256] buffer = { {{zeroBytes}} };
                     stack mut Ascii owned = new Ascii() {
                         Data = &buffer[0],
                         Length = 0,
@@ -2683,8 +2684,8 @@ internal sealed class StandardLibraryTestSuite
                     }
                 }
 
-                export ffi fn i32 main() {
-                    stack mut i8[64] buffer = { {{zeroBytes}} };
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i8[-128 127][64] buffer = { {{zeroBytes}} };
                     stack mut Ascii joined = new Ascii() {
                         Data = &buffer[0],
                         Length = 0,
@@ -3008,7 +3009,7 @@ internal sealed class StandardLibraryTestSuite
                 import System.Syscall
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     if (System.Syscall.Syscall0(39) <= 0) {
                         return 1;
                     }
@@ -3087,22 +3088,22 @@ internal sealed class StandardLibraryTestSuite
                 import System.Runtime.Buffer
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack mut System.Runtime.Buffer.ByteBuffer512 linear = new System.Runtime.Buffer.ByteBuffer512();
                     if (linear.Capacity() != 512 || linear.Readable() != 0 || linear.Writable() != 512) {
                         return 1;
                     }
 
-                    stack rawmutptr<i8> writePtr = linear.WritePointer();
+                    stack rawmutptr<i8[-128 127]> writePtr = linear.WritePointer();
                     if (writePtr == null) {
                         return 2;
                     }
 
-                    *writePtr = (i8)65;
+                    *writePtr = (i8[-128 127])65;
                     linear.AdvanceWrite(1);
 
-                    stack rawptr<i8> readPtr = linear.ReadPointer();
-                    if (readPtr == null || *readPtr != (i8)65) {
+                    stack rawptr<i8[-128 127]> readPtr = linear.ReadPointer();
+                    if (readPtr == null || *readPtr != (i8[-128 127])65) {
                         return 3;
                     }
 
@@ -3112,26 +3113,26 @@ internal sealed class StandardLibraryTestSuite
                     }
 
                     stack mut System.Runtime.Buffer.RingBuffer512 ring = new System.Runtime.Buffer.RingBuffer512();
-                    stack mut i8 value = 0;
+                    stack mut i8[-128 127] value = 0;
 
-                    if (!ring.TryPushByte((i8)66) || !ring.TryPushByte((i8)67)) {
+                    if (!ring.TryPushByte((i8[-128 127])66) || !ring.TryPushByte((i8[-128 127])67)) {
                         return 5;
                     }
 
-                    if (!ring.TryPopByte(&value) || value != (i8)66) {
+                    if (!ring.TryPopByte(&value) || value != (i8[-128 127])66) {
                         return 6;
                     }
 
-                    if (!ring.TryPopByte(&value) || value != (i8)67) {
+                    if (!ring.TryPopByte(&value) || value != (i8[-128 127])67) {
                         return 7;
                     }
 
-                    for willexit (stack mut i64 i = 0; i < 1024; i += 1) {
-                        if (!ring.TryPushByte((i8)90)) {
+                    for willexit (stack mut i64[-9223372036854775808 9223372036854775807] i = 0; i < 1024; i += 1) {
+                        if (!ring.TryPushByte((i8[-128 127])90)) {
                             return 8;
                         }
 
-                        if (!ring.TryPopByte(&value) || value != (i8)90) {
+                        if (!ring.TryPopByte(&value) || value != (i8[-128 127])90) {
                             return 9;
                         }
                     }

@@ -552,7 +552,7 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
-                var fieldType = ProjectFrozenView(target.Type, ApplyGenericSubstitution(publishedFieldAccess.FieldType));
+                var fieldType = ProjectAddressProjectionType(target.Type, ApplyGenericSubstitution(publishedFieldAccess.FieldType));
                 var updatedPath = target.Path.ToList();
                 updatedPath.Add(new PlacePathSegment(
                     PlacePathKind.Field,
@@ -595,7 +595,7 @@ internal sealed partial class MidLevelIrLowerer
                     {
                         if (TryResolveImportedTypedTemplateConstantIndex(index, out var constantIndex))
                         {
-                            var constantElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            var constantElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                             updatedPath.Add(new PlacePathSegment(
                                 PlacePathKind.ConstantArrayIndex,
                                 FieldName: null,
@@ -612,7 +612,7 @@ internal sealed partial class MidLevelIrLowerer
                             return false;
                         }
 
-                        var dynamicElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                        var dynamicElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                         updatedPath.Add(new PlacePathSegment(
                             PlacePathKind.DynamicArrayIndex,
                             FieldName: null,
@@ -628,7 +628,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     if (currentType.Kind == StarkTypeKind.Slice && currentType.ElementType is not null)
                     {
-                        var sliceElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                        var sliceElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                         updatedPath.Add(new PlacePathSegment(
                             PlacePathKind.SliceIndex,
                             FieldName: null,
@@ -830,10 +830,27 @@ internal sealed partial class MidLevelIrLowerer
                     return true;
 
                 case ImportedTemplateTypedSwitchCaseKind.EnumPattern:
-                case ImportedTemplateTypedSwitchCaseKind.AggregatePattern:
                     if (!TryBuildImportedTypedTemplateSwitchPattern(switchCase, out var aggregatePattern)
-                        || aggregatePattern is null
-                        || aggregatePattern.WholeCaptureName is not null)
+                        || aggregatePattern is null)
+                    {
+                        return false;
+                    }
+
+                    label = new LowerableSwitchLabel(
+                        "typed-switch-pattern",
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: false,
+                        IsMatchAll: false,
+                        CaptureName: null,
+                        AggregatePattern: aggregatePattern,
+                        ImportedLiteralExpression: null,
+                        ImportedGuardExpression: switchCase.GuardExpression);
+                    return true;
+
+                case ImportedTemplateTypedSwitchCaseKind.AggregatePattern:
+                    if (!TryBuildImportedTypedTemplateSwitchPattern(switchCase, out aggregatePattern)
+                        || aggregatePattern is null)
                     {
                         return false;
                     }
@@ -881,12 +898,14 @@ internal sealed partial class MidLevelIrLowerer
             return switchCase.Ordinal is { } ordinal
                 && TryBuildImportedTypedTemplateEnumSwitchPattern(
                     ordinal,
+                    switchCase.Name,
                     switchCase.Members,
                     out aggregatePattern);
         }
 
         private bool TryBuildImportedTypedTemplateEnumSwitchPattern(
             int ordinal,
+            string? wholeCaptureName,
             IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
             out LowerableAggregatePattern? aggregatePattern)
         {
@@ -904,6 +923,21 @@ internal sealed partial class MidLevelIrLowerer
                 || !enumLayout.TryGetVariant(publishedEnumPattern.VariantName, out var enumVariant))
             {
                 return false;
+            }
+
+            if (wholeCaptureName is not null && memberPatterns.Count != 0)
+            {
+                return false;
+            }
+
+            if (wholeCaptureName is not null)
+            {
+                aggregatePattern = new LowerableAggregatePattern(
+                    enumType.NamedType,
+                    publishedEnumPattern.VariantName,
+                    [],
+                    WholeCaptureName: wholeCaptureName);
+                return true;
             }
 
             if (enumVariant.UsesNamedFields)
@@ -940,7 +974,7 @@ internal sealed partial class MidLevelIrLowerer
                     enumType.NamedType,
                     publishedEnumPattern.VariantName,
                     fieldPatterns,
-                    WholeCaptureName: null);
+                    WholeCaptureName: wholeCaptureName);
                 return true;
             }
 
@@ -969,7 +1003,7 @@ internal sealed partial class MidLevelIrLowerer
                 enumType.NamedType,
                 publishedEnumPattern.VariantName,
                 tupleFieldPatterns,
-                WholeCaptureName: null);
+                WholeCaptureName: wholeCaptureName);
             return true;
         }
 
@@ -982,12 +1016,14 @@ internal sealed partial class MidLevelIrLowerer
             return switchCase.Ordinal is { } ordinal
                 && TryBuildImportedTypedTemplateAggregateSwitchPattern(
                     ordinal,
+                    switchCase.Name,
                     switchCase.Members,
                     out aggregatePattern);
         }
 
         private bool TryBuildImportedTypedTemplateAggregateSwitchPattern(
             int ordinal,
+            string? wholeCaptureName,
             IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
             out LowerableAggregatePattern? aggregatePattern)
         {
@@ -1002,6 +1038,11 @@ internal sealed partial class MidLevelIrLowerer
             if (aggregateType.Kind != StarkTypeKind.Named
                 || aggregateType.NamedType is null
                 || !_typeModel.NamedTypes.TryGetValue(aggregateType.NamedType, out var namedType))
+            {
+                return false;
+            }
+
+            if (wholeCaptureName is not null && memberPatterns.Count != 0)
             {
                 return false;
             }
@@ -1031,7 +1072,7 @@ internal sealed partial class MidLevelIrLowerer
                 aggregateType.NamedType,
                 EnumVariantName: null,
                 fieldPatterns,
-                WholeCaptureName: null);
+                WholeCaptureName: wholeCaptureName);
             return true;
         }
 
@@ -1095,9 +1136,8 @@ internal sealed partial class MidLevelIrLowerer
 
             if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern
                 && fieldPattern.Ordinal is { } enumOrdinal
-                && TryBuildImportedTypedTemplateEnumSwitchPattern(enumOrdinal, fieldPattern.Members, out var nestedEnumPattern)
-                && nestedEnumPattern is not null
-                && nestedEnumPattern.WholeCaptureName is null)
+                && TryBuildImportedTypedTemplateEnumSwitchPattern(enumOrdinal, fieldPattern.Name, fieldPattern.Members, out var nestedEnumPattern)
+                && nestedEnumPattern is not null)
             {
                 parsedFieldPattern = new LowerableAggregateFieldPattern(
                     fieldName,
@@ -1115,9 +1155,8 @@ internal sealed partial class MidLevelIrLowerer
 
             if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern
                 && fieldPattern.Ordinal is { } aggregateOrdinal
-                && TryBuildImportedTypedTemplateAggregateSwitchPattern(aggregateOrdinal, fieldPattern.Members, out var nestedAggregatePattern)
-                && nestedAggregatePattern is not null
-                && nestedAggregatePattern.WholeCaptureName is null)
+                && TryBuildImportedTypedTemplateAggregateSwitchPattern(aggregateOrdinal, fieldPattern.Name, fieldPattern.Members, out var nestedAggregatePattern)
+                && nestedAggregatePattern is not null)
             {
                 parsedFieldPattern = new LowerableAggregateFieldPattern(
                     fieldName,

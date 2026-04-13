@@ -21,7 +21,7 @@ public sealed class CompilerPipelineFunctionEffectsTests
                 module Facade
 
                 public strictfp hot noinline finite law f32 Precise(f32 value);
-                export cold ffi fn void Sink(rawptr<i8> value);
+                export cold ffi fn void Sink(rawptr<i8[-128 127]> value);
                 """,
                 facadePath));
 
@@ -59,7 +59,7 @@ public sealed class CompilerPipelineFunctionEffectsTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("public strictfp hot noinline finite law f32 Precise(f32 value);", sourceText, StringComparison.Ordinal);
-            Assert.Contains("export cold ffi fn void Sink(rawptr<i8> value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("export cold ffi fn void Sink(rawptr<i8> value);"), sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);

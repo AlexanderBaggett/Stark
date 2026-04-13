@@ -32,11 +32,11 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            fn ascii SliceAscii(ascii text, i32 start, i32 length) {
+            fn ascii SliceAscii(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
 
-            fn unicode SliceUnicode(unicode text, i32 start, i32 length) {
+            fn unicode SliceUnicode(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
             """);
@@ -57,11 +57,11 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            fn ascii PickAscii(ascii text, i32 index) {
+            fn ascii PickAscii(ascii text, i32[-2147483648 2147483647] index) {
                 return text[index];
             }
 
-            fn unicode PickUnicode(unicode text, i32 index) {
+            fn unicode PickUnicode(unicode text, i32[-2147483648 2147483647] index) {
                 return text[index];
             }
             """);
@@ -99,15 +99,15 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            fn i64 Run() {
-                stack mut i8[8] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+            fn i64[-9223372036854775808 9223372036854775807] Run() {
+                stack mut i8[-128 127][8] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Ascii asciiOwned = new Ascii() {
                     Data = &asciiBuffer[0],
                     Length = 0,
                     Capacity = 8
                 };
 
-                stack mut i32[4] unicodeBuffer = { 0, 0, 0, 0 };
+                stack mut i32[-2147483648 2147483647][4] unicodeBuffer = { 0, 0, 0, 0 };
                 stack mut Unicode unicodeOwned = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -134,7 +134,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
             public fn ascii Run() {
-                stack mut i8[16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Ascii owned = new Ascii() {
                     Data = &buffer[0],
                     Length = 0,
@@ -165,12 +165,12 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """
             module System.Text
 
-            public finite law rawptr<i8> AsciiData(ascii source);
-            public finite law i64 AsciiLength(ascii source);
-            public finite law rawptr<i32> UnicodeData(unicode source);
-            public finite law i64 UnicodeLength(unicode source);
+            public finite law rawptr<i8[-128 127]> AsciiData(ascii source);
+            public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+            public finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
+            public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
 
-            public fn i64 Run() {
+            public fn i64[-9223372036854775808 9223372036854775807] Run() {
                 if (AsciiData("text") == null) {
                     return -1;
                 }

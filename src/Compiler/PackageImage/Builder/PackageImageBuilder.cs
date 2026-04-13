@@ -15,6 +15,10 @@ internal static partial class PackageImageBuilder
         result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validationModel);
 
         var modules = new List<StarkPackageModuleManifest>();
+        var publishedModuleNames = loadedModules.Modules.Values
+            .Where(HasPublishedSurface)
+            .Select(static module => module.SyntaxModel.ModuleName)
+            .ToHashSet(StringComparer.Ordinal);
 
         foreach (var module in loadedModules.Modules.Values.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
         {
@@ -24,6 +28,7 @@ internal static partial class PackageImageBuilder
                 .Select(static import => new StarkPackageReExportManifest(import.ModuleName))
                 .ToArray();
             var imports = module.SyntaxModel.Imports
+                .Where(import => import.IsReExport || publishedModuleNames.Contains(import.ModuleName))
                 .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
                 .ThenByDescending(static import => import.IsReExport)
                 .Select(static import => new StarkPackageImportManifest(import.ModuleName, import.IsReExport))
@@ -241,5 +246,12 @@ internal static partial class PackageImageBuilder
     private static string LookupName(string moduleName, bool isRoot, string declarationName)
     {
         return isRoot ? declarationName : $"{moduleName}.{declarationName}";
+    }
+
+    private static bool HasPublishedSurface(LoadedModuleDocument module)
+    {
+        return module.SyntaxModel.Imports.Any(static import => import.IsReExport)
+            || module.SyntaxModel.Declarations.Any(
+                static declaration => declaration.Visibility is StarkVisibility.Public or StarkVisibility.Export);
     }
 }

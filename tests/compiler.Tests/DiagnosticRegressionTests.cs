@@ -12,7 +12,7 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             fn void Run() {
-                stack i32 value = 1
+                stack i32[-2147483648 2147483647] value = 1
             }
             """);
 
@@ -77,10 +77,10 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Missing;
             }
@@ -97,7 +97,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            law i32 Read(out i32 value) {
+            law i32[-2147483648 2147483647] Read(out i32[-2147483648 2147483647] value) {
                 return 0;
             }
             """);
@@ -114,7 +114,7 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             static Box Current = new Box() { Value = 1 };
@@ -135,7 +135,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            static i32 Answer = 42;
+            static i32[-2147483648 2147483647] Answer = 42;
 
             fn void Run() {
                 Answer = 7;
@@ -155,7 +155,7 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             const Box Current = new Box() { Value = 1 };
@@ -178,7 +178,7 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             struct Holder {
-                rawptr<i8> Ptr;
+                rawptr<i8[-128 127]> Ptr;
             }
 
             const Holder Current = new Holder() { Ptr = null };
@@ -195,9 +195,9 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32 Source();
+            fn i32[-2147483648 2147483647] Source();
 
-            const i32 Answer = Source();
+            const i32[-2147483648 2147483647] Answer = Source();
             """);
 
         Assert.False(result.Succeeded);
@@ -205,19 +205,19 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void NamedSwitchWholeValueCapturesProduceAStableBoundedDiagnostic()
+    public void NamedAggregateWholeValueTypedCaptureMarksFollowingDefaultUnreachable()
     {
         var result = Compile(
             """
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run(Box box) {
+            fn i32[-2147483648 2147483647] Run(Box box) {
                 switch (box) {
-                    case var capture:
+                    case Box capture:
                         return 1;
                     default:
                         return 0;
@@ -226,7 +226,8 @@ public sealed class DiagnosticRegressionTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Switch over 'Box'", "Whole-value capture patterns remain unsupported for named switch values");
+        AssertDiagnostic(result, "STK3019", "Switch label 'default' is unreachable", "already exhaustive");
+        AssertDiagnostic(result, "STK3020", "Switch coverage becomes exhaustive here for 'Box'.");
     }
 
     [Fact]
@@ -236,7 +237,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32 Run(i32 value) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     case var capture:
                     case 1:
@@ -258,7 +259,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32 Run(bool value) {
+            fn i32[-2147483648 2147483647] Run(bool value) {
                 switch (value) {
                     case true:
                         return 1;

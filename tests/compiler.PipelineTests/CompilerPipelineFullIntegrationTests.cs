@@ -63,9 +63,9 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            fn i32 Run(bool flag, i32 limit) {
-                stack i32 sum = 0;
-                stack i32 i = 0;
+            fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] limit) {
+                stack i32[-2147483648 2147483647] sum = 0;
+                stack i32[-2147483648 2147483647] i = 0;
 
                 while willexit (i < limit) {
                     switch (flag) {
@@ -112,7 +112,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return (1 + 2) * 3;
             }
             """));
@@ -146,8 +146,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            fn i32 Run(i32 input) {
-                stack mut i32 value = input;
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+                stack mut i32[-2147483648 2147483647] value = input;
                 value = value + 1;
                 return value;
             }
@@ -204,8 +204,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                fn i32 Run(bool flag) {
-                    stack mut i32 value = 0;
+                fn i32[-2147483648 2147483647] Run(bool flag) {
+                    stack mut i32[-2147483648 2147483647] value = 0;
                     if (flag) {
                         value = 1;
                     } else {
@@ -216,6 +216,42 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
                 """),
             new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        Assert.Equal(ArtifactTextRenderer.Render(ssa), ArtifactTextRenderer.Render(optimizedSsa));
+
+        var function = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        Assert.Contains(function.Blocks, static block => block.Phis.Count != 0);
+        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
+    }
+
+    [Fact]
+    public void DebugFriendlyOptimizationLevelPreservesRawSsaBeforeLlvmEmission()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Run(bool flag) {
+                    stack mut i32[-2147483648 2147483647] value = 0;
+                    if (flag) {
+                        value = 1;
+                    } else {
+                        value = 2;
+                    }
+
+                    return value;
+                }
+                """),
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.Og));
 
         Assert.True(result.Succeeded);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
@@ -242,7 +278,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Lib
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Lib.Adjust(4);
                 }
                 """,
@@ -255,8 +291,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Lib
 
-                        public finite law i32 Adjust(i32 value) {
-                            stack mut i32 current = value;
+                        public finite law i32[-2147483648 2147483647] Adjust(i32[-2147483648 2147483647] value) {
+                            stack mut i32[-2147483648 2147483647] current = value;
                             if (current < 10) {
                                 current = current + 3;
                             }
@@ -328,10 +364,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Effects
 
-            public finite law i32 Add(i32 left, i32 right);
+            public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
             public strictfp finite law f32 Precise(f32 left, f32 right);
-            export ffi cold fn void Accept(rawptr<i8> value);
-            internal hot fn i32 Warm(i32 value);
+            export ffi cold fn void Accept(rawptr<i8[-128 127]> value);
+            internal hot fn i32[-2147483648 2147483647] Warm(i32[-2147483648 2147483647] value);
             """));
 
         Assert.True(result.Succeeded);
@@ -393,7 +429,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import System.Syscall
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 0;
                 }
                 """,
@@ -407,7 +443,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module System.Syscall
 
-                        public ffi asm(x86_64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+                        public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
                             in("rax") number,
                             in("rdi") arg1,
                             in("rsi") arg2,
@@ -418,7 +454,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                             "syscall"
                         }
 
-                        public ffi asm(aarch64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3)
+                        public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
                             in("x8") number,
                             in("x0") arg1,
                             in("x1") arg2,
@@ -481,13 +517,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public asm(x86_64) fn i64 MissingFfi(i64 number)
+                public asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] MissingFfi(i64[-9223372036854775808 9223372036854775807] number)
                     out("rax") return
                 {
                     "syscall"
                 }
 
-                public ffi asm(aarch64) fn i64 NoMatch(i64 number)
+                public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] NoMatch(i64[-9223372036854775808 9223372036854775807] number)
                     out("x0") return
                 {
                     "svc #0"
@@ -511,13 +547,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public ffi asm(x86_64) fn i64 Syscall0()
+                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
                     out("rax") return
                 {
                     "syscall"
                 }
 
-                public ffi asm(x86_64) fn i64 Syscall0()
+                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
                     out("rax") return
                 {
                     "syscall"
@@ -540,7 +576,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public ffi asm(x86_64) fn i64 Broken(i64 number, out i64 result)
+                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Broken(i64[-9223372036854775808 9223372036854775807] number, out i64[-9223372036854775808 9223372036854775807] result)
                     in("x0") number,
                     in("rsi") result,
                     out("rax") result,
@@ -568,7 +604,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8> path)
+                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
                     in("rax") number,
                     in("rdi") path,
                     out("rax") return,
@@ -627,7 +663,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Syscall
                 module Demo
 
-                fn i64 Run(rawptr<i8> path) {
+                fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
                     return Syscall.Syscall2(2, path);
                 }
                 """,
@@ -641,7 +677,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Syscall
 
-                        public ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8> path)
+                        public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
                             in("rax") number,
                             in("rdi") path,
                             out("rax") return,
@@ -696,16 +732,16 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             struct Big {
-                i64 A;
-                i64 B;
-                i64 C;
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
             }
 
             fn Big Make() {
                 return new Big() { A = 1, B = 2, C = 3 };
             }
 
-            fn i64 Read(Big value) {
+            fn i64[-9223372036854775808 9223372036854775807] Read(Big value) {
                 return value.A + value.C;
             }
             """));
@@ -737,14 +773,14 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Effects
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            fn i32 Read(borrow Box box) {
+            fn i32[-2147483648 2147483647] Read(borrow Box box) {
                 return box.Value;
             }
             """));
@@ -843,15 +879,15 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                static mut i32 Counter = 0;
+                static mut i32[-2147483648 2147483647] Counter = 0;
 
-                fn void Bump(i32 value) {
+                fn void Bump(i32[-2147483648 2147483647] value) {
                     Counter = Counter + value;
                     return;
                 }
 
                 struct Resource {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
 
                     drop {
                         Bump(self.Value);
@@ -868,7 +904,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Resource Backup;
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     {
                         stack Holder holder = new Holder() {
                             Token = Token.Text(new Resource() { Value = 3 }),
@@ -904,33 +940,33 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 struct Inner {
-                    i32[2] Pair;
+                    i32[-2147483648 2147483647][2] Pair;
                 }
 
                 struct Outer {
-                    i32 Score;
+                    i32[-2147483648 2147483647] Score;
                     Inner Node;
                 }
 
-                fn i32 MakeScore() {
+                fn i32[-2147483648 2147483647] MakeScore() {
                     return 9;
                 }
 
-                fn i32 MakeLeft() {
+                fn i32[-2147483648 2147483647] MakeLeft() {
                     return 4;
                 }
 
-                fn i32 MakeRight() {
+                fn i32[-2147483648 2147483647] MakeRight() {
                     return 7;
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack Outer outer = new Outer() {
                         Score = MakeScore(),
                         Node = { Pair = { MakeLeft(), MakeRight() } }
                     };
-                    stack i32[3] buffer = { 1, 2, 3 };
-                    stack i32 total = outer.Node.Pair[0] + outer.Node.Pair[1] + outer.Score + buffer[2];
+                    stack i32[-2147483648 2147483647][3] buffer = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647] total = outer.Node.Pair[0] + outer.Node.Pair[1] + outer.Score + buffer[2];
                     return total;
                 }
                 """),
@@ -958,27 +994,27 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+                record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
                 record Label(ascii Tag, unicode Word) { }
 
                 enum Token {
                     None,
-                    Pair(i32, i32),
+                    Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack Many lessLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
                     stack Many lessRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
 
-                    stack i32[3] sameLeft = { 1, 2, 3 };
-                    stack i32[3] sameRight = { 1, 2, 3 };
-                    stack i32[3] greaterLeft = { 1, 2, 4 };
-                    stack i32[3] greaterRight = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647][3] sameLeft = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647][3] sameRight = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647][3] greaterLeft = { 1, 2, 4 };
+                    stack i32[-2147483648 2147483647][3] greaterRight = { 1, 2, 3 };
 
-                    stack i32[3] leftValues = { 1, 2, 3 };
-                    stack i32[3] rightValues = { 1, 2, 3 };
-                    stack i32[] leftView = leftValues;
-                    stack i32[] rightView = rightValues;
+                    stack i32[-2147483648 2147483647][3] leftValues = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647][3] rightValues = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647][] leftView = leftValues;
+                    stack i32[-2147483648 2147483647][] rightView = rightValues;
 
                     if (lessLeft < lessRight
                         && sameLeft == sameRight
@@ -1021,18 +1057,18 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
-                fn i32 Next() {
+                fn i32[-2147483648 2147483647] Next() {
                     return 7;
                 }
 
-                fn Box MakeBox(i32 value) {
+                fn Box MakeBox(i32[-2147483648 2147483647] value) {
                     return new Box() { Value = value };
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack mut Box box = new Box() { Value = 1 };
                     box.Value + 2;
                     MakeBox(Next());
@@ -1066,22 +1102,22 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 struct Cell {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 struct Holder {
                     Cell[2] Cells;
                 }
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     stack mut Holder holder = new Holder() {
                         Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
                     };
-                    stack i32 index = 1;
+                    stack i32[-2147483648 2147483647] index = 1;
                     holder.Cells[index].Value += 4;
 
-                    stack i32[3] values = { 1, 2, 3 };
-                    stack i32[] view = values;
+                    stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+                    stack i32[-2147483648 2147483647][] view = values;
                     view[0] = holder.Cells[index].Value;
 
                     return holder.Cells[index].Value + view[0];
@@ -1112,10 +1148,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -1143,11 +1179,11 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Effects
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            law i32 Use() {
+            law i32[-2147483648 2147483647] Use() {
                 return Add(1, 2);
             }
             """));
@@ -1174,15 +1210,15 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Effects
 
-            inlinehint fn i32 Hint(i32 value) {
+            inlinehint fn i32[-2147483648 2147483647] Hint(i32[-2147483648 2147483647] value) {
                 return value + 1;
             }
 
-            noinline fn i32 Stop(i32 value) {
+            noinline fn i32[-2147483648 2147483647] Stop(i32[-2147483648 2147483647] value) {
                 return value + 1;
             }
 
-            fn i32 Loop(i32 value) {
+            fn i32[-2147483648 2147483647] Loop(i32[-2147483648 2147483647] value) {
                 if (value == 0) {
                     return 0;
                 }
@@ -1190,7 +1226,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 return Loop(value - 1);
             }
 
-            law i32 Use(i32 value) {
+            law i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
                 return Hint(Stop(Loop(value)));
             }
             """));
@@ -1216,7 +1252,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1229,19 +1265,19 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        law i32 LawOnly() {
+                        law i32[-2147483648 2147483647] LawOnly() {
                             return 1;
                         }
 
-                        law i32 LawBlocked() {
+                        law i32[-2147483648 2147483647] LawBlocked() {
                             return 2;
                         }
 
-                        public law i32 UseLaw() {
+                        public law i32[-2147483648 2147483647] UseLaw() {
                             return LawOnly();
                         }
 
-                        public fn i32 UseFn() {
+                        public fn i32[-2147483648 2147483647] UseFn() {
                             return LawBlocked();
                         }
                         """,
@@ -1270,7 +1306,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32 Run() {
+                law i32[-2147483648 2147483647] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1283,11 +1319,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        law i32 LawOnly() {
+                        law i32[-2147483648 2147483647] LawOnly() {
                             return 1;
                         }
 
-                        public law i32 UseLaw() {
+                        public law i32[-2147483648 2147483647] UseLaw() {
                             return LawOnly();
                         }
                         """,
@@ -1315,11 +1351,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32 LawRun() {
+                law i32[-2147483648 2147483647] LawRun() {
                     return Math.UseLaw();
                 }
 
-                fn i32 FnRun() {
+                fn i32[-2147483648 2147483647] FnRun() {
                     Touch();
                     return Math.UseLaw();
                 }
@@ -1335,7 +1371,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public law i32 UseLaw() {
+                        public law i32[-2147483648 2147483647] UseLaw() {
                             return 1;
                         }
                         """,
@@ -1362,7 +1398,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32 Run() {
+                law i32[-2147483648 2147483647] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1375,11 +1411,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        law i32 LawOnly() {
+                        law i32[-2147483648 2147483647] LawOnly() {
                             return 1;
                         }
 
-                        public law i32 UseLaw() {
+                        public law i32[-2147483648 2147483647] UseLaw() {
                             return LawOnly();
                         }
                         """,
@@ -1446,7 +1482,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1459,7 +1495,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -1489,7 +1525,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1502,7 +1538,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -1550,8 +1586,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Path
 
-                        ffi fn i32 fputs(ascii text, rawptr<i8> stream);
-                        const rawptr<i8> stdout = null;
+                        ffi fn i32[-2147483648 2147483647] fputs(ascii text, rawptr<i8[-128 127]> stream);
+                        const rawptr<i8[-128 127]> stdout = null;
 
                         public fn ascii DirectorySeparator() {
                             return "/";
@@ -1595,12 +1631,12 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Laws
 
             public doctrine Numbers {
-                finite law i32 Add(i32 left, i32 right) {
+                finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Numbers.Add(1, 2);
             }
             """));
@@ -1634,10 +1670,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Contracts
 
             public trait Comparable {
-                law i32 Compare(i32 other);
+                law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """));
@@ -1671,9 +1707,9 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            alias Byte = i8;
+            alias Byte = i8[-128 127];
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """));
@@ -1698,7 +1734,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.Numbers.Add(3, 4);
                 }
                 """,
@@ -1712,7 +1748,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         public doctrine Numbers {
-                            finite law i32 Add(i32 left, i32 right) {
+                            finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                                 return left + right;
                             }
                         }
@@ -1744,7 +1780,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 0;
                 }
                 """,
@@ -1758,7 +1794,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         public trait Comparable {
-                            law i32 Compare(i32 other);
+                            law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                         }
                         """,
                         "/virtual/Math.stark"
@@ -1788,20 +1824,20 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 public doctrine Numbers {
-                    finite law i32 Add(i32 left, i32 right) {
+                    finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return left + right;
                     }
                 }
 
                 public trait Comparable {
-                    law i32 Compare(i32 other);
+                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                 }
 
-                law i32 UseLaw() {
+                law i32[-2147483648 2147483647] UseLaw() {
                     return Math.Numbers.Add(1, 2);
                 }
 
-                fn i32 UseFn() {
+                fn i32[-2147483648 2147483647] UseFn() {
                     Touch();
                     return Math.Numbers.Add(3, 4);
                 }
@@ -1818,13 +1854,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         public doctrine Numbers {
-                            finite law i32 Add(i32 left, i32 right) {
+                            finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                                 return left + right;
                             }
                         }
 
                         public trait Comparable {
-                            law i32 Compare(i32 other);
+                            law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                         }
                         """,
                         "/virtual/Math.stark"
@@ -1883,11 +1919,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32 UseLawClone(i32 left, i32 right) {
+                law i32[-2147483648 2147483647] UseLawClone(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return Math.Add(left, right);
                 }
 
-                fn i32 UseDirect(i32 left, i32 right) {
+                fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     Touch();
                     return Math.Add(left, right);
                 }
@@ -1903,7 +1939,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -1938,7 +1974,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Facade
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1952,7 +1988,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         import Math
                         module Facade
 
-                        public fn i32 Double(i32 value) {
+                        public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                             return Math.Add(value, value);
                         }
                         """,
@@ -1963,7 +1999,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -1991,7 +2027,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Facade
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -2005,7 +2041,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         export import Math
                         module Facade
 
-                        public fn i32 Double(i32 value) {
+                        public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                             return Math.Add(value, value);
                         }
                         """,
@@ -2016,7 +2052,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32 Add(i32 left, i32 right) {
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                             return left + right;
                         }
                         """,
@@ -2053,7 +2089,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """
                     module Syscall
 
-                    public ffi asm(x86_64) fn i64 Syscall0(i64 number)
+                    public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
                         in("rax") number,
                         out("rax") return,
                         clobber("rcx", "r11")
@@ -2076,7 +2112,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Syscall
                     module Demo
 
-                    fn i64 Run() {
+                    fn i64[-9223372036854775808 9223372036854775807] Run() {
                         return Syscall.Syscall0(39);
                     }
                     """,
@@ -2141,7 +2177,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """
                     module Syscall
 
-                    public ffi asm(x86_64) fn i64 Syscall0(i64 number)
+                    public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
                         in("rax") number,
                         out("rax") return,
                         clobber("rcx", "r11")
@@ -2164,7 +2200,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Syscall
                     module Demo
 
-                    fn i64 Run() {
+                    fn i64[-9223372036854775808 9223372036854775807] Run() {
                         return 0;
                     }
                     """,
@@ -2283,7 +2319,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public doctrine Numbers {
-                    finite law i32 Double(i32 value) {
+                    finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                         return value + value;
                     }
                 }
@@ -2304,7 +2340,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return Facade.Numbers.Double(3);
                     }
                     """,
@@ -2348,7 +2384,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public doctrine Numbers {
-                    finite law i32 Double(i32 value) {
+                    finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                         return value + value;
                     }
                 }
@@ -2372,7 +2408,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.Contains("Facade.Numbers.Double", importedDocument.PackageImageFacts!.FunctionSignatures.Keys);
 
             var corruptedSourceText = importedDocument.ParseResult.SourceText.Replace(
-                "finite law i32 Double(i32 value);",
+                StrictIntegerSource("finite law i32 Double(i32 value);"),
                 "finite law Missing Double(Missing value);",
                 StringComparison.Ordinal);
             Assert.NotEqual(importedDocument.ParseResult.SourceText, corruptedSourceText);
@@ -2388,7 +2424,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return Facade.Numbers.Double(3);
                     }
                     """,
@@ -2431,7 +2467,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public trait Comparable {
-                    law i32 Compare(i32 other);
+                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                 }
                 """,
                 facadePath));
@@ -2450,7 +2486,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 0;
                     }
                     """,
@@ -2494,7 +2530,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public trait Comparable {
-                    law i32 Compare(i32 other);
+                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                 }
                 """,
                 facadePath));
@@ -2516,7 +2552,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.Contains("Facade.Comparable.Compare", importedDocument.PackageImageFacts!.FunctionSignatures.Keys);
 
             var corruptedSourceText = importedDocument.ParseResult.SourceText.Replace(
-                "law i32 Compare(i32 other);",
+                StrictIntegerSource("law i32 Compare(i32 other);"),
                 "law Missing Compare(Missing other);",
                 StringComparison.Ordinal);
             Assert.NotEqual(importedDocument.ParseResult.SourceText, corruptedSourceText);
@@ -2532,7 +2568,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 0;
                     }
                     """,
@@ -2575,13 +2611,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public doctrine Numbers {
-                    finite law i32 Add(i32 left, i32 right) {
+                    finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return left + right;
                     }
                 }
 
                 public trait Comparable {
-                    law i32 Compare(i32 other);
+                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                 }
                 """,
                 facadePath));
@@ -2600,7 +2636,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return Facade.Numbers.Add(1, 2);
                     }
                     """,
@@ -2658,8 +2694,8 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public enum Token {
                     End,
-                    Integer(i32),
-                    Move { X: i32, Y: i32 },
+                    Integer(i32[-2147483648 2147483647]),
+                    Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
                 }
 
                 fn void Touch() {
@@ -2732,7 +2768,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public enum IOResult<T> {
                     Ok(T),
-                    Err(i32),
+                    Err(i32[-2147483648 2147483647]),
                 }
 
                 fn void Touch() {
@@ -2758,11 +2794,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    finite law i32 Unwrap(Facade.IOResult<i32> result) {
+                    finite law i32[-2147483648 2147483647] Unwrap(Facade.IOResult<i32[-2147483648 2147483647]> result) {
                         switch (result) {
-                            case Facade.IOResult<i32>.Ok(var value):
+                            case Facade.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
                                 return value;
-                            case Facade.IOResult<i32>.Err(var code):
+                            case Facade.IOResult<i32[-2147483648 2147483647]>.Err(var code):
                                 return code;
                         }
                     }
@@ -2808,15 +2844,15 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Types
 
             struct Widget {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            public const i32 Answer = 42;
-            internal static rawptr<i8> Buffer = null;
+            public const i32[-2147483648 2147483647] Answer = 42;
+            internal static rawptr<i8[-128 127]> Buffer = null;
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Widget widget = new Widget() { Value = 1 };
-                stack i32 value = widget.Value + 2;
+                stack i32[-2147483648 2147483647] value = widget.Value + 2;
                 return value;
             }
             """));
@@ -2849,8 +2885,8 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             enum Token {
                 End,
-                Integer(i32),
-                Move { X: i32, Y: i32 },
+                Integer(i32[-2147483648 2147483647]),
+                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
             fn void Run() {
@@ -2897,11 +2933,11 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             enum Token {
                 End,
-                Integer(i32),
-                Move { X: i32, Y: i32 },
+                Integer(i32[-2147483648 2147483647]),
+                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            fn Token Make(i32 value) {
+            fn Token Make(i32[-2147483648 2147483647] value) {
                 if (value == 0) {
                     return Token.End;
                 }
@@ -2917,7 +2953,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 return token;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Token first = Token.Integer(5);
                 stack Token second = Token.Move { X: 1, Y: 2 };
                 stack Token third = Make(0);
@@ -2999,7 +3035,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            public const i32 Value = null;
+            public const i32[-2147483648 2147483647] Value = null;
             """));
 
         Assert.False(result.Succeeded);
@@ -3018,7 +3054,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Math
 
                 public doctrine Numbers {
-                    finite law i32 Add(i32 left, i32 right) {
+                    finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return left + right;
                     }
                 }
@@ -3042,13 +3078,13 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             struct Buffer {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
-                fn i32 Scale(borrow Buffer self, i32 factor) {
+                fn i32[-2147483648 2147483647] Scale(borrow Buffer self, i32[-2147483648 2147483647] factor) {
                     return self.Value * factor;
                 }
 
-                fn i32 Scale(borrow Buffer self, bool doubleIt) {
+                fn i32[-2147483648 2147483647] Scale(borrow Buffer self, bool doubleIt) {
                     if (doubleIt) {
                         return self.Value * 2;
                     }
@@ -3057,7 +3093,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Buffer buffer = new Buffer() { Value = 3 };
                 return buffer.Scale(4) + buffer.Scale(true);
             }
@@ -3096,11 +3132,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public finite law i32 Parse(i32 value) {
+                public finite law i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
                     return value;
                 }
 
-                public finite law i32 Parse(bool value) {
+                public finite law i32[-2147483648 2147483647] Parse(bool value) {
                     if (value) {
                         return 1;
                     }
@@ -3135,7 +3171,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return Facade.Parse(4) + Facade.Parse(true);
                     }
                     """,
@@ -3254,7 +3290,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Pair<T>(T Value) { }
                 public alias BufferView<T> = Pair<T>[];
-                public fn Pair<i32> First(BufferView<i32> view);
+                public fn Pair<i32[-2147483648 2147483647]> First(BufferView<i32[-2147483648 2147483647]> view);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -3322,14 +3358,14 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Pair<T>(T Value) { }
                 public alias BufferView<T> = Pair<T>[];
-                public alias IntBufferView = Pair<i32>[];
+                public alias IntBufferView = Pair<i32[-2147483648 2147483647]>[];
                 public record Holder(IntBufferView View) {
                     IntBufferView Cached;
 
                     fn IntBufferView Echo(IntBufferView value);
                 }
 
-                public fn BufferView<i32> First(BufferView<i32> view);
+                public fn BufferView<i32[-2147483648 2147483647]> First(BufferView<i32[-2147483648 2147483647]> view);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -3366,12 +3402,12 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.Equal(["T"], bufferView.GenericParameters);
 
             var intBufferView = Assert.Single(sourceSurface.TypeAliases!, static alias => alias.Name == "IntBufferView");
-            Assert.Equal("Pair<i32>[]", intBufferView.TargetType);
+            Assert.Equal(StrictIntegerSource("Pair<i32>[]"), intBufferView.TargetType);
 
             var first = Assert.Single(sourceSurface.Functions!, static function => function.Name == "First");
-            Assert.Equal("BufferView<i32>", first.ReturnType);
+            Assert.Equal(StrictIntegerSource("BufferView<i32>"), first.ReturnType);
             var parameter = Assert.Single(first.Parameters);
-            Assert.Equal("BufferView<i32>", parameter.Type);
+            Assert.Equal(StrictIntegerSource("BufferView<i32>"), parameter.Type);
         }
         finally
         {
@@ -3429,7 +3465,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         Name: "BufferView",
                         QualifiedName: "Facade.BufferView",
                         Visibility: "public",
-                        TargetType: "i32[]")
+                        TargetType: StrictIntegerSource("i32[]"))
                 ]));
 
         Assert.True(
@@ -3442,7 +3478,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 out var sourceText));
 
         Assert.Contains("import Bits", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public alias BufferView = i32[];", sourceText, StringComparison.Ordinal);
+        Assert.Contains(StrictIntegerSource("public alias BufferView = i32[];"), sourceText, StringComparison.Ordinal);
         Assert.Contains("public fn BufferView Identity(BufferView value);", sourceText, StringComparison.Ordinal);
     }
 
@@ -3499,7 +3535,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         Visibility: "public",
                         SymbolName: "Facade.Right",
                         Kind: "fn",
-                        ReturnType: "i32",
+                        ReturnType: StrictIntegerSource("i32"),
                         Parameters: [],
                         IsFfi: false,
                         IsStrictFp: false,
@@ -3513,7 +3549,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         Name: "Buffer",
                         QualifiedName: "Facade.Buffer",
                         Visibility: "public",
-                        TargetType: "i32[]")
+                        TargetType: StrictIntegerSource("i32[]"))
                 ]));
 
         Assert.True(
@@ -3526,8 +3562,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 out var sourceText));
 
         Assert.Contains("import Bits", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public alias Buffer = i32[];", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn i32 Right();", sourceText, StringComparison.Ordinal);
+        Assert.Contains(StrictIntegerSource("public alias Buffer = i32[];"), sourceText, StringComparison.Ordinal);
+        Assert.Contains(StrictIntegerSource("public fn i32 Right();"), sourceText, StringComparison.Ordinal);
         Assert.DoesNotContain("WrongBits", sourceText, StringComparison.Ordinal);
         Assert.DoesNotContain("WrongBuffer", sourceText, StringComparison.Ordinal);
         Assert.DoesNotContain("public fn i8 Wrong();", sourceText, StringComparison.Ordinal);
@@ -3613,7 +3649,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Visibility: "public",
                     SymbolName: "Facade.Right",
                     Kind: "fn",
-                    ReturnType: new StarkPackageTypeReference("integer", BitWidth: 32),
+                    ReturnType: SignedIntegerTypeReference(32),
                     Parameters: [],
                     IsFfi: false,
                     IsStrictFp: false,
@@ -3641,7 +3677,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     facadeModule),
                 out var sourceText));
 
-        Assert.Contains("public fn i32 Right();", sourceText, StringComparison.Ordinal);
+        Assert.Contains(StrictIntegerSource("public fn i32 Right();"), sourceText, StringComparison.Ordinal);
         Assert.DoesNotContain("Wrong", sourceText, StringComparison.Ordinal);
     }
 
@@ -3805,7 +3841,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public alias Count = i32;
+                public alias Count = i32[-2147483648 2147483647];
 
                 public fn Count Identity<T>(Count value) {
                     return value + 0;
@@ -3832,9 +3868,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public alias Count = i32;", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn i32 Identity<T>(i32 value);", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("public fn i32 Identity<T>(i32 value) {", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public alias Count = i32;"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Identity<T>(i32 value);"), sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain(StrictIntegerSource("public fn i32 Identity<T>(i32 value) {"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return value + 0;", sourceText, StringComparison.Ordinal);
         }
         finally
@@ -3866,9 +3902,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 SumWhileControl<T>(i32 count, i32 stopAt, T tag) {
-                    stack mut i32 sum = 0;
-                    stack mut i32 index = 0;
+                public fn i32[-2147483648 2147483647] SumWhileControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
+                    stack mut i32[-2147483648 2147483647] sum = 0;
+                    stack mut i32[-2147483648 2147483647] index = 0;
                     while willexit (index < count) {
                         index = index + 1;
                         if (index < 2) {
@@ -3882,9 +3918,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return sum;
                 }
 
-                public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag) {
-                    stack mut i32 sum = 0;
-                    for willexit (stack mut i32 index = 0; index < count; index = index + 1) {
+                public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
+                    stack mut i32[-2147483648 2147483647] sum = 0;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
                         if (index < 2) {
                             continue;
                         }
@@ -3952,8 +3988,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                     out var importedDocument));
 
             Assert.DoesNotContain("this is not valid Stark", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn i32 SumWhileControl<T>(i32 count, i32 stopAt, T tag);", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag);", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 SumWhileControl<T>(i32 count, i32 stopAt, T tag);"), importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag);"), importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("while willexit (index < count)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("continue;", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
@@ -4437,7 +4473,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Facade
 
-            public alias BufferView = i32[];
+            public alias BufferView = i32[-2147483648 2147483647][];
 
             public fn BufferView First(BufferView view);
 
@@ -4634,7 +4670,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public strictfp hot noinline finite law f32 Precise(f32 value);
-                export cold ffi fn void Sink(rawptr<i8> value);
+                export cold ffi fn void Sink(rawptr<i8[-128 127]> value);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -4686,13 +4722,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Big {
-                    i64 A;
-                    i64 B;
-                    i64 C;
+                    i64[-9223372036854775808 9223372036854775807] A;
+                    i64[-9223372036854775808 9223372036854775807] B;
+                    i64[-9223372036854775808 9223372036854775807] C;
                 }
 
                 public fn Big Make();
-                public fn i64 Read(Big value);
+                public fn i64[-9223372036854775808 9223372036854775807] Read(Big value);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -4743,13 +4779,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Padded {
-                    i8 Small;
-                    i32 Value;
+                    i8[-128 127] Small;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public enum Token {
                     End,
-                    Move { X: i32, Y: i32 },
+                    Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -4802,7 +4838,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn retborrow Box Echo(retborrow Box value) {
@@ -4870,7 +4906,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Touch(borrow mut Box box) {
@@ -4945,7 +4981,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return value;
                 }
 
-                public fn i32 ConcreteIdentity(i32 value) {
+                public fn i32[-2147483648 2147483647] ConcreteIdentity(i32[-2147483648 2147483647] value) {
                     return value;
                 }
 
@@ -5172,11 +5208,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Touch<T>(borrow Box box, T tag) {
-                    stack i32 copy = box.Value;
+                    stack i32[-2147483648 2147483647] copy = box.Value;
                     return;
                 }
                 """,
@@ -5225,7 +5261,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Reset(borrow mut Box box) {
@@ -5286,7 +5322,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 AddTag<T>(i32 left, i32 right, T tag) {
+                public fn i32[-2147483648 2147483647] AddTag<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
                     return left + right;
                 }
                 """,
@@ -5330,14 +5366,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 SumPair<T>(i32 value, T tag) {
-                    stack i32 first = value, second = value + 1;
+                public fn i32[-2147483648 2147483647] SumPair<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack i32[-2147483648 2147483647] first = value, second = value + 1;
                     return first + second;
                 }
 
-                public fn i32 SumTo<T>(i32 limit, T tag) {
-                    stack mut i32 total = 0, stop = limit;
-                    for willexit (stack mut i32 index = 0, max = stop; index < max; index += 1) {
+                public fn i32[-2147483648 2147483647] SumTo<T>(i32[-2147483648 2147483647] limit, T tag) {
+                    stack mut i32[-2147483648 2147483647] total = 0, stop = limit;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0, max = stop; index < max; index += 1) {
                         total += index;
                     }
 
@@ -5421,7 +5457,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn void Observe<T>(i32 value, T tag) {
+                public fn void Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     value + 1;
                     return;
                 }
@@ -5474,8 +5510,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32 current, next = value + 1;
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] current, next = value + 1;
                     current = value;
                     return current + next;
                 }
@@ -5533,9 +5569,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Pair(i32 First, i32 Second) { }
+                public record Pair(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647] Second) { }
 
-                public fn i32 Observe<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     stack Pair pair = { First = value, Second = value + 1 };
                     return pair.First + pair.Second;
                 }
@@ -5593,12 +5629,12 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public fn void NoOp<T>(T tag) { }
 
-                public fn i32 KeepValue<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] KeepValue<T>(i32[-2147483648 2147483647] value, T tag) {
                     ;
                     return value;
                 }
 
-                public fn i32 NestedScope<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] NestedScope<T>(i32[-2147483648 2147483647] value, T tag) {
                     {
                         ;
                     }
@@ -5606,8 +5642,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return value;
                 }
 
-                public fn i32 CountTo<T>(i32 count, T tag) {
-                    stack mut i32 index = 0;
+                public fn i32[-2147483648 2147483647] CountTo<T>(i32[-2147483648 2147483647] count, T tag) {
+                    stack mut i32[-2147483648 2147483647] index = 0;
                     for willexit (;;) {
                         if (index == count) {
                             break;
@@ -5619,7 +5655,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return index;
                 }
 
-                public fn i32 EmptySwitch<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] EmptySwitch<T>(i32[-2147483648 2147483647] value, T tag) {
                     switch (value) {
                         case 0:
                     }
@@ -5697,7 +5733,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32[2] Values;
+                    i32[-2147483648 2147483647][2] Values;
                 }
 
                 public fn Outer<T> Wrap<T>(T value, T tag) {
@@ -5758,8 +5794,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32 current = 1;
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] current = 1;
                     return current += value;
                 }
                 """,
@@ -5815,8 +5851,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag) {
-                    stack mut i32 copy = *ptr;
+                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] copy = *ptr;
                     return *ptr += copy + value;
                 }
                 """,
@@ -5873,13 +5909,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32 First, i32[4] Values) { }
+                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
                 public fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -5954,14 +5990,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32 First, i32[4] Values) { }
+                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32[4] data = { 1, 2, 3, 4 };
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
-                    stack rawmutptr<i32> firstPtr = &buffer.First;
-                    stack rawmutptr<i32> slotPtr = &buffer.Values[2];
-                    stack rawmutptr<i32> aliasPtr = &*slotPtr;
+                    stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;
+                    stack rawmutptr<i32[-2147483648 2147483647]> slotPtr = &buffer.Values[2];
+                    stack rawmutptr<i32[-2147483648 2147483647]> aliasPtr = &*slotPtr;
                     return *aliasPtr = *firstPtr + value;
                 }
                 """,
@@ -6032,7 +6068,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(i32 value, i32 exponent, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] exponent, T tag) {
                     return value ** exponent;
                 }
                 """,
@@ -6084,7 +6120,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                fn i32 Next() {
+                fn i32[-2147483648 2147483647] Next() {
                     return 1;
                 }
 
@@ -6160,11 +6196,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                         Visibility: "public",
                         SymbolName: "Facade.Choose",
                         Kind: "fn",
-                        ReturnType: new StarkPackageTypeReference("integer", BitWidth: 32),
+                        ReturnType: SignedIntegerTypeReference(32),
                         Parameters:
                         [
-                            new StarkPackageTypedParameterManifest("left", new StarkPackageTypeReference("integer", BitWidth: 32)),
-                            new StarkPackageTypedParameterManifest("right", new StarkPackageTypeReference("integer", BitWidth: 32))
+                            new StarkPackageTypedParameterManifest("left", SignedIntegerTypeReference(32)),
+                            new StarkPackageTypedParameterManifest("right", SignedIntegerTypeReference(32))
                         ],
                         IsFfi: false,
                         IsStrictFp: true,
@@ -6186,7 +6222,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         [
                             new StarkPackageTypedFieldManifest(
                                 "Value",
-                                new StarkPackageTypeReference("integer", BitWidth: 32))
+                                SignedIntegerTypeReference(32))
                         ],
                         Methods:
                         [
@@ -6195,12 +6231,12 @@ public sealed class CompilerPipelineFullIntegrationTests
                                 QualifiedName: "Facade.Box.Measure",
                                 SymbolName: "Facade.Box.Measure",
                                 Kind: "fn",
-                                ReturnType: new StarkPackageTypeReference("integer", BitWidth: 32),
+                                ReturnType: SignedIntegerTypeReference(32),
                                 Parameters:
                                 [
                                     new StarkPackageTypedParameterManifest(
                                         "delta",
-                                        new StarkPackageTypeReference("integer", BitWidth: 32))
+                                        SignedIntegerTypeReference(32))
                                 ],
                                 IsFfi: false,
                                 IsStrictFp: false,
@@ -6242,8 +6278,8 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.True(measureDeclaration.Function.Modifiers.HasExplicitInlinePreference);
 
         Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
-        Assert.Contains("public strictfp hot noinline fn i32 Choose(i32 left, i32 right);", sourceText, StringComparison.Ordinal);
-        Assert.Contains("cold inlinehint fn i32 Measure(i32 delta);", sourceText, StringComparison.Ordinal);
+        Assert.Contains(StrictIntegerSource("public strictfp hot noinline fn i32 Choose(i32 left, i32 right);"), sourceText, StringComparison.Ordinal);
+        Assert.Contains(StrictIntegerSource("cold inlinehint fn i32 Measure(i32 delta);"), sourceText, StringComparison.Ordinal);
     }
 
 
@@ -6313,7 +6349,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public struct Pair<T> {
                     T Value;
-                    i32 Count;
+                    i32[-2147483648 2147483647] Count;
                 }
 
                 public fn Pair<T> MakePair<T>(T value) {
@@ -6375,7 +6411,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public fn T Identity<T>(T value) {
                     stack T copy = value;
-                    const i32 one = 1;
+                    const i32[-2147483648 2147483647] one = 1;
                     return copy;
                 }
                 """,
@@ -6448,18 +6484,18 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return echoed;
                 }
 
-                public fn i32 TruncateTyped<T>(f32 value, T tag) {
-                    return (i32)value;
+                public fn i32[-2147483648 2147483647] TruncateTyped<T>(f32 value, T tag) {
+                    return (i32[-2147483648 2147483647])value;
                 }
 
-                public fn i32 AddViaAssign<T>(T tag, i32 left, i32 right) {
-                    stack mut i32 sum = left;
+                public fn i32[-2147483648 2147483647] AddViaAssign<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    stack mut i32[-2147483648 2147483647] sum = left;
                     sum = sum + right;
                     return sum;
                 }
 
-                public fn i32 ChooseBranch<T>(bool takeLeft, i32 left, i32 right, T tag) {
-                    stack mut i32 result = 0;
+                public fn i32[-2147483648 2147483647] ChooseBranch<T>(bool takeLeft, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                    stack mut i32[-2147483648 2147483647] result = 0;
                     if (takeLeft) {
                         result = left;
                     } else {
@@ -6468,9 +6504,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return result;
                 }
 
-                public fn i32 SumTo<T>(i32 count, T tag) {
-                    stack mut i32 index = 0;
-                    stack mut i32 sum = 0;
+                public fn i32[-2147483648 2147483647] SumTo<T>(i32[-2147483648 2147483647] count, T tag) {
+                    stack mut i32[-2147483648 2147483647] index = 0;
+                    stack mut i32[-2147483648 2147483647] sum = 0;
                     while willexit (index < count) {
                         sum = sum + index;
                         index = index + 1;
@@ -6478,17 +6514,17 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return sum;
                 }
 
-                public fn i32 SumFor<T>(i32 count, T tag) {
-                    stack mut i32 sum = 0;
-                    for willexit (stack mut i32 index = 0; index < count; index = index + 1) {
+                public fn i32[-2147483648 2147483647] SumFor<T>(i32[-2147483648 2147483647] count, T tag) {
+                    stack mut i32[-2147483648 2147483647] sum = 0;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
                         sum = sum + index;
                     }
                     return sum;
                 }
 
-                public fn i32 SumForControl<T>(i32 count, i32 stopAt, T tag) {
-                    stack mut i32 sum = 0;
-                    for willexit (stack mut i32 index = 0; index < count; index = index + 1) {
+                public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
+                    stack mut i32[-2147483648 2147483647] sum = 0;
+                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
                         if (index < 2) {
                             continue;
                         }
@@ -6500,7 +6536,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return sum;
                 }
 
-                public fn i8 One<T>(T tag) {
+                public fn i8[-128 127] One<T>(T tag) {
                     return 1;
                 }
 
@@ -6508,7 +6544,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return !flag;
                 }
 
-                public fn i32 AddTagged<T>(T tag, i32 left, i32 right) {
+                public fn i32[-2147483648 2147483647] AddTagged<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
 
@@ -6524,17 +6560,17 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return box.Value;
                 }
 
-                public record EchoBox(i32 Dummy) {
-                    fn i32 Echo(borrow EchoBox self, i32 value) {
+                public record EchoBox(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow EchoBox self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn EchoBox MakeEchoBox(i32 dummy) {
+                public fn EchoBox MakeEchoBox(i32[-2147483648 2147483647] dummy) {
                     return new EchoBox(dummy);
                 }
 
-                public fn i32 CallEcho<T>(EchoBox box, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallEcho<T>(EchoBox box, i32[-2147483648 2147483647] value, T tag) {
                     return box.Echo(value);
                 }
 
@@ -6542,72 +6578,72 @@ public sealed class CompilerPipelineFullIntegrationTests
                     EchoBox Box;
                 }
 
-                public fn i32 CallHeldEcho<T>(EchoHolder holder, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallHeldEcho<T>(EchoHolder holder, i32[-2147483648 2147483647] value, T tag) {
                     return holder.Box.Echo(value);
                 }
 
-                public fn i32 CallIndexedEcho<T>(EchoBox[] boxes, i32 index, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallIndexedEcho<T>(EchoBox[] boxes, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] value, T tag) {
                     return boxes[index].Echo(value);
                 }
 
-                public fn i32 CallMadeEcho<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallMadeEcho<T>(i32[-2147483648 2147483647] value, T tag) {
                     return MakeEchoBox(1).Echo(value);
                 }
 
                 public struct IntBox {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
-                public fn IntBox MakeIntBox(i32 value) {
+                public fn IntBox MakeIntBox(i32[-2147483648 2147483647] value) {
                     return new IntBox() { Value = value };
                 }
 
-                public fn i32 ReadMadeValue<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] ReadMadeValue<T>(i32[-2147483648 2147483647] value, T tag) {
                     return MakeIntBox(value).Value;
                 }
 
-                public fn i32 CallConstructedEcho<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] CallConstructedEcho<T>(i32[-2147483648 2147483647] value, T tag) {
                     return new EchoBox(1).Echo(value);
                 }
 
-                public fn i32 ReadConstructedValue<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] ReadConstructedValue<T>(i32[-2147483648 2147483647] value, T tag) {
                     return new IntBox() { Value = value }.Value;
                 }
 
-                public fn i32 ChooseBoxValue<T>(bool takeLeft, IntBox left, IntBox right, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseBoxValue<T>(bool takeLeft, IntBox left, IntBox right, T tag) {
                     return (takeLeft ? left : right).Value;
                 }
 
-                public fn i32 ChooseEcho<T>(bool takeLeft, EchoBox left, EchoBox right, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] ChooseEcho<T>(bool takeLeft, EchoBox left, EchoBox right, i32[-2147483648 2147483647] value, T tag) {
                     return (takeLeft ? left : right).Echo(value);
                 }
 
-                public fn i32 ReadSliceAt<T>(i32[] view, i32 index, T tag) {
+                public fn i32[-2147483648 2147483647] ReadSliceAt<T>(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index, T tag) {
                     return view[index];
                 }
 
-                public fn ascii SliceAsciiWindow<T>(ascii text, i32 start, i32 length, T tag) {
+                public fn ascii SliceAsciiWindow<T>(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length, T tag) {
                     return text[start, length];
                 }
 
                 public struct SliceBox<T> {
-                    i32[] Values;
+                    i32[-2147483648 2147483647][] Values;
                 }
 
-                public fn i32 ReadBoxSliceAt<T>(SliceBox<T> box, i32 index, T tag) {
+                public fn i32[-2147483648 2147483647] ReadBoxSliceAt<T>(SliceBox<T> box, i32[-2147483648 2147483647] index, T tag) {
                     return box.Values[index];
                 }
 
                 public struct Counted<T> {
                     T Value;
-                    i32 Count;
+                    i32[-2147483648 2147483647] Count;
                 }
 
-                public fn i32 ReadIndexedCount<T>(Counted<T>[] pairs, i32 index, T tag) {
+                public fn i32[-2147483648 2147483647] ReadIndexedCount<T>(Counted<T>[] pairs, i32[-2147483648 2147483647] index, T tag) {
                     return pairs[index].Count;
                 }
 
-                public record ResetBox(i32 Value) {
+                public record ResetBox(i32[-2147483648 2147483647] Value) {
                     fn void Reset(borrow mut ResetBox self) {
                         self.Value = 0;
                     }
@@ -6653,10 +6689,10 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
-                public fn Boxed<T> WrapNamed<T>(T value, i32 tag) {
+                public fn Boxed<T> WrapNamed<T>(T value, i32[-2147483648 2147483647] tag) {
                     return Boxed<T>.Value { Data: value, Tag: tag };
                 }
 
@@ -6668,7 +6704,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return takeLeft ? left : right;
                 }
 
-                public fn i32 MinTagged<T>(T tag, i32 left, i32 right) {
+                public fn i32[-2147483648 2147483647] MinTagged<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left < right ? left : right;
                 }
                 """,
@@ -7307,16 +7343,16 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
                 public enum Wrapped<T> {
-                    Value { Data: Counter, Marker: i32 },
+                    Value { Data: Counter, Marker: i32[-2147483648 2147483647] },
                 }
 
-                public record Counter(i32 Value, i32 Count) { }
+                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
 
-                public fn i32 HasValueSwitch<T>(Option<T> value) {
+                public fn i32[-2147483648 2147483647] HasValueSwitch<T>(Option<T> value) {
                     switch (value) {
                         case Option<T>.Some(var payload):
                             return 1;
@@ -7325,21 +7361,21 @@ public sealed class CompilerPipelineFullIntegrationTests
                     }
                 }
 
-                public fn i32 ReadTagSwitch<T>(Boxed<T> boxed) {
+                public fn i32[-2147483648 2147483647] ReadTagSwitch<T>(Boxed<T> boxed) {
                     switch (boxed) {
                         case Boxed<T>.Value { Data: _, Tag: var tag }:
                             return tag;
                     }
                 }
 
-                public fn i32 ReadCountSwitch<T>(Counter counter, T tag) {
+                public fn i32[-2147483648 2147483647] ReadCountSwitch<T>(Counter counter, T tag) {
                     switch (counter) {
                         case Counter(_, var count):
                             return count;
                     }
                 }
 
-                public fn i32 ClassifySwitch<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] ClassifySwitch<T>(i32[-2147483648 2147483647] value, T tag) {
                     switch (value) {
                         case 0:
                         case 1:
@@ -7351,7 +7387,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     }
                 }
 
-                public fn i32 ReadNestedCountSwitch<T>(Wrapped<T> wrapped, T tag) {
+                public fn i32[-2147483648 2147483647] ReadNestedCountSwitch<T>(Wrapped<T> wrapped, T tag) {
                     switch (wrapped) {
                         case Wrapped<T>.Value { Data: Counter(7, var count), Marker: 1 }:
                             return count;
@@ -7483,8 +7519,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Truncate<T>(f32 value, T tag) {
-                    return (i32)value;
+                public fn i32[-2147483648 2147483647] Truncate<T>(f32 value, T tag) {
+                    return (i32[-2147483648 2147483647])value;
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -7529,7 +7565,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i8 },
+                    Value { Data: T, Tag: i8[-128 127] },
                 }
 
                 public fn Boxed<T> Wrap<T>(T value) {
@@ -7701,7 +7737,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Some(T),
                 }
 
-                public fn i32 HasValue<T>(Option<T> value) {
+                public fn i32[-2147483648 2147483647] HasValue<T>(Option<T> value) {
                     switch (value) {
                         case Option<T>.Some(var payload):
                             return 1;
@@ -7768,10 +7804,10 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32 },
+                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
                 }
 
-                public fn i32 ReadTag<T>(Boxed<T> boxed) {
+                public fn i32[-2147483648 2147483647] ReadTag<T>(Boxed<T> boxed) {
                     switch (boxed) {
                         case Boxed<T>.Value { Data: _, Tag: var tag }:
                             return tag;
@@ -7837,9 +7873,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Counter(i32 Value, i32 Count) { }
+                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
 
-                public fn i32 ReadCount<T>(Counter counter, T tag) {
+                public fn i32[-2147483648 2147483647] ReadCount<T>(Counter counter, T tag) {
                     switch (counter) {
                         case Counter(_, var count):
                             return count;
@@ -7997,13 +8033,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Box(i32 Dummy) {
-                    fn i32 Echo(borrow Box self, i32 value) {
+                public record Box(i32[-2147483648 2147483647] Dummy) {
+                    fn i32[-2147483648 2147483647] Echo(borrow Box self, i32[-2147483648 2147483647] value) {
                         return value;
                     }
                 }
 
-                public fn i32 Forward<T>(T tag, Box box, i32 value) {
+                public fn i32[-2147483648 2147483647] Forward<T>(T tag, Box box, i32[-2147483648 2147483647] value) {
                     return box.Echo(value);
                 }
                 """,
@@ -8056,7 +8092,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public record Counter<T>(T Value) {
-                    i32 Tag;
+                    i32[-2147483648 2147483647] Tag;
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -8159,7 +8195,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Pair<A, B>(A First, B Second) { }
 
-                public fn i32 Forward<T>(T value, bool flag) {
+                public fn i32[-2147483648 2147483647] Forward<T>(T value, bool flag) {
                     stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
                     return pair.Second ? 1 : 0;
                 }
@@ -8281,8 +8317,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Pair {
-                    i32 Left;
-                    i32 Right;
+                    i32[-2147483648 2147483647] Left;
+                    i32[-2147483648 2147483647] Right;
                 }
 
                 alias HiddenPair = Pair;
@@ -8290,7 +8326,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 export alias ExportedPair = HiddenPair;
                 public alias BufferView<T> = T[];
 
-                public finite law i32 Left(PublicPair value, BufferView<i32> view) {
+                public finite law i32[-2147483648 2147483647] Left(PublicPair value, BufferView<i32[-2147483648 2147483647]> view) {
                     return value.Left + view[0];
                 }
                 """,
@@ -8334,11 +8370,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
-                        stack i32[1] values = { 4 };
+                    fn i32[-2147483648 2147483647] Run() {
+                        stack i32[-2147483648 2147483647][1] values = { 4 };
                         stack Facade.ExportedPair exported = new Facade.Pair() { Left = 3, Right = 0 };
                         stack Facade.PublicPair pair = exported;
-                        stack Facade.BufferView<i32> view = (i32[])values;
+                        stack Facade.BufferView<i32[-2147483648 2147483647]> view = (i32[-2147483648 2147483647][])values;
                         return Facade.Left(pair, view);
                     }
                     """,
@@ -8412,8 +8448,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Pair {
-                    i32 Left;
-                    i32 Right;
+                    i32[-2147483648 2147483647] Left;
+                    i32[-2147483648 2147483647] Right;
                 }
 
                 public alias PublicPair = Pair;
@@ -8453,7 +8489,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
                         return pair.Left;
                     }
@@ -8496,20 +8532,20 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Pair {
-                    i32 Left;
-                    i32 Right;
+                    i32[-2147483648 2147483647] Left;
+                    i32[-2147483648 2147483647] Right;
                 }
 
                 public alias PublicPair = Pair;
 
                 public doctrine Numbers {
-                    finite law i32 Double(i32 value) {
+                    finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                         return value + value;
                     }
                 }
 
                 public trait Comparable {
-                    law i32 Compare(i32 other);
+                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
                 }
                 """,
                 facadePath));
@@ -8546,7 +8582,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
                         return Facade.Numbers.Double(pair.Left);
                     }
@@ -8601,9 +8637,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                internal alias Hidden = i32;
+                internal alias Hidden = i32[-2147483648 2147483647];
 
-                public finite law i32 Id(i32 value) {
+                public finite law i32[-2147483648 2147483647] Id(i32[-2147483648 2147483647] value) {
                     return value;
                 }
                 """,
@@ -8626,7 +8662,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         stack Facade.Hidden value = 3;
                         return Facade.Id(value);
                     }
@@ -8697,7 +8733,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Counter {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
 
                     mut drop {
                         self.Value = 0;
@@ -8726,7 +8762,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         stack mut Facade.Counter value = new Facade.Counter() { Value = 1 };
                         return 0;
                     }

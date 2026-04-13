@@ -11,8 +11,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(bool flag) {
-                stack mut i32 value = 0;
+            fn i32[-2147483648 2147483647] Run(bool flag) {
+                stack mut i32[-2147483648 2147483647] value = 0;
                 if (flag) {
                     value = 1;
                 } else {
@@ -39,9 +39,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 left, i32 right) {
-                stack i32 first = left + right;
-                stack i32 second = right + left;
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                stack i32[-2147483648 2147483647] first = left + right;
+                stack i32[-2147483648 2147483647] second = right + left;
                 return first + second;
             }
             """);
@@ -63,8 +63,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(bool flag) {
-                stack mut i32 value = 7;
+            fn i32[-2147483648 2147483647] Run(bool flag) {
+                stack mut i32[-2147483648 2147483647] value = 7;
                 if (flag) {
                     value = 7;
                 } else {
@@ -140,8 +140,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack mut i32 i = 0;
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647] i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
                 }
@@ -167,10 +167,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run(bool flag) {
+            fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack mut Box box = new Box() { Value = 0 };
                 if (flag) {
                     box = new Box() { Value = 1 };
@@ -199,7 +199,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -223,10 +223,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -249,10 +249,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -275,8 +275,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
-                register mut i32 value = 7;
+            fn i32[-2147483648 2147483647] Run() {
+                register mut i32[-2147483648 2147483647] value = 7;
                 value = value + 1;
                 return value;
             }
@@ -301,10 +301,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -329,11 +329,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -371,14 +371,14 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
             fn void Touch(Pair value) {
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair source = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> sourcePtr = &source;
                 Touch(source);
@@ -409,11 +409,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Pair value = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -444,11 +444,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32 Left;
-                i32 Right;
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
             }
 
-            fn i32 Run(bool flag) {
+            fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -478,8 +478,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack mut i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
             }
@@ -504,9 +504,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 index) {
-                stack i32[3] values = { 4, 7, 9 };
-                stack i32[] view = values;
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
+                stack i32[-2147483648 2147483647][] view = values;
                 return view[index];
             }
             """);
@@ -531,7 +531,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn unicode Run(unicode text, i32 start, i32 length) {
+            fn unicode Run(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
             """);
@@ -592,8 +592,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32 index) {
-                stack mut i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
             }
@@ -619,7 +619,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(i32[] view, i32 index) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -641,11 +641,11 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32 Run(i64 bits) {
-                stack mut i32 value = 1;
-                stack rawmutptr<i32> ptr = &value;
-                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
-                *ptr = (i32)bits;
+            fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
+                stack mut i32[-2147483648 2147483647] value = 1;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
+                *ptr = (i32[-2147483648 2147483647])bits;
                 return *readonlyPtr;
             }
             """);
@@ -680,12 +680,12 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32 Run(i32 input) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
@@ -719,13 +719,13 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Buffer {
-                i8[16] Storage;
-                i64 WritePos;
+                i8[-128 127][16] Storage;
+                i64[-9223372036854775808 9223372036854775807] WritePos;
             }
 
-            fn i32 Touch(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+            fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&(*buffer).Storage[index]) = value;
-                return (i32)*(&(*buffer).Storage[index]);
+                return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
             """);
 
@@ -747,17 +747,17 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            static i32 Counter = 0;
+            static i32[-2147483648 2147483647] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            fn rawptr<i32> CounterPtr() {
+            fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
                 return &Counter;
             }
 
-            fn rawptr<i32> FieldPtr() {
+            fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -800,7 +800,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32> FirstPtr(frozen i32[] view) {
+            fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
                 return &(view[0]);
             }
             """);

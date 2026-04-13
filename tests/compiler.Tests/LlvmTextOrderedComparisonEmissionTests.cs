@@ -23,7 +23,7 @@ public sealed class LlvmTextOrderedComparisonEmissionTests
                 return left < right;
             }
 
-            fn bool PointerLess(rawptr<i32> left, rawptr<i32> right) {
+            fn bool PointerLess(rawptr<i32[-2147483648 2147483647]> left, rawptr<i32[-2147483648 2147483647]> right) {
                 return left < right;
             }
             """);

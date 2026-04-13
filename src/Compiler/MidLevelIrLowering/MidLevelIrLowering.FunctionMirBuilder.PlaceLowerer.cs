@@ -96,7 +96,7 @@ internal sealed partial class MidLevelIrLowerer
                         if (currentType.Kind == StarkTypeKind.FixedArray
                             && TryResolveConstantArrayIndex(currentType, indexExpression, out var constantIndex, out var elementType))
                         {
-                            elementType = ProjectFrozenView(currentType, elementType);
+                            elementType = ProjectAddressProjectionType(currentType, elementType);
                             path.Add(new PlacePathSegment(
                                 PlacePathKind.ConstantArrayIndex,
                                 FieldName: null,
@@ -121,7 +121,7 @@ internal sealed partial class MidLevelIrLowerer
                                 return false;
                             }
 
-                            var dynamicElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            var dynamicElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                             path.Add(new PlacePathSegment(
                                 PlacePathKind.DynamicArrayIndex,
                                 FieldName: null,
@@ -143,7 +143,7 @@ internal sealed partial class MidLevelIrLowerer
                                 return false;
                             }
 
-                            var sliceElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            var sliceElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                             path.Add(new PlacePathSegment(
                                 PlacePathKind.SliceIndex,
                                 FieldName: null,
@@ -189,7 +189,7 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
-                var projectedType = ProjectFrozenView(currentType, field.Type);
+                var projectedType = ProjectAddressProjectionType(currentType, field.Type);
                 path.Add(new PlacePathSegment(
                     PlacePathKind.Field,
                     postfixPart.Identifier().GetText(),
@@ -264,7 +264,7 @@ internal sealed partial class MidLevelIrLowerer
                         if (currentType.Kind == StarkTypeKind.FixedArray
                             && TryResolveConstantArrayIndex(currentType, indexExpression, out var constantIndex, out var elementType))
                         {
-                            elementType = ProjectFrozenView(currentType, elementType);
+                            elementType = ProjectAddressProjectionType(currentType, elementType);
                             path.Add(new PlacePathSegment(
                                 PlacePathKind.ConstantArrayIndex,
                                 FieldName: null,
@@ -284,7 +284,7 @@ internal sealed partial class MidLevelIrLowerer
                                 return false;
                             }
 
-                            var dynamicElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            var dynamicElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                             path.Add(new PlacePathSegment(
                                 PlacePathKind.DynamicArrayIndex,
                                 FieldName: null,
@@ -304,7 +304,7 @@ internal sealed partial class MidLevelIrLowerer
                                 return false;
                             }
 
-                            var sliceElementType = ProjectFrozenView(currentType, currentType.ElementType);
+                            var sliceElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
                             path.Add(new PlacePathSegment(
                                 PlacePathKind.SliceIndex,
                                 FieldName: null,
@@ -348,7 +348,7 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
-                var projectedType = ProjectFrozenView(currentType, field.Type);
+                var projectedType = ProjectAddressProjectionType(currentType, field.Type);
                 path.Add(new PlacePathSegment(
                     PlacePathKind.Field,
                     memberName,
@@ -842,6 +842,13 @@ internal sealed partial class MidLevelIrLowerer
 
             elementType = targetType.ElementType;
             return true;
+        }
+
+        private static StarkTypeSymbol ProjectAddressProjectionType(StarkTypeSymbol sourceType, StarkTypeSymbol projectedType)
+        {
+            return sourceType.AccessKind == StarkAccessKind.Frozen
+                ? StarkTypeSymbols.FreezeAddressPointeeType(projectedType)
+                : projectedType;
         }
 
         private sealed class PlaceLowerer

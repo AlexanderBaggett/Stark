@@ -32,7 +32,7 @@ public sealed class PackageImageTypedNestedObjectCreationIntegrationTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32[2] Values;
+                    i32[-2147483648 2147483647][2] Values;
                 }
 
                 public fn Outer<T> Wrap<T>(T value, T tag) {
@@ -104,9 +104,9 @@ public sealed class PackageImageTypedNestedObjectCreationIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack i32 value = 4;
-                    stack Facade.Outer<i32> wrapped = Facade.Wrap(value, value);
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack i32[-2147483648 2147483647] value = 4;
+                    stack Facade.Outer<i32[-2147483648 2147483647]> wrapped = Facade.Wrap(value, value);
                     return wrapped.Item.Value * 10 + wrapped.Values[1];
                 }
                 """);

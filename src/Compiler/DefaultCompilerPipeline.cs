@@ -1474,12 +1474,6 @@ public static class DefaultCompilerPipeline
                     ? module.PackageImageFacts?.FunctionTemplates
                     : null;
 
-                if (!module.Reference.IsRoot
-                    && importedTemplateInfos is { Count: > 0 })
-                {
-                    continue;
-                }
-
                 foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var overloadKey = FunctionOverloadFacts.BuildOverloadKey(functionSyntax.ParameterList);
@@ -1502,7 +1496,19 @@ public static class DefaultCompilerPipeline
                     if (importedTemplateInfos?.ContainsKey(resolvedName) == true)
                     {
                         // Imported generic planning should trust the published package-image
-                        // summary instead of re-deriving complexity from reparsed bridge text.
+                        // summary for complexity/optimization shape, but still preserve
+                        // source-visible modifiers from the typed interface bridge.
+                        if (infos.TryGetValue(resolvedName, out var importedExisting))
+                        {
+                            infos[resolvedName] = importedExisting with
+                            {
+                                HasBody = declaration.Function.HasBody || importedExisting.HasBody,
+                                IsHot = declaration.Function.Modifiers.IsHot,
+                                IsCold = declaration.Function.Modifiers.IsCold,
+                                InlinePreference = declaration.Function.Modifiers.InlinePreference
+                            };
+                        }
+
                         continue;
                     }
 
@@ -3120,6 +3126,7 @@ public static class DefaultCompilerPipeline
                 ssa,
                 context.Options.TargetInfo,
                 internalizeModulePrivate: context.Options.QualifyModuleSymbols,
+                isOptimizedBuild: context.Options.OptimizationLevel != CompilerOptimizationLevel.O0,
                 semanticValidation: validationModel,
                 closedWorldModel: closedWorldModel,
                 specializationCodegenStrategy: specializationCodegenStrategy,
@@ -3194,7 +3201,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaIr);
-            var optimized = context.Options.OptimizationLevel == CompilerOptimizationLevel.O0
+            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
                 ? ssa
                 : new SsaCleanupOptimizer().Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
@@ -3214,7 +3221,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var optimized = context.Options.OptimizationLevel == CompilerOptimizationLevel.O0
+            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
                 ? ssa
                 : new SsaConstantPropagator().Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);

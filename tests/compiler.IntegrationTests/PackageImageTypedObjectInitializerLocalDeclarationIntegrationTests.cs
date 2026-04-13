@@ -26,9 +26,9 @@ public sealed class PackageImageTypedObjectInitializerLocalDeclarationIntegratio
                 """
                 module Facade
 
-                public record Pair(i32 First, i32 Second) { }
+                public record Pair(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647] Second) { }
 
-                public fn i32 Observe<T>(i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     stack Pair pair = { First = value, Second = value + 1 };
                     return pair.First + pair.Second;
                 }
@@ -95,7 +95,7 @@ public sealed class PackageImageTypedObjectInitializerLocalDeclarationIntegratio
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return Facade.Observe(7, 0);
                 }
                 """);

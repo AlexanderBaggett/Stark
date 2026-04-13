@@ -18,7 +18,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 1;
                 }
                 """),
@@ -48,8 +48,8 @@ public sealed class CompilerCliTests
         Assert.Contains("--target-feature <feature>", text);
         Assert.Contains("--relocation-model <default|static|pic|pie>", text);
         Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
-        Assert.Contains("-O0|-O1|-O2|-O3", text);
-        Assert.Contains("--optimize <0|1|2|3>", text);
+        Assert.Contains("-O0|-Og|-O1|-O2|-O3", text);
+        Assert.Contains("--optimize <0|g|1|2|3>", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
@@ -171,7 +171,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn ascii Run(ascii text, i32 first, i32 second, i32 third) {
+                fn ascii Run(ascii text, i32[-2147483648 2147483647] first, i32[-2147483648 2147483647] second, i32[-2147483648 2147483647] third) {
                     return text[
                         first,
                         second,
@@ -207,7 +207,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run(bool value) {
+                fn i32[-2147483648 2147483647] Run(bool value) {
                     switch (value) {
                         case true:
                             return 1;
@@ -242,7 +242,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run(bool flag) {
+                fn i32[-2147483648 2147483647] Run(bool flag) {
                     return flag ? 1 : 2;
                 }
                 """),
@@ -269,7 +269,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run(bool left, bool right) {
+                fn i32[-2147483648 2147483647] Run(bool left, bool right) {
                     return left && right ? 1 : 2;
                 }
                 """),
@@ -296,7 +296,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 7;
                 }
                 """),
@@ -320,7 +320,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 7;
                 }
                 """),
@@ -347,7 +347,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 7;
                 }
                 """),
@@ -372,7 +372,7 @@ public sealed class CompilerCliTests
                 module Demo
 
                 struct Buffer {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
 
                     mut drop {
                         ;
@@ -402,14 +402,14 @@ public sealed class CompilerCliTests
                 module Demo
 
                 struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 fn void Consume(Box value) {
                     return;
                 }
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     stack Box box = new Box() { Value = 1 };
                     Consume(box);
                     return box.Value;
@@ -441,14 +441,14 @@ public sealed class CompilerCliTests
                 module Demo
 
                 struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 fn void Consume(Box value) {
                     return;
                 }
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     stack Box box = new Box() { Value = 1 };
                     Consume(box);
                     return box.Value;
@@ -553,7 +553,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 7;
                     }
                     """),
@@ -597,7 +597,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 7;
                     }
                     """),
@@ -641,7 +641,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 7;
                     }
                     """),
@@ -697,7 +697,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 7;
                     }
                     """),
@@ -765,7 +765,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return 7;
                     }
                     """),
@@ -827,8 +827,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32 Run(bool flag) {
-                        stack mut i32 value = 0;
+                    fn i32[-2147483648 2147483647] Run(bool flag) {
+                        stack mut i32[-2147483648 2147483647] value = 0;
                         if (flag) {
                             value = 1;
                         } else {
@@ -865,6 +865,74 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitObjectModeForwardsDebugFriendlyOptimizationLevelToClang()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-opt-level-og-");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "--emit-obj",
+                    "-o", outputPath,
+                    "-Og"
+                ],
+                new StringReader(
+                    """
+                    module Demo
+
+                    fn i32[-2147483648 2147483647] Run(bool flag) {
+                        stack mut i32[-2147483648 2147483647] value = 0;
+                        if (flag) {
+                            value = 1;
+                        } else {
+                            value = 2;
+                        }
+
+                        return value;
+                    }
+                    """),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted object file:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-Og", clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task CheckModeResolvesSourceImportsFromConfiguredSearchPath()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-search-source-");
@@ -883,7 +951,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32 Add(i32 left, i32 right) {
+                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
                 """);
@@ -894,7 +962,7 @@ public sealed class CompilerCliTests
                 import Math
                 module App
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -947,7 +1015,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32 Add(i32 left, i32 right) {
+                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
                 """);
@@ -958,7 +1026,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32 Double(i32 value) {
+                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1037,7 +1105,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32 Add(i32 left, i32 right) {
+                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
                 """);
@@ -1048,7 +1116,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32 Double(i32 value) {
+                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1070,7 +1138,7 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32 Double(i32 value) {
+                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                     return value + value;
                 }
                 """);
@@ -1142,14 +1210,14 @@ public sealed class CompilerCliTests
                 module Geometry
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn Box Make() {
                     return new Box() { Value = 7 };
                 }
 
-                public fn i32 Read(Box box) {
+                public fn i32[-2147483648 2147483647] Read(Box box) {
                     return box.Value;
                 }
                 """);
@@ -1160,7 +1228,7 @@ public sealed class CompilerCliTests
                 import Geometry
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return Geometry.Read(Geometry.Make());
                 }
                 """);
@@ -1232,7 +1300,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32 Add(i32 left, i32 right) {
+                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
                 """);
@@ -1243,7 +1311,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32 Double(i32 value) {
+                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1268,7 +1336,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -1358,11 +1426,11 @@ public sealed class CompilerCliTests
                     Write,
                 }
 
-                public finite law i32 Open(ascii path, FileMode mode) {
+                public finite law i32[-2147483648 2147483647] Open(ascii path, FileMode mode) {
                     return 4;
                 }
 
-                public finite law i32 Open(ascii path, FileMode mode, Text.Encoding encoding) {
+                public finite law i32[-2147483648 2147483647] Open(ascii path, FileMode mode, Text.Encoding encoding) {
                     return 11;
                 }
                 """);
@@ -1374,7 +1442,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32 Run() {
+                public finite law i32[-2147483648 2147483647] Run() {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -1401,7 +1469,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -1476,7 +1544,7 @@ public sealed class CompilerCliTests
                 """
                 module Syscall
 
-                public ffi asm(x86_64) fn i64 Syscall0(i64 number)
+                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
                     in("rax") number,
                     out("rax") return,
                     clobber("rcx", "r11")
@@ -1503,8 +1571,11 @@ public sealed class CompilerCliTests
                 var syscallModule = manifest.RootElement.GetProperty("Modules")
                     .EnumerateArray()
                     .Single(module => module.GetProperty("ModuleName").GetString() == "Syscall");
-                var syscallFunction = syscallModule.GetProperty("Functions")
-                    .EnumerateArray()
+                var syscallFunctions =
+                    syscallModule.GetProperty("Functions").EnumerateArray().ToArray().Length != 0
+                        ? syscallModule.GetProperty("Functions").EnumerateArray()
+                        : syscallModule.GetProperty("SourceSurface").GetProperty("Functions").EnumerateArray();
+                var syscallFunction = syscallFunctions
                     .Single(function => function.GetProperty("Name").GetString() == "Syscall0");
                 Assert.True(syscallFunction.TryGetProperty("Asm", out var asm));
                 Assert.Equal("x86_64", asm.GetProperty("ArchitectureText").GetString());
@@ -1519,7 +1590,7 @@ public sealed class CompilerCliTests
                 import Syscall
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     if (Syscall.Syscall0(39) <= 0) {
                         return 1;
                     }
@@ -1598,7 +1669,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return 7;
                 }
                 """);
@@ -1666,7 +1737,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                fn i32 Run() {
+                fn i32[-2147483648 2147483647] Run() {
                     return 7;
                 }
                 """);
@@ -1735,7 +1806,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return 7;
                 }
                 """);
@@ -1803,7 +1874,7 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32 Double(i32 value) {
+                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                     return value + value;
                 }
                 """);

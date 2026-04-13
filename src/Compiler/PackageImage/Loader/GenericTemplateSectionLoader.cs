@@ -436,6 +436,7 @@ internal static partial class PackageImageLoader
 
             summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
                 ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern,
+                manifest.Name,
                 Ordinal: ordinal,
                 MemberPatterns: members);
             return true;
@@ -461,6 +462,7 @@ internal static partial class PackageImageLoader
 
             summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
                 ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern,
+                manifest.Name,
                 Ordinal: ordinal,
                 MemberPatterns: members);
             return true;

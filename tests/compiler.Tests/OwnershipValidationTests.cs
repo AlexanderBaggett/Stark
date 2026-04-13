@@ -12,10 +12,10 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            finite i32 Run() {
+            finite i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 1 };
                 return 1;
             }
@@ -34,14 +34,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             finite law void Consume(Box value) {
                 return;
             }
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 Consume(box);
                 return box.Value;
@@ -65,14 +65,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             finite law void Consume(Box value) {
                 return;
             }
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 Consume(box);
                 return box.Value;
@@ -102,14 +102,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 finite law void Consume(Box box) {
                     return;
                 }
             }
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 box.Consume();
                 return box.Value;
@@ -132,9 +132,9 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
-            finite law i32 Run() {
-                stack i32 x = 1;
-                stack i32 y = x;
+            finite law i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647] x = 1;
+                stack i32[-2147483648 2147483647] y = x;
                 return x + y;
             }
             """);
@@ -153,10 +153,10 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box = new Box() { Value = 2 };
                 return box.Value;
@@ -176,14 +176,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             finite law void Consume(Box value) {
                 return;
             }
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 if (true) {
                     Consume(box);
@@ -205,7 +205,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             finite law Box Make() {
@@ -277,7 +277,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             doctrine Sink {
@@ -286,7 +286,7 @@ public sealed class OwnershipValidationTests
                 }
             }
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 Sink.Consume(box);
                 return box.Value;

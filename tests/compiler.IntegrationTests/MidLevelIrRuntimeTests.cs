@@ -11,15 +11,15 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn i32 Pick(ascii text) {
+            fn i32[-2147483648 2147483647] Pick(ascii text) {
                 return 1;
             }
 
-            fn i32 Pick(unicode text) {
+            fn i32[-2147483648 2147483647] Pick(unicode text) {
                 return 2;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 return Pick("caf\u00E9");
             }
             """);
@@ -43,8 +43,8 @@ public sealed class MidLevelIrRuntimeTests
                 return left + right;
             }
 
-            export ffi fn i32 main() {
-                return (i32)Add(1.0, 2.0);
+            export ffi fn i32[-2147483648 2147483647] main() {
+                return (i32[-2147483648 2147483647])Add(1.0, 2.0);
             }
             """);
 
@@ -63,12 +63,12 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            strictfp fn f64 Compute(f32 left, i32 middle, f64 right, f32 divisor) {
+            strictfp fn f64 Compute(f32 left, i32[-2147483648 2147483647] middle, f64 right, f32 divisor) {
                 return left + middle * right / divisor - 1.0;
             }
 
-            export ffi fn i32 main() {
-                return (i32)Compute(1.5, 2, 3.0, 0.5);
+            export ffi fn i32[-2147483648 2147483647] main() {
+                return (i32[-2147483648 2147483647])Compute(1.5, 2, 3.0, 0.5);
             }
             """);
 
@@ -88,10 +88,10 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -112,12 +112,12 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn i32 Read(i32[3] values, i32 index) {
+            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][3] values, i32[-2147483648 2147483647] index) {
                 return values[index];
             }
 
-            export ffi fn i32 main() {
-                stack i32[3] values = { 4, 7, 9 };
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
                 return Read(values, 1);
             }
             """);
@@ -138,10 +138,10 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Box {
-                i32[3] Values;
+                i32[-2147483648 2147483647][3] Values;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack Box box = new Box() { Values = { 4, 7 } };
                 return box.Values[0] + box.Values[1] + box.Values[2];
             }
@@ -162,7 +162,7 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn i32 Pick(ascii text, i32 index) {
+            fn i32[-2147483648 2147483647] Pick(ascii text, i32[-2147483648 2147483647] index) {
                 switch (text[index]) {
                     case 'b':
                         return 7;
@@ -171,7 +171,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 return Pick("abc", 1);
             }
             """);
@@ -195,7 +195,7 @@ public sealed class MidLevelIrRuntimeTests
                 return text[];
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 switch (Whole("abc")[1]) {
                     case 'b':
                         return 7;
@@ -220,7 +220,7 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
             fn bool Same(Pair left, Pair right) {
                 return left == right;
@@ -230,7 +230,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack Pair sameLeft = new Pair() { Left = 1, Right = 2 };
                 stack Pair sameRight = new Pair() { Left = 1, Right = 2 };
                 stack Pair differentLeft = new Pair() { Left = 1, Right = 2 };
@@ -259,7 +259,7 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
 
             fn bool Less(Many left, Many right) {
                 return left < right;
@@ -277,7 +277,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left >= right;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack Many lessLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
                 stack Many lessRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
                 stack Many lessOrEqualLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
@@ -316,19 +316,19 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn bool Same(i32[2] left, i32[2] right) {
+            fn bool Same(i32[-2147483648 2147483647][2] left, i32[-2147483648 2147483647][2] right) {
                 return left == right;
             }
 
-            fn bool Different(i32[2] left, i32[2] right) {
+            fn bool Different(i32[-2147483648 2147483647][2] left, i32[-2147483648 2147483647][2] right) {
                 return left != right;
             }
 
-            export ffi fn i32 main() {
-                stack i32[2] sameLeft = { 1, 2 };
-                stack i32[2] sameRight = { 1, 2 };
-                stack i32[2] differentLeft = { 1, 2 };
-                stack i32[2] differentRight = { 2, 1 };
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647][2] sameLeft = { 1, 2 };
+                stack i32[-2147483648 2147483647][2] sameRight = { 1, 2 };
+                stack i32[-2147483648 2147483647][2] differentLeft = { 1, 2 };
+                stack i32[-2147483648 2147483647][2] differentRight = { 2, 1 };
 
                 if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight)) {
                     return 7;
@@ -354,15 +354,15 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Counter {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
-                fn void Set(borrow mut Counter self, i32 next) {
+                fn void Set(borrow mut Counter self, i32[-2147483648 2147483647] next) {
                     self.Value = next;
                     return;
                 }
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Counter left = new Counter() { Value = 0 };
                 stack mut Counter right = new Counter() { Value = 0 };
                 true ? left.Set(7) : right.Set(9);
@@ -387,7 +387,7 @@ public sealed class MidLevelIrRuntimeTests
 
             enum Token {
                 None,
-                Number(i32),
+                Number(i32[-2147483648 2147483647]),
             }
 
             fn bool Same(Token left, Token right) {
@@ -398,7 +398,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack Token sameLeft = Token.Number(7);
                 stack Token sameRight = Token.Number(7);
                 stack Token differentPayloadLeft = Token.Number(7);
@@ -433,8 +433,8 @@ public sealed class MidLevelIrRuntimeTests
 
             enum Token {
                 None,
-                Number(i32),
-                Pair(i32, i32),
+                Number(i32[-2147483648 2147483647]),
+                Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
             fn bool Less(Token left, Token right) {
@@ -453,7 +453,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left >= right;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack Token lessPayloadLeft = Token.Number(7);
                 stack Token lessPayloadRight = Token.Number(9);
                 stack Token lessVariantLeft = Token.None;
@@ -495,11 +495,11 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
 
             enum Token {
                 None,
-                Many(i32, i32, i32, i32, i32),
+                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
             fn bool SameRecord(Many left, Many right) {
@@ -510,11 +510,11 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            fn bool SameArray(i32[5] left, i32[5] right) {
+            fn bool SameArray(i32[-2147483648 2147483647][5] left, i32[-2147483648 2147483647][5] right) {
                 return left == right;
             }
 
-            fn bool DifferentArray(i32[5] left, i32[5] right) {
+            fn bool DifferentArray(i32[-2147483648 2147483647][5] left, i32[-2147483648 2147483647][5] right) {
                 return left != right;
             }
 
@@ -526,16 +526,16 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack Many sameRecordLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
                 stack Many sameRecordRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
                 stack Many differentRecordLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
                 stack Many differentRecordRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
 
-                stack i32[5] sameArrayLeft = { 1, 2, 3, 4, 5 };
-                stack i32[5] sameArrayRight = { 1, 2, 3, 4, 5 };
-                stack i32[5] differentArrayLeft = { 1, 2, 3, 4, 5 };
-                stack i32[5] differentArrayRight = { 1, 2, 3, 4, 6 };
+                stack i32[-2147483648 2147483647][5] sameArrayLeft = { 1, 2, 3, 4, 5 };
+                stack i32[-2147483648 2147483647][5] sameArrayRight = { 1, 2, 3, 4, 5 };
+                stack i32[-2147483648 2147483647][5] differentArrayLeft = { 1, 2, 3, 4, 5 };
+                stack i32[-2147483648 2147483647][5] differentArrayRight = { 1, 2, 3, 4, 6 };
 
                 stack Token sameTokenLeft = Token.Many(1, 2, 3, 4, 5);
                 stack Token sameTokenRight = Token.Many(1, 2, 3, 4, 5);
@@ -588,7 +588,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 if (SameAscii("cab!"[1, 2], "zab?"[1, 2])
                     && DifferentUnicode(((unicode)"caf\u00E9!")[0, 4], ((unicode)"cafe?")[0, 4])
                     && SameLabel(
@@ -619,13 +619,13 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Window(i32[] Items, i32 Count) { }
+            record Window(i32[-2147483648 2147483647][] Items, i32[-2147483648 2147483647] Count) { }
 
-            fn bool SameSliceSelf(i32[] value) {
+            fn bool SameSliceSelf(i32[-2147483648 2147483647][] value) {
                 return value == value;
             }
 
-            fn bool DifferentSlice(i32[] left, i32[] right) {
+            fn bool DifferentSlice(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
                 return left != right;
             }
 
@@ -637,18 +637,18 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32 main() {
-                stack i32[3] selfValues = { 1, 2, 3 };
-                stack i32[] selfView = selfValues;
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647][3] selfValues = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][] selfView = selfValues;
 
-                stack i32[3] leftValues = { 1, 2, 3 };
-                stack i32[3] rightValues = { 1, 2, 3 };
-                stack i32[] leftView = leftValues;
-                stack i32[] rightView = rightValues;
+                stack i32[-2147483648 2147483647][3] leftValues = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] rightValues = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][] leftView = leftValues;
+                stack i32[-2147483648 2147483647][] rightView = rightValues;
 
-                stack i32[3] selfWindowValues = { 1, 2, 3 };
-                stack i32[3] leftWindowValues = { 1, 2, 3 };
-                stack i32[3] rightWindowValues = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] selfWindowValues = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] leftWindowValues = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] rightWindowValues = { 1, 2, 3 };
 
                 if (SameSliceSelf(selfView)
                     && DifferentSlice(leftView, rightView)
@@ -678,15 +678,15 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32 value) {
+            fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 drop {
                     Bump(self.Value);
@@ -698,7 +698,7 @@ public sealed class MidLevelIrRuntimeTests
                 Text(Resource),
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Token token = Token.Text(new Resource() { Value = 1 });
                 token = Token.End;
                 return Counter;
@@ -720,15 +720,15 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32 value) {
+            fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 drop {
                     Bump(self.Value);
@@ -745,7 +745,7 @@ public sealed class MidLevelIrRuntimeTests
                 Resource Backup;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 {
                     stack Holder holder = new Holder() {
                         Token = Token.Text(new Resource() { Value = 3 }),
@@ -773,25 +773,25 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Counter {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 fn void Reset(borrow mut Counter self) {
                     self.Value = 0;
                     return;
                 }
 
-                fn void ResetThenAdd(borrow mut Counter self, i32 value) {
+                fn void ResetThenAdd(borrow mut Counter self, i32[-2147483648 2147483647] value) {
                     self.Reset();
                     self.Value += value;
                     return;
                 }
 
-                fn i32 Current(borrow Counter self) {
+                fn i32[-2147483648 2147483647] Current(borrow Counter self) {
                     return self.Value;
                 }
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Counter counter = new Counter() { Value = 9 };
                 counter.ResetThenAdd(7);
                 return counter.Current();
@@ -813,11 +813,11 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
             enum Status {
                 Ok,
-                Err(i32),
+                Err(i32[-2147483648 2147483647]),
             }
 
             fn Status Next() {
@@ -825,7 +825,7 @@ public sealed class MidLevelIrRuntimeTests
                 return Status.Ok;
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 switch (Next()) {
                     case Status.Ok:
                         return Counter;
@@ -877,7 +877,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 if (MatchLabel(new Label() { Tag = "ab", Word = (unicode)"cat" })
                     && MatchToken(Token.Text { Tag: "ab", Word: (unicode)"cat" })
                     && !MatchLabel(new Label() { Tag = "zz", Word = (unicode)"cat" })
@@ -905,22 +905,22 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Buffer {
-                i8[16] Storage;
-                i64 WritePos;
+                i8[-128 127][16] Storage;
+                i64[-9223372036854775808 9223372036854775807] WritePos;
             }
 
-            fn void Put(rawmutptr<Buffer> buffer, i64 index, i8 value) {
+            fn void Put(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&(*buffer).Storage[index]) = value;
                 return;
             }
 
-            fn i32 Read(rawmutptr<Buffer> buffer, i64 index) {
-                return (i32)*(&(*buffer).Storage[index]);
+            fn i32[-2147483648 2147483647] Read(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index) {
+                return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Buffer buffer = new Buffer();
-                Put(&buffer, 3, (i8)90);
+                Put(&buffer, 3, (i8[-128 127])90);
                 return Read(&buffer, 3);
             }
             """);
@@ -940,18 +940,18 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn void Put(rawmutptr<i8> data, i64 index, i8 value) {
+            fn void Put(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&data[index]) = value;
                 return;
             }
 
-            fn i32 Read(rawmutptr<i8> data, i64 index) {
-                return (i32)*(&data[index]);
+            fn i32[-2147483648 2147483647] Read(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index) {
+                return (i32[-2147483648 2147483647])*(&data[index]);
             }
 
-            export ffi fn i32 main() {
-                stack mut i8[16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                Put(&buffer[0], 4, (i8)77);
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                Put(&buffer[0], 4, (i8[-128 127])77);
                 return Read(&buffer[0], 4);
             }
             """);
@@ -972,21 +972,21 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Buffer {
-                i8[16] Storage;
+                i8[-128 127][16] Storage;
 
-                fn void Put(borrow mut Buffer self, i64 index, i8 value) {
+                fn void Put(borrow mut Buffer self, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                     *(&self.Storage[index]) = value;
                     return;
                 }
 
-                fn i32 Read(borrow Buffer self, i64 index) {
-                    return (i32)*(&self.Storage[index]);
+                fn i32[-2147483648 2147483647] Read(borrow Buffer self, i64[-9223372036854775808 9223372036854775807] index) {
+                    return (i32[-2147483648 2147483647])*(&self.Storage[index]);
                 }
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Buffer buffer = new Buffer();
-                buffer.Put(5, (i8)65);
+                buffer.Put(5, (i8[-128 127])65);
                 return buffer.Read(5);
             }
             """);
@@ -1007,20 +1007,20 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Big {
-                i64 A;
-                i64 B;
-                i64 C;
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
             }
 
-            fn Big Make(i64 seed) {
+            fn Big Make(i64[-9223372036854775808 9223372036854775807] seed) {
                 return new Big() { A = seed, B = seed + 1, C = seed + 2 };
             }
 
-            fn i32 Read(Big value) {
-                return (i32)(value.A + value.C);
+            fn i32[-2147483648 2147483647] Read(Big value) {
+                return (i32[-2147483648 2147483647])(value.A + value.C);
             }
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 return Read(Make(20));
             }
             """);

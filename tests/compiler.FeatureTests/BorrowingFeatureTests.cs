@@ -10,10 +10,10 @@ public sealed class BorrowingFeatureTests : FeatureLlvmTestBase
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Read(borrow Box box) {
+            fn i32[-2147483648 2147483647] Read(borrow Box box) {
                 return box.Value;
             }
             """);

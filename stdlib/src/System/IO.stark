@@ -9,7 +9,7 @@ public enum IOError {
     InvalidPath,
     BrokenPipe,
     DiskFull,
-    Unknown(i32),
+    Unknown(i32[-2147483648 2147483647]),
 }
 
 public enum IOResult<T> {

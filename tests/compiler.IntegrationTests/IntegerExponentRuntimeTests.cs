@@ -16,9 +16,9 @@ public sealed class IntegerExponentRuntimeTests
             """
             module Demo
 
-            export ffi fn i32 main() {
-                stack i32 left = 2;
-                stack i32 right = 5;
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647] left = 2;
+                stack i32[-2147483648 2147483647] right = 5;
                 return left ** right;
             }
             """);

@@ -114,7 +114,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Run(i32[-10 10 20] value) {
+            fn void Run(i32[-2147483648 2147483647][-10 10 20] value) {
                 return;
             }
             """

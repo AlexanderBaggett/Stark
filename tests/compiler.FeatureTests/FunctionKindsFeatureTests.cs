@@ -9,7 +9,7 @@ public sealed class FunctionKindsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            law i32 Run() {
+            law i32[-2147483648 2147483647] Run() {
                 return 1;
             }
             """);

@@ -988,8 +988,7 @@ internal sealed partial class MidLevelIrLowerer
             if (pattern.enumNamedFieldPattern() is { } nestedEnumNamedFieldPattern)
             {
                 if (!TryParseEnumNamedFieldPattern(nestedEnumNamedFieldPattern, out var parsedNestedPattern)
-                    || parsedNestedPattern is null
-                    || parsedNestedPattern.WholeCaptureName is not null)
+                    || parsedNestedPattern is null)
                 {
                     parsedFieldPattern = default!;
                     return false;
@@ -1012,8 +1011,7 @@ internal sealed partial class MidLevelIrLowerer
             if (pattern.aggregatePattern() is { } nestedAggregatePattern)
             {
                 if (!TryParseAggregatePattern(nestedAggregatePattern, out var parsedNestedPattern)
-                    || parsedNestedPattern is null
-                    || parsedNestedPattern.WholeCaptureName is not null)
+                    || parsedNestedPattern is null)
                 {
                     parsedFieldPattern = default!;
                     return false;
@@ -1036,8 +1034,7 @@ internal sealed partial class MidLevelIrLowerer
             if (pattern.genericEnumAggregatePattern() is { } nestedGenericEnumAggregatePattern)
             {
                 if (!TryParseAggregatePattern(nestedGenericEnumAggregatePattern, out var parsedNestedPattern)
-                    || parsedNestedPattern is null
-                    || parsedNestedPattern.WholeCaptureName is not null)
+                    || parsedNestedPattern is null)
                 {
                     parsedFieldPattern = default!;
                     return false;
@@ -1214,12 +1211,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var aggregatePattern = aggregateLabels[0].AggregatePattern!;
-                    if (aggregatePattern.WholeCaptureName is not null)
-                    {
-                        return false;
-                    }
-
-                    if (!TryRegisterAggregatePatternCaptureLocals(aggregatePattern))
+                    if (!TryRegisterAggregatePatternCaptureLocals(aggregatePattern, switchType))
                     {
                         return false;
                     }
@@ -1250,8 +1242,18 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
-        private bool TryRegisterAggregatePatternCaptureLocals(LowerableAggregatePattern aggregatePattern)
+        private bool TryRegisterAggregatePatternCaptureLocals(LowerableAggregatePattern aggregatePattern, StarkTypeSymbol aggregateValueType)
         {
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            {
+                if (_localsByName.ContainsKey(wholeCaptureName) || _parametersByName.ContainsKey(wholeCaptureName))
+                {
+                    return false;
+                }
+
+                RegisterLocal(wholeCaptureName, aggregateValueType, storageClass: "match", isMutable: false, isConstant: false);
+            }
+
             foreach (var fieldPattern in aggregatePattern.FieldPatterns)
             {
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
@@ -1270,8 +1272,7 @@ internal sealed partial class MidLevelIrLowerer
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Nested)
                 {
                     if (fieldPattern.NestedPattern is null
-                        || fieldPattern.NestedPattern.WholeCaptureName is not null
-                        || !TryRegisterAggregatePatternCaptureLocals(fieldPattern.NestedPattern))
+                        || !TryRegisterAggregatePatternCaptureLocals(fieldPattern.NestedPattern, fieldPattern.FieldType))
                     {
                         return false;
                     }
@@ -1299,11 +1300,6 @@ internal sealed partial class MidLevelIrLowerer
             int sectionIndex,
             int labelIndex)
         {
-            if (aggregatePattern.WholeCaptureName is not null)
-            {
-                return false;
-            }
-
             if (switchValue.Type.Kind != StarkTypeKind.Named
                 || switchValue.Type.NamedType is null
                 || !string.Equals(switchValue.Type.NamedType, aggregatePattern.TypeName, StringComparison.Ordinal))
@@ -1336,6 +1332,11 @@ internal sealed partial class MidLevelIrLowerer
             List<PendingSwitchBinding> bindings,
             string pathTag)
         {
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            {
+                bindings.Add(new PendingSwitchBinding(wholeCaptureName, switchValue));
+            }
+
             var fieldPatterns = aggregatePattern.FieldPatterns;
             if (aggregatePattern.EnumVariantName is { } enumVariantName)
             {

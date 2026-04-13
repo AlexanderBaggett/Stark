@@ -77,7 +77,7 @@ public sealed class CompilerPipelineLowerHirTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -123,6 +123,133 @@ public sealed class CompilerPipelineLowerHirTests
 
 
     [Fact]
+    public void ManifestBackedEnumWholeCaptureGenericBodiesPreserveTypedTemplateFactsIntoHighLevelIr()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-enum-whole-capture-lower-hir-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public enum Wrapped<T> {
+                    None,
+                    Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                }
+
+                public fn i32[-2147483648 2147483647] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag) {
+                    switch (wrapped) {
+                        case Wrapped<T>.Pair capture:
+                            return 5;
+                        default:
+                            return -2;
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            Assert.NotNull(facadeModule.TypedInterface);
+            Assert.NotNull(facadeModule.CompilerFacts);
+            Assert.NotNull(facadeModule.GenericTemplates);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                        stack i32[-2147483648 2147483647] tag = 0;
+                        return Facade.ReadEnumWhole(Facade.Wrapped<i32[-2147483648 2147483647]>.Pair(2, 3), tag);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-hir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.True(importedModule.HasPublishedTypedTemplateBodies);
+            Assert.True(importedModule.PackageImageFacts!.FunctionTemplates.TryGetValue("Facade.ReadEnumWhole", out var importedTemplate));
+            Assert.NotNull(importedTemplate);
+            Assert.NotNull(importedTemplate.TypedBody);
+
+            var importedDeclaration = Assert.Single(
+                importedModule.SyntaxModel.Declarations,
+                static declaration => declaration.Kind == DeclarationKind.Function && declaration.Name == "ReadEnumWhole");
+            Assert.True(importedDeclaration.Function!.HasBody);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
+            Assert.NotNull(hir);
+            var specialized = Assert.Single(
+                hir.Functions,
+                static function => function.Name == "__stark_mono_fn_Demo__Facade_ReadEnumWhole__i32");
+            Assert.True(specialized.HasBody);
+            Assert.Equal(FunctionBodyLoweringKind.StarkCfg, specialized.BodyLoweringKind);
+            Assert.Equal("Facade.ReadEnumWhole", specialized.Signature.TemplateName);
+            Assert.Equal("Facade.ReadEnumWhole", specialized.BodyTemplateName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIr()
     {
         var result = DefaultCompilerPipeline.Create().Run(
@@ -138,7 +265,7 @@ public sealed class CompilerPipelineLowerHirTests
                     return Identity(value);
                 }
 
-                fn i32 Run(i32 value) {
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     return Forward(value);
                 }
                 """,
@@ -168,7 +295,7 @@ public sealed class CompilerPipelineLowerHirTests
                     return copy;
                 }
 
-                fn i32 Run(i32 value) {
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     return Identity(value);
                 }
                 """),
@@ -207,14 +334,14 @@ public sealed class CompilerPipelineLowerHirTests
                 """
                 module Demo
 
-                public record Counter(i32 Value) { }
+                public record Counter(i32[-2147483648 2147483647] Value) { }
 
-                public fn i32 MakeFlag<T>(T value) {
+                public fn i32[-2147483648 2147483647] MakeFlag<T>(T value) {
                     stack Counter counter = new Counter(0);
                     return 1;
                 }
 
-                fn i32 Run(i32 value) {
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     return MakeFlag(value);
                 }
                 """;

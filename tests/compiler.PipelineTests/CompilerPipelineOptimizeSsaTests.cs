@@ -19,7 +19,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return value;
                 }
 
-                fn i32 Run(i32 value) {
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     return Identity(value);
                 }
                 """),

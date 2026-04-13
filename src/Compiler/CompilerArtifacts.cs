@@ -789,7 +789,9 @@ public static class StarkTypeSymbols
     {
         var displayName = rangeMin is null && rangeMax is null
             ? $"i{bitWidth}"
-            : $"i{bitWidth}[{rangeMin} {rangeMax}]";
+            : IsFullSignedIntegerRange(bitWidth, rangeMin, rangeMax)
+                ? $"i{bitWidth}"
+                : $"i{bitWidth}[{rangeMin} {rangeMax}]";
         return new StarkTypeSymbol(StarkTypeKind.Integer, displayName, BitWidth: bitWidth, RangeMin: rangeMin, RangeMax: rangeMax);
     }
 
@@ -825,6 +827,18 @@ public static class StarkTypeSymbols
     {
         var angle = key.IndexOf('<');
         return angle >= 0 ? key[..angle] : key;
+    }
+
+    public static bool IsFullSignedIntegerRange(int bitWidth, BigInteger? rangeMin, BigInteger? rangeMax)
+    {
+        if (bitWidth <= 0 || rangeMin is null || rangeMax is null)
+        {
+            return false;
+        }
+
+        var min = -(BigInteger.One << (bitWidth - 1));
+        var max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
+        return rangeMin.Value == min && rangeMax.Value == max;
     }
 
     public static bool IsGenericInstantiation(StarkTypeSymbol type)
@@ -944,9 +958,38 @@ public static class StarkTypeSymbols
             return type;
         }
 
+        if (type.Kind is
+            StarkTypeKind.Void or
+            StarkTypeKind.Bool or
+            StarkTypeKind.Ascii or
+            StarkTypeKind.Unicode or
+            StarkTypeKind.Integer or
+            StarkTypeKind.Float or
+            StarkTypeKind.Null)
+        {
+            return WithQualifiers(type, accessKind: StarkAccessKind.None, isMutableView: false);
+        }
+
         if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
         {
-            return RawPointer(FreezeReachableView(type.ElementType), isMutable: false);
+            // Frozen projections keep pointer-backed reachable memory readonly,
+            // even when top-level scalar reads remain plain values.
+            return RawPointer(FreezeAddressPointeeType(type.ElementType), isMutable: false);
+        }
+
+        return WithQualifiers(type, accessKind: StarkAccessKind.Frozen, isMutableView: false);
+    }
+
+    public static StarkTypeSymbol FreezeAddressPointeeType(StarkTypeSymbol type)
+    {
+        if (type.Kind == StarkTypeKind.Error)
+        {
+            return type;
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            return RawPointer(FreezeAddressPointeeType(type.ElementType), isMutable: false);
         }
 
         return WithQualifiers(type, accessKind: StarkAccessKind.Frozen, isMutableView: false);

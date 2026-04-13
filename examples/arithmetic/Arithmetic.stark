@@ -1,9 +1,9 @@
 module Arithmetic
 
-export ffi fn i32 main() {
-    stack i32 left = 6;
-    stack i32 right = 7;
-    stack i32 combined = (left + right) * 2 - 5;
+export ffi fn i32[-2147483648 2147483647] main() {
+    stack i32[-2147483648 2147483647] left = 6;
+    stack i32[-2147483648 2147483647] right = 7;
+    stack i32[-2147483648 2147483647] combined = (left + right) * 2 - 5;
 
     if (combined != 21) {
         return 1;

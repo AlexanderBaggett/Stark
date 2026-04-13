@@ -11,7 +11,7 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
             """);
@@ -38,7 +38,7 @@ public sealed class V1LoweringContractTests
                 return text;
             }
 
-            fn i32 Read(i32[] view, i32 index) {
+            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 return view[index];
             }
             """);
@@ -60,9 +60,9 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            ffi fn i32 puts(ascii text);
+            ffi fn i32[-2147483648 2147483647] puts(ascii text);
 
-            export ffi fn i32 main() {
+            export ffi fn i32[-2147483648 2147483647] main() {
                 puts("Hello");
                 return 0;
             }
@@ -85,8 +85,8 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Pair {
-                i8 Tag;
-                i32 Value;
+                i8[-128 127] Tag;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Inspect(borrow Pair pair) {
@@ -109,8 +109,8 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Pair {
-                i64 Left;
-                i64 Right;
+                i64[-9223372036854775808 9223372036854775807] Left;
+                i64[-9223372036854775808 9223372036854775807] Right;
             }
 
             fn Pair Step(Pair value) {
@@ -135,9 +135,9 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Big {
-                i64 A;
-                i64 B;
-                i64 C;
+                i64[-9223372036854775808 9223372036854775807] A;
+                i64[-9223372036854775808 9223372036854775807] B;
+                i64[-9223372036854775808 9223372036854775807] C;
             }
 
             fn Big Step(Big value) {
@@ -160,11 +160,11 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn i32 Read4(i32[4] values) {
+            fn i32[-2147483648 2147483647] Read4(i32[-2147483648 2147483647][4] values) {
                 return values[0];
             }
 
-            fn i32 Read5(i32[5] values) {
+            fn i32[-2147483648 2147483647] Read5(i32[-2147483648 2147483647][5] values) {
                 return values[0];
             }
             """);

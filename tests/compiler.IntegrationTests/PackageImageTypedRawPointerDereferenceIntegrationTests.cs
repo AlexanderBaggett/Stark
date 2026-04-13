@@ -26,8 +26,8 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag) {
-                    stack mut i32 copy = *ptr;
+                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647] copy = *ptr;
                     return *ptr += copy + value;
                 }
                 """);
@@ -93,9 +93,9 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack mut i32 current = 5;
-                    stack i32 tag = 0;
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i32[-2147483648 2147483647] current = 5;
+                    stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.Observe(&current, 3, tag);
                 }
                 """);
@@ -173,13 +173,13 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32 First, i32[4] Values) { }
+                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
                 public fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag) {
+                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -246,10 +246,10 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack mut i32[4] values = { 10, 20, 30, 40 };
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut i32[-2147483648 2147483647][4] values = { 10, 20, 30, 40 };
                     stack mut Facade.Buffer buffer = { First = 5, Values = values };
-                    stack i32 tag = 0;
+                    stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.Observe(&buffer, 2, 3, tag);
                 }
                 """);
@@ -327,14 +327,14 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32 First, i32[4] Values) { }
+                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn i32 Observe<T>(i32 value, T tag) {
-                    stack mut i32[4] data = { 1, 2, 3, 4 };
+                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                    stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
-                    stack rawmutptr<i32> firstPtr = &buffer.First;
-                    stack rawmutptr<i32> slotPtr = &buffer.Values[2];
-                    stack rawmutptr<i32> aliasPtr = &*slotPtr;
+                    stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;
+                    stack rawmutptr<i32[-2147483648 2147483647]> slotPtr = &buffer.Values[2];
+                    stack rawmutptr<i32[-2147483648 2147483647]> aliasPtr = &*slotPtr;
                     return *aliasPtr = *firstPtr + value;
                 }
                 """);
@@ -400,8 +400,8 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
-                    stack i32 tag = 0;
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.Observe(5, tag);
                 }
                 """);

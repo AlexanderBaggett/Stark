@@ -485,6 +485,7 @@ internal static class NativeToolchain
         arguments.Add(optimizationLevel switch
         {
             CompilerOptimizationLevel.O0 => "-O0",
+            CompilerOptimizationLevel.Og => "-Og",
             CompilerOptimizationLevel.O1 => "-O1",
             CompilerOptimizationLevel.O2 => "-O2",
             _ => "-O3"

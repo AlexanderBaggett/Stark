@@ -21,7 +21,7 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                     return value;
                 }
 
-                fn i32 Run(Pair<i32> pair) {
+                fn i32[-2147483648 2147483647] Run(Pair<i32[-2147483648 2147483647]> pair) {
                     return Identity(pair.Value);
                 }
                 """),
@@ -74,7 +74,7 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Pair<i32> pair) {
+                    fn i32[-2147483648 2147483647] Run(Facade.Pair<i32[-2147483648 2147483647]> pair) {
                         return Facade.Identity(pair.Value);
                     }
                     """,
@@ -148,7 +148,7 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Pair<i32> pair) {
+                    fn i32[-2147483648 2147483647] Run(Facade.Pair<i32[-2147483648 2147483647]> pair) {
                         return Facade.Identity(pair.Value);
                     }
                     """,

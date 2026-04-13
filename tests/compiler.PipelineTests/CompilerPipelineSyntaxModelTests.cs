@@ -17,14 +17,14 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 struct Buffer {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
 
                     drop {
                         ;
                     }
                 }
 
-                record Cursor(i32 Position) {
+                record Cursor(i32[-2147483648 2147483647] Position) {
                     mut drop {
                         self.Position = 0;
                     }
@@ -56,7 +56,7 @@ public sealed class CompilerPipelineSyntaxModelTests
                 """
                 module Demo
 
-                public alias Byte = i8;
+                public alias Byte = i8[-128 127];
                 alias BufferView<T> = borrow T[];
                 """),
             new CompilerOptions(StopAfterPassId: "syntax-model"));
@@ -68,7 +68,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         var byteAlias = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.TypeAlias && declaration.Name == "Byte");
         Assert.Equal(StarkVisibility.Public, byteAlias.Visibility);
         Assert.NotNull(byteAlias.TypeAlias);
-        Assert.Equal("i8", byteAlias.TypeAlias!.AliasedType);
+        Assert.Equal("i8[-128127]", byteAlias.TypeAlias!.AliasedType);
         Assert.Empty(byteAlias.TypeAlias.GenericParameters);
 
         var bufferViewAlias = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.TypeAlias && declaration.Name == "BufferView");

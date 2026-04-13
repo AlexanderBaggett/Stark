@@ -4720,7 +4720,7 @@ internal sealed partial class MidLevelIrLowerer
         private StarkTypeSymbol ProjectRootType(MidLevelIrOperand operand)
         {
             return UsesFrozenProjectionSemantics(operand)
-                ? StarkTypeSymbols.FreezeReachableView(operand.Type)
+                ? StarkTypeSymbols.FreezeAddressPointeeType(operand.Type)
                 : operand.Type;
         }
 

@@ -11,7 +11,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32 Run() {
+            finite law i32[-2147483648 2147483647] Run() {
                 return 2 ** 3;
             }
             """);
@@ -45,10 +45,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32 Run(i32 left, i32 right) {
-                stack mut i32 value = left;
+            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                stack mut i32[-2147483648 2147483647] value = left;
                 value +%= right;
-                stack i32 product = left *| right;
+                stack i32[-2147483648 2147483647] product = left *| right;
                 return -%value +% product +| 3;
             }
             """,
@@ -83,7 +83,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            strictfp finite law f64 Run(f32 left, i32 middle, f64 right, f32 divisor) {
+            strictfp finite law f64 Run(f32 left, i32[-2147483648 2147483647] middle, f64 right, f32 divisor) {
                 return left + middle * right / divisor - 1.0;
             }
             """,
@@ -101,15 +101,15 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32 Run(i64 bits, ascii text) {
-                stack mut i32 value = 7;
-                stack rawmutptr<i32> ptr = &value;
-                stack rawptr<i32> readonlyPtr = (rawptr<i32>)ptr;
-                *ptr = (i32)bits;
-                stack i64 address = (i64)ptr;
-                stack rawmutptr<i32> roundTrip = (rawmutptr<i32>)address;
-                stack i32[2] values = { 1, 2 };
-                stack i32[] view = (i32[])values;
+            finite law i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits, ascii text) {
+                stack mut i32[-2147483648 2147483647] value = 7;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
+                *ptr = (i32[-2147483648 2147483647])bits;
+                stack i64[-9223372036854775808 9223372036854775807] address = (i64[-9223372036854775808 9223372036854775807])ptr;
+                stack rawmutptr<i32[-2147483648 2147483647]> roundTrip = (rawmutptr<i32[-2147483648 2147483647]>)address;
+                stack i32[-2147483648 2147483647][2] values = { 1, 2 };
+                stack i32[-2147483648 2147483647][] view = (i32[-2147483648 2147483647][])values;
                 return *roundTrip + view[0];
             }
             """,
@@ -158,7 +158,7 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct Holder {
@@ -167,11 +167,11 @@ public sealed class TypeCheckingTests
 
             const Holder Current = new Holder() { Item = new Box() { Value = 7 } };
 
-            fn i32 Read(frozen Box box) {
+            fn i32[-2147483648 2147483647] Read(frozen Box box) {
                 return 7;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Read(Current.Item);
             }
             """,
@@ -227,7 +227,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Run(i32[1 + 2] values) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][1 + 2] values) {
                 return values[2];
             }
             """,
@@ -245,8 +245,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack i32[3] values = { 1, 2 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647][3] values = { 1, 2 };
                 return values[0] + values[1] + values[2];
             }
             """,
@@ -264,7 +264,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Many(i32 A, i32 B, i32 C, i32 D, i32 E) { }
+            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
 
             fn bool Less(Many left, Many right) {
                 return left < right;
@@ -286,7 +286,7 @@ public sealed class TypeCheckingTests
 
             enum Token {
                 None,
-                Many(i32, i32, i32, i32, i32),
+                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
             fn bool Less(Token left, Token right) {
@@ -326,16 +326,16 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             struct PtrBox {
-                rawmutptr<i32> Ptr;
+                rawmutptr<i32[-2147483648 2147483647]> Ptr;
             }
 
             finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
-                stack rawptr<frozen i32> valuePtr = &box.Value;
-                stack rawptr<frozen i32> readonlyPtr = ptrBox.Ptr;
+                stack rawptr<frozen i32[-2147483648 2147483647]> valuePtr = &box.Value;
+                stack rawptr<frozen i32[-2147483648 2147483647]> readonlyPtr = ptrBox.Ptr;
                 stack bool same = *valuePtr == *readonlyPtr;
             }
             """,
@@ -353,14 +353,94 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            finite law i32 Run(Pair value) {
+            finite law i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
                     case Pair(_, _):
                         return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void NamedAggregateWholeValueSwitchCapturesTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+
+            finite law i32[-2147483648 2147483647] Run(Pair value) {
+                switch (value) {
+                    case var whole:
+                        return whole.Left;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void NestedAggregateWholeValueSwitchCapturesTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
+
+            finite law i32[-2147483648 2147483647] Run(Outer value) {
+                switch (value) {
+                    case Outer(Pair capture, var tail):
+                        return capture.Right + tail;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void EnumWholeValueSwitchCapturesTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token {
+                Empty,
+                Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+            }
+
+            finite law i32[-2147483648 2147483647] Run(Token value) {
+                switch (value) {
+                    case Token.Pair capture:
+                        switch (capture) {
+                            case Token.Pair(var left, var right):
+                                return left + right;
+                            default:
+                                return 0;
+                        }
+                    default:
+                        return -1;
                 }
             }
             """,
@@ -378,7 +458,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32 Run(bool value, bool allow) {
+            finite law i32[-2147483648 2147483647] Run(bool value, bool allow) {
                 switch (value) {
                     case true when allow:
                         return 1;
@@ -404,10 +484,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
-            record Outer(Pair Values, i32 Tail) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
 
-            finite law i32 Run(Outer value) {
+            finite law i32[-2147483648 2147483647] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -432,11 +512,11 @@ public sealed class TypeCheckingTests
 
             enum Token {
                 End,
-                Integer(i32),
-                Move { X: i32, Y: i32 },
+                Integer(i32[-2147483648 2147483647]),
+                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            finite law i32 Run(Token token) {
+            finite law i32[-2147483648 2147483647] Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;
@@ -468,11 +548,11 @@ public sealed class TypeCheckingTests
                 Some(T),
             }
 
-            finite law bool HasValue(Option<i32> opt) {
+            finite law bool HasValue(Option<i32[-2147483648 2147483647]> opt) {
                 switch (opt) {
-                    case Option<i32>.None:
+                    case Option<i32[-2147483648 2147483647]>.None:
                         return false;
-                    case Option<i32>.Some(var value):
+                    case Option<i32[-2147483648 2147483647]>.Some(var value):
                         return value > 0;
                 }
             }
@@ -499,7 +579,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            finite law i32 Sum(Pair<i32, i32> pair) {
+            finite law i32[-2147483648 2147483647] Sum(Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> pair) {
                 return pair.First + pair.Second;
             }
             """,
@@ -524,8 +604,8 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            finite law i32 Sum() {
-                stack Pair<i32, i32> pair = new Pair<i32, i32>(3, 4);
+            finite law i32[-2147483648 2147483647] Sum() {
+                stack Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> pair = new Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]>(3, 4);
                 return pair.First + pair.Second;
             }
             """);
@@ -542,7 +622,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            fn bool Accept(Pair<i32, bool> pair) {
+            fn bool Accept(Pair<i32[-2147483648 2147483647], bool> pair) {
                 return pair.Second;
             }
             """,
@@ -566,7 +646,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            fn i32 Read(rawptr<Pair<i32, bool>> ptr) {
+            fn i32[-2147483648 2147483647] Read(rawptr<Pair<i32[-2147483648 2147483647], bool>> ptr) {
                 if ((*ptr).Second) {
                     return (*ptr).First;
                 }
@@ -644,8 +724,8 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32 Run() {
-                stack i32 value = 42;
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647] value = 42;
                 return Identity(value);
             }
             """,
@@ -676,9 +756,9 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box();
-                stack i32 value = 42;
+                stack i32[-2147483648 2147483647] value = 42;
                 return box.Echo(value);
             }
             """,
@@ -713,9 +793,9 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32 Run() {
-                stack Box<i32> box = new Box<i32>() { Value = 1 };
-                stack i32 value = 42;
+            fn i32[-2147483648 2147483647] Run() {
+                stack Box<i32[-2147483648 2147483647]> box = new Box<i32[-2147483648 2147483647]>() { Value = 1 };
+                stack i32[-2147483648 2147483647] value = 42;
                 return box.Echo(value);
             }
             """,
@@ -746,7 +826,7 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32 Run(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return Identity(left) + Identity(right);
             }
             """,
@@ -770,7 +850,7 @@ public sealed class TypeCheckingTests
 
             record Pair<T>(T Value) { }
 
-            fn i32 Add(Pair<i32> left, Pair<i32> right) {
+            fn i32[-2147483648 2147483647] Add(Pair<i32[-2147483648 2147483647]> left, Pair<i32[-2147483648 2147483647]> right) {
                 return left.Value + right.Value;
             }
             """,
@@ -792,7 +872,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Parse(i32 value) {
+            fn i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
                 return value;
             }
 
@@ -800,8 +880,8 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32 Run() {
-                stack i32 value = 42;
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647] value = 42;
                 return Parse(value);
             }
             """,
@@ -820,7 +900,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            alias Byte = i8;
+            alias Byte = i8[-128 127];
 
             fn Byte Inc(Byte value) {
                 return value + 1;
@@ -846,7 +926,7 @@ public sealed class TypeCheckingTests
 
             alias Ptr<T> = rawptr<T>;
 
-            fn i32 Read(Ptr<i32> value) {
+            fn i32[-2147483648 2147483647] Read(Ptr<i32[-2147483648 2147483647]> value) {
                 return *value;
             }
             """,
@@ -874,7 +954,7 @@ public sealed class TypeCheckingTests
                 Some(T),
             }
 
-            finite law void Bad(Option<i32, bool> opt) {
+            finite law void Bad(Option<i32[-2147483648 2147483647], bool> opt) {
                 return;
             }
             """,
@@ -896,11 +976,11 @@ public sealed class TypeCheckingTests
                 Err(E),
             }
 
-            finite law i32 Unwrap(Result<i32, bool> res) {
+            finite law i32[-2147483648 2147483647] Unwrap(Result<i32[-2147483648 2147483647], bool> res) {
                 switch (res) {
-                    case Result<i32, bool>.Ok(var value):
+                    case Result<i32[-2147483648 2147483647], bool>.Ok(var value):
                         return value;
-                    case Result<i32, bool>.Err(var err):
+                    case Result<i32[-2147483648 2147483647], bool>.Err(var err):
                         if (err) {
                             return -1;
                         }
@@ -928,9 +1008,9 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Point(i32 X, i32 Y) { }
+            record Point(i32[-2147483648 2147483647] X, i32[-2147483648 2147483647] Y) { }
 
-            finite law void Bad(Point<i32> p) {
+            finite law void Bad(Point<i32[-2147483648 2147483647]> p) {
                 return;
             }
             """,
@@ -947,7 +1027,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32 Parse(i32 value) {
+            fn i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
                 return value;
             }
 
@@ -955,7 +1035,7 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Parse(42);
             }
 
@@ -983,13 +1063,13 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Counter {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
-                fn i32 Scale(borrow Counter self, i32 factor) {
+                fn i32[-2147483648 2147483647] Scale(borrow Counter self, i32[-2147483648 2147483647] factor) {
                     return self.Value * factor;
                 }
 
-                fn i32 Scale(borrow Counter self, bool doubleIt) {
+                fn i32[-2147483648 2147483647] Scale(borrow Counter self, bool doubleIt) {
                     if (doubleIt) {
                         return self.Value * 2;
                     }
@@ -998,12 +1078,12 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Counter counter = new Counter() { Value = 3 };
                 return counter.Scale(4);
             }
 
-            fn i32 RunBool() {
+            fn i32[-2147483648 2147483647] RunBool() {
                 stack Counter counter = new Counter() { Value = 3 };
                 return counter.Scale(true);
             }

@@ -16,33 +16,33 @@ public sealed class FixedArrayOrderedComparisonRuntimeTests
             """
             module Demo
 
-            fn bool Less(i32[3] left, i32[3] right) {
+            fn bool Less(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
                 return left < right;
             }
 
-            fn bool LessOrEqual(i32[3] left, i32[3] right) {
+            fn bool LessOrEqual(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
                 return left <= right;
             }
 
-            fn bool Greater(i32[3] left, i32[3] right) {
+            fn bool Greater(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
                 return left > right;
             }
 
-            fn bool GreaterOrEqual(i32[3] left, i32[3] right) {
+            fn bool GreaterOrEqual(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
                 return left >= right;
             }
 
-            export ffi fn i32 main() {
-                stack i32[3] lessLeft = { 1, 2, 3 };
-                stack i32[3] lessRight = { 1, 2, 4 };
-                stack i32[3] lessOrEqualLeft = { 1, 2, 3 };
-                stack i32[3] lessOrEqualRight = { 1, 2, 3 };
-                stack i32[3] greaterLeft = { 1, 2, 4 };
-                stack i32[3] greaterRight = { 1, 2, 3 };
-                stack i32[3] greaterOrEqualLeft = { 1, 2, 3 };
-                stack i32[3] greaterOrEqualRight = { 1, 2, 3 };
-                stack i32[3] topLeft = { 2, 0, 0 };
-                stack i32[3] topRight = { 1, 9, 9 };
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647][3] lessLeft = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] lessRight = { 1, 2, 4 };
+                stack i32[-2147483648 2147483647][3] lessOrEqualLeft = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] lessOrEqualRight = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] greaterLeft = { 1, 2, 4 };
+                stack i32[-2147483648 2147483647][3] greaterRight = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] greaterOrEqualLeft = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] greaterOrEqualRight = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][3] topLeft = { 2, 0, 0 };
+                stack i32[-2147483648 2147483647][3] topRight = { 1, 9, 9 };
 
                 if (Less(lessLeft, lessRight)
                     && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)

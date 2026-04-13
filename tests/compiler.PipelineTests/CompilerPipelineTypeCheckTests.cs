@@ -21,7 +21,7 @@ public sealed class CompilerPipelineTypeCheckTests
 
                 public enum IOResult<T> {
                     Ok(T),
-                    Err(i32),
+                    Err(i32[-2147483648 2147483647]),
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -39,11 +39,11 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    finite law i32 Unwrap(Facade.IOResult<i32> result) {
+                    finite law i32[-2147483648 2147483647] Unwrap(Facade.IOResult<i32[-2147483648 2147483647]> result) {
                         switch (result) {
-                            case Facade.IOResult<i32>.Ok(var value):
+                            case Facade.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
                                 return value;
-                            case Facade.IOResult<i32>.Err(var code):
+                            case Facade.IOResult<i32[-2147483648 2147483647]>.Err(var code):
                                 return code;
                         }
                     }
@@ -102,8 +102,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
-                        stack i32 value = 4;
+                    fn i32[-2147483648 2147483647] Run() {
+                        stack i32[-2147483648 2147483647] value = 4;
                         return Facade.Identity(value);
                     }
                     """,
@@ -148,8 +148,8 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public const i32 Answer = 42;
-                public static mut i32 Counter = 0;
+                public const i32[-2147483648 2147483647] Answer = 42;
+                public static mut i32[-2147483648 2147483647] Counter = 0;
                 """,
                 facadePath));
 
@@ -171,8 +171,8 @@ public sealed class CompilerPipelineTypeCheckTests
             Assert.Contains("Facade.Counter", importedDocument.PackageImageFacts.Globals.Keys);
 
             var corruptedSourceText = importedDocument.ParseResult.SourceText
-                .Replace("public const i32 Answer = 0;", "public const Missing Answer = 0;", StringComparison.Ordinal)
-                .Replace("public static mut i32 Counter;", "public static mut Missing Counter;", StringComparison.Ordinal);
+                .Replace(StrictIntegerSource("public const i32 Answer;"), "public const Missing Answer;", StringComparison.Ordinal)
+                .Replace(StrictIntegerSource("public static mut i32 Counter;"), "public static mut Missing Counter;", StringComparison.Ordinal);
             Assert.NotEqual(importedDocument.ParseResult.SourceText, corruptedSourceText);
 
             var corruptedDocument = importedDocument with
@@ -186,7 +186,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return Facade.Answer;
                     }
                     """,
@@ -231,7 +231,7 @@ public sealed class CompilerPipelineTypeCheckTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
                 """,
                 facadePath));
@@ -255,7 +255,7 @@ public sealed class CompilerPipelineTypeCheckTests
             Assert.Equal("i32", field.Type.DisplayName);
 
             var corruptedSourceText = importedDocument.ParseResult.SourceText.Replace(
-                "i32 Value;",
+                StrictIntegerSource("i32 Value;"),
                 "Missing Wrong;",
                 StringComparison.Ordinal);
             Assert.NotEqual(importedDocument.ParseResult.SourceText, corruptedSourceText);
@@ -271,7 +271,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         stack Facade.Box box = new Facade.Box() { Value = 3 };
                         return box.Value;
                     }
@@ -314,8 +314,8 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public record Counter(i32 Value) {
-                    i32 Count;
+                public record Counter(i32[-2147483648 2147483647] Value) {
+                    i32[-2147483648 2147483647] Count;
                 }
                 """,
                 facadePath));
@@ -340,7 +340,7 @@ public sealed class CompilerPipelineTypeCheckTests
             Assert.Equal("i32", Assert.Single(primaryConstructor.Parameters).Type.DisplayName);
 
             var corruptedSourceText = importedDocument.ParseResult.SourceText.Replace(
-                "record Counter(i32 Value)",
+                StrictIntegerSource("record Counter(i32 Value)"),
                 "record Counter(Missing Value)",
                 StringComparison.Ordinal);
             Assert.NotEqual(importedDocument.ParseResult.SourceText, corruptedSourceText);
@@ -356,7 +356,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack Facade.Counter counter = new Facade.Counter(value);
                         return counter.Value;
                     }
@@ -403,9 +403,9 @@ public sealed class CompilerPipelineTypeCheckTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
 
-                    Box(i32 value) {
+                    Box(i32[-2147483648 2147483647] value) {
                     }
                 }
                 """,
@@ -440,7 +440,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn void Run(i32 value) {
+                    fn void Run(i32[-2147483648 2147483647] value) {
                         stack Facade.Box box = new Facade.Box(value);
                     }
                     """,
@@ -485,10 +485,10 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public record Counter(i32 Value) {
-                    i32 Count;
+                public record Counter(i32[-2147483648 2147483647] Value) {
+                    i32[-2147483648 2147483647] Count;
 
-                    Counter(i32 value, i32 count) {
+                    Counter(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
                     }
                 }
                 """,
@@ -533,7 +533,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 value) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack Facade.Counter counter = new Facade.Counter(value, 7);
                         return counter.Value;
                     }

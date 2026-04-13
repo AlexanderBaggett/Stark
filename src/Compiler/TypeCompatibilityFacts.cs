@@ -28,7 +28,13 @@ internal static class TypeCompatibilityFacts
                 return false;
             }
 
-            return IsRangeContained(source.RangeMin, source.RangeMax, target.RangeMin, target.RangeMax);
+            if (!TryGetEffectiveIntegerRange(source, out var sourceMin, out var sourceMax)
+                || !TryGetEffectiveIntegerRange(target, out var targetMin, out var targetMax))
+            {
+                return false;
+            }
+
+            return IsRangeContained(sourceMin, sourceMax, targetMin, targetMax);
         }
 
         if (target.Kind == StarkTypeKind.Float && source.Kind == StarkTypeKind.Float)
@@ -150,6 +156,27 @@ internal static class TypeCompatibilityFacts
         }
 
         return sourceMin >= targetMin && sourceMax <= targetMax;
+    }
+
+    private static bool TryGetEffectiveIntegerRange(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        if (type.RangeMin is not null && type.RangeMax is not null)
+        {
+            min = type.RangeMin.Value;
+            max = type.RangeMax.Value;
+            return true;
+        }
+
+        min = -(BigInteger.One << (bitWidth - 1));
+        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
+        return true;
     }
 
     private static bool IsBorrowAssignable(StarkBorrowKind target, StarkBorrowKind source)

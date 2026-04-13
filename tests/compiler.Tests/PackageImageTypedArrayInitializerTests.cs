@@ -18,8 +18,8 @@ public sealed class PackageImageTypedArrayInitializerTests
                 """
                 module Facade
 
-                public fn i32 SumArray<T>(i32 left, i32 right, T tag) {
-                    stack i32[2] values = { left, right };
+                public fn i32[-2147483648 2147483647] SumArray<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                    stack i32[-2147483648 2147483647][2] values = { left, right };
                     return values[0] + values[1];
                 }
                 """,
@@ -41,7 +41,7 @@ public sealed class PackageImageTypedArrayInitializerTests
                         facadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn i32 SumArray<T>(i32 left, i32 right, T tag);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32[-2147483648 2147483647] SumArray<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag);", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack i32[2] values = { left, right };", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return values[0] + values[1];", sourceText, StringComparison.Ordinal);
 
@@ -54,7 +54,7 @@ public sealed class PackageImageTypedArrayInitializerTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(i32 left, i32 right) {
+                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                         return Facade.SumArray(left, right, 0);
                     }
                     """,

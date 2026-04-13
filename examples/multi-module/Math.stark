@@ -1,5 +1,5 @@
 module Math
 
-public finite law i32 Add(i32 left, i32 right) {
+public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
     return left + right;
 }

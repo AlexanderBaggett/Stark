@@ -17,7 +17,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Bits
 
-                public record Token(i32 value) {
+                public record Token(i32[-2147483648 2147483647] value) {
                 }
                 """);
             File.WriteAllText(
@@ -25,7 +25,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Math
 
-                public fn i32 Id(i32 value) {
+                public fn i32[-2147483648 2147483647] Id(i32[-2147483648 2147483647] value) {
                     return value;
                 }
                 """);

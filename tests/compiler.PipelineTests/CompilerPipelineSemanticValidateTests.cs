@@ -21,7 +21,7 @@ public sealed class CompilerPipelineSemanticValidateTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Touch(borrow mut Box value) {

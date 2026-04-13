@@ -24,7 +24,7 @@ public sealed class CompilerPipelineIntegrationTests
                 """
                 module Math
 
-                public finite law i32 Add(i32 left, i32 right) {
+                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                     return left + right;
                 }
                 """);
@@ -35,7 +35,7 @@ public sealed class CompilerPipelineIntegrationTests
                 export import Math
                 module Facade
 
-                public finite law i32 Double(i32 value) {
+                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -61,7 +61,7 @@ public sealed class CompilerPipelineIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32 Run() {
+                    fn i32[-2147483648 2147483647] Run() {
                         return Math.Add(3, 4);
                     }
                     """,

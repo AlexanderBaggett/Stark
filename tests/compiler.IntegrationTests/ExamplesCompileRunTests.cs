@@ -200,7 +200,7 @@ public sealed class ExamplesCompileRunTests
                 import Facade
                 module App
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return Facade.Quadruple(5);
                 }
                 """);
@@ -269,7 +269,7 @@ public sealed class ExamplesCompileRunTests
         var stderr = new StringWriter();
 
         var exitCode = await CompilerCli.RunAsync(
-            [sourcePath, "--emit-lib", "-o", libraryPath],
+            [sourcePath, "--emit-lib", "-o", libraryPath, "-O0"],
             new StringReader(string.Empty),
             stdout,
             stderr);

@@ -11,8 +11,8 @@ public sealed class MidLevelIrDynamicFixedArrayIndexingTests
             """
             module Demo
 
-            fn i32 Run(i32 index) {
-                return (new i32[3])[index];
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                return (new i32[-2147483648 2147483647][3])[index];
             }
             """);
 

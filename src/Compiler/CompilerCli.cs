@@ -5,7 +5,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
@@ -131,7 +131,7 @@ internal static class CompilerCli
             {
                 if (!TryParseOptimizationLevel(optimizeValue, out optimizationLevel))
                 {
-                    await stderr.WriteLineAsync($"Unknown optimization level '{optimizeValue}'. Expected 0, 1, 2, or 3.");
+                    await stderr.WriteLineAsync($"Unknown optimization level '{optimizeValue}'. Expected 0, g, 1, 2, or 3.");
                     await stderr.WriteLineAsync(Usage);
                     return 1;
                 }
@@ -993,8 +993,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --target-feature <feature>     Forward a target feature string; repeatable (for example: +sse4.1)");
         await stdout.WriteLineAsync("  --relocation-model <default|static|pic|pie>  Choose the native relocation/PIC model");
         await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
-        await stdout.WriteLineAsync("  -O0|-O1|-O2|-O3                Select the optimization level for frontend/codegen behavior (default: -O3)");
-        await stdout.WriteLineAsync("  --optimize <0|1|2|3>           Long-form optimization level control");
+        await stdout.WriteLineAsync("  -O0|-Og|-O1|-O2|-O3            Select the optimization level for frontend/codegen behavior (default: -O3)");
+        await stdout.WriteLineAsync("  --optimize <0|g|1|2|3>         Long-form optimization level control");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
@@ -1343,6 +1343,10 @@ internal static class CompilerCli
             case "0":
             case "O0":
                 optimizationLevel = CompilerOptimizationLevel.O0;
+                return true;
+            case "G":
+            case "OG":
+                optimizationLevel = CompilerOptimizationLevel.Og;
                 return true;
             case "1":
             case "O1":

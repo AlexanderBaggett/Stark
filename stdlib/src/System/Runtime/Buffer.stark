@@ -1,11 +1,11 @@
 module System.Runtime.Buffer
 
 internal struct ByteBuffer512 {
-    i8[512] Storage;
-    i64 ReadPos;
-    i64 WritePos;
+    i8[-128 127][512] Storage;
+    i64[-9223372036854775808 9223372036854775807] ReadPos;
+    i64[-9223372036854775808 9223372036854775807] WritePos;
 
-    fn i64 Capacity(borrow ByteBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Capacity(borrow ByteBuffer512 self) {
         return 512;
     }
 
@@ -17,15 +17,15 @@ internal struct ByteBuffer512 {
         return self.WritePos >= 512;
     }
 
-    fn i64 Readable(borrow ByteBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Readable(borrow ByteBuffer512 self) {
         return self.WritePos - self.ReadPos;
     }
 
-    fn i64 Writable(borrow ByteBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Writable(borrow ByteBuffer512 self) {
         return 512 - self.WritePos;
     }
 
-    fn rawptr<i8> ReadPointer(borrow ByteBuffer512 self) {
+    fn rawptr<i8[-128 127]> ReadPointer(borrow ByteBuffer512 self) {
         if (self.Readable() <= 0) {
             return null;
         }
@@ -33,7 +33,7 @@ internal struct ByteBuffer512 {
         return &self.Storage[self.ReadPos];
     }
 
-    fn rawmutptr<i8> ReadWritePointer(mut borrow ByteBuffer512 self) {
+    fn rawmutptr<i8[-128 127]> ReadWritePointer(mut borrow ByteBuffer512 self) {
         if (self.Readable() <= 0) {
             return null;
         }
@@ -41,7 +41,7 @@ internal struct ByteBuffer512 {
         return &self.Storage[self.ReadPos];
     }
 
-    fn rawmutptr<i8> WritePointer(mut borrow ByteBuffer512 self) {
+    fn rawmutptr<i8[-128 127]> WritePointer(mut borrow ByteBuffer512 self) {
         if (self.Writable() <= 0) {
             return null;
         }
@@ -49,7 +49,7 @@ internal struct ByteBuffer512 {
         return &self.Storage[self.WritePos];
     }
 
-    fn void AdvanceRead(mut borrow ByteBuffer512 self, i64 count) {
+    fn void AdvanceRead(mut borrow ByteBuffer512 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0) {
             return;
         }
@@ -62,7 +62,7 @@ internal struct ByteBuffer512 {
         self.ReadPos += count;
     }
 
-    fn void AdvanceWrite(mut borrow ByteBuffer512 self, i64 count) {
+    fn void AdvanceWrite(mut borrow ByteBuffer512 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0) {
             return;
         }
@@ -82,11 +82,11 @@ internal struct ByteBuffer512 {
 }
 
 internal struct ByteBuffer4096 {
-    i8[4096] Storage;
-    i64 ReadPos;
-    i64 WritePos;
+    i8[-128 127][4096] Storage;
+    i64[-9223372036854775808 9223372036854775807] ReadPos;
+    i64[-9223372036854775808 9223372036854775807] WritePos;
 
-    fn i64 Capacity(borrow ByteBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Capacity(borrow ByteBuffer4096 self) {
         return 4096;
     }
 
@@ -98,15 +98,15 @@ internal struct ByteBuffer4096 {
         return self.WritePos >= 4096;
     }
 
-    fn i64 Readable(borrow ByteBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Readable(borrow ByteBuffer4096 self) {
         return self.WritePos - self.ReadPos;
     }
 
-    fn i64 Writable(borrow ByteBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Writable(borrow ByteBuffer4096 self) {
         return 4096 - self.WritePos;
     }
 
-    fn rawptr<i8> ReadPointer(borrow ByteBuffer4096 self) {
+    fn rawptr<i8[-128 127]> ReadPointer(borrow ByteBuffer4096 self) {
         if (self.Readable() <= 0) {
             return null;
         }
@@ -114,7 +114,7 @@ internal struct ByteBuffer4096 {
         return &self.Storage[self.ReadPos];
     }
 
-    fn rawmutptr<i8> ReadWritePointer(mut borrow ByteBuffer4096 self) {
+    fn rawmutptr<i8[-128 127]> ReadWritePointer(mut borrow ByteBuffer4096 self) {
         if (self.Readable() <= 0) {
             return null;
         }
@@ -122,7 +122,7 @@ internal struct ByteBuffer4096 {
         return &self.Storage[self.ReadPos];
     }
 
-    fn rawmutptr<i8> WritePointer(mut borrow ByteBuffer4096 self) {
+    fn rawmutptr<i8[-128 127]> WritePointer(mut borrow ByteBuffer4096 self) {
         if (self.Writable() <= 0) {
             return null;
         }
@@ -130,7 +130,7 @@ internal struct ByteBuffer4096 {
         return &self.Storage[self.WritePos];
     }
 
-    fn void AdvanceRead(mut borrow ByteBuffer4096 self, i64 count) {
+    fn void AdvanceRead(mut borrow ByteBuffer4096 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0) {
             return;
         }
@@ -143,7 +143,7 @@ internal struct ByteBuffer4096 {
         self.ReadPos += count;
     }
 
-    fn void AdvanceWrite(mut borrow ByteBuffer4096 self, i64 count) {
+    fn void AdvanceWrite(mut borrow ByteBuffer4096 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0) {
             return;
         }
@@ -163,11 +163,11 @@ internal struct ByteBuffer4096 {
 }
 
 internal struct ByteBuffer8192 {
-    i8[8192] Storage;
-    i64 ReadPos;
-    i64 WritePos;
+    i8[-128 127][8192] Storage;
+    i64[-9223372036854775808 9223372036854775807] ReadPos;
+    i64[-9223372036854775808 9223372036854775807] WritePos;
 
-    fn i64 Capacity(borrow ByteBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Capacity(borrow ByteBuffer8192 self) {
         return 8192;
     }
 
@@ -179,15 +179,15 @@ internal struct ByteBuffer8192 {
         return self.WritePos >= 8192;
     }
 
-    fn i64 Readable(borrow ByteBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Readable(borrow ByteBuffer8192 self) {
         return self.WritePos - self.ReadPos;
     }
 
-    fn i64 Writable(borrow ByteBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Writable(borrow ByteBuffer8192 self) {
         return 8192 - self.WritePos;
     }
 
-    fn rawptr<i8> ReadPointer(borrow ByteBuffer8192 self) {
+    fn rawptr<i8[-128 127]> ReadPointer(borrow ByteBuffer8192 self) {
         if (self.Readable() <= 0) {
             return null;
         }
@@ -195,7 +195,7 @@ internal struct ByteBuffer8192 {
         return &self.Storage[self.ReadPos];
     }
 
-    fn rawmutptr<i8> ReadWritePointer(mut borrow ByteBuffer8192 self) {
+    fn rawmutptr<i8[-128 127]> ReadWritePointer(mut borrow ByteBuffer8192 self) {
         if (self.Readable() <= 0) {
             return null;
         }
@@ -203,7 +203,7 @@ internal struct ByteBuffer8192 {
         return &self.Storage[self.ReadPos];
     }
 
-    fn rawmutptr<i8> WritePointer(mut borrow ByteBuffer8192 self) {
+    fn rawmutptr<i8[-128 127]> WritePointer(mut borrow ByteBuffer8192 self) {
         if (self.Writable() <= 0) {
             return null;
         }
@@ -211,7 +211,7 @@ internal struct ByteBuffer8192 {
         return &self.Storage[self.WritePos];
     }
 
-    fn void AdvanceRead(mut borrow ByteBuffer8192 self, i64 count) {
+    fn void AdvanceRead(mut borrow ByteBuffer8192 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0) {
             return;
         }
@@ -224,7 +224,7 @@ internal struct ByteBuffer8192 {
         self.ReadPos += count;
     }
 
-    fn void AdvanceWrite(mut borrow ByteBuffer8192 self, i64 count) {
+    fn void AdvanceWrite(mut borrow ByteBuffer8192 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0) {
             return;
         }
@@ -244,12 +244,12 @@ internal struct ByteBuffer8192 {
 }
 
 internal struct RingBuffer512 {
-    i8[512] Storage;
-    i64 Head;
-    i64 Tail;
+    i8[-128 127][512] Storage;
+    i64[-9223372036854775808 9223372036854775807] Head;
+    i64[-9223372036854775808 9223372036854775807] Tail;
     bool Full;
 
-    fn i64 Capacity(borrow RingBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Capacity(borrow RingBuffer512 self) {
         return 512;
     }
 
@@ -261,7 +261,7 @@ internal struct RingBuffer512 {
         return self.Full;
     }
 
-    fn i64 Readable(borrow RingBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Readable(borrow RingBuffer512 self) {
         if (self.Full) {
             return 512;
         }
@@ -273,11 +273,11 @@ internal struct RingBuffer512 {
         return 512 - self.Head + self.Tail;
     }
 
-    fn i64 Writable(borrow RingBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Writable(borrow RingBuffer512 self) {
         return 512 - self.Readable();
     }
 
-    fn rawptr<i8> ReadPointer(borrow RingBuffer512 self) {
+    fn rawptr<i8[-128 127]> ReadPointer(borrow RingBuffer512 self) {
         if (self.IsEmpty()) {
             return null;
         }
@@ -285,7 +285,7 @@ internal struct RingBuffer512 {
         return &self.Storage[self.Head];
     }
 
-    fn i64 ReadContiguous(borrow RingBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] ReadContiguous(borrow RingBuffer512 self) {
         if (self.IsEmpty()) {
             return 0;
         }
@@ -297,7 +297,7 @@ internal struct RingBuffer512 {
         return self.Tail - self.Head;
     }
 
-    fn rawmutptr<i8> WritePointer(mut borrow RingBuffer512 self) {
+    fn rawmutptr<i8[-128 127]> WritePointer(mut borrow RingBuffer512 self) {
         if (self.Full) {
             return null;
         }
@@ -305,7 +305,7 @@ internal struct RingBuffer512 {
         return &self.Storage[self.Tail];
     }
 
-    fn i64 WriteContiguous(borrow RingBuffer512 self) {
+    fn i64[-9223372036854775808 9223372036854775807] WriteContiguous(borrow RingBuffer512 self) {
         if (self.Full) {
             return 0;
         }
@@ -317,12 +317,12 @@ internal struct RingBuffer512 {
         return 512 - self.Tail;
     }
 
-    fn void CommitWrite(mut borrow RingBuffer512 self, i64 count) {
+    fn void CommitWrite(mut borrow RingBuffer512 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0 || self.Full) {
             return;
         }
 
-        stack i64 writable = self.Writable();
+        stack i64[-9223372036854775808 9223372036854775807] writable = self.Writable();
         if (count >= writable) {
             if (writable <= 0) {
                 return;
@@ -346,12 +346,12 @@ internal struct RingBuffer512 {
         }
     }
 
-    fn void ConsumeRead(mut borrow RingBuffer512 self, i64 count) {
+    fn void ConsumeRead(mut borrow RingBuffer512 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0 || self.IsEmpty()) {
             return;
         }
 
-        stack i64 readable = self.Readable();
+        stack i64[-9223372036854775808 9223372036854775807] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -364,7 +364,7 @@ internal struct RingBuffer512 {
         }
     }
 
-    fn bool TryPushByte(mut borrow RingBuffer512 self, i8 value) {
+    fn bool TryPushByte(mut borrow RingBuffer512 self, i8[-128 127] value) {
         if (self.Full) {
             return false;
         }
@@ -374,7 +374,7 @@ internal struct RingBuffer512 {
         return true;
     }
 
-    fn bool TryPopByte(mut borrow RingBuffer512 self, rawmutptr<i8> destination) {
+    fn bool TryPopByte(mut borrow RingBuffer512 self, rawmutptr<i8[-128 127]> destination) {
         if (destination == null || self.IsEmpty()) {
             return false;
         }
@@ -392,12 +392,12 @@ internal struct RingBuffer512 {
 }
 
 internal struct RingBuffer4096 {
-    i8[4096] Storage;
-    i64 Head;
-    i64 Tail;
+    i8[-128 127][4096] Storage;
+    i64[-9223372036854775808 9223372036854775807] Head;
+    i64[-9223372036854775808 9223372036854775807] Tail;
     bool Full;
 
-    fn i64 Capacity(borrow RingBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Capacity(borrow RingBuffer4096 self) {
         return 4096;
     }
 
@@ -409,7 +409,7 @@ internal struct RingBuffer4096 {
         return self.Full;
     }
 
-    fn i64 Readable(borrow RingBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Readable(borrow RingBuffer4096 self) {
         if (self.Full) {
             return 4096;
         }
@@ -421,11 +421,11 @@ internal struct RingBuffer4096 {
         return 4096 - self.Head + self.Tail;
     }
 
-    fn i64 Writable(borrow RingBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Writable(borrow RingBuffer4096 self) {
         return 4096 - self.Readable();
     }
 
-    fn rawptr<i8> ReadPointer(borrow RingBuffer4096 self) {
+    fn rawptr<i8[-128 127]> ReadPointer(borrow RingBuffer4096 self) {
         if (self.IsEmpty()) {
             return null;
         }
@@ -433,7 +433,7 @@ internal struct RingBuffer4096 {
         return &self.Storage[self.Head];
     }
 
-    fn i64 ReadContiguous(borrow RingBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] ReadContiguous(borrow RingBuffer4096 self) {
         if (self.IsEmpty()) {
             return 0;
         }
@@ -445,7 +445,7 @@ internal struct RingBuffer4096 {
         return self.Tail - self.Head;
     }
 
-    fn rawmutptr<i8> WritePointer(mut borrow RingBuffer4096 self) {
+    fn rawmutptr<i8[-128 127]> WritePointer(mut borrow RingBuffer4096 self) {
         if (self.Full) {
             return null;
         }
@@ -453,7 +453,7 @@ internal struct RingBuffer4096 {
         return &self.Storage[self.Tail];
     }
 
-    fn i64 WriteContiguous(borrow RingBuffer4096 self) {
+    fn i64[-9223372036854775808 9223372036854775807] WriteContiguous(borrow RingBuffer4096 self) {
         if (self.Full) {
             return 0;
         }
@@ -465,12 +465,12 @@ internal struct RingBuffer4096 {
         return 4096 - self.Tail;
     }
 
-    fn void CommitWrite(mut borrow RingBuffer4096 self, i64 count) {
+    fn void CommitWrite(mut borrow RingBuffer4096 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0 || self.Full) {
             return;
         }
 
-        stack i64 writable = self.Writable();
+        stack i64[-9223372036854775808 9223372036854775807] writable = self.Writable();
         if (count >= writable) {
             if (writable <= 0) {
                 return;
@@ -494,12 +494,12 @@ internal struct RingBuffer4096 {
         }
     }
 
-    fn void ConsumeRead(mut borrow RingBuffer4096 self, i64 count) {
+    fn void ConsumeRead(mut borrow RingBuffer4096 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0 || self.IsEmpty()) {
             return;
         }
 
-        stack i64 readable = self.Readable();
+        stack i64[-9223372036854775808 9223372036854775807] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -512,7 +512,7 @@ internal struct RingBuffer4096 {
         }
     }
 
-    fn bool TryPushByte(mut borrow RingBuffer4096 self, i8 value) {
+    fn bool TryPushByte(mut borrow RingBuffer4096 self, i8[-128 127] value) {
         if (self.Full) {
             return false;
         }
@@ -522,7 +522,7 @@ internal struct RingBuffer4096 {
         return true;
     }
 
-    fn bool TryPopByte(mut borrow RingBuffer4096 self, rawmutptr<i8> destination) {
+    fn bool TryPopByte(mut borrow RingBuffer4096 self, rawmutptr<i8[-128 127]> destination) {
         if (destination == null || self.IsEmpty()) {
             return false;
         }
@@ -540,12 +540,12 @@ internal struct RingBuffer4096 {
 }
 
 internal struct RingBuffer8192 {
-    i8[8192] Storage;
-    i64 Head;
-    i64 Tail;
+    i8[-128 127][8192] Storage;
+    i64[-9223372036854775808 9223372036854775807] Head;
+    i64[-9223372036854775808 9223372036854775807] Tail;
     bool Full;
 
-    fn i64 Capacity(borrow RingBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Capacity(borrow RingBuffer8192 self) {
         return 8192;
     }
 
@@ -557,7 +557,7 @@ internal struct RingBuffer8192 {
         return self.Full;
     }
 
-    fn i64 Readable(borrow RingBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Readable(borrow RingBuffer8192 self) {
         if (self.Full) {
             return 8192;
         }
@@ -569,11 +569,11 @@ internal struct RingBuffer8192 {
         return 8192 - self.Head + self.Tail;
     }
 
-    fn i64 Writable(borrow RingBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] Writable(borrow RingBuffer8192 self) {
         return 8192 - self.Readable();
     }
 
-    fn rawptr<i8> ReadPointer(borrow RingBuffer8192 self) {
+    fn rawptr<i8[-128 127]> ReadPointer(borrow RingBuffer8192 self) {
         if (self.IsEmpty()) {
             return null;
         }
@@ -581,7 +581,7 @@ internal struct RingBuffer8192 {
         return &self.Storage[self.Head];
     }
 
-    fn i64 ReadContiguous(borrow RingBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] ReadContiguous(borrow RingBuffer8192 self) {
         if (self.IsEmpty()) {
             return 0;
         }
@@ -593,7 +593,7 @@ internal struct RingBuffer8192 {
         return self.Tail - self.Head;
     }
 
-    fn rawmutptr<i8> WritePointer(mut borrow RingBuffer8192 self) {
+    fn rawmutptr<i8[-128 127]> WritePointer(mut borrow RingBuffer8192 self) {
         if (self.Full) {
             return null;
         }
@@ -601,7 +601,7 @@ internal struct RingBuffer8192 {
         return &self.Storage[self.Tail];
     }
 
-    fn i64 WriteContiguous(borrow RingBuffer8192 self) {
+    fn i64[-9223372036854775808 9223372036854775807] WriteContiguous(borrow RingBuffer8192 self) {
         if (self.Full) {
             return 0;
         }
@@ -613,12 +613,12 @@ internal struct RingBuffer8192 {
         return 8192 - self.Tail;
     }
 
-    fn void CommitWrite(mut borrow RingBuffer8192 self, i64 count) {
+    fn void CommitWrite(mut borrow RingBuffer8192 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0 || self.Full) {
             return;
         }
 
-        stack i64 writable = self.Writable();
+        stack i64[-9223372036854775808 9223372036854775807] writable = self.Writable();
         if (count >= writable) {
             if (writable <= 0) {
                 return;
@@ -642,12 +642,12 @@ internal struct RingBuffer8192 {
         }
     }
 
-    fn void ConsumeRead(mut borrow RingBuffer8192 self, i64 count) {
+    fn void ConsumeRead(mut borrow RingBuffer8192 self, i64[-9223372036854775808 9223372036854775807] count) {
         if (count <= 0 || self.IsEmpty()) {
             return;
         }
 
-        stack i64 readable = self.Readable();
+        stack i64[-9223372036854775808 9223372036854775807] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -660,7 +660,7 @@ internal struct RingBuffer8192 {
         }
     }
 
-    fn bool TryPushByte(mut borrow RingBuffer8192 self, i8 value) {
+    fn bool TryPushByte(mut borrow RingBuffer8192 self, i8[-128 127] value) {
         if (self.Full) {
             return false;
         }
@@ -670,7 +670,7 @@ internal struct RingBuffer8192 {
         return true;
     }
 
-    fn bool TryPopByte(mut borrow RingBuffer8192 self, rawmutptr<i8> destination) {
+    fn bool TryPopByte(mut borrow RingBuffer8192 self, rawmutptr<i8[-128 127]> destination) {
         if (destination == null || self.IsEmpty()) {
             return false;
         }

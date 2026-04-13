@@ -4256,23 +4256,21 @@ public partial class StarkParser : Parser {
 				builtinType();
 				}
 				break;
-			case Identifier:
-				EnterOuterAlt(_localctx, 2);
-				{
-				State = 768;
-				qualifiedName();
-				State = 770;
-				ErrorHandler.Sync(this);
-				switch ( Interpreter.AdaptivePredict(TokenStream,68,Context) ) {
-				case 1:
+				case Identifier:
+					EnterOuterAlt(_localctx, 2);
 					{
-					State = 769;
-					typeArgumentList();
+					State = 768;
+					qualifiedName();
+					State = 770;
+					ErrorHandler.Sync(this);
+					if (TokenStream.LA(1) == LT) {
+						{
+						State = 769;
+						typeArgumentList();
+						}
+					}
 					}
 					break;
-				}
-				}
-				break;
 			default:
 				throw new NoViableAltException(this);
 			}
@@ -5981,53 +5979,64 @@ public partial class StarkParser : Parser {
 		PatternContext _localctx = new PatternContext(Context, State);
 		EnterRule(_localctx, 176, RULE_pattern);
 		try {
-			State = 957;
-			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,89,Context) ) {
-			case 1:
-				EnterOuterAlt(_localctx, 1);
-				{
-				State = 950;
-				Match(DISCARD);
-				}
-				break;
-			case 2:
-				EnterOuterAlt(_localctx, 2);
-				{
-				State = 951;
-				literal();
-				}
-				break;
-			case 3:
-				EnterOuterAlt(_localctx, 3);
-				{
-				State = 952;
-				Match(VAR);
-				State = 953;
-				Match(Identifier);
-				}
-				break;
-			case 4:
-				EnterOuterAlt(_localctx, 4);
-				{
-				State = 954;
-				enumNamedFieldPattern();
-				}
-				break;
-			case 5:
+			if (TokenStream.LA(1) == Identifier
+				&& LooksLikeGenericEnumCaseReference()
+				&& !LooksLikeEnumConstructorExpression()) {
 				EnterOuterAlt(_localctx, 5);
 				{
 				State = 955;
 				genericEnumAggregatePattern();
 				}
-				break;
-			case 6:
-				EnterOuterAlt(_localctx, 6);
-				{
-				State = 956;
-				aggregatePattern();
+			}
+			else {
+				State = 957;
+				ErrorHandler.Sync(this);
+				switch ( Interpreter.AdaptivePredict(TokenStream,89,Context) ) {
+				case 1:
+					EnterOuterAlt(_localctx, 1);
+					{
+					State = 950;
+					Match(DISCARD);
+					}
+					break;
+				case 2:
+					EnterOuterAlt(_localctx, 2);
+					{
+					State = 951;
+					literal();
+					}
+					break;
+				case 3:
+					EnterOuterAlt(_localctx, 3);
+					{
+					State = 952;
+					Match(VAR);
+					State = 953;
+					Match(Identifier);
+					}
+					break;
+				case 4:
+					EnterOuterAlt(_localctx, 4);
+					{
+					State = 954;
+					enumNamedFieldPattern();
+					}
+					break;
+				case 5:
+					EnterOuterAlt(_localctx, 5);
+					{
+					State = 955;
+					genericEnumAggregatePattern();
+					}
+					break;
+				case 6:
+					EnterOuterAlt(_localctx, 6);
+					{
+					State = 956;
+					aggregatePattern();
+					}
+					break;
 				}
-				break;
 			}
 		}
 		catch (RecognitionException re) {
@@ -6565,27 +6574,38 @@ public partial class StarkParser : Parser {
 		AssignmentExpressionContext _localctx = new AssignmentExpressionContext(Context, State);
 		EnterRule(_localctx, 194, RULE_assignmentExpression);
 		try {
-			State = 1023;
-			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,100,Context) ) {
-			case 1:
+			if ((TokenStream.LA(1) == LPAREN && (IsConversionTypeStart(TokenStream.LA(2)) || TokenStream.LA(2) == NEW))
+				|| TokenStream.LA(1) == NEW
+				|| (TokenStream.LA(1) == Identifier && LooksLikeGenericEnumCaseReference())) {
 				EnterOuterAlt(_localctx, 1);
 				{
 				State = 1018;
 				conditionalExpression();
 				}
-				break;
-			case 2:
-				EnterOuterAlt(_localctx, 2);
-				{
-				State = 1019;
-				unaryExpression();
-				State = 1020;
-				assignmentOperator();
-				State = 1021;
-				assignmentExpression();
+			}
+			else {
+				State = 1023;
+				ErrorHandler.Sync(this);
+				switch ( Interpreter.AdaptivePredict(TokenStream,100,Context) ) {
+				case 1:
+					EnterOuterAlt(_localctx, 1);
+					{
+					State = 1018;
+					conditionalExpression();
+					}
+					break;
+				case 2:
+					EnterOuterAlt(_localctx, 2);
+					{
+					State = 1019;
+					unaryExpression();
+					State = 1020;
+					assignmentOperator();
+					State = 1021;
+					assignmentExpression();
+					}
+					break;
 				}
-				break;
 			}
 		}
 		catch (RecognitionException re) {
@@ -7495,17 +7515,7 @@ public partial class StarkParser : Parser {
 		UnaryExpressionContext _localctx = new UnaryExpressionContext(Context, State);
 		EnterRule(_localctx, 220, RULE_unaryExpression);
 		try {
-			State = 1129;
-			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,113,Context) ) {
-			case 1:
-				EnterOuterAlt(_localctx, 1);
-				{
-				State = 1120;
-				powerExpression();
-				}
-				break;
-			case 2:
+			if (TokenStream.LA(1) == LPAREN && IsConversionTypeStart(TokenStream.LA(2))) {
 				EnterOuterAlt(_localctx, 2);
 				{
 				State = 1121;
@@ -7517,8 +7527,8 @@ public partial class StarkParser : Parser {
 				State = 1124;
 				unaryExpression();
 				}
-				break;
-			case 3:
+			}
+			else if ((((((TokenStream.LA(1) - 95)) & ~0x3f) == 0 && ((1L << (TokenStream.LA(1) - 95)) & 206593L) != 0))) {
 				EnterOuterAlt(_localctx, 3);
 				{
 				State = 1126;
@@ -7526,7 +7536,13 @@ public partial class StarkParser : Parser {
 				State = 1127;
 				unaryExpression();
 				}
-				break;
+			}
+			else {
+				EnterOuterAlt(_localctx, 1);
+				{
+				State = 1120;
+				powerExpression();
+				}
 			}
 		}
 		catch (RecognitionException re) {
@@ -7538,6 +7554,31 @@ public partial class StarkParser : Parser {
 			ExitRule();
 		}
 		return _localctx;
+	}
+
+	private static bool IsConversionTypeStart(int tokenType) {
+		switch (tokenType) {
+		case BORROW:
+		case RETBORROW:
+		case STOREBORROW:
+		case FROZEN:
+		case SHARED:
+		case OUT:
+		case INIT:
+		case MUT:
+		case RAWPTR:
+		case RAWMUTPTR:
+		case INTEGER_TYPE:
+		case FLOAT_TYPE:
+		case BOOL:
+		case ASCII:
+		case UNICODE:
+		case ASCIISTRING:
+		case UNICODESTRING:
+			return true;
+		default:
+			return false;
+		}
 	}
 
 	public partial class UnaryOperatorContext : ParserRuleContext {
@@ -7983,52 +8024,42 @@ public partial class StarkParser : Parser {
 		PrimaryExpressionContext _localctx = new PrimaryExpressionContext(Context, State);
 		EnterRule(_localctx, 234, RULE_primaryExpression);
 		try {
-			State = 1183;
-			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,121,Context) ) {
-			case 1:
+			if (IsLiteralStart(TokenStream.LA(1))) {
 				EnterOuterAlt(_localctx, 1);
 				{
 				State = 1173;
 				literal();
 				}
-				break;
-			case 2:
-				EnterOuterAlt(_localctx, 2);
-				{
-				State = 1174;
-				Match(Identifier);
-				}
-				break;
-			case 3:
+			}
+			else if (TokenStream.LA(1) == Identifier && LooksLikeEnumConstructorExpression()) {
 				EnterOuterAlt(_localctx, 3);
 				{
 				State = 1175;
 				enumConstructorExpression();
 				}
-				break;
-			case 4:
+			}
+			else if (TokenStream.LA(1) == Identifier && LooksLikeGenericEnumCaseReference()) {
 				EnterOuterAlt(_localctx, 4);
 				{
 				State = 1176;
 				genericEnumCaseReference();
 				}
-				break;
-			case 5:
-				EnterOuterAlt(_localctx, 5);
+			}
+			else if (TokenStream.LA(1) == Identifier) {
+				EnterOuterAlt(_localctx, 2);
 				{
-				State = 1177;
-				qualifiedName();
+				State = 1174;
+				Match(Identifier);
 				}
-				break;
-			case 6:
+			}
+			else if (TokenStream.LA(1) == NEW) {
 				EnterOuterAlt(_localctx, 6);
 				{
 				State = 1178;
 				objectCreationExpression();
 				}
-				break;
-			case 7:
+			}
+			else if (TokenStream.LA(1) == LPAREN) {
 				EnterOuterAlt(_localctx, 7);
 				{
 				State = 1179;
@@ -8038,7 +8069,9 @@ public partial class StarkParser : Parser {
 				State = 1181;
 				Match(RPAREN);
 				}
-				break;
+			}
+			else {
+				throw new NoViableAltException(this);
 			}
 		}
 		catch (RecognitionException re) {
@@ -8050,6 +8083,105 @@ public partial class StarkParser : Parser {
 			ExitRule();
 		}
 		return _localctx;
+	}
+
+	private static bool IsLiteralStart(int tokenType) {
+		switch (tokenType) {
+		case MINUS:
+		case IntegerLiteral:
+		case FloatLiteral:
+		case CharacterLiteral:
+		case StringLiteral:
+		case TRUE:
+		case FALSE:
+		case NULL:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	private bool LooksLikeGenericEnumCaseReference() {
+		if (TokenStream.LA(1) != Identifier) {
+			return false;
+		}
+
+		var offset = 2;
+		while (TokenStream.LA(offset) == DOT && TokenStream.LA(offset + 1) == Identifier) {
+			offset += 2;
+		}
+
+		if (TokenStream.LA(offset) != LT) {
+			return false;
+		}
+
+		var depth = 0;
+		while (true) {
+			var tokenType = TokenStream.LA(offset);
+			if (tokenType < 0) {
+				return false;
+			}
+
+			if (tokenType == LT) {
+				depth++;
+			}
+			else if (tokenType == GT) {
+				depth--;
+				if (depth == 0) {
+					offset++;
+					break;
+				}
+			}
+
+			offset++;
+		}
+
+		return TokenStream.LA(offset) == DOT && TokenStream.LA(offset + 1) == Identifier;
+	}
+
+	private bool LooksLikeEnumConstructorExpression() {
+		var offset = 1;
+		if (TokenStream.LA(offset) != Identifier) {
+			return false;
+		}
+
+		if (LooksLikeGenericEnumCaseReference()) {
+			offset = 2;
+			while (TokenStream.LA(offset) == DOT && TokenStream.LA(offset + 1) == Identifier) {
+				offset += 2;
+			}
+
+			var depth = 0;
+			while (true) {
+				var tokenType = TokenStream.LA(offset);
+				if (tokenType < 0) {
+					return false;
+				}
+
+				if (tokenType == LT) {
+					depth++;
+				}
+				else if (tokenType == GT) {
+					depth--;
+					if (depth == 0) {
+						offset++;
+						break;
+					}
+				}
+
+				offset++;
+			}
+
+			return TokenStream.LA(offset) == DOT
+				&& TokenStream.LA(offset + 1) == Identifier
+				&& TokenStream.LA(offset + 2) == LBRACE;
+		}
+
+		while (TokenStream.LA(offset + 1) == DOT && TokenStream.LA(offset + 2) == Identifier) {
+			offset += 2;
+		}
+
+		return offset > 1 && TokenStream.LA(offset + 1) == LBRACE;
 	}
 
 	public partial class EnumConstructorExpressionContext : ParserRuleContext {
@@ -9021,23 +9153,19 @@ public partial class StarkParser : Parser {
 		EnumCaseTargetContext _localctx = new EnumCaseTargetContext(Context, State);
 		EnterRule(_localctx, 266, RULE_enumCaseTarget);
 		try {
-			State = 1304;
-			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,138,Context) ) {
-			case 1:
-				EnterOuterAlt(_localctx, 1);
-				{
-				State = 1302;
-				dottedName();
-				}
-				break;
-			case 2:
+			if (LooksLikeGenericEnumCaseReference()) {
 				EnterOuterAlt(_localctx, 2);
 				{
 				State = 1303;
 				genericEnumCaseReference();
 				}
-				break;
+			}
+			else {
+				EnterOuterAlt(_localctx, 1);
+				{
+				State = 1302;
+				dottedName();
+				}
 			}
 		}
 		catch (RecognitionException re) {

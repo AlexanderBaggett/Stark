@@ -11,7 +11,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
             fn void Run() {
                 stack Pair pair = new Pair(1, false);
@@ -29,7 +29,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
             fn void Run() {
                 stack Pair pair = new Pair(1);
@@ -49,7 +49,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Pair(i32, i32),
+                Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
             fn void Run() {
@@ -70,7 +70,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run() {
@@ -89,7 +89,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
             fn void Run() {
                 stack Pair pair = new Pair(1, 2) { Left = 3 };
@@ -107,7 +107,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Add(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
@@ -130,7 +130,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32),
+                Integer(i32[-2147483648 2147483647]),
             }
 
             export fn Token Use(Token token);
@@ -168,7 +168,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn bool Broken(ascii text, i32 count)
+            public ffi asm(x86_64) fn bool Broken(ascii text, i32[-2147483648 2147483647] count)
                 in("rdi") text,
                 in("rsi") count,
                 out("rax") return
@@ -234,7 +234,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn f32 Broken(f32 scale, i32 count)
+            public ffi asm(x86_64) fn f32 Broken(f32 scale, i32[-2147483648 2147483647] count)
                 in("rdi") scale,
                 in("xmm1") count,
                 out("rax") return
@@ -261,7 +261,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32),
+                Integer(i32[-2147483648 2147483647]),
             }
 
             struct Inner {
@@ -288,13 +288,13 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            alias Score = i32;
+            alias Score = i32[-2147483648 2147483647];
 
-            fn i32 Parse(i32 value) {
+            fn i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
                 return value;
             }
 
-            fn i32 Parse(Score value) {
+            fn i32[-2147483648 2147483647] Parse(Score value) {
                 return value;
             }
             """,
@@ -382,10 +382,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                ascii Text;
+                Ascii Text;
             }
 
-            fn i32 Run(Box value) {
+            fn i32[-2147483648 2147483647] Run(Box value) {
                 switch (value) {
                     case Box(var text):
                         return 1;
@@ -396,7 +396,7 @@ public sealed class TypeTypingDiagnosticsTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Field 'Text'", "cannot currently be captured", "scalar, non-owning field types");
+        AssertDiagnostic(result, "STK3008", "Field 'Text'", "cannot currently be captured", "scalar and text-view field types");
     }
 
     [Fact]
@@ -406,7 +406,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Run(bool value) {
+            fn i32[-2147483648 2147483647] Run(bool value) {
                 switch (value) {
                     case true:
                         return 1;
@@ -430,9 +430,9 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            fn i32 Run(Pair value) {
+            fn i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair(_, _):
                         return 0;
@@ -454,9 +454,9 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            fn i32 Run(Pair value) {
+            fn i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair(1, _):
                         return 0;
@@ -480,10 +480,10 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32 Left, i32 Right) { }
-            record Outer(Pair Values, i32 Tail) { }
+            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
 
-            fn i32 Run(Outer value) {
+            fn i32[-2147483648 2147483647] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, _), _):
                         return 0;
@@ -509,11 +509,11 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32),
-                Move { X: i32, Y: i32 },
+                Integer(i32[-2147483648 2147483647]),
+                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            fn i32 Run(Token token) {
+            fn i32[-2147483648 2147483647] Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;
@@ -541,10 +541,10 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32),
+                Integer(i32[-2147483648 2147483647]),
             }
 
-            fn i32 Run(Token token) {
+            fn i32[-2147483648 2147483647] Run(Token token) {
                 switch (token) {
                     case Token.Integer(_):
                         return 0;
@@ -569,7 +569,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[2] values = { 1, false };
+                stack i32[-2147483648 2147483647][2] values = { 1, false };
             }
             """);
 
@@ -585,7 +585,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[] view = { 1, 2, 3 };
+                stack i32[-2147483648 2147483647][] view = { 1, 2, 3 };
             }
             """);
 
@@ -601,7 +601,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Buffer {
-                i32[] Values;
+                i32[-2147483648 2147483647][] Values;
             }
 
             fn void Run() {
@@ -620,7 +620,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return 1.5;
             }
             """);
@@ -636,10 +636,10 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            const i32[3] Values = { 1, 2, 3 };
+            const i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
 
             fn void Run() {
-                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&Values[0]);
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&Values[0]);
             }
             """);
 
@@ -654,10 +654,10 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            const i32[3] Values = { 1, 2, 3 };
+            const i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
 
             fn void Run() {
-                stack i64 bits = (i64)(&Values[0]);
+                stack i64[-9223372036854775808 9223372036854775807] bits = (i64[-9223372036854775808 9223372036854775807])(&Values[0]);
             }
             """);
 
@@ -673,13 +673,13 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             const Box Current = new Box() { Value = 1 };
 
             fn void Run() {
-                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&Current.Value);
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&Current.Value);
             }
             """);
 
@@ -695,13 +695,13 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             const Box Current = new Box() { Value = 1 };
 
             fn void Run() {
-                stack i64 bits = (i64)(&Current.Value);
+                stack i64[-9223372036854775808 9223372036854775807] bits = (i64[-9223372036854775808 9223372036854775807])(&Current.Value);
             }
             """);
 
@@ -717,7 +717,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run(frozen Box box) {
@@ -736,7 +736,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn void Run(frozen i32[] view) {
+            fn void Run(frozen i32[-2147483648 2147483647][] view) {
                 view[0] = 4;
             }
             """);
@@ -753,11 +753,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run(frozen Box box) {
-                stack rawmutptr<i32> ptr = (rawmutptr<i32>)(&box.Value);
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&box.Value);
             }
             """);
 
@@ -773,11 +773,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn void Run(frozen Box box) {
-                stack i64 bits = (i64)(&box.Value);
+                stack i64[-9223372036854775808 9223372036854775807] bits = (i64[-9223372036854775808 9223372036854775807])(&box.Value);
             }
             """);
 
@@ -793,11 +793,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct PtrBox {
-                rawmutptr<i32> Ptr;
+                rawmutptr<i32[-2147483648 2147483647]> Ptr;
             }
 
             fn void Run(frozen PtrBox box) {
-                stack rawmutptr<i32> leaked = box.Ptr;
+                stack rawmutptr<i32[-2147483648 2147483647]> leaked = box.Ptr;
             }
             """);
 
@@ -813,10 +813,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = false;
                 return 0;
@@ -834,11 +834,11 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Echo(i32 value) {
+            fn i32[-2147483648 2147483647] Echo(i32[-2147483648 2147483647] value) {
                 return value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Echo(false);
             }
             """);
@@ -949,8 +949,8 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack i32[2] values = { 1, 2 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647][2] values = { 1, 2 };
                 values[];
                 return 0;
             }
@@ -968,10 +968,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Value();
             }
@@ -989,10 +989,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Value[0];
             }
@@ -1009,7 +1009,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn rawptr<i32> Run() {
+            fn rawptr<i32[-2147483648 2147483647]> Run() {
                 return &(1 + 2);
             }
             """);
@@ -1025,7 +1025,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return *1;
             }
             """);
@@ -1042,7 +1042,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             public doctrine Numbers {
-                law i32 Zero();
+                law i32[-2147483648 2147483647] Zero();
             }
 
             struct Holder {
@@ -1079,7 +1079,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             public trait Comparable {
-                law i32 Compare(i32 other);
+                law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
             }
 
             struct Holder {
@@ -1116,10 +1116,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             public trait Comparable {
-                law i32 Compare(i32 other);
+                law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Comparable.Compare(1);
             }
             """,
@@ -1136,15 +1136,15 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Convert(i32 value) {
+            fn i32[-2147483648 2147483647] Convert(i32[-2147483648 2147483647] value) {
                 return value;
             }
 
-            fn i32 Convert(ascii value) {
+            fn i32[-2147483648 2147483647] Convert(ascii value) {
                 return 0;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Convert(true);
             }
             """,
@@ -1165,7 +1165,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             fn T Make<T>();
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Make();
             }
             """,
@@ -1183,16 +1183,16 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32 Measure(f32 value) {
+            fn i32[-2147483648 2147483647] Measure(f32 value) {
                 return 1;
             }
 
-            fn i32 Measure(f64 value) {
+            fn i32[-2147483648 2147483647] Measure(f64 value) {
                 return 2;
             }
 
-            fn i32 Run() {
-                stack i32 value = 1;
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647] value = 1;
                 return Measure(value);
             }
             """,

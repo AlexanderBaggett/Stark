@@ -12,7 +12,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return (1 + 2) * 3;
             }
             """);
@@ -33,8 +33,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32 Adjust(i32 value) {
-                stack mut i32 current = value;
+            finite law i32[-2147483648 2147483647] Adjust(i32[-2147483648 2147483647] value) {
+                stack mut i32[-2147483648 2147483647] current = value;
                 if (current < 10) {
                     current = current + 3;
                 }
@@ -42,7 +42,7 @@ public sealed partial class MidLevelIrLoweringTests
                 return current;
             }
 
-            fn i32 Run() {
+            fn i32[-2147483648 2147483647] Run() {
                 return Adjust(4);
             }
             """);
@@ -63,8 +63,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32 Run() {
-                stack i32[3] values = { 1, 2, 3 };
+            fn i32[-2147483648 2147483647] Run() {
+                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 return values[1 + 1];
             }
             """);

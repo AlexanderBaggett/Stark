@@ -32,3 +32,25 @@ not belong in this list.
 There are no currently documented source-level MIR lowering gaps. Newly
 discovered constructs that pass parsing and type checking but still stop in
 `lower-mir` should be recorded here with a focused repro and regression test.
+
+## Current Compiler Implementation Gaps
+
+These are not source-level rejections. They are compiler implementation gaps
+that can still matter for code generation quality, compile time, or runtime
+behavior and should have a public paper trail until they are fully closed.
+
+There are no currently documented compiler implementation gaps. Newly
+discovered code-generation-quality or compile-time gaps that are not
+source-level rejections should be recorded here with a focused repro and
+regression test.
+
+## Current Frontend-Rejected Surface Restrictions
+
+These are source forms that are intentionally rejected before MIR lowering.
+They belong here when the language reference or parser shape may make them look
+plausible, but the current compiler still refuses them with an explicit
+diagnostic.
+
+There are no currently documented frontend-rejected surface restrictions. Newly
+discovered source forms that are intentionally rejected before MIR lowering
+should be recorded here with a focused repro and regression test.

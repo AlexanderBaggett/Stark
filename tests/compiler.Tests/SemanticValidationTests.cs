@@ -11,7 +11,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn borrow i32 Echo(borrow i32 value) {
+            fn borrow i32[-2147483648 2147483647] Echo(borrow i32[-2147483648 2147483647] value) {
                 return value;
             }
             """);
@@ -27,8 +27,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn storeborrow i32 Source();
-            static borrow i32 Current = Source();
+            fn storeborrow i32[-2147483648 2147483647] Source();
+            static borrow i32[-2147483648 2147483647] Current = Source();
             """);
 
         Assert.False(result.Succeeded);
@@ -42,7 +42,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Use(rawptr<rawptr<i8>> value);
+            fn void Use(rawptr<rawptr<i8[-128 127]>> value);
             """);
 
         Assert.False(result.Succeeded);
@@ -56,7 +56,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            ffi fn void Use(rawptr<rawptr<i8>> value);
+            ffi fn void Use(rawptr<rawptr<i8[-128 127]>> value);
             """);
 
         Assert.True(result.Succeeded);
@@ -70,7 +70,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Holder {
-                rawptr<i8> Ptr;
+                rawptr<i8[-128 127]> Ptr;
             }
 
             const Holder Current = new Holder() { Ptr = null };
@@ -87,9 +87,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[] Source();
+            fn i32[-2147483648 2147483647][] Source();
 
-            const i32[] View = Source();
+            const i32[-2147483648 2147483647][] View = Source();
             """);
 
         Assert.False(result.Succeeded);
@@ -103,7 +103,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 1 + 2;
+            const i32[-2147483648 2147483647] Answer = 1 + 2;
             """);
 
         Assert.True(result.Succeeded);
@@ -116,9 +116,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32 Read();
+            fn i32[-2147483648 2147483647] Read();
 
-            const i32 Answer = Read();
+            const i32[-2147483648 2147483647] Answer = Read();
             """);
 
         Assert.False(result.Succeeded);
@@ -132,9 +132,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 42;
+            const i32[-2147483648 2147483647] Answer = 42;
 
-            law i32 Read() {
+            law i32[-2147483648 2147483647] Read() {
                 return Answer;
             }
             """);
@@ -150,7 +150,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
             law void Touch() {
                 Counter = 1;
@@ -169,13 +169,13 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            static i32 Counter = 1;
+            static i32[-2147483648 2147483647] Counter = 1;
 
-            fn i32 Impure() {
+            fn i32[-2147483648 2147483647] Impure() {
                 return Counter;
             }
 
-            law i32 PureWrapper() {
+            law i32[-2147483648 2147483647] PureWrapper() {
                 return Impure();
             }
             """);
@@ -191,11 +191,11 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32 PureAdd(i32 left, i32 right) {
+            fn i32[-2147483648 2147483647] PureAdd(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            law i32 Use() {
+            law i32[-2147483648 2147483647] Use() {
                 return PureAdd(1, 2);
             }
             """);
@@ -211,10 +211,10 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
-            law i32 Bump() {
+            law i32[-2147483648 2147483647] Bump() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -232,7 +232,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
             }
 
             fn storeborrow mut Box Source();
@@ -383,7 +383,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32 value) {
+            fn void Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     default:
                         continue;
@@ -403,7 +403,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32 value) {
+            fn void Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     case 0:
                         break;
@@ -426,7 +426,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32 value) {
+            fn void Run(i32[-2147483648 2147483647] value) {
                 while willexit (true) {
                     switch (value) {
                         default:
@@ -448,7 +448,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32 value) {
+            fn void Run(i32[-2147483648 2147483647] value) {
                 while infinite (true) {
                     switch (value) {
                         default:
@@ -526,11 +526,11 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32 Step(i32 value) {
+            fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
                 return value + 1;
             }
 
-            finite i32 Outer(i32 value) {
+            finite i32[-2147483648 2147483647] Outer(i32[-2147483648 2147483647] value) {
                 return Step(value);
             }
             """);
@@ -562,9 +562,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn retborrow i32 Bounce(retborrow i32 value);
+            fn retborrow i32[-2147483648 2147483647] Bounce(retborrow i32[-2147483648 2147483647] value);
 
-            fn retborrow i32 Forward(retborrow i32 value) {
+            fn retborrow i32[-2147483648 2147483647] Forward(retborrow i32[-2147483648 2147483647] value) {
                 return Bounce(value);
             }
             """);
@@ -580,9 +580,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            ffi fn void Accept(borrow i32 value);
+            ffi fn void Accept(borrow i32[-2147483648 2147483647] value);
 
-            fn void Use(borrow i32 value) {
+            fn void Use(borrow i32[-2147483648 2147483647] value) {
                 Accept(value);
                 return;
             }
@@ -599,11 +599,11 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Inspect(borrow i32 value) {
+            fn void Inspect(borrow i32[-2147483648 2147483647] value) {
                 return;
             }
 
-            fn retborrow i32 Echo(retborrow i32 value) {
+            fn retborrow i32[-2147483648 2147483647] Echo(retborrow i32[-2147483648 2147483647] value) {
                 Inspect(value);
                 return value;
             }
@@ -623,10 +623,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 42;
+            const i32[-2147483648 2147483647] Answer = 42;
 
             doctrine Numbers {
-                law i32 Read() {
+                law i32[-2147483648 2147483647] Read() {
                     return Answer;
                 }
             }
@@ -644,7 +644,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Buffer {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 drop {
                     self.Value = 0;
@@ -665,7 +665,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Buffer {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 mut drop {
                     ;
@@ -688,7 +688,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Buffer {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 fn void Reset(mut borrow Buffer self) {
                     self.Value = 0;

@@ -2,42 +2,42 @@ import System.Runtime.Buffer
 import System.Text
 module System.Runtime.Platform.Windows
 
-internal ffi fn rawmutptr<i8> GetStdHandle(i32 nStdHandle);
-internal ffi fn i32 WriteFile(rawptr<i8> hFile, rawptr<i8> buffer, i32 bytesToWrite, rawmutptr<i32> bytesWritten, rawptr<i8> overlapped);
-internal ffi fn i32 ReadFile(rawptr<i8> hFile, rawptr<i8> buffer, i32 bytesToRead, rawmutptr<i32> bytesRead, rawptr<i8> overlapped);
-internal ffi fn rawmutptr<i8> CreateFileW(rawptr<i16> fileName, i32 desiredAccess, i32 shareMode, rawptr<i8> securityAttributes, i32 creationDisposition, i32 flagsAndAttributes, rawptr<i8> templateFile);
-internal ffi fn i32 CloseHandle(rawptr<i8> handle);
-internal ffi fn i32 FlushFileBuffers(rawptr<i8> handle);
-internal ffi fn i32 DeleteFileW(rawptr<i16> path);
-internal ffi fn i32 MoveFileExW(rawptr<i16> existingPath, rawptr<i16> newPath, i32 flags);
-internal ffi fn i32 GetFileAttributesW(rawptr<i16> path);
-internal ffi fn i32 GetCurrentDirectoryW(i32 bufferLength, rawmutptr<i16> buffer);
-internal ffi fn i32 GetConsoleMode(rawptr<i8> handle, rawmutptr<i32> mode);
-internal ffi fn i32 GetLastError();
+internal ffi fn rawmutptr<i8[-128 127]> GetStdHandle(i32[-2147483648 2147483647] nStdHandle);
+internal ffi fn i32[-2147483648 2147483647] WriteFile(rawptr<i8[-128 127]> hFile, rawptr<i8[-128 127]> buffer, i32[-2147483648 2147483647] bytesToWrite, rawmutptr<i32[-2147483648 2147483647]> bytesWritten, rawptr<i8[-128 127]> overlapped);
+internal ffi fn i32[-2147483648 2147483647] ReadFile(rawptr<i8[-128 127]> hFile, rawptr<i8[-128 127]> buffer, i32[-2147483648 2147483647] bytesToRead, rawmutptr<i32[-2147483648 2147483647]> bytesRead, rawptr<i8[-128 127]> overlapped);
+internal ffi fn rawmutptr<i8[-128 127]> CreateFileW(rawptr<i16[-32768 32767]> fileName, i32[-2147483648 2147483647] desiredAccess, i32[-2147483648 2147483647] shareMode, rawptr<i8[-128 127]> securityAttributes, i32[-2147483648 2147483647] creationDisposition, i32[-2147483648 2147483647] flagsAndAttributes, rawptr<i8[-128 127]> templateFile);
+internal ffi fn i32[-2147483648 2147483647] CloseHandle(rawptr<i8[-128 127]> handle);
+internal ffi fn i32[-2147483648 2147483647] FlushFileBuffers(rawptr<i8[-128 127]> handle);
+internal ffi fn i32[-2147483648 2147483647] DeleteFileW(rawptr<i16[-32768 32767]> path);
+internal ffi fn i32[-2147483648 2147483647] MoveFileExW(rawptr<i16[-32768 32767]> existingPath, rawptr<i16[-32768 32767]> newPath, i32[-2147483648 2147483647] flags);
+internal ffi fn i32[-2147483648 2147483647] GetFileAttributesW(rawptr<i16[-32768 32767]> path);
+internal ffi fn i32[-2147483648 2147483647] GetCurrentDirectoryW(i32[-2147483648 2147483647] bufferLength, rawmutptr<i16[-32768 32767]> buffer);
+internal ffi fn i32[-2147483648 2147483647] GetConsoleMode(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> mode);
+internal ffi fn i32[-2147483648 2147483647] GetLastError();
 
-const i32 WinStdOutputHandle = -11;
-const i32 WinStdErrorHandle = -12;
-const i32 WinStdInputHandle = -10;
-const i32 WinGenericRead = -2147483648;
-const i32 WinGenericWrite = 1073741824;
-const i32 WinFileAppendData = 4;
-const i32 WinFileShareRead = 1;
-const i32 WinFileShareWrite = 2;
-const i32 WinCreateAlways = 2;
-const i32 WinOpenExisting = 3;
-const i32 WinOpenAlways = 4;
-const i32 WinFileAttributeNormal = 128;
-const i32 WinMoveFileReplaceExisting = 1;
-const i32 WinInvalidFileAttributes = -1;
-const i64 WinLongPathThreshold = 248;
+const i32[-2147483648 2147483647] WinStdOutputHandle = -11;
+const i32[-2147483648 2147483647] WinStdErrorHandle = -12;
+const i32[-2147483648 2147483647] WinStdInputHandle = -10;
+const i32[-2147483648 2147483647] WinGenericRead = -2147483647 - 1;
+const i32[-2147483648 2147483647] WinGenericWrite = 1073741824;
+const i32[-2147483648 2147483647] WinFileAppendData = 4;
+const i32[-2147483648 2147483647] WinFileShareRead = 1;
+const i32[-2147483648 2147483647] WinFileShareWrite = 2;
+const i32[-2147483648 2147483647] WinCreateAlways = 2;
+const i32[-2147483648 2147483647] WinOpenExisting = 3;
+const i32[-2147483648 2147483647] WinOpenAlways = 4;
+const i32[-2147483648 2147483647] WinFileAttributeNormal = 128;
+const i32[-2147483648 2147483647] WinMoveFileReplaceExisting = 1;
+const i32[-2147483648 2147483647] WinInvalidFileAttributes = -1;
+const i64[-9223372036854775808 9223372036854775807] WinLongPathThreshold = 248;
 
 internal fn void ResetAsciiDestination(rawmutptr<Ascii> destination) {
     if (destination == null) {
         return;
     }
 
-    stack rawmutptr<i8> data = (*destination).Data;
-    stack i64 capacity = (*destination).Capacity;
+    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
+    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
     *destination = new Ascii() {
         Data = data,
         Length = 0,
@@ -45,8 +45,8 @@ internal fn void ResetAsciiDestination(rawmutptr<Ascii> destination) {
     };
 }
 
-internal fn i32 NegativeLastError() {
-    stack i32 error = GetLastError();
+internal fn i32[-2147483648 2147483647] NegativeLastError() {
+    stack i32[-2147483648 2147483647] error = GetLastError();
     if (error <= 0) {
         return -1;
     }
@@ -54,58 +54,58 @@ internal fn i32 NegativeLastError() {
     return -error;
 }
 
-internal fn bool IsInvalidHandle(rawmutptr<i8> handle) {
+internal fn bool IsInvalidHandle(rawmutptr<i8[-128 127]> handle) {
     if (handle == null) {
         return true;
     }
 
-    return (i64)handle == -1;
+    return (i64[-9223372036854775808 9223372036854775807])handle == -1;
 }
 
-internal fn i32 RequestedChunkLength(i64 totalBytes) {
+internal fn i32[-2147483648 2147483647] RequestedChunkLength(i64[-9223372036854775808 9223372036854775807] totalBytes) {
     if (totalBytes > 2147483647) {
         return 2147483647;
     }
 
-    return (i32)totalBytes;
+    return (i32[-2147483648 2147483647])totalBytes;
 }
 
-internal fn i32 UnsignedByte(i8 value) {
+internal fn i32[-2147483648 2147483647] UnsignedByte(i8[-128 127] value) {
     if (value < 0) {
-        return ((i32)value) + 256;
+        return ((i32[-2147483648 2147483647])value) + 256;
     }
 
-    return (i32)value;
+    return (i32[-2147483648 2147483647])value;
 }
 
-internal fn i32 UnsignedWide(i16 value) {
+internal fn i32[-2147483648 2147483647] UnsignedWide(i16[-32768 32767] value) {
     if (value < 0) {
-        return ((i32)value) + 65536;
+        return ((i32[-2147483648 2147483647])value) + 65536;
     }
 
-    return (i32)value;
+    return (i32[-2147483648 2147483647])value;
 }
 
-internal fn bool IsWideDirectorySeparatorUnit(i32 value) {
+internal fn bool IsWideDirectorySeparatorUnit(i32[-2147483648 2147483647] value) {
     return value == 47 || value == 92;
 }
 
-internal fn bool IsWideDriveLetter(i32 value) {
+internal fn bool IsWideDriveLetter(i32[-2147483648 2147483647] value) {
     return (65 <= value && value <= 90)
         || (97 <= value && value <= 122);
 }
 
-internal fn bool IsUtf8ContinuationByte(i8 value) {
-    stack i32 unit = UnsignedByte(value);
+internal fn bool IsUtf8ContinuationByte(i8[-128 127] value) {
+    stack i32[-2147483648 2147483647] unit = UnsignedByte(value);
     return 128 <= unit && unit <= 191;
 }
 
-internal fn bool TryAppendWideCodeUnit(rawmutptr<i16> destination, i64 capacity, rawmutptr<i64> writeIndex, i16 value) {
+internal fn bool TryAppendWideCodeUnit(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, rawmutptr<i64[-9223372036854775808 9223372036854775807]> writeIndex, i16[-32768 32767] value) {
     if (destination == null || writeIndex == null) {
         return false;
     }
 
-    stack i64 index = *writeIndex;
+    stack i64[-9223372036854775808 9223372036854775807] index = *writeIndex;
     if (index >= capacity) {
         return false;
     }
@@ -115,7 +115,7 @@ internal fn bool TryAppendWideCodeUnit(rawmutptr<i16> destination, i64 capacity,
     return true;
 }
 
-internal ffi asm(x86_64) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i16> source, i32 length)
+internal ffi asm(x86_64) fn void CopyWideUnits(rawmutptr<i16[-32768 32767]> destination, rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length)
     in("r8") destination,
     in("r9") source,
     in("r10") length,
@@ -124,7 +124,7 @@ internal ffi asm(x86_64) fn void CopyWideUnits(rawmutptr<i16> destination, rawpt
     "cld\nmovq %r8, %rdi\nmovq %r9, %rsi\nmovl %r10d, %ecx\nrep movsw"
 }
 
-internal ffi asm(aarch64) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i16> source, i32 length)
+internal ffi asm(aarch64) fn void CopyWideUnits(rawmutptr<i16[-32768 32767]> destination, rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length)
     in("x0") destination,
     in("x1") source,
     in("w2") length,
@@ -133,7 +133,7 @@ internal ffi asm(aarch64) fn void CopyWideUnits(rawmutptr<i16> destination, rawp
     "cbz w2, 2f\nmov w9, wzr\n1:\nldrh w10, [x1, w9, uxtw #1]\nstrh w10, [x0, w9, uxtw #1]\nadd w9, w9, #1\nsub w11, w2, w9\ncbnz w11, 1b\n2:"
 }
 
-internal ffi asm(riscv64) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i16> source, i32 length)
+internal ffi asm(riscv64) fn void CopyWideUnits(rawmutptr<i16[-32768 32767]> destination, rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length)
     in("a0") destination,
     in("a1") source,
     in("a2") length,
@@ -142,7 +142,7 @@ internal ffi asm(riscv64) fn void CopyWideUnits(rawmutptr<i16> destination, rawp
     "beq a2, zero, 2f\nli t0, 0\n1:\nslli t1, t0, 1\nadd t2, a1, t1\nlhu t3, 0(t2)\nadd t4, a0, t1\nsh t3, 0(t4)\naddi t0, t0, 1\nsub t1, a2, t0\nbne t1, zero, 1b\n2:"
 }
 
-internal ffi asm(x86) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i16> source, i32 length)
+internal ffi asm(x86) fn void CopyWideUnits(rawmutptr<i16[-32768 32767]> destination, rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length)
     in("eax") destination,
     in("edx") source,
     in("ebx") length,
@@ -151,7 +151,7 @@ internal ffi asm(x86) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i
     "cld\nmovl %eax, %edi\nmovl %edx, %esi\nmovl %ebx, %ecx\nrep movsw"
 }
 
-internal ffi asm(arm) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i16> source, i32 length)
+internal ffi asm(arm) fn void CopyWideUnits(rawmutptr<i16[-32768 32767]> destination, rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length)
     in("r0") destination,
     in("r1") source,
     in("r2") length,
@@ -161,27 +161,27 @@ internal ffi asm(arm) fn void CopyWideUnits(rawmutptr<i16> destination, rawptr<i
 }
 
 internal fn bool TryCopyWideRange(
-    rawmutptr<i16> destination,
-    i64 capacity,
-    rawmutptr<i64> writeIndex,
-    rawptr<i16> source,
-    i64 sourceLength)
+    rawmutptr<i16[-32768 32767]> destination,
+    i64[-9223372036854775808 9223372036854775807] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writeIndex,
+    rawptr<i16[-32768 32767]> source,
+    i64[-9223372036854775808 9223372036854775807] sourceLength)
 {
     if (destination == null || writeIndex == null || source == null || sourceLength < 0) {
         return false;
     }
 
-    stack i64 index = *writeIndex;
+    stack i64[-9223372036854775808 9223372036854775807] index = *writeIndex;
     if (index < 0 || index > capacity || sourceLength > capacity - index) {
         return false;
     }
 
-    CopyWideUnits(&destination[index], source, (i32)sourceLength);
+    CopyWideUnits(&destination[index], source, (i32[-2147483648 2147483647])sourceLength);
     *writeIndex = index + sourceLength;
     return true;
 }
 
-internal fn bool HasLongPathPrefix(rawptr<i16> source, i64 sourceLength) {
+internal fn bool HasLongPathPrefix(rawptr<i16[-32768 32767]> source, i64[-9223372036854775808 9223372036854775807] sourceLength) {
     if (source == null || sourceLength < 4) {
         return false;
     }
@@ -192,7 +192,7 @@ internal fn bool HasLongPathPrefix(rawptr<i16> source, i64 sourceLength) {
         && UnsignedWide(*(&source[3])) == 92;
 }
 
-internal fn bool IsDriveAbsoluteWidePath(rawptr<i16> source, i64 sourceLength) {
+internal fn bool IsDriveAbsoluteWidePath(rawptr<i16[-32768 32767]> source, i64[-9223372036854775808 9223372036854775807] sourceLength) {
     if (source == null || sourceLength < 3) {
         return false;
     }
@@ -202,7 +202,7 @@ internal fn bool IsDriveAbsoluteWidePath(rawptr<i16> source, i64 sourceLength) {
         && IsWideDirectorySeparatorUnit(UnsignedWide(*(&source[2])));
 }
 
-internal fn bool IsUncWidePath(rawptr<i16> source, i64 sourceLength) {
+internal fn bool IsUncWidePath(rawptr<i16[-32768 32767]> source, i64[-9223372036854775808 9223372036854775807] sourceLength) {
     if (source == null || sourceLength < 2) {
         return false;
     }
@@ -212,21 +212,21 @@ internal fn bool IsUncWidePath(rawptr<i16> source, i64 sourceLength) {
 }
 
 internal fn bool TryDecodeUtf8CodePoint(
-    rawptr<i8> data,
-    i64 length,
-    rawmutptr<i64> index,
-    rawmutptr<i32> codePoint)
+    rawptr<i8[-128 127]> data,
+    i64[-9223372036854775808 9223372036854775807] length,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> index,
+    rawmutptr<i32[-2147483648 2147483647]> codePoint)
 {
     if (data == null || index == null || codePoint == null) {
         return false;
     }
 
-    stack i64 readIndex = *index;
+    stack i64[-9223372036854775808 9223372036854775807] readIndex = *index;
     if (readIndex < 0 || readIndex >= length) {
         return false;
     }
 
-    stack i32 first = UnsignedByte(*(&data[readIndex]));
+    stack i32[-2147483648 2147483647] first = UnsignedByte(*(&data[readIndex]));
     if (first <= 127) {
         *index = readIndex + 1;
         *codePoint = first;
@@ -238,12 +238,12 @@ internal fn bool TryDecodeUtf8CodePoint(
             return false;
         }
 
-        stack i8 secondRaw = *(&data[readIndex + 1]);
+        stack i8[-128 127] secondRaw = *(&data[readIndex + 1]);
         if (!IsUtf8ContinuationByte(secondRaw)) {
             return false;
         }
 
-        stack i32 second = UnsignedByte(secondRaw);
+        stack i32[-2147483648 2147483647] second = UnsignedByte(secondRaw);
         *index = readIndex + 2;
         *codePoint = ((first & 31) << 6) | (second & 63);
         return true;
@@ -254,14 +254,14 @@ internal fn bool TryDecodeUtf8CodePoint(
             return false;
         }
 
-        stack i8 secondRaw = *(&data[readIndex + 1]);
-        stack i8 thirdRaw = *(&data[readIndex + 2]);
+        stack i8[-128 127] secondRaw = *(&data[readIndex + 1]);
+        stack i8[-128 127] thirdRaw = *(&data[readIndex + 2]);
         if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw)) {
             return false;
         }
 
-        stack i32 second = UnsignedByte(secondRaw);
-        stack i32 third = UnsignedByte(thirdRaw);
+        stack i32[-2147483648 2147483647] second = UnsignedByte(secondRaw);
+        stack i32[-2147483648 2147483647] third = UnsignedByte(thirdRaw);
         if (first == 224 && second < 160) {
             return false;
         }
@@ -282,18 +282,18 @@ internal fn bool TryDecodeUtf8CodePoint(
             return false;
         }
 
-        stack i8 secondRaw = *(&data[readIndex + 1]);
-        stack i8 thirdRaw = *(&data[readIndex + 2]);
-        stack i8 fourthRaw = *(&data[readIndex + 3]);
+        stack i8[-128 127] secondRaw = *(&data[readIndex + 1]);
+        stack i8[-128 127] thirdRaw = *(&data[readIndex + 2]);
+        stack i8[-128 127] fourthRaw = *(&data[readIndex + 3]);
         if (!IsUtf8ContinuationByte(secondRaw)
             || !IsUtf8ContinuationByte(thirdRaw)
             || !IsUtf8ContinuationByte(fourthRaw)) {
             return false;
         }
 
-        stack i32 second = UnsignedByte(secondRaw);
-        stack i32 third = UnsignedByte(thirdRaw);
-        stack i32 fourth = UnsignedByte(fourthRaw);
+        stack i32[-2147483648 2147483647] second = UnsignedByte(secondRaw);
+        stack i32[-2147483648 2147483647] third = UnsignedByte(thirdRaw);
+        stack i32[-2147483648 2147483647] fourth = UnsignedByte(fourthRaw);
         if (first == 240 && second < 144) {
             return false;
         }
@@ -314,50 +314,50 @@ internal fn bool TryDecodeUtf8CodePoint(
 }
 
 internal fn bool TryAppendWideCodePoint(
-    rawmutptr<i16> destination,
-    i64 capacity,
-    rawmutptr<i64> writeIndex,
-    i32 codePoint)
+    rawmutptr<i16[-32768 32767]> destination,
+    i64[-9223372036854775808 9223372036854775807] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writeIndex,
+    i32[-2147483648 2147483647] codePoint)
 {
-    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
     if (scalar == 0) {
         return false;
     }
 
     if (scalar <= 65535) {
-        return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16)scalar);
+        return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[-32768 32767])scalar);
     }
 
-    stack i32 adjusted = scalar - 65536;
-    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16)((adjusted >> 10) + 55296))) {
+    stack i32[-2147483648 2147483647] adjusted = scalar - 65536;
+    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[-32768 32767])((adjusted >> 10) + 55296))) {
         return false;
     }
 
-    return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16)((adjusted & 1023) + 56320));
+    return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[-32768 32767])((adjusted & 1023) + 56320));
 }
 
 internal fn bool TryDecodeUtf8PathToWide(
-    rawmutptr<i16> destination,
-    i64 capacity,
+    rawmutptr<i16[-32768 32767]> destination,
+    i64[-9223372036854775808 9223372036854775807] capacity,
     ascii path,
-    rawmutptr<i64> writtenLength)
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength)
 {
     if (destination == null || writtenLength == null || capacity <= 0) {
         return false;
     }
 
-    stack i64 length = System.Text.AsciiLength(path);
+    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.AsciiLength(path);
     stack ascii fullPath = path[0, length];
-    stack rawptr<i8> data = System.Text.AsciiData(fullPath);
+    stack rawptr<i8[-128 127]> data = System.Text.AsciiData(fullPath);
     if (length > 0 && data == null) {
         return false;
     }
 
-    stack mut i64 readIndex = 0;
-    stack mut i64 writeIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
 
     while willexit (readIndex < length) {
-        stack i32 codePoint = 0;
+        stack i32[-2147483648 2147483647] codePoint = 0;
         if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint)) {
             return false;
         }
@@ -376,11 +376,11 @@ internal fn bool TryDecodeUtf8PathToWide(
 }
 
 internal fn bool TryBuildAbsoluteWindowsWidePath(
-    rawmutptr<i16> destination,
-    i64 capacity,
-    rawptr<i16> source,
-    i64 sourceLength,
-    rawmutptr<i64> writtenLength)
+    rawmutptr<i16[-32768 32767]> destination,
+    i64[-9223372036854775808 9223372036854775807] capacity,
+    rawptr<i16[-32768 32767]> source,
+    i64[-9223372036854775808 9223372036854775807] sourceLength,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength)
 {
     if (destination == null || writtenLength == null || source == null) {
         return false;
@@ -389,7 +389,7 @@ internal fn bool TryBuildAbsoluteWindowsWidePath(
     if (IsDriveAbsoluteWidePath(source, sourceLength)
         || IsUncWidePath(source, sourceLength)
         || HasLongPathPrefix(source, sourceLength)) {
-        stack mut i64 directLength = 0;
+        stack mut i64[-9223372036854775808 9223372036854775807] directLength = 0;
         if (!TryCopyWideRange(destination, capacity, &directLength, source, sourceLength)) {
             return false;
         }
@@ -398,13 +398,13 @@ internal fn bool TryBuildAbsoluteWindowsWidePath(
         return true;
     }
 
-    stack mut i16[4096] currentDirectory;
-    stack i32 currentDirectoryLength = GetCurrentDirectoryW(4096, &currentDirectory[0]);
+    stack mut i16[-32768 32767][4096] currentDirectory;
+    stack i32[-2147483648 2147483647] currentDirectoryLength = GetCurrentDirectoryW(4096, &currentDirectory[0]);
     if (currentDirectoryLength <= 0 || currentDirectoryLength >= 4096) {
         return false;
     }
 
-    stack mut i64 writeIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
     if (sourceLength > 0 && IsWideDirectorySeparatorUnit(UnsignedWide(*(&source[0])))) {
         if (HasLongPathPrefix(&currentDirectory[0], currentDirectoryLength)) {
             if (currentDirectoryLength < 6
@@ -442,7 +442,7 @@ internal fn bool TryBuildAbsoluteWindowsWidePath(
     }
 
     if (writeIndex > 0 && !IsWideDirectorySeparatorUnit(UnsignedWide(*(&destination[writeIndex - 1])))) {
-        if (!TryAppendWideCodeUnit(destination, capacity, &writeIndex, (i16)92)) {
+        if (!TryAppendWideCodeUnit(destination, capacity, &writeIndex, (i16[-32768 32767])92)) {
             return false;
         }
     }
@@ -455,14 +455,14 @@ internal fn bool TryBuildAbsoluteWindowsWidePath(
     return true;
 }
 
-internal fn bool TryBuildLongWindowsWidePath(rawmutptr<i16> destination, i64 capacity, rawptr<i16> source, i64 sourceLength) {
+internal fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, rawptr<i16[-32768 32767]> source, i64[-9223372036854775808 9223372036854775807] sourceLength) {
     if (destination == null || capacity <= 0 || source == null) {
         return false;
     }
 
-    stack mut i16[4096] absolutePath;
-    stack rawptr<i16> absoluteSource = source;
-    stack i64 absoluteLength = sourceLength;
+    stack mut i16[-32768 32767][4096] absolutePath;
+    stack rawptr<i16[-32768 32767]> absoluteSource = source;
+    stack i64[-9223372036854775808 9223372036854775807] absoluteLength = sourceLength;
 
     if (!HasLongPathPrefix(source, sourceLength)
         && !IsDriveAbsoluteWidePath(source, sourceLength)
@@ -474,21 +474,21 @@ internal fn bool TryBuildLongWindowsWidePath(rawmutptr<i16> destination, i64 cap
         absoluteSource = &absolutePath[0];
     }
 
-    stack mut i64 writeIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
     if (HasLongPathPrefix(absoluteSource, absoluteLength)) {
         if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, absoluteSource, absoluteLength)) {
             return false;
         }
     }
     else if (IsUncWidePath(absoluteSource, absoluteLength)) {
-        if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)63)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)85)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)78)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)67)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)) {
+        if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])63)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])85)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])78)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])67)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)) {
             return false;
         }
 
@@ -497,10 +497,10 @@ internal fn bool TryBuildLongWindowsWidePath(rawmutptr<i16> destination, i64 cap
         }
     }
     else if (IsDriveAbsoluteWidePath(absoluteSource, absoluteLength)) {
-        if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)63)
-            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16)92)) {
+        if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])63)
+            || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[-32768 32767])92)) {
             return false;
         }
 
@@ -516,13 +516,13 @@ internal fn bool TryBuildLongWindowsWidePath(rawmutptr<i16> destination, i64 cap
     return true;
 }
 
-internal fn bool TryBuildWindowsWidePath(rawmutptr<i16> destination, i64 capacity, ascii path) {
+internal fn bool TryBuildWindowsWidePath(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, ascii path) {
     if (destination == null || capacity <= 0) {
         return false;
     }
 
-    stack mut i16[4096] normalizedPath;
-    stack mut i64 normalizedLength = 0;
+    stack mut i16[-32768 32767][4096] normalizedPath;
+    stack mut i64[-9223372036854775808 9223372036854775807] normalizedLength = 0;
     if (!TryDecodeUtf8PathToWide(&normalizedPath[0], 4096, path, &normalizedLength)) {
         return false;
     }
@@ -536,7 +536,7 @@ internal fn bool TryBuildWindowsWidePath(rawmutptr<i16> destination, i64 capacit
         return false;
     }
 
-    stack mut i64 writeIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
     if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, &normalizedPath[0], normalizedLength)) {
         return false;
     }
@@ -545,47 +545,47 @@ internal fn bool TryBuildWindowsWidePath(rawmutptr<i16> destination, i64 capacit
     return true;
 }
 
-internal fn void WriteUtf8CodePointToPointer(rawmutptr<i8> destination, rawmutptr<i64> writeIndex, i32 codePoint) {
-    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
-    stack i64 index = *writeIndex;
+internal fn void WriteUtf8CodePointToPointer(rawmutptr<i8[-128 127]> destination, rawmutptr<i64[-9223372036854775808 9223372036854775807]> writeIndex, i32[-2147483648 2147483647] codePoint) {
+    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64[-9223372036854775808 9223372036854775807] index = *writeIndex;
 
     if (scalar <= 127) {
-        *(&destination[index]) = (i8)scalar;
+        *(&destination[index]) = (i8[-128 127])scalar;
         *writeIndex = index + 1;
         return;
     }
 
     if (scalar <= 2047) {
-        *(&destination[index]) = (i8)((scalar >> 6) | 192);
-        *(&destination[index + 1]) = (i8)((scalar & 63) | 128);
+        *(&destination[index]) = (i8[-128 127])((scalar >> 6) | 192);
+        *(&destination[index + 1]) = (i8[-128 127])((scalar & 63) | 128);
         *writeIndex = index + 2;
         return;
     }
 
     if (scalar <= 65535) {
-        *(&destination[index]) = (i8)((scalar >> 12) | 224);
-        *(&destination[index + 1]) = (i8)(((scalar >> 6) & 63) | 128);
-        *(&destination[index + 2]) = (i8)((scalar & 63) | 128);
+        *(&destination[index]) = (i8[-128 127])((scalar >> 12) | 224);
+        *(&destination[index + 1]) = (i8[-128 127])(((scalar >> 6) & 63) | 128);
+        *(&destination[index + 2]) = (i8[-128 127])((scalar & 63) | 128);
         *writeIndex = index + 3;
         return;
     }
 
-    *(&destination[index]) = (i8)((scalar >> 18) | 240);
-    *(&destination[index + 1]) = (i8)(((scalar >> 12) & 63) | 128);
-    *(&destination[index + 2]) = (i8)(((scalar >> 6) & 63) | 128);
-    *(&destination[index + 3]) = (i8)((scalar & 63) | 128);
+    *(&destination[index]) = (i8[-128 127])((scalar >> 18) | 240);
+    *(&destination[index + 1]) = (i8[-128 127])(((scalar >> 12) & 63) | 128);
+    *(&destination[index + 2]) = (i8[-128 127])(((scalar >> 6) & 63) | 128);
+    *(&destination[index + 3]) = (i8[-128 127])((scalar & 63) | 128);
     *writeIndex = index + 4;
 }
 
-internal fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16> source, i32 length) {
+internal fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length) {
     if (destination == null || source == null || length < 0) {
         ResetAsciiDestination(destination);
         return false;
     }
 
-    stack rawmutptr<i8> data = (*destination).Data;
-    stack i64 capacity = (*destination).Capacity;
-    stack i64 required = (i64)length;
+    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
+    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack i64[-9223372036854775808 9223372036854775807] required = (i64[-9223372036854775808 9223372036854775807])length;
     if (required > capacity) {
         ResetAsciiDestination(destination);
         return false;
@@ -596,16 +596,16 @@ internal fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16> sourc
         return false;
     }
 
-    stack mut i64 readIndex = 0;
-    stack mut i64 writeIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
     while willexit (readIndex < required) {
-        stack i32 first = UnsignedWide(*(&source[readIndex]));
-        stack i32 codePoint = first;
+        stack i32[-2147483648 2147483647] first = UnsignedWide(*(&source[readIndex]));
+        stack i32[-2147483648 2147483647] codePoint = first;
         readIndex += 1;
 
         if (55296 <= first && first <= 56319) {
             if (readIndex < required) {
-                stack i32 second = UnsignedWide(*(&source[readIndex]));
+                stack i32[-2147483648 2147483647] second = UnsignedWide(*(&source[readIndex]));
                 if (56320 <= second && second <= 57343) {
                     readIndex += 1;
                     codePoint = (((first - 55296) << 10) | (second - 56320)) + 65536;
@@ -622,7 +622,7 @@ internal fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16> sourc
             codePoint = 65533;
         }
 
-        stack i64 encodedLength = Utf8EncodedLength(codePoint);
+        stack i64[-9223372036854775808 9223372036854775807] encodedLength = Utf8EncodedLength(codePoint);
         if (writeIndex + encodedLength > capacity) {
             ResetAsciiDestination(destination);
             return false;
@@ -639,7 +639,7 @@ internal fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16> sourc
     return true;
 }
 
-internal fn i32 WriteBufferToHandle(rawptr<i8> handle, rawptr<i8> buffer, i64 length) {
+internal fn i32[-2147483648 2147483647] WriteBufferToHandle(rawptr<i8[-128 127]> handle, rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] length) {
     if (handle == null) {
         return -1;
     }
@@ -652,14 +652,14 @@ internal fn i32 WriteBufferToHandle(rawptr<i8> handle, rawptr<i8> buffer, i64 le
         return -1;
     }
 
-    stack i64 remaining = length;
-    stack i64 written = 0;
+    stack i64[-9223372036854775808 9223372036854775807] remaining = length;
+    stack i64[-9223372036854775808 9223372036854775807] written = 0;
 
     while willexit (remaining > 0) {
-        stack i32 request = RequestedChunkLength(remaining);
-        stack i32 chunkWritten = 0;
-        stack rawptr<i8> chunk = &buffer[written];
-        stack i32 result = WriteFile(handle, chunk, request, &chunkWritten, null);
+        stack i32[-2147483648 2147483647] request = RequestedChunkLength(remaining);
+        stack i32[-2147483648 2147483647] chunkWritten = 0;
+        stack rawptr<i8[-128 127]> chunk = &buffer[written];
+        stack i32[-2147483648 2147483647] result = WriteFile(handle, chunk, request, &chunkWritten, null);
         if (result == 0) {
             return NegativeLastError();
         }
@@ -675,7 +675,7 @@ internal fn i32 WriteBufferToHandle(rawptr<i8> handle, rawptr<i8> buffer, i64 le
     return 0;
 }
 
-internal fn i32 NormalizeUnicodeCodePoint(i32 codePoint) {
+internal fn i32[-2147483648 2147483647] NormalizeUnicodeCodePoint(i32[-2147483648 2147483647] codePoint) {
     if (codePoint < 0) {
         return 65533;
     }
@@ -691,8 +691,8 @@ internal fn i32 NormalizeUnicodeCodePoint(i32 codePoint) {
     return codePoint;
 }
 
-internal fn i64 Utf8EncodedLength(i32 codePoint) {
-    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
+internal fn i64[-9223372036854775808 9223372036854775807] Utf8EncodedLength(i32[-2147483648 2147483647] codePoint) {
+    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
 
     if (scalar <= 127) {
         return 1;
@@ -709,45 +709,45 @@ internal fn i64 Utf8EncodedLength(i32 codePoint) {
     return 4;
 }
 
-internal fn void AppendUtf8CodePoint(rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer, i32 codePoint) {
-    stack i32 scalar = NormalizeUnicodeCodePoint(codePoint);
-    stack i64 writePos = *(&(*buffer).WritePos);
+internal fn void AppendUtf8CodePoint(rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer, i32[-2147483648 2147483647] codePoint) {
+    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64[-9223372036854775808 9223372036854775807] writePos = *(&(*buffer).WritePos);
 
     if (scalar <= 127) {
-        *(&(*buffer).Storage[writePos]) = (i8)scalar;
+        *(&(*buffer).Storage[writePos]) = (i8[-128 127])scalar;
         *(&(*buffer).WritePos) = writePos + 1;
         return;
     }
 
     if (scalar <= 2047) {
-        *(&(*buffer).Storage[writePos]) = (i8)((scalar >> 6) | 192);
-        *(&(*buffer).Storage[writePos + 1]) = (i8)((scalar & 63) | 128);
+        *(&(*buffer).Storage[writePos]) = (i8[-128 127])((scalar >> 6) | 192);
+        *(&(*buffer).Storage[writePos + 1]) = (i8[-128 127])((scalar & 63) | 128);
         *(&(*buffer).WritePos) = writePos + 2;
         return;
     }
 
     if (scalar <= 65535) {
-        *(&(*buffer).Storage[writePos]) = (i8)((scalar >> 12) | 224);
-        *(&(*buffer).Storage[writePos + 1]) = (i8)(((scalar >> 6) & 63) | 128);
-        *(&(*buffer).Storage[writePos + 2]) = (i8)((scalar & 63) | 128);
+        *(&(*buffer).Storage[writePos]) = (i8[-128 127])((scalar >> 12) | 224);
+        *(&(*buffer).Storage[writePos + 1]) = (i8[-128 127])(((scalar >> 6) & 63) | 128);
+        *(&(*buffer).Storage[writePos + 2]) = (i8[-128 127])((scalar & 63) | 128);
         *(&(*buffer).WritePos) = writePos + 3;
         return;
     }
 
-    *(&(*buffer).Storage[writePos]) = (i8)((scalar >> 18) | 240);
-    *(&(*buffer).Storage[writePos + 1]) = (i8)(((scalar >> 12) & 63) | 128);
-    *(&(*buffer).Storage[writePos + 2]) = (i8)(((scalar >> 6) & 63) | 128);
-    *(&(*buffer).Storage[writePos + 3]) = (i8)((scalar & 63) | 128);
+    *(&(*buffer).Storage[writePos]) = (i8[-128 127])((scalar >> 18) | 240);
+    *(&(*buffer).Storage[writePos + 1]) = (i8[-128 127])(((scalar >> 12) & 63) | 128);
+    *(&(*buffer).Storage[writePos + 2]) = (i8[-128 127])(((scalar >> 6) & 63) | 128);
+    *(&(*buffer).Storage[writePos + 3]) = (i8[-128 127])((scalar & 63) | 128);
     *(&(*buffer).WritePos) = writePos + 4;
 }
 
-internal fn i32 FlushEncodedWriteBuffer(rawptr<i8> handle, rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer) {
-    stack i64 length = *(&(*buffer).WritePos);
+internal fn i32[-2147483648 2147483647] FlushEncodedWriteBuffer(rawptr<i8[-128 127]> handle, rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer) {
+    stack i64[-9223372036854775808 9223372036854775807] length = *(&(*buffer).WritePos);
     if (length <= 0) {
         return 0;
     }
 
-    stack i32 status = WriteBufferToHandle(handle, &(*buffer).Storage[0], length);
+    stack i32[-2147483648 2147483647] status = WriteBufferToHandle(handle, &(*buffer).Storage[0], length);
     if (status == 0) {
         *(&(*buffer).ReadPos) = 0;
         *(&(*buffer).WritePos) = 0;
@@ -756,33 +756,33 @@ internal fn i32 FlushEncodedWriteBuffer(rawptr<i8> handle, rawmutptr<System.Runt
     return status;
 }
 
-internal fn i32 WriteAsciiToHandle(rawptr<i8> handle, ascii text) {
-    stack i64 length = System.Text.AsciiLength(text);
+internal fn i32[-2147483648 2147483647] WriteAsciiToHandle(rawptr<i8[-128 127]> handle, ascii text) {
+    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.AsciiLength(text);
     stack ascii view = text[0, length];
     return WriteBufferToHandle(handle, System.Text.AsciiData(view), length);
 }
 
-internal fn i32 WriteUnicodeToHandle(rawptr<i8> handle, unicode text) {
+internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]> handle, unicode text) {
     if (handle == null) {
         return -1;
     }
 
-    stack i64 length = System.Text.UnicodeLength(text);
+    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.UnicodeLength(text);
     if (length <= 0) {
         return 0;
     }
 
     stack mut System.Runtime.Buffer.ByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.ByteBuffer4096();
-    stack mut i64 index = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
 
     while willexit (index < length) {
         stack unicode unit = text[index, 1];
-        stack rawptr<i32> data = System.Text.UnicodeData(unit);
-        stack i32 codePoint = *data;
-        stack i64 required = Utf8EncodedLength(codePoint);
+        stack rawptr<i32[-2147483648 2147483647]> data = System.Text.UnicodeData(unit);
+        stack i32[-2147483648 2147483647] codePoint = *data;
+        stack i64[-9223372036854775808 9223372036854775807] required = Utf8EncodedLength(codePoint);
 
         if (utf8Buffer.Writable() < required) {
-            stack i32 flushStatus = FlushEncodedWriteBuffer(handle, &utf8Buffer);
+            stack i32[-2147483648 2147483647] flushStatus = FlushEncodedWriteBuffer(handle, &utf8Buffer);
             if (flushStatus != 0) {
                 return flushStatus;
             }
@@ -795,13 +795,13 @@ internal fn i32 WriteUnicodeToHandle(rawptr<i8> handle, unicode text) {
     return FlushEncodedWriteBuffer(handle, &utf8Buffer);
 }
 
-internal fn rawptr<i8> OpenFileWithDisposition(ascii path, i32 desiredAccess, i32 creationDisposition) {
-    stack mut i16[4096] pathBuffer;
+internal fn rawptr<i8[-128 127]> OpenFileWithDisposition(ascii path, i32[-2147483648 2147483647] desiredAccess, i32[-2147483648 2147483647] creationDisposition) {
+    stack mut i16[-32768 32767][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
         return null;
     }
 
-    stack rawmutptr<i8> handle = CreateFileW(
+    stack rawmutptr<i8[-128 127]> handle = CreateFileW(
         &pathBuffer[0],
         desiredAccess,
         WinFileShareRead | WinFileShareWrite,
@@ -814,78 +814,78 @@ internal fn rawptr<i8> OpenFileWithDisposition(ascii path, i32 desiredAccess, i3
         return null;
     }
 
-    return (rawptr<i8>)handle;
+    return (rawptr<i8[-128 127]>)handle;
 }
 
-internal fn i32 WriteStdoutAscii(ascii text) {
-    stack rawmutptr<i8> handle = GetStdHandle(WinStdOutputHandle);
+internal fn i32[-2147483648 2147483647] WriteStdoutAscii(ascii text) {
+    stack rawmutptr<i8[-128 127]> handle = GetStdHandle(WinStdOutputHandle);
     if (IsInvalidHandle(handle)) {
         return -1;
     }
 
-    return WriteAsciiToHandle((rawptr<i8>)handle, text);
+    return WriteAsciiToHandle((rawptr<i8[-128 127]>)handle, text);
 }
 
-internal fn i32 WriteStdoutUnicode(unicode text) {
-    stack rawmutptr<i8> handle = GetStdHandle(WinStdOutputHandle);
+internal fn i32[-2147483648 2147483647] WriteStdoutUnicode(unicode text) {
+    stack rawmutptr<i8[-128 127]> handle = GetStdHandle(WinStdOutputHandle);
     if (IsInvalidHandle(handle)) {
         return -1;
     }
 
-    return WriteUnicodeToHandle((rawptr<i8>)handle, text);
+    return WriteUnicodeToHandle((rawptr<i8[-128 127]>)handle, text);
 }
 
-internal fn i32 WriteStderrAscii(ascii text) {
-    stack rawmutptr<i8> handle = GetStdHandle(WinStdErrorHandle);
+internal fn i32[-2147483648 2147483647] WriteStderrAscii(ascii text) {
+    stack rawmutptr<i8[-128 127]> handle = GetStdHandle(WinStdErrorHandle);
     if (IsInvalidHandle(handle)) {
         return -1;
     }
 
-    return WriteAsciiToHandle((rawptr<i8>)handle, text);
+    return WriteAsciiToHandle((rawptr<i8[-128 127]>)handle, text);
 }
 
-internal fn i32 WriteStderrUnicode(unicode text) {
-    stack rawmutptr<i8> handle = GetStdHandle(WinStdErrorHandle);
+internal fn i32[-2147483648 2147483647] WriteStderrUnicode(unicode text) {
+    stack rawmutptr<i8[-128 127]> handle = GetStdHandle(WinStdErrorHandle);
     if (IsInvalidHandle(handle)) {
         return -1;
     }
 
-    return WriteUnicodeToHandle((rawptr<i8>)handle, text);
+    return WriteUnicodeToHandle((rawptr<i8[-128 127]>)handle, text);
 }
 
-internal fn rawptr<i8> OpenStdin() {
-    stack rawmutptr<i8> handle = GetStdHandle(WinStdInputHandle);
+internal fn rawptr<i8[-128 127]> OpenStdin() {
+    stack rawmutptr<i8[-128 127]> handle = GetStdHandle(WinStdInputHandle);
     if (IsInvalidHandle(handle)) {
         return null;
     }
 
-    return (rawptr<i8>)handle;
+    return (rawptr<i8[-128 127]>)handle;
 }
 
-internal fn void CloseStdin(rawptr<i8> handle) {
+internal fn void CloseStdin(rawptr<i8[-128 127]> handle) {
     return;
 }
 
-internal fn i64 ReadStdin(rawmutptr<i8> buffer, i64 capacity) {
-    stack rawmutptr<i8> handle = GetStdHandle(WinStdInputHandle);
+internal fn i64[-9223372036854775808 9223372036854775807] ReadStdin(rawmutptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] capacity) {
+    stack rawmutptr<i8[-128 127]> handle = GetStdHandle(WinStdInputHandle);
     if (IsInvalidHandle(handle) || buffer == null || capacity <= 0) {
         return 0;
     }
 
-    stack mut i32 bytesRead = 0;
-    stack i32 request = RequestedChunkLength(capacity);
+    stack mut i32[-2147483648 2147483647] bytesRead = 0;
+    stack i32[-2147483648 2147483647] request = RequestedChunkLength(capacity);
     if (request <= 0) {
         return 0;
     }
 
-    if (ReadFile((rawptr<i8>)handle, buffer, request, &bytesRead, null) == 0 || bytesRead <= 0) {
+    if (ReadFile((rawptr<i8[-128 127]>)handle, buffer, request, &bytesRead, null) == 0 || bytesRead <= 0) {
         return 0;
     }
 
-    return (i64)bytesRead;
+    return (i64[-9223372036854775808 9223372036854775807])bytesRead;
 }
 
-internal fn i32 WriteAscii(rawptr<i8> handle, ascii text) {
+internal fn i32[-2147483648 2147483647] WriteAscii(rawptr<i8[-128 127]> handle, ascii text) {
     return WriteAsciiToHandle(handle, text);
 }
 
@@ -902,40 +902,40 @@ internal finite law ascii PathSeparator() {
 }
 
 internal finite law bool IsDirectorySeparator(ascii value) {
-    stack i8 unit = *System.Text.AsciiData(value);
-    return unit == (i8)47 || unit == (i8)92;
+    stack i8[-128 127] unit = *System.Text.AsciiData(value);
+    return unit == (i8[-128 127])47 || unit == (i8[-128 127])92;
 }
 
-internal fn bool IsTerminal(rawptr<i8> handle) {
+internal fn bool IsTerminal(rawptr<i8[-128 127]> handle) {
     if (handle == null) {
         return false;
     }
 
-    stack mut i32 mode = 0;
+    stack mut i32[-2147483648 2147483647] mode = 0;
     return GetConsoleMode(handle, &mode) != 0;
 }
 
-internal fn i32 WriteUnicode(rawptr<i8> handle, unicode text) {
+internal fn i32[-2147483648 2147483647] WriteUnicode(rawptr<i8[-128 127]> handle, unicode text) {
     return WriteUnicodeToHandle(handle, text);
 }
 
-internal fn rawptr<i8> OpenFileRead(ascii path) {
+internal fn rawptr<i8[-128 127]> OpenFileRead(ascii path) {
     return OpenFileWithDisposition(path, WinGenericRead, WinOpenExisting);
 }
 
-internal fn rawptr<i8> OpenFileWrite(ascii path) {
+internal fn rawptr<i8[-128 127]> OpenFileWrite(ascii path) {
     return OpenFileWithDisposition(path, WinGenericWrite, WinCreateAlways);
 }
 
-internal fn rawptr<i8> OpenFileAppend(ascii path) {
+internal fn rawptr<i8[-128 127]> OpenFileAppend(ascii path) {
     return OpenFileWithDisposition(path, WinFileAppendData, WinOpenAlways);
 }
 
-internal fn rawptr<i8> OpenFileReadWrite(ascii path) {
+internal fn rawptr<i8[-128 127]> OpenFileReadWrite(ascii path) {
     return OpenFileWithDisposition(path, WinGenericRead | WinGenericWrite, WinOpenExisting);
 }
 
-internal fn i32 CloseFile(rawptr<i8> handle) {
+internal fn i32[-2147483648 2147483647] CloseFile(rawptr<i8[-128 127]> handle) {
     if (handle == null) {
         return 0;
     }
@@ -947,7 +947,7 @@ internal fn i32 CloseFile(rawptr<i8> handle) {
     return 0;
 }
 
-internal fn i32 FlushFile(rawptr<i8> handle) {
+internal fn i32[-2147483648 2147483647] FlushFile(rawptr<i8[-128 127]> handle) {
     if (handle == null) {
         return 0;
     }
@@ -959,14 +959,14 @@ internal fn i32 FlushFile(rawptr<i8> handle) {
     return 0;
 }
 
-internal fn i64 ReadFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+internal fn i64[-9223372036854775808 9223372036854775807] ReadFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
     if (handle == null || buffer == null || size <= 0 || count <= 0) {
         return 0;
     }
 
-    stack i64 bytesRequested = size * count;
-    stack i32 request = RequestedChunkLength(bytesRequested);
-    stack mut i32 bytesRead = 0;
+    stack i64[-9223372036854775808 9223372036854775807] bytesRequested = size * count;
+    stack i32[-2147483648 2147483647] request = RequestedChunkLength(bytesRequested);
+    stack mut i32[-2147483648 2147483647] bytesRead = 0;
     if (ReadFile(handle, buffer, request, &bytesRead, null) == 0) {
         return 0;
     }
@@ -975,17 +975,17 @@ internal fn i64 ReadFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> hand
         return 0;
     }
 
-    return ((i64)bytesRead) / size;
+    return ((i64[-9223372036854775808 9223372036854775807])bytesRead) / size;
 }
 
-internal fn i64 WriteFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle) {
+internal fn i64[-9223372036854775808 9223372036854775807] WriteFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
     if (handle == null || buffer == null || size <= 0 || count <= 0) {
         return 0;
     }
 
-    stack i64 bytesRequested = size * count;
-    stack i32 request = RequestedChunkLength(bytesRequested);
-    stack mut i32 bytesWritten = 0;
+    stack i64[-9223372036854775808 9223372036854775807] bytesRequested = size * count;
+    stack i32[-2147483648 2147483647] request = RequestedChunkLength(bytesRequested);
+    stack mut i32[-2147483648 2147483647] bytesWritten = 0;
     if (WriteFile(handle, buffer, request, &bytesWritten, null) == 0) {
         return 0;
     }
@@ -994,11 +994,11 @@ internal fn i64 WriteFile(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> han
         return 0;
     }
 
-    return ((i64)bytesWritten) / size;
+    return ((i64[-9223372036854775808 9223372036854775807])bytesWritten) / size;
 }
 
-internal fn i32 DeleteFile(ascii path) {
-    stack mut i16[4096] pathBuffer;
+internal fn i32[-2147483648 2147483647] DeleteFile(ascii path) {
+    stack mut i16[-32768 32767][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
         return -1;
     }
@@ -1010,9 +1010,9 @@ internal fn i32 DeleteFile(ascii path) {
     return 0;
 }
 
-internal fn i32 MoveFile(ascii oldPath, ascii newPath) {
-    stack mut i16[4096] oldPathBuffer;
-    stack mut i16[4096] newPathBuffer;
+internal fn i32[-2147483648 2147483647] MoveFile(ascii oldPath, ascii newPath) {
+    stack mut i16[-32768 32767][4096] oldPathBuffer;
+    stack mut i16[-32768 32767][4096] newPathBuffer;
     if (!TryBuildWindowsWidePath(&oldPathBuffer[0], 4096, oldPath)
         || !TryBuildWindowsWidePath(&newPathBuffer[0], 4096, newPath)) {
         return -1;
@@ -1026,7 +1026,7 @@ internal fn i32 MoveFile(ascii oldPath, ascii newPath) {
 }
 
 internal fn bool FileExists(ascii path) {
-    stack mut i16[4096] pathBuffer;
+    stack mut i16[-32768 32767][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
         return false;
     }
@@ -1039,15 +1039,15 @@ internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
         return false;
     }
 
-    stack rawmutptr<i8> data = (*destination).Data;
-    stack i64 capacity = (*destination).Capacity;
+    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
+    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
     if (data == null || capacity <= 0) {
         ResetAsciiDestination(destination);
         return false;
     }
 
-    stack mut i16[4096] pathBuffer;
-    stack i32 written = GetCurrentDirectoryW(4096, &pathBuffer[0]);
+    stack mut i16[-32768 32767][4096] pathBuffer;
+    stack i32[-2147483648 2147483647] written = GetCurrentDirectoryW(4096, &pathBuffer[0]);
     if (written <= 0 || written >= 4096) {
         ResetAsciiDestination(destination);
         return false;

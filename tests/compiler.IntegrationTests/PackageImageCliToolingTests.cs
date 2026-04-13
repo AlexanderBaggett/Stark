@@ -169,7 +169,7 @@ public sealed class PackageImageCliToolingTests
         """
         module Demo
 
-        public fn i32 Run() {
+        public fn i32[-2147483648 2147483647] Run() {
             return 7;
         }
         """;

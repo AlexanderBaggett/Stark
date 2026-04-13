@@ -1274,7 +1274,7 @@ internal sealed class SemanticValidator
     {
         if (pattern.VAR() is not null && pattern.Identifier() is { } capture)
         {
-            if (switchType.Kind != StarkTypeKind.Named)
+            if (!IsEnumSwitchType(switchType))
             {
                 scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
             }
@@ -1319,8 +1319,14 @@ internal sealed class SemanticValidator
         }
 
         var suffix = aggregatePattern.aggregatePatternSuffix();
-        if (suffix is null || suffix.Identifier() is not null)
+        if (suffix is null)
         {
+            return;
+        }
+
+        if (suffix.Identifier() is { } capture)
+        {
+            scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
             return;
         }
 
@@ -1380,8 +1386,14 @@ internal sealed class SemanticValidator
             return true;
         }
 
-        if (variant.IsUnit || suffix is null || suffix.Identifier() is not null)
+        if (variant.IsUnit || suffix is null)
         {
+            return true;
+        }
+
+        if (suffix.Identifier() is { } capture)
+        {
+            scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
             return true;
         }
 
@@ -1504,8 +1516,14 @@ internal sealed class SemanticValidator
         }
 
         var suffix = aggregatePattern.aggregatePatternSuffix();
-        if (suffix is null || suffix.Identifier() is not null)
+        if (suffix is null)
         {
+            return;
+        }
+
+        if (suffix.Identifier() is { } wholeCapture)
+        {
+            scope.Declare(new VariableSymbol(wholeCapture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
             return;
         }
 
@@ -1524,6 +1542,14 @@ internal sealed class SemanticValidator
     private StarkTypeSymbol ResolvePatternSimpleType(StarkParser.SimpleTypeContext simpleType)
     {
         return _typeResolver.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName);
+    }
+
+    private bool IsEnumSwitchType(StarkTypeSymbol switchType)
+    {
+        return switchType.Kind == StarkTypeKind.Named
+            && switchType.NamedType is not null
+            && _typeModel.NamedTypes.TryGetValue(switchType.NamedType, out var namedType)
+            && namedType.Kind == DeclarationKind.Enum;
     }
 
     private static bool SupportsAggregateFieldSubpattern(StarkTypeSymbol type)
@@ -1714,7 +1740,8 @@ internal sealed class SemanticValidator
             currentType = currentUsesFrozenProjectionSemantics
                 ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
                 : ProjectFrozenView(currentType, currentType.ElementType);
-            currentUsesFrozenProjectionSemantics = currentType.AccessKind == StarkAccessKind.Frozen;
+            currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
+                || currentType.AccessKind == StarkAccessKind.Frozen;
         }
 
         return new ValidationValue(
@@ -1722,7 +1749,8 @@ internal sealed class SemanticValidator
             IsAssignable: currentIsAssignable,
             RootSymbol: target.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(currentType),
-            IsIndirectStorageAccess: true);
+            IsIndirectStorageAccess: true,
+            UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics);
     }
 
     private ValidationValue ApplyMemberAccess(ValidationValue target, string memberName)
@@ -1813,7 +1841,8 @@ internal sealed class SemanticValidator
                 IsAssignable: target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen,
                 RootSymbol: target.RootSymbol,
                 NamedType: ResolveNamedTypeSymbol(projectedType),
-                IsIndirectStorageAccess: true);
+                IsIndirectStorageAccess: true,
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target));
         }
 
         var methodSourceName = $"{namedType.Name}.{memberName}";
@@ -1853,7 +1882,8 @@ internal sealed class SemanticValidator
                 targetType,
                 RootSymbol: operand.RootSymbol,
                 NamedType: ResolveNamedTypeSymbol(targetType),
-                IsIndirectStorageAccess: operand.IsIndirectStorageAccess)
+                IsIndirectStorageAccess: operand.IsIndirectStorageAccess,
+                UsesFrozenProjectionSemantics: operand.UsesFrozenProjectionSemantics)
             : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
     }
 
@@ -1924,7 +1954,7 @@ internal sealed class SemanticValidator
         }
 
         var pointeeType = UsesFrozenProjectionSemantics(operand)
-            ? StarkTypeSymbols.FreezeReachableView(operand.Type)
+            ? StarkTypeSymbols.FreezeAddressPointeeType(operand.Type)
             : operand.Type;
         var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAssignable);
         return new ValidationValue(
@@ -3052,7 +3082,8 @@ internal sealed class SemanticValidator
 
     private static bool UsesFrozenProjectionSemantics(ValidationValue value)
     {
-        return value.Type.AccessKind == StarkAccessKind.Frozen
+        return value.UsesFrozenProjectionSemantics
+            || value.Type.AccessKind == StarkAccessKind.Frozen
             || value.RootSymbol?.BindingKind == GlobalBindingKind.Const;
     }
 
@@ -3431,7 +3462,8 @@ internal sealed class SemanticValidator
         bool IsIndirectStorageAccess = false,
         string? NamespaceName = null,
         ValidationValue? Receiver = null,
-        EnumConstructorBinding? EnumConstructor = null);
+        EnumConstructorBinding? EnumConstructor = null,
+        bool UsesFrozenProjectionSemantics = false);
 
     private sealed record EnumConstructorBinding(
         string Name,

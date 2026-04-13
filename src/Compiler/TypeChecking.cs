@@ -1610,7 +1610,8 @@ internal sealed class TypeChecker
         var suffix = aggregatePattern.aggregatePatternSuffix();
         if (suffix is null || suffix.Identifier() is not null)
         {
-            return false;
+            coveragePattern = CreateMatchAllAggregateCoveragePattern(namedType);
+            return true;
         }
 
         var fieldPatterns = suffix.pattern();
@@ -1729,9 +1730,24 @@ internal sealed class TypeChecker
             return true;
         }
 
-        if (suffix is null || suffix.Identifier() is not null)
+        if (suffix is null)
         {
             return false;
+        }
+
+        if (suffix.Identifier() is not null)
+        {
+            coveragePattern = new EnumCoveragePattern(
+                enumType.Name,
+                variant.Name,
+                variant.Fields
+                    .Select(static _ => new AggregateCoverageField(
+                        AggregateCoverageFieldKind.Wildcard,
+                        LiteralKey: null,
+                        NestedAggregatePattern: null,
+                        NestedEnumPattern: null))
+                    .ToArray());
+            return true;
         }
 
         var fieldPatterns = suffix.pattern();
@@ -2175,9 +2191,30 @@ internal sealed class TypeChecker
         return pattern.Fields.All(static field => field.Kind == AggregateCoverageFieldKind.Wildcard);
     }
 
+    private static AggregateCoveragePattern CreateMatchAllAggregateCoveragePattern(NamedTypeSymbol namedType)
+    {
+        return new AggregateCoveragePattern(
+            namedType.Name,
+            namedType.OrderedFields
+                .Select(static _ => new AggregateCoverageField(
+                    AggregateCoverageFieldKind.Wildcard,
+                    LiteralKey: null,
+                    NestedAggregatePattern: null,
+                    NestedEnumPattern: null))
+                .ToArray());
+    }
+
     private static bool IsMatchAllEnumPattern(EnumCoveragePattern pattern)
     {
         return pattern.Fields.All(static field => field.Kind == AggregateCoverageFieldKind.Wildcard);
+    }
+
+    private bool IsEnumSwitchType(StarkTypeSymbol switchType)
+    {
+        return switchType.Kind == StarkTypeKind.Named
+            && switchType.NamedType is not null
+            && _namedTypes.TryGetValue(switchType.NamedType, out var namedType)
+            && namedType.Kind == DeclarationKind.Enum;
     }
 
     private static string DescribeSwitchLabel(StarkParser.SwitchLabelContext label)
@@ -2208,11 +2245,11 @@ internal sealed class TypeChecker
 
         if (pattern.VAR() is not null)
         {
-            if (switchType.Kind == StarkTypeKind.Named)
+            if (IsEnumSwitchType(switchType))
             {
                 ReportError(
                     "STK3008",
-                    $"Switch over '{switchType.DisplayName}' currently supports exact-type aggregate patterns with scalar field subpatterns, plus '_' and 'default'. Whole-value capture patterns remain unsupported for named switch values.",
+                    $"Switch over enum '{switchType.DisplayName}' currently supports case patterns, '_', and 'default'. Whole-value capture patterns remain unsupported for enum switch values.",
                     pattern);
                 return;
             }
@@ -2315,10 +2352,7 @@ internal sealed class TypeChecker
 
         if (suffix.Identifier() is not null)
         {
-            ReportError(
-                "STK3008",
-                $"Switch over '{switchType.DisplayName}' currently supports field-level aggregate patterns, but whole-value typed captures like '{aggregatePattern.GetText()}' are not implemented yet.",
-                aggregatePattern);
+            scope.Declare(new VariableSymbol(suffix.Identifier().GetText(), switchType, IsMutable: false, IsConstant: false));
             return;
         }
 
@@ -2467,10 +2501,7 @@ internal sealed class TypeChecker
 
         if (suffix.Identifier() is not null)
         {
-            ReportError(
-                "STK3008",
-                $"Enum case pattern '{context.GetText()}' must currently bind payload subpatterns directly, not as a whole-value typed capture.",
-                context);
+            scope.Declare(new VariableSymbol(suffix.Identifier().GetText(), switchType, IsMutable: false, IsConstant: false));
             return;
         }
 
@@ -2768,10 +2799,7 @@ internal sealed class TypeChecker
 
         if (suffix.Identifier() is not null)
         {
-            ReportError(
-                "STK3008",
-                $"Nested aggregate switch pattern '{aggregatePattern.GetText()}' for field '{field.Name}' must currently use field subpatterns, not a whole-value typed capture.",
-                aggregatePattern);
+            scope.Declare(new VariableSymbol(suffix.Identifier().GetText(), field.Type, IsMutable: false, IsConstant: false));
             return;
         }
 
@@ -4371,7 +4399,8 @@ internal sealed class TypeChecker
                 currentType = currentUsesFrozenProjectionSemantics
                     ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
                     : ProjectFrozenView(currentType, currentType.ElementType);
-                currentUsesFrozenProjectionSemantics = currentType.AccessKind == StarkAccessKind.Frozen;
+                currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
+                    || currentType.AccessKind == StarkAccessKind.Frozen;
                 continue;
             }
 
@@ -4379,7 +4408,8 @@ internal sealed class TypeChecker
             {
                 currentIsAssignable &= currentType.IsMutablePointer;
                 currentType = currentType.ElementType;
-                currentUsesFrozenProjectionSemantics = currentType.AccessKind == StarkAccessKind.Frozen;
+                currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
+                    || currentType.AccessKind == StarkAccessKind.Frozen;
                 continue;
             }
 
@@ -4401,7 +4431,8 @@ internal sealed class TypeChecker
                 ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, "indexed element")
                 : target.Type.AccessKind == StarkAccessKind.Frozen
                     ? DescribeFrozenMutationError("indexed element")
-                : target.AssignmentErrorMessage);
+                : target.AssignmentErrorMessage,
+            UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics);
     }
 
     private ExpressionBinding ApplyMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -4526,7 +4557,8 @@ internal sealed class TypeChecker
                     ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, $"member '{memberName}'")
                     : target.Type.AccessKind == StarkAccessKind.Frozen
                         ? DescribeFrozenMutationError($"member '{memberName}'")
-                    : target.AssignmentErrorMessage);
+                    : target.AssignmentErrorMessage,
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target));
         }
 
         var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
@@ -5385,7 +5417,7 @@ internal sealed class TypeChecker
         }
 
         var pointeeType = UsesFrozenProjectionSemantics(operand)
-            ? StarkTypeSymbols.FreezeReachableView(operand.Type)
+            ? StarkTypeSymbols.FreezeAddressPointeeType(operand.Type)
             : operand.Type;
         var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAssignable);
         return new ExpressionBinding(pointerType, NamedType: ResolveNamedTypeSymbol(pointerType));
@@ -5674,7 +5706,7 @@ internal sealed class TypeChecker
 
         if (target.Kind == StarkTypeKind.Integer
             && source.Kind == StarkTypeKind.Integer
-            && (source.BitWidth > target.BitWidth || !IsRangeContained(source.RangeMin, source.RangeMax, target.RangeMin, target.RangeMax)))
+            && (source.BitWidth > target.BitWidth || !HasContainedEffectiveIntegerRange(source, target)))
         {
             return " An explicit narrowing conversion is required.";
         }
@@ -5735,7 +5767,8 @@ internal sealed class TypeChecker
 
     private static bool UsesFrozenProjectionSemantics(ExpressionBinding binding)
     {
-        return binding.Type.AccessKind == StarkAccessKind.Frozen
+        return binding.UsesFrozenProjectionSemantics
+            || binding.Type.AccessKind == StarkAccessKind.Frozen
             || binding.RootGlobalBindingKind == GlobalBindingKind.Const;
     }
 
@@ -5777,7 +5810,7 @@ internal sealed class TypeChecker
                 return false;
             }
 
-            return IsRangeContained(source.RangeMin, source.RangeMax, target.RangeMin, target.RangeMax);
+            return HasContainedEffectiveIntegerRange(source, target);
         }
 
         if (target.Kind == StarkTypeKind.Float && source.Kind == StarkTypeKind.Float)
@@ -6079,6 +6112,38 @@ internal sealed class TypeChecker
         }
 
         return sourceMin >= targetMin && sourceMax <= targetMax;
+    }
+
+    private static bool HasContainedEffectiveIntegerRange(StarkTypeSymbol source, StarkTypeSymbol target)
+    {
+        if (!TryGetEffectiveIntegerRange(source, out var sourceMin, out var sourceMax)
+            || !TryGetEffectiveIntegerRange(target, out var targetMin, out var targetMax))
+        {
+            return false;
+        }
+
+        return IsRangeContained(sourceMin, sourceMax, targetMin, targetMax);
+    }
+
+    private static bool TryGetEffectiveIntegerRange(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        if (type.RangeMin is not null && type.RangeMax is not null)
+        {
+            min = type.RangeMin.Value;
+            max = type.RangeMax.Value;
+            return true;
+        }
+
+        min = -(BigInteger.One << (bitWidth - 1));
+        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
+        return true;
     }
 
     private static StarkTypeSymbol FindCommonType(StarkTypeSymbol left, StarkTypeSymbol right)
@@ -7004,7 +7069,8 @@ internal sealed class TypeChecker
         string? AssignmentErrorMessage = null,
         EnumConstructorBinding? EnumConstructor = null,
         string? TextLiteral = null,
-        TextLiteralKind? TextLiteralKind = null);
+        TextLiteralKind? TextLiteralKind = null,
+        bool UsesFrozenProjectionSemantics = false);
 
     private sealed record EnumConstructorBinding(
         string Name,

@@ -396,9 +396,7 @@ internal static partial class PackageImageLoader
             "ascii" => "ascii",
             "unicode" => "unicode",
             "null" => "null",
-            "integer" => type.RangeMin is not null && type.RangeMax is not null
-                ? $"i{type.BitWidth}[{type.RangeMin} {type.RangeMax}]"
-                : $"i{type.BitWidth}",
+            "integer" => PackageImageIntegerTypeText.Render(type.BitWidth, type.RangeMin, type.RangeMax),
             "float" => $"f{type.BitWidth}",
             "rawpointer" => $"{(type.IsMutablePointer ? "rawmutptr" : "rawptr")}<{RenderTypeReference(type.ElementType!)}>",
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
@@ -411,5 +409,26 @@ internal static partial class PackageImageLoader
         return qualifiers.Count == 0
             ? core
             : $"{string.Join(" ", qualifiers)} {core}";
+    }
+}
+
+file static class PackageImageIntegerTypeText
+{
+    public static string Render(int? bitWidth, string? rangeMin, string? rangeMax)
+    {
+        var normalizedBitWidth = bitWidth ?? 32;
+        if (rangeMin is not null && rangeMax is not null)
+        {
+            return $"i{normalizedBitWidth}[{rangeMin} {rangeMax}]";
+        }
+
+        if (normalizedBitWidth <= 0)
+        {
+            return $"i{normalizedBitWidth}";
+        }
+
+        var min = -(BigInteger.One << (normalizedBitWidth - 1));
+        var max = (BigInteger.One << (normalizedBitWidth - 1)) - BigInteger.One;
+        return $"i{normalizedBitWidth}[{min} {max}]";
     }
 }

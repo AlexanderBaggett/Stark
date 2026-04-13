@@ -1,3 +1,5 @@
+using System.Numerics;
+using System.Text.RegularExpressions;
 using Stark.Compiler;
 using Stark.Parsing;
 
@@ -5,52 +7,84 @@ namespace compiler.PipelineTests;
 
 internal static class CompilerPipelineTestSupport
 {
-internal static IReadOnlyList<System.Numerics.BigInteger> CollectMirIntegerConstants(MidLevelIrFunction function)
-{
-    var values = new List<System.Numerics.BigInteger>();
-
-    foreach (var block in function.Blocks)
+    internal static IReadOnlyList<BigInteger> CollectMirIntegerConstants(MidLevelIrFunction function)
     {
-        foreach (var statement in block.Statements)
+        var values = new List<BigInteger>();
+
+        foreach (var block in function.Blocks)
         {
-            if (statement.Value is null)
+            foreach (var statement in block.Statements)
             {
-                continue;
+                if (statement.Value is null)
+                {
+                    continue;
+                }
+
+                switch (statement.Value)
+                {
+                    case MidLevelIrUseRValue { Operand: MidLevelIrIntegerConstantOperand integerOperand }:
+                        values.Add(integerOperand.Value);
+                        break;
+                    case MidLevelIrConvertRValue { Operand: MidLevelIrIntegerConstantOperand convertedOperand }:
+                        values.Add(convertedOperand.Value);
+                        break;
+                    case MidLevelIrInsertFieldRValue { Value: MidLevelIrIntegerConstantOperand fieldOperand }:
+                        values.Add(fieldOperand.Value);
+                        break;
+                }
             }
 
-            switch (statement.Value)
+            if (block.Terminator.Value is MidLevelIrIntegerConstantOperand operand)
             {
-                case MidLevelIrUseRValue { Operand: MidLevelIrIntegerConstantOperand integerOperand }:
-                    values.Add(integerOperand.Value);
-                    break;
-                case MidLevelIrConvertRValue { Operand: MidLevelIrIntegerConstantOperand convertedOperand }:
-                    values.Add(convertedOperand.Value);
-                    break;
-                case MidLevelIrInsertFieldRValue { Value: MidLevelIrIntegerConstantOperand fieldOperand }:
-                    values.Add(fieldOperand.Value);
-                    break;
+                values.Add(operand.Value);
             }
         }
 
-        if (block.Terminator.Value is MidLevelIrIntegerConstantOperand operand)
-        {
-            values.Add(operand.Value);
-        }
+        return values;
     }
 
-    return values;
-}
-
-
-internal static StarkPackageModuleManifest WithEffectiveLegacyCompilerSectionCopies(StarkPackageModuleManifest module)
-{
-    return module with
+    internal static StarkPackageModuleManifest WithEffectiveLegacyCompilerSectionCopies(StarkPackageModuleManifest module)
     {
-        TypedInterface = module.EffectiveTypedInterface,
-        CompilerFacts = module.EffectiveCompilerFacts,
-        GenericTemplates = module.EffectiveGenericTemplates
-    };
-}
+        return module with
+        {
+            TypedInterface = module.EffectiveTypedInterface,
+            CompilerFacts = module.EffectiveCompilerFacts,
+            GenericTemplates = module.EffectiveGenericTemplates
+        };
+    }
+
+    internal static string StrictIntegerSource(string text)
+    {
+        return Regex.Replace(
+            text,
+            @"\bi(?<bits>\d+)\b(?!\s*\[)",
+            static match => StrictIntegerTypeText(int.Parse(match.Groups["bits"].Value)),
+            RegexOptions.CultureInvariant);
+    }
+
+    internal static StarkPackageTypeReference SignedIntegerTypeReference(int bitWidth)
+    {
+        return new StarkPackageTypeReference(
+            "integer",
+            BitWidth: bitWidth,
+            RangeMin: SignedIntegerRangeMin(bitWidth),
+            RangeMax: SignedIntegerRangeMax(bitWidth));
+    }
+
+    private static string StrictIntegerTypeText(int bitWidth)
+    {
+        return $"i{bitWidth}[{SignedIntegerRangeMin(bitWidth)} {SignedIntegerRangeMax(bitWidth)}]";
+    }
+
+    private static string SignedIntegerRangeMin(int bitWidth)
+    {
+        return (-(BigInteger.One << (bitWidth - 1))).ToString();
+    }
+
+    private static string SignedIntegerRangeMax(int bitWidth)
+    {
+        return ((BigInteger.One << (bitWidth - 1)) - BigInteger.One).ToString();
+    }
 }
 
 internal sealed class ThrowingPass : ICompilerPass

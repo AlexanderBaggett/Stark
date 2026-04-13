@@ -11,15 +11,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32 value) {
+            fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 drop {
                     Bump(self.Value);
@@ -54,15 +54,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32 value) {
+            fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 drop {
                     Bump(self.Value);
@@ -116,12 +116,12 @@ public sealed partial class MidLevelIrLoweringTests
                         """
                         module Lib
 
-                        fn void Bump(i32 value) {
+                        fn void Bump(i32[-2147483648 2147483647] value) {
                             return;
                         }
 
                         public struct Buffer {
-                            i32 Value;
+                            i32[-2147483648 2147483647] Value;
 
                             drop {
                                 Bump(self.Value);
@@ -148,15 +148,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32 Counter = 0;
+            static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32 value) {
+            fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32 Value;
+                i32[-2147483648 2147483647] Value;
 
                 drop {
                     Bump(self.Value);

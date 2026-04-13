@@ -25,8 +25,8 @@ public sealed class PackageImageTypedArrayInitializerIntegrationTests
                 """
                 module Facade
 
-                public fn i32 SumArray<T>(i32 left, i32 right, T tag) {
-                    stack i32[2] values = { left, right };
+                public fn i32[-2147483648 2147483647] SumArray<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                    stack i32[-2147483648 2147483647][2] values = { left, right };
                     return values[0] + values[1];
                 }
                 """);
@@ -51,7 +51,7 @@ public sealed class PackageImageTypedArrayInitializerIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32 main() {
+                export ffi fn i32[-2147483648 2147483647] main() {
                     return Facade.SumArray(4, 7, 0);
                 }
                 """);

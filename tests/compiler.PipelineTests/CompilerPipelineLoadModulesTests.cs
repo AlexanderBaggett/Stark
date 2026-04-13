@@ -21,7 +21,7 @@ public sealed class CompilerPipelineLoadModulesTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn retborrow Box Echo(retborrow Box value) {
@@ -80,7 +80,7 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn i32 Run(Facade.Box value) {
+                    fn i32[-2147483648 2147483647] Run(Facade.Box value) {
                         return value.Value;
                     }
                     """,
@@ -135,7 +135,7 @@ public sealed class CompilerPipelineLoadModulesTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Touch(borrow mut Box box) {
@@ -241,7 +241,7 @@ public sealed class CompilerPipelineLoadModulesTests
                 module Facade
 
                 public struct Box {
-                    i32 Value;
+                    i32[-2147483648 2147483647] Value;
                 }
 
                 public fn void Reset(borrow mut Box box) {
