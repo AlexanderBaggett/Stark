@@ -1,4 +1,5 @@
 using Stark.Compiler;
+using System.Text.RegularExpressions;
 
 namespace compiler.Tests;
 
@@ -19,9 +20,9 @@ public sealed class LlvmIrEmissionTests
             """);
 
         Assert.True(result.Succeeded);
-        var llvm = GetLlvm(result);
+        var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("define fastcc i32 @Run()", llvm);
+        Assert.Contains("define fastcc noundef i32 @Run()", llvm);
         Assert.Contains("ret i32 2", llvm);
         Assert.DoesNotContain("add i32", llvm);
         Assert.DoesNotContain("alloca i32", llvm);
@@ -45,7 +46,7 @@ public sealed class LlvmIrEmissionTests
             "/virtual/Demo.stark");
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvm(result);
+        var llvm = GetLlvmRaw(result);
 
         Assert.Contains("declare void @llvm.dbg.declare(metadata, metadata, metadata)", llvm);
         Assert.Contains("declare void @llvm.dbg.value(metadata, metadata, metadata)", llvm);
@@ -105,7 +106,7 @@ public sealed class LlvmIrEmissionTests
             """);
 
         Assert.True(result.Succeeded);
-        var llvm = GetLlvm(result);
+        var llvm = GetLlvmRaw(result);
 
         Assert.Contains("ret i32 1", llvm);
         Assert.DoesNotContain("br i1", llvm);
@@ -768,7 +769,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal i32 @__stark_int_pow_i32(i32 %base, i32 %exponent)", llvm);
+        var helperHeader = ExtractDefinitionHeader(llvm, "__stark_int_pow_i32");
+        Assert.Contains("define internal dso_local i32 @__stark_int_pow_i32(i32 %base, i32 %exponent)", helperHeader);
+        Assert.Contains("unnamed_addr", helperHeader);
         Assert.Contains("call i32 @__stark_int_pow_i32(", llvm);
         Assert.DoesNotContain("@llvm.pow.i32", llvm);
     }
@@ -800,13 +803,13 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("call fastcc double @Echo(double 0.0)", llvm);
-        Assert.Contains("fcmp one double %", llvm);
+        Assert.Contains("call fastcc fast double @Echo(double 0.0)", llvm);
+        Assert.Contains("fcmp fast one double %", llvm);
         Assert.Contains(", 0.0", llvm);
-        Assert.Contains("call fastcc double @Echo(double 3.0)", llvm);
+        Assert.Contains("call fastcc fast double @Echo(double 3.0)", llvm);
         Assert.Contains(", 3.0", llvm);
-        Assert.DoesNotContain("call fastcc double @Echo(double 0)", llvm);
-        Assert.DoesNotContain("call fastcc double @Echo(double 3)", llvm);
+        Assert.DoesNotContain("call fastcc fast double @Echo(double 0)", llvm);
+        Assert.DoesNotContain("call fastcc fast double @Echo(double 3)", llvm);
     }
 
     [Fact]
@@ -1014,8 +1017,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("fcmp olt float", llvm);
-        Assert.Contains("fcmp ole float", llvm);
+        Assert.Contains("fcmp fast olt float", llvm);
+        Assert.Contains("fcmp fast ole float", llvm);
         Assert.Contains("br i1", llvm);
     }
 
@@ -1440,8 +1443,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc double @System_Math_Sqrt(double %arg_value)", llvm);
-        Assert.Contains("call fastcc double @System_Math_Sqrt(double %arg_value)", llvm);
+        var sqrtHeader = ExtractDefinitionHeader(llvm, "System_Math_Sqrt");
+        Assert.Contains("define internal dso_local fastcc double @System_Math_Sqrt(double %arg_value)", sqrtHeader);
+        Assert.Contains("unnamed_addr", sqrtHeader);
+        Assert.Contains("call fastcc fast double @System_Math_Sqrt(double %arg_value)", llvm);
         Assert.DoesNotContain("declare fastcc double @System_Math_Sqrt(", llvm);
     }
 
@@ -1476,8 +1481,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.DoesNotContain("define internal fastcc double @System_Math_Sqrt(double %arg_value)", llvm);
-        Assert.DoesNotContain("define internal fastcc double @System_Math_Round(double %arg_value)", llvm);
+        Assert.DoesNotContain("define internal dso_local fastcc double @System_Math_Sqrt(", llvm);
+        Assert.DoesNotContain("define internal dso_local fastcc double @System_Math_Round(", llvm);
         Assert.DoesNotContain("call double asm \"sqrtsd %xmm0, %xmm0\", \"={xmm0},0\"", llvm);
         Assert.DoesNotContain("call double asm \"roundsd $$0, %xmm0, %xmm0\", \"={xmm0},0\"", llvm);
     }
@@ -1512,7 +1517,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @System_BitOperations_PopCount(i32 %arg_value)", llvm);
+        var popCountHeader = ExtractDefinitionHeader(llvm, "System_BitOperations_PopCount");
+        Assert.Contains("define internal dso_local fastcc i32 @System_BitOperations_PopCount(i32 %arg_value)", popCountHeader);
+        Assert.Contains("unnamed_addr", popCountHeader);
         Assert.Contains("call fastcc i32 @System_BitOperations_PopCount(i32 %arg_value)", llvm);
         Assert.DoesNotContain("declare fastcc i32 @System_BitOperations_PopCount(", llvm);
     }
@@ -1717,6 +1724,54 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ScalarAbiValuesEmitNoundefOnParametersAndReturns()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+                if (allow) {
+                    return value;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "Run");
+
+        Assert.Contains("define fastcc noundef i32 @Run(i32 noundef %arg_value, i1 noundef %arg_allow)", header);
+        Assert.Contains("ret i32", llvm);
+    }
+
+    [Fact]
+    public void BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturns()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn i32[-2147483648 2147483647] Read(borrow Box box) {
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "Read");
+
+        Assert.Contains("define fastcc noundef i32 @Read(ptr noundef", header);
+        Assert.Contains("ret i32", llvm);
+    }
+
+    [Fact]
     public void MemoryAttributesDistinguishArgumentAndOtherMemoryEffects()
     {
         var result = Compile(
@@ -1770,7 +1825,7 @@ public sealed class LlvmIrEmissionTests
             """);
 
         Assert.True(result.Succeeded);
-        var llvm = GetLlvm(result);
+        var llvm = GetLlvmRaw(result);
 
         Assert.Contains("@.str.0 = private unnamed_addr constant [10 x i8] c\"\\00\\08\\09\\0A\\0C\\0D\\5C\\22'\\00\"", llvm);
         Assert.Contains("@.str.1 = private unnamed_addr constant [2 x i8] c\"A\\00\"", llvm);
@@ -1887,14 +1942,42 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void StrictFpFunctionsEmitStrictFpAttribute()
+    public void NonStrictFpFunctionsEmitFastMathFlagsOnBinaryOpsAndCalls()
     {
         var result = Compile(
             """
             module Demo
 
-            strictfp fn f32 Run(f32 left, f32 right) {
+            fn f32 Add(f32 left, f32 right) {
                 return left + right;
+            }
+
+            fn f32 Run(f32 left, f32 right) {
+                return Add(left, right);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("fadd fast float %arg_left, %arg_right", llvm);
+        Assert.Contains("call fastcc fast float @Add(float %arg_left, float %arg_right)", llvm);
+        Assert.DoesNotContain(" strictfp ", llvm);
+    }
+
+    [Fact]
+    public void StrictFpFunctionsOptOutOfFastMathFlags()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            strictfp fn f32 Add(f32 left, f32 right) {
+                return left + right;
+            }
+
+            strictfp fn f32 Run(f32 left, f32 right) {
+                return Add(left, right);
             }
             """);
 
@@ -1903,6 +1986,10 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc float @Run(float %arg_left, float %arg_right)", llvm);
         Assert.Contains(" strictfp ", llvm);
+        Assert.Contains("fadd float %arg_left, %arg_right", llvm);
+        Assert.DoesNotContain("fadd fast float %arg_left, %arg_right", llvm);
+        Assert.Contains("call fastcc float @Add(float %arg_left, float %arg_right)", llvm);
+        Assert.DoesNotContain("call fastcc fast float @Add(float %arg_left, %arg_right)", llvm);
     }
 
     [Fact]
@@ -1923,14 +2010,38 @@ public sealed class LlvmIrEmissionTests
             """);
 
         Assert.True(result.Succeeded);
-        var llvm = GetLlvm(result);
+        var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare ptr @malloc(i64)", llvm);
+        Assert.Contains("declare noalias noundef ptr @malloc(i64 noundef) allocsize(0) nounwind", llvm);
         Assert.Contains("declare void @free(ptr)", llvm);
-        Assert.Contains("call ptr @malloc(i64", llvm);
+        Assert.Contains("call noalias noundef align 4 dereferenceable_or_null(4) ptr @malloc(i64 noundef", llvm);
         Assert.Contains("call void @free(ptr %slot_box)", llvm);
         Assert.DoesNotContain("alloca %Box", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void StackLocalsEmitInstructionAlignmentWhenLayoutsAreKnown()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+                stack mut i32[-2147483648 2147483647] value = input;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+                *ptr = input + 1;
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("alloca i32, align 4", llvm);
+        Assert.Contains("store i32", llvm);
+        Assert.Contains("ptr %slot_value, align 4", llvm);
+        Assert.Contains("load i32, ptr %slot_value, align 4", llvm);
     }
 
     [Fact]
@@ -2096,7 +2207,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal i32 @__stark_named_compare_", llvm);
+        Assert.Contains("define internal dso_local i32 @__stark_named_compare_", llvm);
         Assert.Contains("call i32 @__stark_named_compare_", llvm);
         Assert.True(CountOccurrences(llvm, "icmp slt i32") >= 5);
         Assert.True(CountOccurrences(llvm, "icmp sgt i32") >= 5);
@@ -2140,7 +2251,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal i32 @__stark_named_compare_", llvm);
+        Assert.Contains("define internal dso_local i32 @__stark_named_compare_", llvm);
         Assert.Contains("call i32 @__stark_named_compare_", llvm);
         Assert.Contains("icmp slt i8", llvm);
         Assert.Contains("icmp sgt i8", llvm);
@@ -2238,8 +2349,12 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", llvm);
-        Assert.Contains("define internal i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", llvm);
+        var asciiEqualHeader = ExtractDefinitionHeader(llvm, "__stark_ascii_equal");
+        var unicodeEqualHeader = ExtractDefinitionHeader(llvm, "__stark_unicode_equal");
+        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", asciiEqualHeader);
+        Assert.Contains("unnamed_addr", asciiEqualHeader);
+        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", unicodeEqualHeader);
+        Assert.Contains("unnamed_addr", unicodeEqualHeader);
         Assert.Contains("call i1 @__stark_ascii_equal(%stark_ascii %arg_left, %stark_ascii %arg_right)", llvm);
         Assert.Contains("call i1 @__stark_unicode_equal(%stark_unicode %arg_left, %stark_unicode %arg_right)", llvm);
         Assert.Contains("xor i1", llvm);
@@ -2646,7 +2761,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare void @llvm.memcpy.inline.p0.p0.i64", llvm);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %v", llvm);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %v", llvm);
         Assert.Contains("i64 36, i1 false)", llvm);
     }
 
@@ -2658,7 +2773,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[-128 127][64] Data;
+                i32[-2147483648 2147483647][16] Data;
             }
 
             ffi fn void Consume(rawptr<Buffer> buffer);
@@ -2673,7 +2788,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare void @llvm.memset.inline.p0.i64", llvm);
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr %slot_buffer, i8 0, i64 64, i1 false)", llvm);
+        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 4 %slot_buffer, i8 0, i64 64, i1 false)", llvm);
         Assert.DoesNotContain("store %Buffer zeroinitializer", llvm);
     }
 
@@ -2816,7 +2931,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)", llvm);
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr %ret, i8 0, i64 24, i1 false)", llvm);
+        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)", llvm);
         Assert.Contains("store i64 1, ptr %abi_insert_field_store_", llvm);
         Assert.Contains("store i64 2, ptr %abi_insert_field_store_", llvm);
         Assert.Contains("store i64 3, ptr %abi_insert_field_store_", llvm);
@@ -2852,7 +2967,12 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)", llvm);
         Assert.Contains("call fastcc void @Make(ptr sret(%Big)", llvm);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %ret, ptr %abi_callret_slot_", llvm);
+        Assert.True(
+            Regex.IsMatch(
+                llvm,
+                @"call void @llvm\.memcpy\.inline\.p0\.p0\.i64\(ptr(?: align \d+)? %ret, ptr(?: align \d+)? %abi_callret_slot_",
+                RegexOptions.CultureInvariant),
+            "Expected Forward to copy the indirect call result slot into the sret buffer.");
         Assert.DoesNotContain("load %Big, ptr %abi_callret_slot_", llvm);
         Assert.DoesNotContain("store %Big", llvm);
     }
@@ -2880,7 +3000,12 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)", llvm);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %ret, ptr %arg_value, i64 32, i1 false)", llvm);
+        Assert.True(
+            Regex.IsMatch(
+                llvm,
+                @"call void @llvm\.memcpy\.inline\.p0\.p0\.i64\(ptr(?: align \d+)? %ret, ptr(?: align \d+)? %arg_value, i64 32, i1 false\)",
+                RegexOptions.CultureInvariant),
+            "Expected Forward to copy directly from the indirect parameter pointer into the sret buffer.");
         Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
         Assert.DoesNotContain("%abi_arg_value_value", llvm);
         Assert.DoesNotContain("store %Big", llvm);
@@ -2915,7 +3040,12 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)", llvm);
         Assert.Contains("call fastcc void @Step(ptr sret(%Big)", llvm);
         Assert.Contains("ptr byval(%Big) align 8 %arg_value", llvm);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr %ret, ptr %abi_callret_slot_", llvm);
+        Assert.True(
+            Regex.IsMatch(
+                llvm,
+                @"call void @llvm\.memcpy\.inline\.p0\.p0\.i64\(ptr(?: align \d+)? %ret, ptr(?: align \d+)? %abi_callret_slot_",
+                RegexOptions.CultureInvariant),
+            "Expected Forward to copy from the indirect callee result slot into the sret buffer.");
         Assert.DoesNotContain("load %Big, ptr %abi_callret_slot_", llvm);
         Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
         Assert.DoesNotContain("%abi_callarg_value", llvm);
@@ -3593,7 +3723,7 @@ public sealed class LlvmIrEmissionTests
 
             fn i32[-2147483648 2147483647] Run() {
                 Math.Counter = 7;
-                return Math.Counter + Math.Answer;
+                return Math.Counter + Math.Answer + Math.Hidden;
             }
             """,
             new CompilerOptions(
@@ -3605,6 +3735,7 @@ public sealed class LlvmIrEmissionTests
                         module Math
 
                         public const i32[-2147483648 2147483647] Answer = 3;
+                        public static i32[-2147483648 2147483647] Hidden = 2;
                         public static mut i32[-2147483648 2147483647] Counter = 1;
                         """,
                         "/virtual/Math.stark"
@@ -3615,7 +3746,9 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("; imported declaration: Math.Answer", llvm);
-        Assert.Contains("@Math_Answer = external constant i32", llvm);
+        Assert.Contains("@Math_Answer = external local_unnamed_addr constant i32", llvm);
+        Assert.Contains("; imported declaration: Math.Hidden", llvm);
+        Assert.Contains("@Math_Hidden = external local_unnamed_addr constant i32", llvm);
         Assert.Contains("; imported declaration: Math.Counter", llvm);
         Assert.Contains("@Math_Counter = external global i32", llvm);
         Assert.Contains("store i32 7, ptr @Math_Counter", llvm);
@@ -3827,7 +3960,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Numbers_Add(", llvm);
+        Assert.Contains("define internal dso_local fastcc i32 @__stark_law_clone_Math_Numbers_Add(", llvm);
         Assert.Contains("call fastcc i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right)", llvm);
         Assert.Contains("call fastcc i32 @Math_Numbers_Add(i32 %arg_left, i32 %arg_right)", llvm);
     }
@@ -3870,7 +4003,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_law_clone_Math_Add(", llvm);
+        Assert.Contains("define internal dso_local fastcc i32 @__stark_law_clone_Math_Add(", llvm);
         Assert.Contains("call fastcc i32 @__stark_law_clone_Math_Add(i32 %arg_left, i32 %arg_right)", llvm);
         Assert.Contains("call fastcc i32 @Math_Add(i32 %arg_left, i32 %arg_right)", llvm);
     }
@@ -4456,7 +4589,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @Demo_Helper()", llvm);
+        var privateHelperHeader = ExtractDefinitionHeader(llvm, "Demo_Helper");
+        Assert.Contains("define internal dso_local fastcc i32 @Demo_Helper()", privateHelperHeader);
+        Assert.Contains("unnamed_addr", privateHelperHeader);
     }
 
     [Fact]
@@ -4478,7 +4613,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.Contains("define internal dso_local fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.DoesNotContain("declare internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.DoesNotContain("call fastcc i32 @Identity(", llvm);
@@ -4507,8 +4642,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Forward__i32(", llvm);
-        Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.Contains("define internal dso_local fastcc i32 @__stark_mono_fn_Demo__Forward__i32(", llvm);
+        Assert.Contains("define internal dso_local fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Forward__i32(", llvm);
         Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.DoesNotContain("call fastcc i32 @Forward(", llvm);
@@ -4547,10 +4682,12 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("$__stark_mono_fn_Facade__Facade_Identity__i32 = comdat any", llvm);
-        Assert.Contains("define linkonce_odr fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
-        Assert.Contains("comdat", llvm);
+        var specializationHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Facade__Facade_Identity__i32");
+        Assert.Contains("define linkonce_odr dso_local fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", specializationHeader);
+        Assert.Contains("local_unnamed_addr", specializationHeader);
+        Assert.Contains("comdat", specializationHeader);
         Assert.Contains("call fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
-        Assert.DoesNotContain("define internal fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
+        Assert.DoesNotContain("define internal dso_local fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(", llvm);
     }
 
     [Fact]
@@ -4619,9 +4756,10 @@ public sealed class LlvmIrEmissionTests
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
             var llvm = GetLlvm(consumerResult);
 
-            Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
-            Assert.DoesNotContain("declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
-            Assert.Contains("define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            var specializationHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Facade_Identity__i32");
+            Assert.Contains("define available_externally dso_local fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", specializationHeader);
+            Assert.DoesNotContain("declare available_externally i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.Contains("define internal dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.Contains("call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
         }
@@ -4708,10 +4846,12 @@ public sealed class LlvmIrEmissionTests
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
             var llvm = GetLlvm(consumerResult);
 
-            Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
-            Assert.Contains("define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
-            Assert.Contains("define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
-            Assert.Contains("define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            var forwardHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Facade_Forward__i32");
+            var identityHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Facade_Identity__i32");
+            Assert.Contains("define available_externally dso_local fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", forwardHeader);
+            Assert.Contains("define available_externally dso_local fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", identityHeader);
+            Assert.Contains("define internal dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.Contains("define internal dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.Contains("call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
             Assert.Contains("call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Forward(", llvm);
@@ -4802,18 +4942,22 @@ public sealed class LlvmIrEmissionTests
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
             var llvm = GetLlvm(consumerResult);
 
-            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
-            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
-            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32("));
-            Assert.Equal(1, CountOccurrences(llvm, "define internal fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32("));
-            Assert.Equal(0, CountOccurrences(llvm, "declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
-            Assert.Equal(0, CountOccurrences(llvm, "declare internal fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.Matches(
+                @"define available_externally[^\r\n]*@__stark_mono_fn_Demo__Facade_Forward__i32\(",
+                llvm);
+            Assert.Matches(
+                @"define available_externally[^\r\n]*@__stark_mono_fn_Demo__Facade_Identity__i32\(",
+                llvm);
+            Assert.Equal(1, CountOccurrences(llvm, "define internal dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(1, CountOccurrences(llvm, "define internal dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32("));
+            Assert.Equal(0, CountOccurrences(llvm, "declare available_externally i32 @__stark_mono_fn_Demo__Facade_Forward__i32("));
+            Assert.Equal(0, CountOccurrences(llvm, "declare available_externally i32 @__stark_mono_fn_Demo__Facade_Identity__i32("));
             Assert.Equal(2, CountOccurrences(llvm, "call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32("));
             Assert.Equal(2, CountOccurrences(llvm, "call fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32("));
-            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
-            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
-            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
-            Assert.DoesNotContain("define linkonce_odr fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr dso_local fastcc i32 @__stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr dso_local fastcc i32 @__stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Forward__i32(", llvm);
+            Assert.DoesNotContain("define linkonce_odr dso_local fastcc i32 @__stark_law_clone___stark_mono_fn_Demo__Facade_Identity__i32(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Forward(", llvm);
             Assert.DoesNotContain("call fastcc i32 @Facade_Identity(", llvm);
         }
@@ -5126,6 +5270,13 @@ public sealed class LlvmIrEmissionTests
     {
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
         Assert.NotNull(llvmModule);
+        return NormalizeLlvm(llvmModule.Text);
+    }
+
+    private static string GetLlvmRaw(CompilationResult result)
+    {
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
         return llvmModule.Text;
     }
 
@@ -5141,5 +5292,38 @@ public sealed class LlvmIrEmissionTests
         }
 
         return count;
+    }
+
+    private static string ExtractDefinitionHeader(string llvm, string symbolName)
+    {
+        var prefix = $"@{symbolName}(";
+
+        foreach (var line in llvm.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (line.StartsWith("define ", StringComparison.Ordinal)
+                && line.Contains(prefix, StringComparison.Ordinal))
+            {
+                return line;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected a definition header for symbol '{symbolName}'.");
+    }
+
+    private static string NormalizeLlvm(string llvm)
+    {
+        var normalized = Regex.Replace(llvm, @"\bnoundef\b", string.Empty, RegexOptions.CultureInvariant);
+        return Regex.Replace(
+            normalized,
+            @"^(?:define|declare)\b[^\r\n]*$",
+            static match =>
+            {
+                var line = Regex.Replace(match.Value, @" {2,}", " ", RegexOptions.CultureInvariant);
+                line = Regex.Replace(line, @"\s+,", ",", RegexOptions.CultureInvariant);
+                line = Regex.Replace(line, @"\(\s+", "(", RegexOptions.CultureInvariant);
+                line = Regex.Replace(line, @"\s+\)", ")", RegexOptions.CultureInvariant);
+                return line;
+            },
+            RegexOptions.Multiline | RegexOptions.CultureInvariant);
     }
 }

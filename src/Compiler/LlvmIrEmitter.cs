@@ -284,7 +284,17 @@ internal sealed class LlvmIrEmitter
             {
                 try
                 {
-                    EmitFunctionDefinition(builder, definitionInternalize, signature, abiSignature, effects, memoryEffects, ssaFunction, parameterEffects, resolveCallAbi);
+                    EmitFunctionDefinition(
+                        builder,
+                        definitionInternalize,
+                        availableExternally: false,
+                        signature,
+                        abiSignature,
+                        effects,
+                        memoryEffects,
+                        ssaFunction,
+                        parameterEffects,
+                        resolveCallAbi);
                     builder.AppendLine();
                     continue;
                 }
@@ -326,6 +336,7 @@ internal sealed class LlvmIrEmitter
             EmitFunctionDefinition(
                 builder,
                 internalize: true,
+                availableExternally: false,
                 clone.Signature,
                 clone.AbiSignature,
                 clone.Effects,
@@ -565,6 +576,7 @@ internal sealed class LlvmIrEmitter
             handledFunctionNames,
             resolveCallAbi,
             _specializationCodegenStrategy,
+            _loadedModules,
             _ssa,
             _allFunctionSignatures,
             _allAbiFunctions,
@@ -629,6 +641,21 @@ internal sealed class LlvmIrEmitter
         var addressTakenGlobals = CollectExplicitGlobalAddressNames(_ssa);
         var eligible = new HashSet<string>(StringComparer.Ordinal);
 
+        void TryAddEligibleGlobal(
+            string globalName,
+            TypedGlobalSymbol global,
+            StarkParser.VariableInitializerContext? initializer)
+        {
+            if (global.IsMutable
+                || addressTakenGlobals.Contains(globalName)
+                || (initializer is not null && ShouldEmitExternalConstPlaceholder(global, initializer)))
+            {
+                return;
+            }
+
+            eligible.Add(globalName);
+        }
+
         foreach (var declaration in _parseResult.Root.topLevelDeclaration())
         {
             if (declaration.globalConstantDeclaration() is { } constantDeclaration)
@@ -637,14 +664,12 @@ internal sealed class LlvmIrEmitter
                 {
                     var name = declarator.Identifier().GetText();
                     if (!_typeModel.Globals.TryGetValue(name, out var global)
-                        || global.IsMutable
-                        || addressTakenGlobals.Contains(name)
-                        || ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer()))
+                        || declarator.variableInitializer() is null)
                     {
                         continue;
                     }
 
-                    eligible.Add(name);
+                    TryAddEligibleGlobal(name, global, declarator.variableInitializer());
                 }
 
                 continue;
@@ -659,14 +684,51 @@ internal sealed class LlvmIrEmitter
             {
                 var name = declarator.Identifier().GetText();
                 if (!_typeModel.Globals.TryGetValue(name, out var global)
-                    || global.IsMutable
-                    || declarator.variableInitializer() is null
-                    || addressTakenGlobals.Contains(name))
+                    || declarator.variableInitializer() is null)
                 {
                     continue;
                 }
 
-                eligible.Add(name);
+                TryAddEligibleGlobal(name, global, declarator.variableInitializer());
+            }
+        }
+
+        foreach (var module in _loadedModules.ImportedModules)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+                {
+                    foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                    {
+                        var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declarator.Identifier().GetText()}";
+                        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+                        {
+                            continue;
+                        }
+
+                        TryAddEligibleGlobal(qualifiedName, global, declarator.variableInitializer());
+                    }
+
+                    continue;
+                }
+
+                if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+                {
+                    continue;
+                }
+
+                foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+                {
+                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declarator.Identifier().GetText()}";
+                    if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global)
+                        || declarator.variableInitializer() is null)
+                    {
+                        continue;
+                    }
+
+                    TryAddEligibleGlobal(qualifiedName, global, declarator.variableInitializer());
+                }
             }
         }
 
@@ -1009,6 +1071,7 @@ internal sealed class LlvmIrEmitter
     private void EmitFunctionDefinition(
         StringBuilder builder,
         bool internalize,
+        bool availableExternally,
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
@@ -1022,7 +1085,15 @@ internal sealed class LlvmIrEmitter
         var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
-            BuildDefinitionSignature(internalize, function, abiFunction, effects, effectiveMemoryEffects, parameterEffects, specializationLinkage),
+            BuildDefinitionSignatureCore(
+                internalize,
+                availableExternally,
+                function,
+                abiFunction,
+                effects,
+                effectiveMemoryEffects,
+                parameterEffects,
+                specializationLinkage),
             debugFunction));
         functionBuilder.AppendLine("{");
 
@@ -1033,7 +1104,8 @@ internal sealed class LlvmIrEmitter
             resolveCallAbi,
             ssaFunction,
             _emissionContext,
-            debugFunction);
+            debugFunction,
+            effects.IsStrictFp);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);
@@ -1183,7 +1255,7 @@ internal sealed class LlvmIrEmitter
         }
 
         var functionBuilder = new StringBuilder();
-        functionBuilder.AppendLine(BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects));
+        functionBuilder.AppendLine(BuildDefinitionSignatureCore(internalize, availableExternally: false, function, abiFunction, effects, memoryEffects, parameterEffects));
         functionBuilder.AppendLine("{");
         EmitAsmFunctionBody(functionBuilder, function, abiFunction, asmFunction);
         functionBuilder.AppendLine("}");
@@ -1305,7 +1377,28 @@ internal sealed class LlvmIrEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         MonomorphizationLinkageKind? specializationLinkage = null)
     {
-        return _functionSignatureBuilder.BuildDefinitionSignature(
+        return BuildDefinitionSignatureCore(
+            internalize,
+            availableExternally: false,
+            function,
+            abiFunction,
+            effects,
+            memoryEffects,
+            parameterEffects,
+            specializationLinkage);
+    }
+
+    private string BuildDefinitionSignatureCore(
+        bool internalize,
+        bool availableExternally,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        FunctionEffectProfile effects,
+        FunctionMemoryEffectSummary? memoryEffects,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        MonomorphizationLinkageKind? specializationLinkage = null)
+    {
+        var signature = _functionSignatureBuilder.BuildDefinitionSignature(
             internalize,
             function,
             abiFunction,
@@ -1313,6 +1406,10 @@ internal sealed class LlvmIrEmitter
             memoryEffects,
             parameterEffects,
             specializationLinkage);
+
+        return availableExternally
+            ? PrefixAvailableExternally(signature)
+            : signature;
     }
 
     private bool TryEmitBuiltinFunctionDefinition(
@@ -1942,5 +2039,26 @@ internal sealed class LlvmIrEmitter
         string Initializer,
         int DataLength,
         int AlignmentBytes);
+
+    private static string PrefixAvailableExternally(string signature)
+    {
+        const string definePrefix = "define ";
+        if (!signature.StartsWith(definePrefix, StringComparison.Ordinal))
+        {
+            return $"available_externally {signature}";
+        }
+
+        var remainder = signature[definePrefix.Length..];
+        if (remainder.StartsWith("internal ", StringComparison.Ordinal))
+        {
+            remainder = remainder["internal ".Length..];
+        }
+        else if (remainder.StartsWith("linkonce_odr ", StringComparison.Ordinal))
+        {
+            remainder = remainder["linkonce_odr ".Length..];
+        }
+
+        return $"define available_externally {remainder}";
+    }
 
 }

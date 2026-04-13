@@ -14,17 +14,38 @@ internal sealed class LlvmFunctionAttributeBuilder
     private ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type) => _context.TryGetConcreteTypeLayout(type);
 
     public string RenderAbiParameter(
+        AbiFunctionSignature abiFunction,
         AbiParameterSymbol parameter,
         bool includeName,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var segments = new List<string> { MapType(parameter.LlvmType) };
+
+        if (ShouldMarkNoundef(abiFunction, parameter))
+        {
+            segments.Add("noundef");
+        }
+
         segments.AddRange(DeriveAbiParameterAttributes(parameter, ResolveParameterEffects(parameter, parameterEffects)));
 
         if (includeName)
         {
             segments.Add($"%{EscapeIdentifier(parameter.LlvmName)}");
         }
+
+        return string.Join(" ", segments);
+    }
+
+    public string RenderAbiReturnType(AbiFunctionSignature abiFunction)
+    {
+        var segments = new List<string>();
+
+        if (ShouldMarkNoundef(abiFunction))
+        {
+            segments.Add("noundef");
+        }
+
+        segments.Add(MapType(abiFunction.LlvmReturnType));
 
         return string.Join(" ", segments);
     }
@@ -173,6 +194,54 @@ internal sealed class LlvmFunctionAttributeBuilder
         }
 
         return effects;
+    }
+
+    private static bool ShouldMarkNoundef(
+        AbiFunctionSignature abiFunction,
+        AbiParameterSymbol parameter)
+    {
+        if (abiFunction.IsFfi)
+        {
+            return false;
+        }
+
+        if (parameter.Kind == AbiParameterKind.SRet)
+        {
+            return false;
+        }
+
+        return ShouldMarkNoundef(parameter.SourceType, parameter.Kind);
+    }
+
+    private static bool ShouldMarkNoundef(AbiFunctionSignature abiFunction)
+    {
+        return !abiFunction.IsFfi
+            && !abiFunction.ReturnsIndirect
+            && ShouldMarkNoundef(abiFunction.SourceReturnType, AbiParameterKind.Direct);
+    }
+
+    private static bool ShouldMarkNoundef(
+        StarkTypeSymbol type,
+        AbiParameterKind parameterKind)
+    {
+        if (parameterKind == AbiParameterKind.IndirectIn
+            && type.BorrowKind == StarkBorrowKind.None
+            && type.InitializationKind == StarkInitializationKind.None)
+        {
+            // Indirect-by-value aggregate parameters are not guaranteed to be
+            // padding-free, so keep them off the definedness path.
+            return false;
+        }
+
+        if (type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None)
+        {
+            return true;
+        }
+
+        return type.Kind is StarkTypeKind.Bool
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Float;
     }
 
     private static void AppendPointerMemoryAccessAttributes(

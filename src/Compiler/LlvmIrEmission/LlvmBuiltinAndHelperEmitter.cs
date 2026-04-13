@@ -90,7 +90,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         if (_usesHeapAllocator())
         {
-            declarations.Add($"declare ptr @malloc({AllocatorSizeType})");
+            declarations.Add($"declare noalias noundef ptr @malloc({AllocatorSizeType} noundef) allocsize(0) nounwind");
             declarations.Add("declare void @free(ptr)");
         }
 
@@ -490,7 +490,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         };
         var unitLlvmType = MapType(unitType);
 
-        builder.AppendLine($"define internal i1 @{EscapeIdentifier(helperName)}({textLlvmType} %left, {textLlvmType} %right) {{");
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            "i1",
+            helperName,
+            $"{textLlvmType} %left, {textLlvmType} %right"));
         builder.AppendLine("entry:");
         builder.AppendLine($"  %left_data = extractvalue {textLlvmType} %left, 0");
         builder.AppendLine($"  %left_length = extractvalue {textLlvmType} %left, 1");
@@ -538,7 +541,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         };
         var unitLlvmType = MapType(unitType);
 
-        builder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({textLlvmType} %left, {textLlvmType} %right) {{");
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            "i32",
+            helperName,
+            $"{textLlvmType} %left, {textLlvmType} %right"));
         builder.AppendLine("entry:");
         builder.AppendLine($"  %left_data = extractvalue {textLlvmType} %left, 0");
         builder.AppendLine($"  %left_length = extractvalue {textLlvmType} %left, 1");
@@ -600,7 +606,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var helperName = GetFixedArrayOrderedComparisonHelperName(fixedArrayType);
         var arrayLlvmType = MapType(fixedArrayType);
 
-        builder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({arrayLlvmType} %left, {arrayLlvmType} %right) {{");
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            "i32",
+            helperName,
+            $"{arrayLlvmType} %left, {arrayLlvmType} %right"));
         builder.AppendLine("entry:");
         if (fixedLength == 0)
         {
@@ -655,7 +664,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var helperName = GetScalarizedAggregateOrderedComparisonHelperName(aggregateType);
         var aggregateLlvmType = MapType(aggregateType);
 
-        builder.AppendLine($"define internal i32 @{EscapeIdentifier(helperName)}({aggregateLlvmType} %left, {aggregateLlvmType} %right) {{");
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            "i32",
+            helperName,
+            $"{aggregateLlvmType} %left, {aggregateLlvmType} %right"));
         builder.AppendLine("entry:");
         if (leaves.Count == 0)
         {
@@ -833,7 +845,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var llvmType = MapType(integerType);
         var helperName = GetIntegerExponentHelperName(bitWidth);
 
-        builder.AppendLine($"define internal {llvmType} @{EscapeIdentifier(helperName)}({llvmType} %base, {llvmType} %exponent) {{");
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            llvmType,
+            helperName,
+            $"{llvmType} %base, {llvmType} %exponent"));
         builder.AppendLine("entry:");
         builder.AppendLine($"  %negative = icmp slt {llvmType} %exponent, 0");
         builder.AppendLine("  br i1 %negative, label %return_zero, label %loop_header");
@@ -855,6 +870,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("return_result:");
         builder.AppendLine($"  ret {llvmType} %pow_result");
         builder.AppendLine("}");
+    }
+
+    private static string BuildInternalAddressInsensitiveHelperSignature(
+        string returnType,
+        string helperName,
+        string parameters)
+    {
+        return $"define internal dso_local {returnType} @{EscapeIdentifier(helperName)}({parameters}) unnamed_addr {{";
     }
 
     private StarkTypeSymbol? GetAggregateElementType(StarkTypeSymbol type, int index)

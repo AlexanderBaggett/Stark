@@ -1966,6 +1966,7 @@ public static class DefaultCompilerPipeline
                         function.TypeArguments.ToArray(),
                         function.DeclaringModuleName,
                         function.OwnerModuleName,
+                        monomorphized.IsDeclaringModuleSourceBacked,
                         function.SymbolName,
                         monomorphized.Linkage,
                         DetermineStrategyKind(function),

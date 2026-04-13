@@ -1520,6 +1520,7 @@ public sealed record FunctionSpecializationCodegenStrategy(
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
+    bool IsDeclaringModuleSourceBacked,
     string SymbolName,
     MonomorphizationLinkageKind Linkage,
     FunctionSpecializationCodegenStrategyKind StrategyKind,

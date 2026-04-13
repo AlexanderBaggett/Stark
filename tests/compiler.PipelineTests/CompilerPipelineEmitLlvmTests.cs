@@ -134,8 +134,6 @@ public sealed class CompilerPipelineEmitLlvmTests
             }
         }
     }
-
-
     [Fact]
     public void ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing()
     {
@@ -222,10 +220,10 @@ public sealed class CompilerPipelineEmitLlvmTests
             Assert.NotNull(llvmModule);
             var definition = System.Text.RegularExpressions.Regex.Match(
                 llvmModule.Text,
-                $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
+                $@"define available_externally[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-            Assert.True(definition.Success, $"Expected a concrete LLVM definition for imported specialization '{function.SymbolName}'.");
-            Assert.Contains("ptr nonnull noalias readonly nocapture", definition.Value, StringComparison.Ordinal);
+            Assert.True(definition.Success, $"Expected an available_externally LLVM body for imported specialization '{function.SymbolName}'.");
+            Assert.Contains("ptr noundef nonnull noalias readonly nocapture", definition.Value, StringComparison.Ordinal);
             Assert.Contains("dereferenceable(4)", definition.Value, StringComparison.Ordinal);
             Assert.Contains("align 4", definition.Value, StringComparison.Ordinal);
             Assert.Contains("memory(argmem: read)", definition.Value, StringComparison.Ordinal);
@@ -331,9 +329,14 @@ public sealed class CompilerPipelineEmitLlvmTests
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
             var cloneSymbol = $"__stark_law_clone_{function.SymbolName}";
-            Assert.Contains($"define internal fastcc i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"define internal dso_local fastcc noundef i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
             Assert.Contains($"call fastcc i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
-            Assert.Contains($"define internal fastcc i32 @{function.SymbolName}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define available_externally[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                $"Expected an available_externally LLVM body for imported specialization '{function.SymbolName}'.");
         }
         finally
         {
@@ -1762,13 +1765,13 @@ public sealed class CompilerPipelineEmitLlvmTests
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
                 body,
-                @"load i32, ptr %v\d+",
+                @"load i32, ptr %v\d+(?:, align \d+)?",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count == 2,
             "Expected exactly two i32 loads in Run: one local and one const-derived.");
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
                 body,
-                @"load i32, ptr %v\d+, !invariant\.load !\d+",
+                @"load i32, ptr %v\d+(?:, align \d+)?, !invariant\.load !\d+",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count == 1,
             "Expected exactly one invariant-marked load in Run.");
     }

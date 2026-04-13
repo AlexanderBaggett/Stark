@@ -215,9 +215,18 @@ internal sealed class LlvmModuleSurfaceEmitter
 
         var symbolName = ResolveGlobalSymbolName(qualifiedName);
         var storage = global.IsMutable ? "global" : "constant";
+        var addressAttribute = GetImportedGlobalAddressAttribute(qualifiedName, global);
         builder.AppendLine($"; imported declaration: {qualifiedName}");
         builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
-        builder.AppendLine($"@{EscapeIdentifier(symbolName)} = external {storage} {_context.MapType(global.Type)}");
+        var segments = new List<string> { $"@{EscapeIdentifier(symbolName)}", "=", "external" };
+        if (addressAttribute is not null)
+        {
+            segments.Add(addressAttribute);
+        }
+
+        segments.Add(storage);
+        segments.Add(_context.MapType(global.Type));
+        builder.AppendLine(string.Join(" ", segments));
         builder.AppendLine();
     }
 
@@ -244,7 +253,16 @@ internal sealed class LlvmModuleSurfaceEmitter
         segments.Add(_context.MapType(global.Type));
         segments.Add(initializer);
         var definition = string.Join(" ", segments);
-        if (_context.TryGetGlobalAlignmentBytes(global.Type) is int alignmentBytes && alignmentBytes > 1)
+        var alignmentBytes = _context.TryGetGlobalAlignmentBytes(global.Type) ?? 1;
+        if (!global.IsMutable
+            && LlvmAggregateEmissionSupport.TryGetReadonlyVectorizationFriendlyAlignmentBytes(
+                global.Type,
+                _context.TryGetConcreteTypeLayout(global.Type)) is int preferredReadonlyAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, preferredReadonlyAlignmentBytes);
+        }
+
+        if (alignmentBytes > 1)
         {
             definition += $", align {alignmentBytes}";
         }
@@ -263,6 +281,17 @@ internal sealed class LlvmModuleSurfaceEmitter
         return _context.ShouldInternalize(visibility)
             ? "unnamed_addr"
             : "local_unnamed_addr";
+    }
+
+    private string? GetImportedGlobalAddressAttribute(string qualifiedName, TypedGlobalSymbol global)
+    {
+        if (global.IsMutable
+            || !_globalsEligibleForLocalUnnamedAddr.Contains(qualifiedName))
+        {
+            return null;
+        }
+
+        return "local_unnamed_addr";
     }
 
     private void EmitGlobalInitializerPrelude(StringBuilder builder, IReadOnlyList<string> preludeDefinitions)

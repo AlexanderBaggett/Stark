@@ -985,6 +985,30 @@ public sealed class CompilerPipelineFullIntegrationTests
     }
 
     [Fact]
+    public void ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignment()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(new CompilationInput(
+            """
+            module Demo
+
+            const i32[-2147483648 2147483647][4] Lookup = { 1, 2, 3, 4 };
+            static mut i32[-2147483648 2147483647][4] Scratch = { 5, 6, 7, 8 };
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+                return Lookup[index] + Scratch[index];
+            }
+            """));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+        Assert.Contains("constant [4 x i32] [i32 1, i32 2, i32 3, i32 4], align 16", llvmModule.Text);
+        Assert.Contains("@Scratch = global [4 x i32] [i32 5, i32 6, i32 7, i32 8], align 4", llvmModule.Text);
+    }
+
+    [Fact]
     public void SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogs()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -1165,7 +1189,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             && log.SymbolName == "Run");
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
         Assert.NotNull(llvmModule);
-        Assert.Contains("call ptr @malloc(i64", llvmModule.Text);
+        Assert.Contains("call noalias noundef align 4 dereferenceable_or_null(4) ptr @malloc(i64 noundef", llvmModule.Text);
         Assert.Contains("call void @free(ptr %slot_box)", llvmModule.Text);
     }
 
@@ -1719,7 +1743,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(typeCheckModel);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
         Assert.NotNull(llvmModule);
-        Assert.Contains("define fastcc i32 @Run()", llvmModule.Text);
+        Assert.Contains("define fastcc noundef i32 @Run()", llvmModule.Text);
     }
 
 

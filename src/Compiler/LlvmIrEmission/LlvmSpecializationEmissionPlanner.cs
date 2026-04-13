@@ -21,6 +21,7 @@ internal delegate string BuildLlvmDeclarationSignatureDelegate(
 internal delegate void EmitLlvmFunctionDefinitionDelegate(
     StringBuilder builder,
     bool internalize,
+    bool availableExternally,
     TypedFunctionSignature function,
     AbiFunctionSignature abiFunction,
     FunctionEffectProfile effects,
@@ -129,6 +130,7 @@ internal static class LlvmSpecializationEmissionPlanner
         ISet<string> handledFunctionNames,
         Func<string, string, AbiFunctionSignature?> resolveCallAbi,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy,
+        LoadedModuleSet loadedModules,
         SsaIrModule ssa,
         IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures,
         IReadOnlyDictionary<string, AbiFunctionSignature> allAbiFunctions,
@@ -171,6 +173,8 @@ internal static class LlvmSpecializationEmissionPlanner
             {
                 try
                 {
+                    var availableExternally = loadedModules.TryGet(strategy.DeclaringModuleName, out var declaringModule)
+                        && declaringModule is { PackageImageFacts.HasPublishedTypedTemplateBodies: true };
                     if (strategy.Linkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
                     {
                         builder.AppendLine($"${escapeIdentifier(strategy.SymbolName)} = comdat any");
@@ -179,6 +183,7 @@ internal static class LlvmSpecializationEmissionPlanner
                     emitFunctionDefinition(
                         builder,
                         definitionInternalize,
+                        availableExternally,
                         signature,
                         abiSignature,
                         effects,

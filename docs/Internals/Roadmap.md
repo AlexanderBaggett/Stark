@@ -1037,7 +1037,8 @@ Goal: add non-essential language surface after the first release without slowing
 ## Major LLVM IR Emission Optimizations Available
 
 - [ ] Emit full Stark definedness, nullability, and value-range contracts in LLVM IR
-  - [ ] add `noundef` on parameters and returns wherever Stark guarantees fully defined values
+  - [x] add conservative `noundef` on direct scalar parameters/returns and qualified borrow/init pointer-like ABI values
+  - [ ] extend `noundef` across the remaining fully-defined ABI surfaces
   - [ ] emit `!range` contracts for `bool`, all Stark integer values, and enum discriminants
   - [ ] distinguish non-null safe borrows/views from nullable raw-pointer/FFI paths with `nonnull`, `dereferenceable`, and `dereferenceable_or_null`
 
@@ -1052,9 +1053,9 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] carry the stronger flags through fixed-array, slice, text, field, and nested projection lowering
 
 - [ ] Emit instruction-level alignment aggressively, not just parameter-level alignment
-  - [ ] add target-aware `align` on `alloca`, `load`, `store`, `memcpy`, and `memset`
+  - [x] add target-aware `align` on `alloca`, `load`, `store`, `memcpy`, and `memset`
   - [ ] keep static allocas in the function entry block so LLVM can treat them as fixed frame slots
-  - [ ] propagate known alignment through typed field/index projections instead of dropping it after address formation
+  - [x] propagate known alignment through typed field/index projections instead of dropping it after address formation
 
 - [ ] Emit immutable-data metadata for `const`, frozen, and once-initialized readonly storage
   - [ ] expand `!invariant.load` across all truly immutable loads, not just the simplest const-rooted cases
@@ -1072,8 +1073,9 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] attach scoped metadata to hot-loop memory accesses when Stark exclusivity proves disjointness
 
 - [ ] Emit richer allocator and fresh-allocation facts in LLVM IR
-  - [ ] annotate allocator declarations with `allocsize`, `allocalign`, `noalias`, `nonnull`, and `nounwind`
-  - [ ] add call-result `align`, `dereferenceable`, `noundef`, and `noalias` when heap or arena allocation size/alignment is known
+  - [x] annotate allocator declarations with `allocsize`, `noalias`, `noundef`, and `nounwind` where the current allocator contract makes them sound
+  - [ ] extend allocator declarations with `allocalign` and `nonnull` when the runtime contract proves them
+  - [x] add call-result `align`, `dereferenceable`, `noundef`, and `noalias` when heap or arena allocation size/alignment is known
   - [ ] preserve freshness facts for constructors and runtime helpers that produce unique storage
 
 - [ ] Emit branch prediction metadata directly from Stark source contracts
@@ -1082,7 +1084,8 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] use `llvm.expect` only where it is a better match than plain branch-weight metadata
 
 - [ ] Emit fast-math flags by default and strict floating-point lowering for `strictfp`
-  - [ ] attach aggressive fast-math flags to ordinary floating-point instructions and calls
+  - [x] attach `fast` to ordinary non-`strictfp` floating-point binary ops, comparisons, same-width float-to-float lowering, and direct float-returning calls
+  - [ ] extend fast-math coverage to the remaining floating-point instruction and call forms
   - [ ] lower `strictfp` functions through constrained floating-point intrinsics or an equivalently strict LLVM surface
   - [ ] ensure the optimizer-visible IR matches Stark's default fast-math contract instead of silently using generic strict operations
 
@@ -1091,18 +1094,18 @@ Goal: add non-essential language surface after the first release without slowing
   - [ ] reserve `llvm.fma` for explicit APIs or semantics that require a guaranteed fused operation
   - [ ] add regression tests that ordinary floating-point kernels pick the optimizer-friendly form under non-`strictfp`
 
-- [ ] Emit stronger global linkage, visibility, and preemption facts
+- [x] Emit stronger global linkage, visibility, and preemption facts
   - [x] prefer `private`, `internal`, `linkonce_odr`, and comdat aggressively under Stark visibility and monomorphization rules
-  - [ ] emit `dso_local` and other non-preemptable forms wherever the Stark package/runtime model makes them sound
-  - [ ] extend `unnamed_addr` / `local_unnamed_addr` to address-insignificant constants, helpers, and functions
+  - [x] emit `dso_local` and other non-preemptable forms wherever the Stark package/runtime model makes them sound
+  - [x] extend `unnamed_addr` / `local_unnamed_addr` to address-insignificant constants, helpers, and functions
 
-- [ ] Emit optimizer-only imported bodies from package images
-  - [ ] materialize imported package-image function bodies as `available_externally` when they should exist for optimization but not final ownership
+- [x] Emit optimizer-only imported bodies from package images
+  - [x] materialize imported package-image function bodies as `available_externally` when they should exist for optimization but not final ownership
   - [x] feed imported generics, wrappers, and helper bodies to LLVM without forcing duplicate final definitions
   - [x] combine package-image body publication with linkage rules that still permit dead stripping and internalization
 
 - [ ] Emit vectorization-friendly layout and constant-data alignment choices
-  - [ ] over-align global numeric arrays, lookup tables, and other SIMD-friendly readonly blocks
+  - [x] over-align eligible readonly numeric fixed arrays, lookup-table-like constants, and similar scalar-array readonly blocks with a 16-byte floor
   - [ ] preserve high alignment on stack and heap objects whose element type and usage justify vector loads/stores
   - [ ] tune constant/table layout so LLVM can merge, hoist, and vectorize accesses more aggressively
 

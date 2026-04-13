@@ -40,6 +40,30 @@ internal static class LlvmAggregateEmissionSupport
         return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, namedTypes, enumLayouts);
     }
 
+    public static int? TryGetReadonlyVectorizationFriendlyAlignmentBytes(
+        StarkTypeSymbol type,
+        ConcreteTypeLayout? layout)
+    {
+        var normalizedType = NormalizeTypeForLayout(type);
+        if (normalizedType.Kind != StarkTypeKind.FixedArray
+            || normalizedType.ElementType is null
+            || normalizedType.FixedLength is not int fixedLength
+            || fixedLength <= 0
+            || !IsScalarNumericArrayData(normalizedType.ElementType))
+        {
+            return null;
+        }
+
+        if (layout is null
+            || layout.SizeBytes < 16
+            || layout.AlignmentBytes >= 16)
+        {
+            return null;
+        }
+
+        return 16;
+    }
+
     public static NamedTypeSymbol? ResolveNamedTypeSymbol(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
@@ -466,5 +490,22 @@ internal static class LlvmAggregateEmissionSupport
 
         var remainder = value % alignment;
         return remainder == 0 ? value : checked(value + alignment - remainder);
+    }
+
+    private static bool IsScalarNumericArrayData(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeTypeForLayout(type);
+
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.Bool => true,
+            StarkTypeKind.Integer when normalizedType.BitWidth is not null => true,
+            StarkTypeKind.Float when normalizedType.BitWidth is not null => true,
+            StarkTypeKind.FixedArray when normalizedType.ElementType is not null
+                                          && normalizedType.FixedLength is int fixedLength
+                                          && fixedLength > 0
+                => IsScalarNumericArrayData(normalizedType.ElementType),
+            _ => false
+        };
     }
 }

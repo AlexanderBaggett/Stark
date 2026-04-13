@@ -2,14 +2,12 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed class LlvmFunctionSignatureBuilder
 {
-    private readonly LlvmEmissionContext _context;
     private readonly LlvmFunctionAttributeBuilder _attributeBuilder;
 
     public LlvmFunctionSignatureBuilder(
         LlvmEmissionContext context,
         LlvmFunctionAttributeBuilder attributeBuilder)
     {
-        _context = context;
         _attributeBuilder = attributeBuilder;
     }
 
@@ -33,8 +31,8 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add("fastcc");
         }
 
-        segments.Add(_context.MapType(abiFunction.LlvmReturnType));
-        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(parameter, includeName: false, parameterEffects)))})");
+        segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
+        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeName: false, parameterEffects)))})");
 
         var attributes = _attributeBuilder.BuildFunctionAttributes(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
@@ -61,18 +59,28 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add(linkageKeyword);
         }
 
+        if (ResolveDefinitionPreemptionKeyword(internalize, specializationLinkage) is { } preemptionKeyword)
+        {
+            segments.Add(preemptionKeyword);
+        }
+
         if (effects.UseFastCallingConvention)
         {
             segments.Add("fastcc");
         }
 
-        segments.Add(_context.MapType(abiFunction.LlvmReturnType));
-        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(parameter, includeName: true, parameterEffects)))})");
+        segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
+        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeName: true, parameterEffects)))})");
 
         var attributes = _attributeBuilder.BuildFunctionAttributes(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
+        }
+
+        if (ResolveDefinitionAddressAttribute(internalize, specializationLinkage) is { } addressAttribute)
+        {
+            segments.Add(addressAttribute);
         }
 
         if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
@@ -94,6 +102,29 @@ internal sealed class LlvmFunctionSignatureBuilder
 
         return specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
             ? "linkonce_odr"
+            : null;
+    }
+
+    private static string? ResolveDefinitionPreemptionKeyword(
+        bool internalize,
+        MonomorphizationLinkageKind? specializationLinkage)
+    {
+        return internalize || specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+            ? "dso_local"
+            : null;
+    }
+
+    private static string? ResolveDefinitionAddressAttribute(
+        bool internalize,
+        MonomorphizationLinkageKind? specializationLinkage)
+    {
+        if (internalize)
+        {
+            return "unnamed_addr";
+        }
+
+        return specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+            ? "local_unnamed_addr"
             : null;
     }
 
