@@ -31,8 +31,8 @@ public sealed class LlvmTextOrderedComparisonEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal i32 @__stark_ascii_compare(%stark_ascii %left, %stark_ascii %right)", llvm);
-        Assert.Contains("define internal i32 @__stark_unicode_compare(%stark_unicode %left, %stark_unicode %right)", llvm);
+        Assert.Contains("define internal dso_local i32 @__stark_ascii_compare(%stark_ascii %left, %stark_ascii %right)", llvm);
+        Assert.Contains("define internal dso_local i32 @__stark_unicode_compare(%stark_unicode %left, %stark_unicode %right)", llvm);
         Assert.Contains("call i32 @__stark_ascii_compare(%stark_ascii %arg_left, %stark_ascii %arg_right)", llvm);
         Assert.Contains("call i32 @__stark_unicode_compare(%stark_unicode %arg_left, %stark_unicode %arg_right)", llvm);
         Assert.Contains("icmp slt i32", llvm);

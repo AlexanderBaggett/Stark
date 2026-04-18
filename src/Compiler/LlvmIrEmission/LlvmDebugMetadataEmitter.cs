@@ -1,4 +1,6 @@
 using System.IO;
+using System.Globalization;
+using System.Numerics;
 using System.Text;
 using Stark.Parsing;
 
@@ -13,6 +15,7 @@ internal sealed class DebugMetadataEmitter
     private readonly Dictionary<string, string> _typeRefs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _tupleRefs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _subroutineTypeRefs = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _rangeRefs = new(StringComparer.Ordinal);
     private readonly string _compileUnitRef;
     private readonly string _debugInfoVersionRef;
     private readonly string _dwarfVersionRef;
@@ -41,6 +44,23 @@ internal sealed class DebugMetadataEmitter
     public bool Enabled => true;
 
     public string EmptyTupleRef => _emptyTupleRef;
+
+    public string? GetValueRangeMetadataRef(StarkTypeSymbol type)
+    {
+        if (!TryBuildValueRangeMetadata(type, out var metadataBody))
+        {
+            return null;
+        }
+
+        if (_rangeRefs.TryGetValue(metadataBody, out var existing))
+        {
+            return existing;
+        }
+
+        var rangeRef = CreateMetadata(metadataBody);
+        _rangeRefs[metadataBody] = rangeRef;
+        return rangeRef;
+    }
 
     public DebugFunctionContext CreateFunctionContext(
         string sourceName,
@@ -241,6 +261,93 @@ internal sealed class DebugMetadataEmitter
         var reference = "!" + _nextMetadataId++;
         _definitions.Add(reference + " = " + body);
         return reference;
+    }
+
+    private static bool TryBuildValueRangeMetadata(StarkTypeSymbol type, out string metadataBody)
+    {
+        metadataBody = string.Empty;
+
+        if (!TryGetValueRange(type, out var bitWidth, out var min, out var max))
+        {
+            return false;
+        }
+
+        var valueCount = max - min + BigInteger.One;
+        var domainSize = BigInteger.One << bitWidth;
+        if (valueCount <= BigInteger.Zero || valueCount >= domainSize)
+        {
+            // LLVM rejects empty/full !range sets. For bool, Stark's i1
+            // representation already constrains the value to the full bool
+            // domain, so there is no valid extra !range metadata to emit.
+            return false;
+        }
+
+        var llvmType = $"i{bitWidth}";
+        var lower = FormatTwosComplementInteger(min, bitWidth);
+        var upperExclusive = FormatTwosComplementInteger(max + BigInteger.One, bitWidth);
+        metadataBody = $"!{{{llvmType} {lower}, {llvmType} {upperExclusive}}}";
+        return true;
+    }
+
+    private static bool TryGetValueRange(
+        StarkTypeSymbol type,
+        out int bitWidth,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        var normalizedType = type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+
+        if (normalizedType.Kind == StarkTypeKind.Bool)
+        {
+            bitWidth = 1;
+            min = BigInteger.Zero;
+            max = BigInteger.One;
+            return true;
+        }
+
+        if (normalizedType.Kind != StarkTypeKind.Integer || normalizedType.BitWidth is not int width || width <= 0)
+        {
+            bitWidth = default;
+            min = default;
+            max = default;
+            return false;
+        }
+
+        bitWidth = width;
+        if (normalizedType.RangeMin is not null && normalizedType.RangeMax is not null)
+        {
+            min = normalizedType.RangeMin.Value;
+            max = normalizedType.RangeMax.Value;
+            return true;
+        }
+
+        min = -(BigInteger.One << (width - 1));
+        max = (BigInteger.One << (width - 1)) - BigInteger.One;
+        return true;
+    }
+
+    private static string FormatTwosComplementInteger(BigInteger value, int bitWidth)
+    {
+        var domainSize = BigInteger.One << bitWidth;
+        var normalized = value % domainSize;
+        if (normalized < BigInteger.Zero)
+        {
+            normalized += domainSize;
+        }
+
+        var signedThreshold = BigInteger.One << (bitWidth - 1);
+        if (normalized >= signedThreshold)
+        {
+            normalized -= domainSize;
+        }
+
+        return normalized.ToString(CultureInfo.InvariantCulture);
     }
 
     private static string EscapeMetadataString(string value)

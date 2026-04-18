@@ -58,7 +58,7 @@ public sealed class LlvmEmitterConversionTests
 
         Assert.Contains("define", llvm);
         Assert.Contains("@Run()", llvm);
-        Assert.Contains("getelementptr inbounds i8, ptr null, i64 0", llvm);
+        Assert.Contains("getelementptr inbounds nuw i8, ptr null, i64 0", llvm);
         Assert.Contains("ret ptr", llvm);
     }
 
@@ -72,7 +72,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.DoesNotContain("define", llvm);
         Assert.Contains("@Run()", llvm);
         Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'ascii' to 'unicode'.", llvm);
-        Assert.Contains("declare fastcc %stark_unicode @Run()", llvm);
+        Assert.Contains("declare fastcc noundef %stark_unicode @Run()", llvm);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.DoesNotContain("define", llvm);
         Assert.Contains("@Run()", llvm);
         Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'unicode' to 'ascii'.", llvm);
-        Assert.Contains("declare fastcc %stark_ascii @Run()", llvm);
+        Assert.Contains("declare fastcc noundef %stark_ascii @Run()", llvm);
     }
 
     private static string EmitSingleConversion(

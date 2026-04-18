@@ -124,14 +124,7 @@ internal sealed class LlvmFunctionAttributeBuilder
             attributes.Add("noalias");
             attributes.Add($"sret({MapType(parameter.SourceType)})");
             attributes.Add("nonnull");
-            if (TryGetConcreteTypeLayout(parameter.SourceType) is { } sretLayout)
-            {
-                attributes.Add($"dereferenceable({sretLayout.SizeBytes})");
-                if (sretLayout.AlignmentBytes > 1)
-                {
-                    attributes.Add($"align {sretLayout.AlignmentBytes}");
-                }
-            }
+            AppendDereferenceableAttributes(attributes, parameter.SourceType);
 
             return attributes;
         }
@@ -147,15 +140,7 @@ internal sealed class LlvmFunctionAttributeBuilder
             attributes.Add("noalias");
             AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
             AppendCaptureAttribute(attributes, parameterEffects);
-
-            if (TryGetConcreteTypeLayout(parameter.SourceType) is { } indirectLayout)
-            {
-                attributes.Add($"dereferenceable({indirectLayout.SizeBytes})");
-                if (indirectLayout.AlignmentBytes > 1)
-                {
-                    attributes.Add($"align {indirectLayout.AlignmentBytes}");
-                }
-            }
+            AppendDereferenceableAttributes(attributes, parameter.SourceType);
 
             return attributes;
         }
@@ -169,6 +154,7 @@ internal sealed class LlvmFunctionAttributeBuilder
             || parameter.SourceType.InitializationKind != StarkInitializationKind.None)
         {
             attributes.Add("nonnull");
+            AppendDereferenceableAttributes(attributes, parameter.SourceType);
         }
 
         if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
@@ -179,7 +165,23 @@ internal sealed class LlvmFunctionAttributeBuilder
         AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
         AppendCaptureAttribute(attributes, parameterEffects);
 
+        // Plain raw pointers remain nullable and may carry arbitrary raw/FFI
+        // provenance, so do not infer nonnull or dereferenceable facts here.
         return attributes;
+    }
+
+    private void AppendDereferenceableAttributes(List<string> attributes, StarkTypeSymbol type)
+    {
+        if (TryGetConcreteTypeLayout(type) is not { } layout)
+        {
+            return;
+        }
+
+        attributes.Add($"dereferenceable({layout.SizeBytes})");
+        if (layout.AlignmentBytes > 1)
+        {
+            attributes.Add($"align {layout.AlignmentBytes}");
+        }
     }
 
     private static ParameterMemoryEffectSummary? ResolveParameterEffects(
@@ -200,48 +202,19 @@ internal sealed class LlvmFunctionAttributeBuilder
         AbiFunctionSignature abiFunction,
         AbiParameterSymbol parameter)
     {
-        if (abiFunction.IsFfi)
+        if (abiFunction.IsFfi || parameter.LlvmType.Kind == StarkTypeKind.Void)
         {
             return false;
         }
 
-        if (parameter.Kind == AbiParameterKind.SRet)
-        {
-            return false;
-        }
-
-        return ShouldMarkNoundef(parameter.SourceType, parameter.Kind);
+        return true;
     }
 
     private static bool ShouldMarkNoundef(AbiFunctionSignature abiFunction)
     {
         return !abiFunction.IsFfi
             && !abiFunction.ReturnsIndirect
-            && ShouldMarkNoundef(abiFunction.SourceReturnType, AbiParameterKind.Direct);
-    }
-
-    private static bool ShouldMarkNoundef(
-        StarkTypeSymbol type,
-        AbiParameterKind parameterKind)
-    {
-        if (parameterKind == AbiParameterKind.IndirectIn
-            && type.BorrowKind == StarkBorrowKind.None
-            && type.InitializationKind == StarkInitializationKind.None)
-        {
-            // Indirect-by-value aggregate parameters are not guaranteed to be
-            // padding-free, so keep them off the definedness path.
-            return false;
-        }
-
-        if (type.BorrowKind != StarkBorrowKind.None
-            || type.InitializationKind != StarkInitializationKind.None)
-        {
-            return true;
-        }
-
-        return type.Kind is StarkTypeKind.Bool
-            or StarkTypeKind.Integer
-            or StarkTypeKind.Float;
+            && abiFunction.LlvmReturnType.Kind != StarkTypeKind.Void;
     }
 
     private static void AppendPointerMemoryAccessAttributes(

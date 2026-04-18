@@ -19,6 +19,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private readonly Func<IEnumerable<SsaBinaryRValue>> _enumerateBinaryOperations;
     private readonly Func<string, string> _escapeInlineAsmString;
     private readonly Func<bool> _usesLifetimeMarkers;
+    private readonly Func<bool> _usesInvariantStartIntrinsic;
     private readonly Func<bool> _usesHeapAllocator;
     private readonly Func<bool> _usesMemcpyInlineIntrinsic;
     private readonly Func<bool> _usesMemsetInlineIntrinsic;
@@ -29,6 +30,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         Func<IEnumerable<SsaBinaryRValue>> enumerateBinaryOperations,
         Func<string, string> escapeInlineAsmString,
         Func<bool> usesLifetimeMarkers,
+        Func<bool> usesInvariantStartIntrinsic,
         Func<bool> usesHeapAllocator,
         Func<bool> usesMemcpyInlineIntrinsic,
         Func<bool> usesMemsetInlineIntrinsic)
@@ -38,6 +40,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         _enumerateBinaryOperations = enumerateBinaryOperations;
         _escapeInlineAsmString = escapeInlineAsmString;
         _usesLifetimeMarkers = usesLifetimeMarkers;
+        _usesInvariantStartIntrinsic = usesInvariantStartIntrinsic;
         _usesHeapAllocator = usesHeapAllocator;
         _usesMemcpyInlineIntrinsic = usesMemcpyInlineIntrinsic;
         _usesMemsetInlineIntrinsic = usesMemsetInlineIntrinsic;
@@ -56,6 +59,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type) => _context.ResolveNamedTypeSymbol(type);
 
     private ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type) => _context.TryGetConcreteTypeLayout(type);
+
+    private static string GetProvenInObjectGepFlags() => " inbounds nuw";
 
     private IReadOnlyList<FieldSymbol>? GetScalarizableNamedAggregateFields(NamedTypeSymbol namedType) =>
         _context.GetScalarizableNamedAggregateFields(namedType);
@@ -86,6 +91,11 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             declarations.Add("declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)");
             declarations.Add("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)");
+        }
+
+        if (_usesInvariantStartIntrinsic())
+        {
+            declarations.Add("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)");
         }
 
         if (_usesHeapAllocator())
@@ -508,8 +518,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  br i1 %textcmp_done, label %return_true, label %loop_body");
         builder.AppendLine();
         builder.AppendLine("loop_body:");
-        builder.AppendLine($"  %left_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %left_data, i64 %textcmp_index");
-        builder.AppendLine($"  %right_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %right_data, i64 %textcmp_index");
+        builder.AppendLine($"  %left_unit_ptr = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %left_data, i64 %textcmp_index");
+        builder.AppendLine($"  %right_unit_ptr = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %right_data, i64 %textcmp_index");
         builder.AppendLine($"  %left_unit = load {unitLlvmType}, ptr %left_unit_ptr");
         builder.AppendLine($"  %right_unit = load {unitLlvmType}, ptr %right_unit_ptr");
         builder.AppendLine($"  %unit_equal = icmp eq {unitLlvmType} %left_unit, %right_unit");
@@ -560,8 +570,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  br i1 %textord_done, label %length_compare, label %loop_body");
         builder.AppendLine();
         builder.AppendLine("loop_body:");
-        builder.AppendLine($"  %left_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %left_data, i64 %textord_index");
-        builder.AppendLine($"  %right_unit_ptr = getelementptr inbounds {unitLlvmType}, ptr %right_data, i64 %textord_index");
+        builder.AppendLine($"  %left_unit_ptr = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %left_data, i64 %textord_index");
+        builder.AppendLine($"  %right_unit_ptr = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %right_data, i64 %textord_index");
         builder.AppendLine($"  %left_unit = load {unitLlvmType}, ptr %left_unit_ptr");
         builder.AppendLine($"  %right_unit = load {unitLlvmType}, ptr %right_unit_ptr");
         builder.AppendLine($"  %unit_less = icmp ult {unitLlvmType} %left_unit, %right_unit");
@@ -1462,9 +1472,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("entry:");
         var leftValue = MaterializeAggregateBuiltinParameterValue(builder, leftParameter, "concat_left_view");
         var rightValue = MaterializeAggregateBuiltinParameterValue(builder, rightParameter, "concat_right_view");
-        builder.AppendLine($"  %concat_data_addr = getelementptr inbounds {aggregateType}, ptr {destinationPointer}, i32 0, i32 0");
-        builder.AppendLine($"  %concat_length_addr = getelementptr inbounds {aggregateType}, ptr {destinationPointer}, i32 0, i32 1");
-        builder.AppendLine($"  %concat_capacity_addr = getelementptr inbounds {aggregateType}, ptr {destinationPointer}, i32 0, i32 2");
+        builder.AppendLine($"  %concat_data_addr = getelementptr{GetProvenInObjectGepFlags()} {aggregateType}, ptr {destinationPointer}, i32 0, i32 0");
+        builder.AppendLine($"  %concat_length_addr = getelementptr{GetProvenInObjectGepFlags()} {aggregateType}, ptr {destinationPointer}, i32 0, i32 1");
+        builder.AppendLine($"  %concat_capacity_addr = getelementptr{GetProvenInObjectGepFlags()} {aggregateType}, ptr {destinationPointer}, i32 0, i32 2");
         builder.AppendLine("  %concat_data = load ptr, ptr %concat_data_addr");
         builder.AppendLine("  %concat_capacity = load i64, ptr %concat_capacity_addr");
         builder.AppendLine($"  %concat_left_data = extractvalue {viewLlvmType} {leftValue}, 0");
@@ -1485,8 +1495,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left_loop, label %concat_after_left");
         builder.AppendLine("concat_copy_left_loop:");
         builder.AppendLine("  %concat_left_index = phi i64 [ 0, %concat_copy_left_check ], [ %concat_left_next, %concat_copy_left_loop ]");
-        builder.AppendLine($"  %concat_left_src = getelementptr inbounds {unitLlvmType}, ptr %concat_left_data, i64 %concat_left_index");
-        builder.AppendLine($"  %concat_left_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_index");
+        builder.AppendLine($"  %concat_left_src = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_left_data, i64 %concat_left_index");
+        builder.AppendLine($"  %concat_left_dst = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_data, i64 %concat_left_index");
         builder.AppendLine($"  %concat_left_unit = load {unitLlvmType}, ptr %concat_left_src");
         builder.AppendLine($"  store {unitLlvmType} %concat_left_unit, ptr %concat_left_dst");
         builder.AppendLine("  %concat_left_next = add i64 %concat_left_index, 1");
@@ -1496,12 +1506,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  %concat_right_nonempty = icmp ne i64 %concat_right_length, 0");
         builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right_prepare, label %concat_finish");
         builder.AppendLine("concat_copy_right_prepare:");
-        builder.AppendLine($"  %concat_right_dest = getelementptr inbounds {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
+        builder.AppendLine($"  %concat_right_dest = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
         builder.AppendLine("  br label %concat_copy_right_loop");
         builder.AppendLine("concat_copy_right_loop:");
         builder.AppendLine("  %concat_right_index = phi i64 [ 0, %concat_copy_right_prepare ], [ %concat_right_next, %concat_copy_right_loop ]");
-        builder.AppendLine($"  %concat_right_src = getelementptr inbounds {unitLlvmType}, ptr %concat_right_data, i64 %concat_right_index");
-        builder.AppendLine($"  %concat_right_dst = getelementptr inbounds {unitLlvmType}, ptr %concat_right_dest, i64 %concat_right_index");
+        builder.AppendLine($"  %concat_right_src = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_right_data, i64 %concat_right_index");
+        builder.AppendLine($"  %concat_right_dst = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_right_dest, i64 %concat_right_index");
         builder.AppendLine($"  %concat_right_unit = load {unitLlvmType}, ptr %concat_right_src");
         builder.AppendLine($"  store {unitLlvmType} %concat_right_unit, ptr %concat_right_dst");
         builder.AppendLine("  %concat_right_next = add i64 %concat_right_index, 1");

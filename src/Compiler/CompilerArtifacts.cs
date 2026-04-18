@@ -2505,7 +2505,8 @@ public sealed record SsaAllocateLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
     string StorageClass = "stack",
-    SourceLocation? Location = null)
+    SourceLocation? Location = null,
+    bool IsImmutable = false)
     : SsaInstruction;
 
 public sealed record SsaLifetimeStartInstruction(

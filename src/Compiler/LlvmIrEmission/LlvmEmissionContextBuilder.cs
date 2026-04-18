@@ -21,13 +21,14 @@ internal static class LlvmEmissionContextBuilder
         Func<string, StarkTypeSymbol, EmittedStringConstant> resolveStringConstant,
         Func<StarkTypeSymbol, int?> tryGetGlobalAlignmentBytes,
         Func<string, string> resolveGlobalSymbolName,
-        Func<string, bool> isConstGlobalName,
+        Func<string, bool> isImmutableGlobalName,
         Func<StarkVisibility, bool> shouldInternalize,
         Func<StarkParser.ExpressionContext, StarkParser.PrimaryExpressionContext?> tryUnwrapSimplePrimaryExpression,
         Func<StarkParser.ObjectCreationExpressionContext, TypedConstructorShape?> resolveObjectCreationConstructor,
         Func<string> getAllocatorSizeType,
         Func<bool> isDebugInfoEnabled,
-        Func<string> getEmptyTupleMetadataRef)
+        Func<string> getEmptyTupleMetadataRef,
+        Func<StarkTypeSymbol, string?> getValueRangeMetadataRef)
     {
         return new LlvmEmissionContext(
             moduleName,
@@ -46,12 +47,13 @@ internal static class LlvmEmissionContextBuilder
             resolveStringConstant,
             tryGetGlobalAlignmentBytes,
             resolveGlobalSymbolName,
-            isConstGlobalName,
+            isImmutableGlobalName,
             shouldInternalize,
             tryUnwrapSimplePrimaryExpression,
             resolveObjectCreationConstructor,
             getAllocatorSizeType,
             isDebugInfoEnabled,
-            getEmptyTupleMetadataRef);
+            getEmptyTupleMetadataRef,
+            getValueRangeMetadataRef);
     }
 }

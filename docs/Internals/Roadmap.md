@@ -1038,29 +1038,29 @@ Goal: add non-essential language surface after the first release without slowing
 
 - [ ] Emit full Stark definedness, nullability, and value-range contracts in LLVM IR
   - [x] add conservative `noundef` on direct scalar parameters/returns and qualified borrow/init pointer-like ABI values
-  - [ ] extend `noundef` across the remaining fully-defined ABI surfaces
-  - [ ] emit `!range` contracts for `bool`, all Stark integer values, and enum discriminants
-  - [ ] distinguish non-null safe borrows/views from nullable raw-pointer/FFI paths with `nonnull`, `dereferenceable`, and `dereferenceable_or_null`
+  - [x] extend `noundef` across the remaining fully-defined ABI surfaces
+  - [x] emit legal `!range` contracts for `bool`, Stark integer values, and enum discriminants where LLVM can encode a non-full range
+  - [x] distinguish non-null safe borrows/views from nullable raw-pointer/FFI paths with `nonnull`, `dereferenceable`, and `dereferenceable_or_null`
 
 - [ ] Emit integer UB-backed arithmetic flags for ordinary Stark arithmetic
-  - [ ] add `nsw` / `nuw` on ordinary add/sub/mul where Stark overflow is undefined behavior
-  - [ ] add proven `nsw` / `nuw` on shifts and `exact` on division or shift-right when proof facts justify it
-  - [ ] keep wrapping and saturating operators on the explicit non-UB lowering path with no incorrect flags
+  - [x] add `nsw` / `nuw` on ordinary add/sub/mul where Stark overflow is undefined behavior
+  - [x] add proven `nsw` / `nuw` on shifts and `exact` on division or shift-right when proof facts justify it
+  - [x] keep wrapping and saturating operators on the explicit non-UB lowering path with no incorrect flags
 
 - [ ] Emit stronger GEP flags and pointer-arithmetic facts from Stark indexing rules
-  - [ ] preserve `inbounds` only where object-bound guarantees are actually sound
-  - [ ] add `nuw` / `nusw` on GEPs when Stark index and range facts prove non-wrapping address arithmetic
-  - [ ] carry the stronger flags through fixed-array, slice, text, field, and nested projection lowering
+  - [x] preserve `inbounds` only where object-bound guarantees are actually sound
+  - [x] add `nuw` / `nusw` on GEPs when Stark index and range facts prove non-wrapping address arithmetic
+  - [x] carry the stronger flags through fixed-array, slice, text, field, and nested projection lowering
 
 - [ ] Emit instruction-level alignment aggressively, not just parameter-level alignment
   - [x] add target-aware `align` on `alloca`, `load`, `store`, `memcpy`, and `memset`
-  - [ ] keep static allocas in the function entry block so LLVM can treat them as fixed frame slots
+  - [x] keep static allocas in the function entry block so LLVM can treat them as fixed frame slots
   - [x] propagate known alignment through typed field/index projections instead of dropping it after address formation
 
-- [ ] Emit immutable-data metadata for `const`, frozen, and once-initialized readonly storage
-  - [ ] expand `!invariant.load` across all truly immutable loads, not just the simplest const-rooted cases
-  - [ ] emit `llvm.invariant.start` for runtime-initialized storage that becomes permanently immutable after startup
-  - [ ] preserve invariance through field/index chains and package-image-backed imported readonly data
+- [x] Emit immutable-data metadata for `const`, frozen, and once-initialized readonly storage
+  - [x] expand `!invariant.load` across all truly immutable loads, not just the simplest const-rooted cases
+  - [x] emit `llvm.invariant.start` for runtime-initialized storage that becomes permanently immutable after startup
+  - [x] preserve invariance through field/index chains and package-image-backed imported readonly data
 
 - [ ] Emit conservative Stark TBAA for typed loads and stores
   - [ ] build a Stark TBAA tree for scalars, text units, slices, fixed arrays, and aggregate fields

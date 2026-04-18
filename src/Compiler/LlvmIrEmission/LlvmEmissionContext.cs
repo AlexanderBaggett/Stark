@@ -11,13 +11,14 @@ internal sealed class LlvmEmissionContext
     private readonly Func<string, StarkTypeSymbol, EmittedStringConstant> _resolveStringConstant;
     private readonly Func<StarkTypeSymbol, int?> _tryGetGlobalAlignmentBytes;
     private readonly Func<string, string> _resolveGlobalSymbolName;
-    private readonly Func<string, bool> _isConstGlobalName;
+    private readonly Func<string, bool> _isImmutableGlobalName;
     private readonly Func<StarkVisibility, bool> _shouldInternalize;
     private readonly Func<StarkParser.ExpressionContext, StarkParser.PrimaryExpressionContext?> _tryUnwrapSimplePrimaryExpression;
     private readonly Func<StarkParser.ObjectCreationExpressionContext, TypedConstructorShape?> _resolveObjectCreationConstructor;
     private readonly Func<string> _getAllocatorSizeType;
     private readonly Func<bool> _isDebugInfoEnabled;
     private readonly Func<string> _getEmptyTupleMetadataRef;
+    private readonly Func<StarkTypeSymbol, string?> _getValueRangeMetadataRef;
 
     public LlvmEmissionContext(
         string moduleName,
@@ -36,13 +37,14 @@ internal sealed class LlvmEmissionContext
         Func<string, StarkTypeSymbol, EmittedStringConstant> resolveStringConstant,
         Func<StarkTypeSymbol, int?> tryGetGlobalAlignmentBytes,
         Func<string, string> resolveGlobalSymbolName,
-        Func<string, bool> isConstGlobalName,
+        Func<string, bool> isImmutableGlobalName,
         Func<StarkVisibility, bool> shouldInternalize,
         Func<StarkParser.ExpressionContext, StarkParser.PrimaryExpressionContext?> tryUnwrapSimplePrimaryExpression,
         Func<StarkParser.ObjectCreationExpressionContext, TypedConstructorShape?> resolveObjectCreationConstructor,
         Func<string> getAllocatorSizeType,
         Func<bool> isDebugInfoEnabled,
-        Func<string> getEmptyTupleMetadataRef)
+        Func<string> getEmptyTupleMetadataRef,
+        Func<StarkTypeSymbol, string?> getValueRangeMetadataRef)
     {
         ModuleName = moduleName;
         AsciiStringTypeName = asciiStringTypeName;
@@ -60,13 +62,14 @@ internal sealed class LlvmEmissionContext
         _resolveStringConstant = resolveStringConstant;
         _tryGetGlobalAlignmentBytes = tryGetGlobalAlignmentBytes;
         _resolveGlobalSymbolName = resolveGlobalSymbolName;
-        _isConstGlobalName = isConstGlobalName;
+        _isImmutableGlobalName = isImmutableGlobalName;
         _shouldInternalize = shouldInternalize;
         _tryUnwrapSimplePrimaryExpression = tryUnwrapSimplePrimaryExpression;
         _resolveObjectCreationConstructor = resolveObjectCreationConstructor;
         _getAllocatorSizeType = getAllocatorSizeType;
         _isDebugInfoEnabled = isDebugInfoEnabled;
         _getEmptyTupleMetadataRef = getEmptyTupleMetadataRef;
+        _getValueRangeMetadataRef = getValueRangeMetadataRef;
     }
 
     public string ModuleName { get; }
@@ -93,6 +96,8 @@ internal sealed class LlvmEmissionContext
 
     public string EmptyTupleMetadataRef => _getEmptyTupleMetadataRef();
 
+    public string? GetValueRangeMetadataRef(StarkTypeSymbol type) => _getValueRangeMetadataRef(type);
+
     public string MapType(StarkTypeSymbol type) => _mapType(type);
 
     public ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type) => _tryGetConcreteTypeLayout(type);
@@ -109,7 +114,7 @@ internal sealed class LlvmEmissionContext
 
     public string ResolveGlobalSymbolName(string globalName) => _resolveGlobalSymbolName(globalName);
 
-    public bool IsConstGlobalName(string globalName) => _isConstGlobalName(globalName);
+    public bool IsImmutableGlobalName(string globalName) => _isImmutableGlobalName(globalName);
 
     public bool ShouldInternalize(StarkVisibility visibility) => _shouldInternalize(visibility);
 

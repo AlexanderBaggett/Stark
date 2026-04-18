@@ -204,7 +204,12 @@ internal sealed class SsaLowerer
                         && _addressableLocals.Contains(statement.TargetName))
                     {
                         var storageClass = GetLocalStorageClass(statement.TargetName);
-                        block.Instructions.Add(new SsaAllocateLocalInstruction(statement.TargetName, statement.TargetType, storageClass, statement.Location ?? _function.Location));
+                        block.Instructions.Add(new SsaAllocateLocalInstruction(
+                            statement.TargetName,
+                            statement.TargetType,
+                            storageClass,
+                            statement.Location ?? _function.Location,
+                            IsOnceInitializedReadonlyLocal(statement.TargetName, storageClass)));
                         if (UsesStackLifetime(storageClass))
                         {
                             block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType, statement.Location ?? _function.Location));
@@ -743,6 +748,14 @@ internal sealed class SsaLowerer
             return _localsByName.TryGetValue(localName, out var local)
                 ? local.StorageClass
                 : "stack";
+        }
+
+        private bool IsOnceInitializedReadonlyLocal(string localName, string storageClass)
+        {
+            return storageClass == "stack"
+                && _localsByName.TryGetValue(localName, out var local)
+                && !local.IsMutable
+                && !local.IsConstant;
         }
 
         private static bool UsesStackLifetime(string storageClass) => storageClass == "stack";

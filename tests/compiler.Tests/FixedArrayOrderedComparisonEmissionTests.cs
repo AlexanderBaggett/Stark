@@ -31,7 +31,7 @@ public sealed class FixedArrayOrderedComparisonEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define internal i32 @__stark_fixed_array_compare_", llvm);
+        Assert.Contains("define internal dso_local i32 @__stark_fixed_array_compare_", llvm);
         Assert.Contains("call i32 @__stark_fixed_array_compare_", llvm);
         Assert.Contains("icmp slt i32", llvm);
         Assert.Contains("icmp sgt i32", llvm);

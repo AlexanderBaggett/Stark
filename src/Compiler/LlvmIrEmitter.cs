@@ -156,7 +156,7 @@ internal sealed class LlvmIrEmitter
             ResolveStringConstant,
             TryGetGlobalAlignmentBytes,
             ResolveGlobalSymbolName,
-            IsConstGlobalName,
+            IsImmutableGlobalName,
             ShouldInternalize,
             expression => TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression) ? primaryExpression : null,
             objectCreation => _objectCreationConstructors.TryGetValue(
@@ -169,7 +169,8 @@ internal sealed class LlvmIrEmitter
                 : null,
             GetAllocatorSizeType,
             () => _debugInfo.Enabled,
-            () => _debugInfo.EmptyTupleRef);
+            () => _debugInfo.EmptyTupleRef,
+            type => _debugInfo.GetValueRangeMetadataRef(type));
         _globalInitializerPlanner = new LlvmGlobalInitializerPlanner(_emissionContext);
         _functionAttributeBuilder = new LlvmFunctionAttributeBuilder(_emissionContext);
         _functionSignatureBuilder = new LlvmFunctionSignatureBuilder(_emissionContext, _functionAttributeBuilder);
@@ -180,6 +181,7 @@ internal sealed class LlvmIrEmitter
             EnumerateBinaryOperations,
             EscapeInlineAsmString,
             UsesLifetimeMarkers,
+            UsesInvariantStartIntrinsic,
             UsesHeapAllocator,
             UsesMemcpyInlineIntrinsic,
             UsesMemsetInlineIntrinsic);
@@ -994,6 +996,14 @@ internal sealed class LlvmIrEmitter
             .Any(static instruction => instruction is SsaLifetimeStartInstruction or SsaLifetimeEndInstruction);
     }
 
+    private bool UsesInvariantStartIntrinsic()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(static instruction => instruction is SsaAllocateLocalInstruction { IsImmutable: true });
+    }
+
     private bool UsesMemcpyInlineIntrinsic()
     {
         return _ssa.Functions
@@ -1111,10 +1121,10 @@ internal sealed class LlvmIrEmitter
         builder.Append(functionBuilder);
     }
 
-    private bool IsConstGlobalName(string globalName)
+    private bool IsImmutableGlobalName(string globalName)
     {
         return _typeModel.Globals.TryGetValue(globalName, out var global)
-            && global.IsConst;
+            && !global.IsMutable;
     }
 
     private EmittedStringConstant ResolveStringConstant(string literalText, StarkTypeSymbol type)

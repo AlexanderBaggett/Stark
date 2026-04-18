@@ -343,7 +343,7 @@ internal sealed class LlvmGlobalInitializerPlanner
 
     private static string FormatStringDataPointer(EmittedStringConstant constant)
     {
-        return $"getelementptr inbounds ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
+        return $"getelementptr inbounds nuw ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
     }
 
     private static BigInteger ParseSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)

@@ -19,7 +19,7 @@ public sealed class V1LoweringContractTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Add(i32 %arg_left, i32 %arg_right)", llvm);
+        Assert.Contains("define fastcc noundef i32 @Add(i32 noundef %arg_left, i32 noundef %arg_right)", llvm);
         Assert.DoesNotContain("define i32 @Add(", llvm, StringComparison.Ordinal);
     }
 
@@ -48,9 +48,9 @@ public sealed class V1LoweringContractTests
 
         Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
         Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
-        Assert.Contains("define fastcc %stark_ascii @Echo(%stark_ascii %arg_text)", llvm);
-        Assert.Contains("define fastcc %stark_unicode @Wide(%stark_unicode %arg_text)", llvm);
-        Assert.Contains("define fastcc i32 @Read({ ptr, i64 } %arg_view, i32 %arg_index)", llvm);
+        Assert.Contains("define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)", llvm);
+        Assert.Contains("define fastcc noundef %stark_unicode @Wide(%stark_unicode noundef %arg_text)", llvm);
+        Assert.Contains("define fastcc noundef i32 @Read({ ptr, i64 } noundef %arg_view, i32 noundef %arg_index)", llvm);
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public sealed class V1LoweringContractTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Inspect(ptr nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)", llvm);
+        Assert.Contains("define fastcc void @Inspect(ptr noundef nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)", llvm);
         Assert.DoesNotContain("define fastcc void @Inspect(%Pair %arg_pair)", llvm);
     }
 
@@ -122,7 +122,7 @@ public sealed class V1LoweringContractTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Pair = type { i64, i64 }", llvm);
-        Assert.Contains("define fastcc %Pair @Step(%Pair %arg_value)", llvm);
+        Assert.Contains("define fastcc noundef %Pair @Step(%Pair noundef %arg_value)", llvm);
         Assert.DoesNotContain("sret(%Pair)", llvm);
         Assert.DoesNotContain("byval(%Pair)", llvm);
     }
@@ -149,7 +149,7 @@ public sealed class V1LoweringContractTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Big = type { i64, i64, i64 }", llvm);
-        Assert.Contains("define fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8 %arg_value)", llvm);
+        Assert.Contains("define fastcc void @Step(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8 %arg_value)", llvm);
         Assert.DoesNotContain("define fastcc %Big @Step(%Big %arg_value)", llvm);
     }
 
@@ -172,10 +172,10 @@ public sealed class V1LoweringContractTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Read4([4 x i32] %arg_values)", llvm);
+        Assert.Contains("define fastcc noundef i32 @Read4([4 x i32] noundef %arg_values)", llvm);
         Assert.DoesNotContain("byval([4 x i32])", llvm);
-        Assert.Contains("define fastcc i32 @Read5(", llvm);
-        Assert.Contains("ptr nonnull byval([5 x i32]) noalias readonly nocapture dereferenceable(20) align 4 %arg_values", llvm);
+        Assert.Contains("define fastcc noundef i32 @Read5(", llvm);
+        Assert.Contains("ptr noundef nonnull byval([5 x i32]) noalias readonly nocapture dereferenceable(20) align 4 %arg_values", llvm);
         Assert.DoesNotContain("define fastcc i32 @Read5([5 x i32] %arg_values)", llvm);
     }
 
