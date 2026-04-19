@@ -465,7 +465,7 @@ internal fn i32[-2147483648 2147483647] FlushEncodedWriteBuffer(
     rawmutptr<System.Runtime.Buffer.ByteBuffer4096> buffer)
 {
     while willexit (true) {
-        stack i64[-9223372036854775808 9223372036854775807] readPos = *(&(*buffer).ReadPos);
+        stack mut i64[-9223372036854775808 9223372036854775807] readPos = *(&(*buffer).ReadPos);
         stack i64[-9223372036854775808 9223372036854775807] writePos = *(&(*buffer).WritePos);
         if (readPos >= writePos) {
             *(&(*buffer).ReadPos) = 0;
@@ -496,8 +496,8 @@ internal fn i32[-2147483648 2147483647] FlushEncodedWriteBuffer(
 }
 
 internal fn i32[-2147483648 2147483647] WriteAsciiToHandle(rawptr<i8[-128 127]> handle, ascii text) {
-    stack i64[-9223372036854775808 9223372036854775807] remaining = System.Text.AsciiLength(text);
-    stack i64[-9223372036854775808 9223372036854775807] written = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] remaining = System.Text.AsciiLength(text);
+    stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
 
     while willexit (remaining > 0) {
         stack ascii chunk = text[written, remaining];

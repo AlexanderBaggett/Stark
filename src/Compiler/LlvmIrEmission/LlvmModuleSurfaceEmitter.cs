@@ -226,7 +226,13 @@ internal sealed class LlvmModuleSurfaceEmitter
 
         segments.Add(storage);
         segments.Add(_context.MapType(global.Type));
-        builder.AppendLine(string.Join(" ", segments));
+        var declaration = string.Join(" ", segments);
+        if (GetStarkOwnedGlobalAlignmentBytes(global) is { } alignmentBytes)
+        {
+            declaration += $", align {alignmentBytes}";
+        }
+
+        builder.AppendLine(declaration);
         builder.AppendLine();
     }
 
@@ -253,6 +259,16 @@ internal sealed class LlvmModuleSurfaceEmitter
         segments.Add(_context.MapType(global.Type));
         segments.Add(initializer);
         var definition = string.Join(" ", segments);
+        if (GetStarkOwnedGlobalAlignmentBytes(global) is { } alignmentBytes)
+        {
+            definition += $", align {alignmentBytes}";
+        }
+
+        return definition;
+    }
+
+    private int? GetStarkOwnedGlobalAlignmentBytes(TypedGlobalSymbol global)
+    {
         var alignmentBytes = _context.TryGetGlobalAlignmentBytes(global.Type) ?? 1;
         if (!global.IsMutable
             && LlvmAggregateEmissionSupport.TryGetReadonlyVectorizationFriendlyAlignmentBytes(
@@ -262,12 +278,7 @@ internal sealed class LlvmModuleSurfaceEmitter
             alignmentBytes = Math.Max(alignmentBytes, preferredReadonlyAlignmentBytes);
         }
 
-        if (alignmentBytes > 1)
-        {
-            definition += $", align {alignmentBytes}";
-        }
-
-        return definition;
+        return alignmentBytes > 1 ? alignmentBytes : null;
     }
 
     private string? GetGlobalAddressAttribute(string globalName, StarkVisibility visibility, TypedGlobalSymbol global)

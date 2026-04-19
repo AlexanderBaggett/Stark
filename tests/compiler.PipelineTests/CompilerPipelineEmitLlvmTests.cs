@@ -21,7 +21,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 module Facade
 
                 public cold noinline fn T Choose<T>(T left, T right, bool takeRight) {
-                    stack T current = left;
+                    stack mut T current = left;
                     if (takeRight) {
                         current = right;
                     }
@@ -220,9 +220,9 @@ public sealed class CompilerPipelineEmitLlvmTests
             Assert.NotNull(llvmModule);
             var definition = System.Text.RegularExpressions.Regex.Match(
                 llvmModule.Text,
-                $@"define available_externally[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
+                $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-            Assert.True(definition.Success, $"Expected an available_externally LLVM body for imported specialization '{function.SymbolName}'.");
+            Assert.True(definition.Success, $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
             Assert.Contains("ptr noundef nonnull noalias readonly nocapture", definition.Value, StringComparison.Ordinal);
             Assert.Contains("dereferenceable(4)", definition.Value, StringComparison.Ordinal);
             Assert.Contains("align 4", definition.Value, StringComparison.Ordinal);
@@ -334,9 +334,9 @@ public sealed class CompilerPipelineEmitLlvmTests
             Assert.True(
                 System.Text.RegularExpressions.Regex.IsMatch(
                     llvmModule.Text,
-                    $@"define available_externally[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*",
+                    $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*",
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant),
-                $"Expected an available_externally LLVM body for imported specialization '{function.SymbolName}'.");
+                $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
         }
         finally
         {
@@ -908,6 +908,18 @@ public sealed class CompilerPipelineEmitLlvmTests
                     $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*alwaysinline",
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant),
                 "Expected the imported address-of wrapper specialization to emit with alwaysinline.");
+
+            var wrapperMatch = System.Text.RegularExpressions.Regex.Match(
+                llvmModule.Text,
+                $@"define[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*\r?\n\{{(?<body>.*?)^\}}",
+                System.Text.RegularExpressions.RegexOptions.Singleline
+                | System.Text.RegularExpressions.RegexOptions.Multiline
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            Assert.True(wrapperMatch.Success, "Expected a concrete LLVM definition for the imported address-of wrapper specialization.");
+            var wrapperBody = wrapperMatch.Groups["body"].Value;
+            Assert.Contains("getelementptr", wrapperBody);
+            Assert.DoesNotContain("ptrtoint", wrapperBody);
+            Assert.DoesNotContain("inttoptr", wrapperBody);
         }
         finally
         {
@@ -1742,7 +1754,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 const Box Current = new Box() { Value = 5 };
 
                 fn i32[-2147483648 2147483647] Run() {
-                    stack i32[-2147483648 2147483647] local = 3;
+                    stack mut i32[-2147483648 2147483647] local = 3;
                     stack rawptr<i32[-2147483648 2147483647]> localPtr = &local;
                     stack rawptr<frozen i32[-2147483648 2147483647]> constPtr = &(Current.Value);
                     return (*localPtr) + (*constPtr);

@@ -11,16 +11,22 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
+    private const string HeapAllocateHelperName = "__stark_heap_alloc";
+    private const string OutOfMemoryTrapHelperName = "__stark_oom_trap";
+    private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
 
     private readonly LlvmEmissionContext _context;
     private readonly Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> _buildDefinitionSignature;
     private readonly Func<IEnumerable<SsaBinaryRValue>> _enumerateBinaryOperations;
+    private readonly Func<IEnumerable<SsaFunction>> _enumerateSsaFunctions;
     private readonly Func<string, string> _escapeInlineAsmString;
     private readonly Func<bool> _usesLifetimeMarkers;
     private readonly Func<bool> _usesInvariantStartIntrinsic;
     private readonly Func<bool> _usesHeapAllocator;
+    private readonly Func<bool> _usesUnreachableTrapHelper;
+    private readonly Func<bool> _usesAssumeIntrinsic;
     private readonly Func<bool> _usesMemcpyInlineIntrinsic;
     private readonly Func<bool> _usesMemsetInlineIntrinsic;
 
@@ -28,20 +34,26 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         LlvmEmissionContext context,
         Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> buildDefinitionSignature,
         Func<IEnumerable<SsaBinaryRValue>> enumerateBinaryOperations,
+        Func<IEnumerable<SsaFunction>> enumerateSsaFunctions,
         Func<string, string> escapeInlineAsmString,
         Func<bool> usesLifetimeMarkers,
         Func<bool> usesInvariantStartIntrinsic,
         Func<bool> usesHeapAllocator,
+        Func<bool> usesUnreachableTrapHelper,
+        Func<bool> usesAssumeIntrinsic,
         Func<bool> usesMemcpyInlineIntrinsic,
         Func<bool> usesMemsetInlineIntrinsic)
     {
         _context = context;
         _buildDefinitionSignature = buildDefinitionSignature;
         _enumerateBinaryOperations = enumerateBinaryOperations;
+        _enumerateSsaFunctions = enumerateSsaFunctions;
         _escapeInlineAsmString = escapeInlineAsmString;
         _usesLifetimeMarkers = usesLifetimeMarkers;
         _usesInvariantStartIntrinsic = usesInvariantStartIntrinsic;
         _usesHeapAllocator = usesHeapAllocator;
+        _usesUnreachableTrapHelper = usesUnreachableTrapHelper;
+        _usesAssumeIntrinsic = usesAssumeIntrinsic;
         _usesMemcpyInlineIntrinsic = usesMemcpyInlineIntrinsic;
         _usesMemsetInlineIntrinsic = usesMemsetInlineIntrinsic;
     }
@@ -77,7 +89,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add($"declare {llvmType} @llvm.pow.{suffix}({llvmType}, {llvmType})");
         }
 
+        foreach (var type in CollectFusedMultiplyAddTypes())
+        {
+            var llvmType = MapType(type);
+            declarations.Add($"declare {llvmType} @{GetFusedMultiplyAddIntrinsicName(type)}({llvmType}, {llvmType}, {llvmType})");
+        }
+
         foreach (var declaration in EnumerateSystemMathIntrinsicDeclarations(signatures))
+        {
+            declarations.Add(declaration);
+        }
+
+        foreach (var declaration in EnumerateConstrainedFloatingPointIntrinsicDeclarations())
         {
             declarations.Add(declaration);
         }
@@ -98,10 +121,20 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)");
         }
 
+        if (_usesAssumeIntrinsic())
+        {
+            declarations.Add("declare void @llvm.assume(i1 noundef)");
+        }
+
+        if (_usesHeapAllocator() || _usesUnreachableTrapHelper())
+        {
+            declarations.Add("declare void @llvm.trap() cold noreturn nounwind");
+        }
+
         if (_usesHeapAllocator())
         {
-            declarations.Add($"declare noalias noundef ptr @malloc({AllocatorSizeType} noundef) allocsize(0) nounwind");
-            declarations.Add("declare void @free(ptr)");
+            declarations.Add($"declare noalias noundef ptr @malloc({AllocatorSizeType} noundef) allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"malloc\" nounwind");
+            declarations.Add("declare void @free(ptr allocptr) allockind(\"free\") \"alloc-family\"=\"malloc\" nounwind");
         }
 
         if (_usesMemcpyInlineIntrinsic())
@@ -168,6 +201,49 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             EmitIntegerExponentHelperDefinition(builder, bitWidth);
             builder.AppendLine();
         }
+
+        if (_usesUnreachableTrapHelper())
+        {
+            EmitTrapHelperDefinition(builder, UnreachableTrapHelperName);
+            builder.AppendLine();
+        }
+
+        if (_usesHeapAllocator())
+        {
+            EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
+            builder.AppendLine();
+            EmitHeapAllocateHelperDefinition(builder);
+            builder.AppendLine();
+        }
+    }
+
+    private static void EmitTrapHelperDefinition(StringBuilder builder, string helperName)
+    {
+        builder.AppendLine(
+            $"define internal dso_local coldcc void @{helperName}() unnamed_addr cold noreturn nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine("}");
+    }
+
+    private void EmitHeapAllocateHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine(
+            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"malloc\" nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %raw = call noalias noundef ptr @malloc({AllocatorSizeType} noundef %size)");
+        builder.AppendLine("  %is_null = icmp eq ptr %raw, null");
+        var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
+        builder.AppendLine($"  br i1 %is_null, label %oom, label %ok, !prof {allocationFailureProfile}");
+        builder.AppendLine();
+        builder.AppendLine("oom:");
+        builder.AppendLine($"  call coldcc void @{OutOfMemoryTrapHelperName}()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("ok:");
+        builder.AppendLine("  ret ptr %raw");
+        builder.AppendLine("}");
     }
 
     private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes()
@@ -795,11 +871,11 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                 }
             case StarkTypeKind.Float:
                 {
-                    builder.AppendLine($"  %fixedcmp_less_{index} = fcmp olt {MapType(operandType)} {left}, {right}");
+                    builder.AppendLine($"  %fixedcmp_less_{index} = fcmp fast olt {MapType(operandType)} {left}, {right}");
                     builder.AppendLine($"  br i1 %fixedcmp_less_{index}, label %return_less, label %{checkGreaterBlock}");
                     builder.AppendLine();
                     builder.AppendLine($"{checkGreaterBlock}:");
-                    builder.AppendLine($"  %fixedcmp_greater_{index} = fcmp ogt {MapType(operandType)} {left}, {right}");
+                    builder.AppendLine($"  %fixedcmp_greater_{index} = fcmp fast ogt {MapType(operandType)} {left}, {right}");
                     builder.AppendLine($"  br i1 %fixedcmp_greater_{index}, label %return_greater, label %{nextBlock}");
                     return true;
                 }
@@ -970,6 +1046,204 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
     }
 
+    private IEnumerable<string> EnumerateConstrainedFloatingPointIntrinsicDeclarations()
+    {
+        var declarations = new SortedSet<string>(StringComparer.Ordinal);
+        var hasStrictFpFunction = false;
+
+        foreach (var function in _enumerateSsaFunctions())
+        {
+            if (_context.TryGetFunctionEffects(function.Name)?.IsStrictFp != true)
+            {
+                continue;
+            }
+
+            hasStrictFpFunction = true;
+            foreach (var instruction in function.Blocks.SelectMany(static block => block.Instructions))
+            {
+                if (instruction is not SsaValueInstruction valueInstruction)
+                {
+                    continue;
+                }
+
+                AddConstrainedFloatingPointDeclarations(valueInstruction.Value, declarations);
+            }
+        }
+
+        if (hasStrictFpFunction)
+        {
+            foreach (var floatType in EnumerateSupportedFloatTypes())
+            {
+                declarations.Add(BuildConstrainedFloatCompareDeclaration(floatType));
+            }
+        }
+
+        return declarations;
+    }
+
+    private IEnumerable<StarkTypeSymbol> CollectFusedMultiplyAddTypes()
+    {
+        var types = new HashSet<StarkTypeSymbol>();
+
+        foreach (var function in _enumerateSsaFunctions())
+        {
+            if (_context.TryGetFunctionEffects(function.Name)?.IsStrictFp == true)
+            {
+                continue;
+            }
+
+            var valueDefinitions = CollectValueDefinitions(function);
+            foreach (var binary in function.Blocks
+                         .SelectMany(static block => block.Instructions)
+                         .OfType<SsaValueInstruction>()
+                         .Select(static instruction => instruction.Value)
+                         .OfType<SsaBinaryRValue>())
+            {
+                if (HasFusedMultiplyAddCandidate(binary, valueDefinitions))
+                {
+                    types.Add(binary.Type);
+                }
+            }
+        }
+
+        return types
+            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, SsaRValue> CollectValueDefinitions(SsaFunction function)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .ToDictionary(
+                static instruction => instruction.ResultName,
+                static instruction => instruction.Value,
+                StringComparer.Ordinal);
+    }
+
+    private static bool HasFusedMultiplyAddCandidate(
+        SsaBinaryRValue binary,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions)
+    {
+        if (binary.Type.Kind != StarkTypeKind.Float
+            || binary.Operator is not (SsaBinaryOperator.Add or SsaBinaryOperator.Subtract))
+        {
+            return false;
+        }
+
+        return IsFloatingMultiplyReference(binary.Left, binary.Type, valueDefinitions)
+            || IsFloatingMultiplyReference(binary.Right, binary.Type, valueDefinitions);
+    }
+
+    private static bool IsFloatingMultiplyReference(
+        SsaValue value,
+        StarkTypeSymbol expectedType,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions)
+    {
+        return value is SsaValueReference reference
+            && valueDefinitions.TryGetValue(reference.Name, out var definition)
+            && definition is SsaBinaryRValue
+            {
+                Operator: SsaBinaryOperator.Multiply,
+                Type.Kind: StarkTypeKind.Float
+            } multiply
+            && multiply.Type == expectedType;
+    }
+
+    private void AddConstrainedFloatingPointDeclarations(SsaRValue value, ISet<string> declarations)
+    {
+        switch (value)
+        {
+            case SsaUnaryRValue { Operator: SsaUnaryOperator.Negate, Type.Kind: StarkTypeKind.Float } unary:
+                declarations.Add(BuildConstrainedUnaryDeclaration("fneg", unary.Type));
+                break;
+            case SsaBinaryRValue { Operator: SsaBinaryOperator.Exponent, Type.Kind: StarkTypeKind.Float } binary:
+                declarations.Add(BuildConstrainedBinaryDeclaration("pow", binary.Type));
+                break;
+            case SsaBinaryRValue { Type.Kind: StarkTypeKind.Float } binary:
+                var operation = binary.Operator switch
+                {
+                    SsaBinaryOperator.Add => "fadd",
+                    SsaBinaryOperator.Subtract => "fsub",
+                    SsaBinaryOperator.Multiply => "fmul",
+                    SsaBinaryOperator.Divide => "fdiv",
+                    SsaBinaryOperator.Modulo => "frem",
+                    _ => null
+                };
+                if (operation is not null)
+                {
+                    declarations.Add(BuildConstrainedBinaryDeclaration(operation, binary.Type));
+                }
+
+                break;
+            case SsaBinaryRValue { Type.Kind: StarkTypeKind.Bool, Left.Type.Kind: StarkTypeKind.Float } binary:
+                declarations.Add(BuildConstrainedFloatCompareDeclaration(binary.Left.Type));
+                break;
+            case SsaConvertRValue convert:
+                AddConstrainedConversionDeclaration(convert, declarations);
+                break;
+        }
+    }
+
+    private void AddConstrainedConversionDeclaration(SsaConvertRValue convert, ISet<string> declarations)
+    {
+        var sourceType = convert.Operand.Type;
+        var targetType = convert.TargetType;
+
+        if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Float)
+        {
+            declarations.Add(
+                $"declare {MapType(targetType)} @{GetConstrainedIntegerToFloatIntrinsicName(sourceType, targetType)}({MapType(sourceType)}, metadata, metadata)");
+            return;
+        }
+
+        if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Integer)
+        {
+            declarations.Add(
+                $"declare {MapType(targetType)} @{GetConstrainedFloatToIntegerIntrinsicName(sourceType, targetType)}({MapType(sourceType)}, metadata)");
+            return;
+        }
+
+        if (sourceType.Kind != StarkTypeKind.Float
+            || targetType.Kind != StarkTypeKind.Float
+            || sourceType.BitWidth == targetType.BitWidth)
+        {
+            return;
+        }
+
+        var metadataParameters = sourceType.BitWidth < targetType.BitWidth
+            ? "metadata"
+            : "metadata, metadata";
+        declarations.Add(
+            $"declare {MapType(targetType)} @{GetConstrainedFloatConversionIntrinsicName(sourceType, targetType)}({MapType(sourceType)}, {metadataParameters})");
+    }
+
+    private static IEnumerable<StarkTypeSymbol> EnumerateSupportedFloatTypes()
+    {
+        yield return StarkTypeSymbols.Float(16);
+        yield return StarkTypeSymbols.Float(32);
+        yield return StarkTypeSymbols.Float(64);
+    }
+
+    private string BuildConstrainedBinaryDeclaration(string operation, StarkTypeSymbol type)
+    {
+        var llvmType = MapType(type);
+        return $"declare {llvmType} @{GetConstrainedBinaryIntrinsicName(operation, type)}({llvmType}, {llvmType}, metadata, metadata)";
+    }
+
+    private string BuildConstrainedUnaryDeclaration(string operation, StarkTypeSymbol type)
+    {
+        var llvmType = MapType(type);
+        return $"declare {llvmType} @{GetConstrainedUnaryIntrinsicName(operation, type)}({llvmType}, metadata, metadata)";
+    }
+
+    private string BuildConstrainedFloatCompareDeclaration(StarkTypeSymbol type)
+    {
+        var llvmType = MapType(type);
+        return $"declare i1 @{GetConstrainedFloatCompareIntrinsicName(type)}({llvmType}, {llvmType}, metadata, metadata)";
+    }
+
     public IEnumerable<string> EnumerateSystemBitOperationsIntrinsicDeclarations(IEnumerable<TypedFunctionSignature> signatures)
     {
         foreach (var signature in signatures)
@@ -1120,17 +1394,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         builder.AppendLine("entry:");
+        var fastMath = GetBuiltinFastMathCallModifier(function);
         if (arity == 1)
         {
             var value = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
-            builder.AppendLine($"  %math_result = call {llvmType} {intrinsicName}({llvmType} {value})");
+            builder.AppendLine($"  %math_result = call{fastMath} {llvmType} {intrinsicName}({llvmType} {value})");
             builder.AppendLine($"  ret {llvmType} %math_result");
             return;
         }
 
         var left = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
         var right = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
-        builder.AppendLine($"  %math_result = call {llvmType} {intrinsicName}({llvmType} {left}, {llvmType} {right})");
+        builder.AppendLine($"  %math_result = call{fastMath} {llvmType} {intrinsicName}({llvmType} {left}, {llvmType} {right})");
         builder.AppendLine($"  ret {llvmType} %math_result");
     }
 
@@ -1201,7 +1476,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         builder.AppendLine("entry:");
         builder.AppendLine(
-            $"  %math_result = call {llvmType} asm \"{_escapeInlineAsmString(template)}\", \"{_escapeInlineAsmString(constraints)}\"({llvmType} {value})");
+            $"  %math_result = call{GetBuiltinFastMathCallModifier(function)} {llvmType} asm \"{_escapeInlineAsmString(template)}\", \"{_escapeInlineAsmString(constraints)}\"({llvmType} {value})");
         builder.AppendLine($"  ret {llvmType} %math_result");
     }
 
@@ -1226,7 +1501,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         builder.AppendLine("entry:");
         builder.AppendLine(
-            $"  %math_result = call {llvmType} asm \"{_escapeInlineAsmString(template)}\", \"{_escapeInlineAsmString(constraints)}\"({llvmType} {left}, {llvmType} {right}, {llvmType} {addend})");
+            $"  %math_result = call{GetBuiltinFastMathCallModifier(function)} {llvmType} asm \"{_escapeInlineAsmString(template)}\", \"{_escapeInlineAsmString(constraints)}\"({llvmType} {left}, {llvmType} {right}, {llvmType} {addend})");
         builder.AppendLine($"  ret {llvmType} %math_result");
     }
 
@@ -1379,12 +1654,17 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var value = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
 
         builder.AppendLine("entry:");
-        builder.AppendLine($"  %math_pair = call {pairType} {intrinsicName}({scalarLlvmType} {value})");
+        builder.AppendLine($"  %math_pair = call{GetBuiltinFastMathCallModifier(function)} {pairType} {intrinsicName}({scalarLlvmType} {value})");
         builder.AppendLine($"  %math_sin = extractvalue {pairType} %math_pair, 0");
         builder.AppendLine($"  %math_cos = extractvalue {pairType} %math_pair, 1");
         builder.AppendLine($"  %math_with_sin = insertvalue {resultType} zeroinitializer, {scalarLlvmType} %math_sin, {signature.SinFieldIndex}");
         builder.AppendLine($"  %math_result = insertvalue {resultType} %math_with_sin, {scalarLlvmType} %math_cos, {signature.CosFieldIndex}");
         builder.AppendLine($"  ret {resultType} %math_result");
+    }
+
+    private string GetBuiltinFastMathCallModifier(TypedFunctionSignature function)
+    {
+        return _context.TryGetFunctionEffects(function.Name)?.IsStrictFp == true ? string.Empty : " fast";
     }
 
     private void EmitOwnedTextViewBuiltin(
@@ -2058,6 +2338,47 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             128 => "f128",
             _ => throw new InvalidOperationException($"Unsupported float intrinsic width '{type.BitWidth}'.")
         };
+    }
+
+    private static string GetFusedMultiplyAddIntrinsicName(StarkTypeSymbol type)
+    {
+        return $"llvm.fmuladd.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedBinaryIntrinsicName(string operation, StarkTypeSymbol type)
+    {
+        return $"llvm.experimental.constrained.{operation}.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedUnaryIntrinsicName(string operation, StarkTypeSymbol type)
+    {
+        return $"llvm.experimental.constrained.{operation}.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedFloatCompareIntrinsicName(StarkTypeSymbol type)
+    {
+        return $"llvm.experimental.constrained.fcmp.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedFloatConversionIntrinsicName(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        return $"llvm.experimental.constrained.{(sourceType.BitWidth < targetType.BitWidth ? "fpext" : "fptrunc")}.{GetFloatIntrinsicSuffix(targetType)}.{GetFloatIntrinsicSuffix(sourceType)}";
+    }
+
+    private static string GetConstrainedIntegerToFloatIntrinsicName(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        return $"llvm.experimental.constrained.sitofp.{GetFloatIntrinsicSuffix(targetType)}.i{sourceType.BitWidth}";
+    }
+
+    private static string GetConstrainedFloatToIntegerIntrinsicName(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        return $"llvm.experimental.constrained.fptosi.i{targetType.BitWidth}.{GetFloatIntrinsicSuffix(sourceType)}";
     }
 
     private static string EscapeIdentifier(string identifier)

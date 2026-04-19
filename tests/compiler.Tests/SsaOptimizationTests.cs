@@ -1107,7 +1107,7 @@ public sealed class SsaOptimizationTests
             module Demo
 
             fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] value) {
-                stack i32[-2147483648 2147483647] result = value;
+                stack mut i32[-2147483648 2147483647] result = value;
                 if (flag) {
                     result = result + 1;
                 } else {
@@ -1244,8 +1244,8 @@ public sealed class SsaOptimizationTests
             module Demo
 
             fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] n) {
-                stack i32[-2147483648 2147483647] sum = 0;
-                stack i32[-2147483648 2147483647] i = 0;
+                stack mut i32[-2147483648 2147483647] sum = 0;
+                stack mut i32[-2147483648 2147483647] i = 0;
                 while willexit (i < n) {
                     sum = sum + i;
                     i = i + 1;

@@ -314,7 +314,7 @@ public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii so
         }
 
         stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-        stack i32[-2147483648 2147483647] codePoint = 65533;
+        stack mut i32[-2147483648 2147483647] codePoint = 65533;
         stack rawptr<i8[-128 127]> sourceData = AsciiData(view);
         if (!TryDecodeUtf8CodePoint(sourceData, sourceLength, &readIndex, &codePoint)) {
             readIndex = start + 1;
@@ -357,7 +357,7 @@ public fn bool TryConvertAsciiToUtf16(rawmutptr<i16[-32768 32767]> destination, 
     stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
     while willexit (readIndex < sourceLength) {
         stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-        stack i32[-2147483648 2147483647] codePoint = 65533;
+        stack mut i32[-2147483648 2147483647] codePoint = 65533;
         if (!TryDecodeUtf8CodePoint(data, sourceLength, &readIndex, &codePoint)) {
             readIndex = start + 1;
         }

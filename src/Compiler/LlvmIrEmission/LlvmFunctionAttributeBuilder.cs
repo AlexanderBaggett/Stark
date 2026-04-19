@@ -26,6 +26,13 @@ internal sealed class LlvmFunctionAttributeBuilder
             segments.Add("noundef");
         }
 
+        if (!abiFunction.IsFfi
+            && parameter.Kind == AbiParameterKind.Direct
+            && LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out var rangeAttribute))
+        {
+            segments.Add(rangeAttribute);
+        }
+
         segments.AddRange(DeriveAbiParameterAttributes(parameter, ResolveParameterEffects(parameter, parameterEffects)));
 
         if (includeName)
@@ -43,6 +50,13 @@ internal sealed class LlvmFunctionAttributeBuilder
         if (ShouldMarkNoundef(abiFunction))
         {
             segments.Add("noundef");
+        }
+
+        if (!abiFunction.IsFfi
+            && !abiFunction.ReturnsIndirect
+            && LlvmValueRangeFacts.TryBuildRangeAttribute(abiFunction.SourceReturnType, out var rangeAttribute))
+        {
+            segments.Add(rangeAttribute);
         }
 
         segments.Add(MapType(abiFunction.LlvmReturnType));

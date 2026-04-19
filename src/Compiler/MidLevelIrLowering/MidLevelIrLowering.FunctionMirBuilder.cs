@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Antlr4.Runtime;
@@ -901,12 +902,14 @@ internal sealed partial class MidLevelIrLowerer
             var elseBlock = ifStatement.statement().Length > 1 ? CreateBlock("if_else") : null;
             var joinBlock = CreateBlock("if_join");
             var condition = LowerExpressionToOperand(ifStatement.expression(), StarkTypeSymbols.Bool);
+            var branchWeights = CreateConditionalBranchWeights(ifStatement.weightSpecifier());
 
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Branch,
                 elseBlock is null ? [thenBlock.Id, joinBlock.Id] : [thenBlock.Id, elseBlock.Id],
                 ConditionText: ifStatement.expression().GetText(),
-                Condition: condition);
+                Condition: condition,
+                BranchWeights: branchWeights);
 
             CurrentBlock = thenBlock;
             LowerStatement(ifStatement.statement(0));
@@ -920,6 +923,60 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             CurrentBlock = joinBlock;
+        }
+
+        private static IReadOnlyList<int>? CreateConditionalBranchWeights(StarkParser.WeightSpecifierContext? weightSpecifier)
+        {
+            if (TryParseBranchWeightPercent(weightSpecifier) is not { } takenPercent)
+            {
+                return null;
+            }
+
+            return [Math.Max(1, takenPercent), Math.Max(1, 100 - takenPercent)];
+        }
+
+        private static IReadOnlyList<int>? CreateSwitchBranchWeights(
+            StarkParser.WeightSpecifierContext? weightSpecifier,
+            int caseCount)
+        {
+            if (caseCount <= 0 || TryParseBranchWeightPercent(weightSpecifier) is not { } explicitCasePercent)
+            {
+                return null;
+            }
+
+            var weights = new int[caseCount + 1];
+            weights[0] = Math.Max(1, 100 - explicitCasePercent);
+
+            var baseCaseWeight = Math.Max(1, explicitCasePercent / caseCount);
+            var remainder = explicitCasePercent % caseCount;
+            for (var index = 0; index < caseCount; index++)
+            {
+                weights[index + 1] = baseCaseWeight + (index < remainder ? 1 : 0);
+            }
+
+            return weights;
+        }
+
+        private static int? TryParseBranchWeightPercent(StarkParser.WeightSpecifierContext? weightSpecifier)
+        {
+            if (weightSpecifier is null)
+            {
+                return null;
+            }
+
+            var text = weightSpecifier.GetText();
+            if (text.Length < 2 || text[0] != 'w')
+            {
+                return null;
+            }
+
+            var digits = text[1..];
+            if (!int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+            {
+                return 100;
+            }
+
+            return Math.Clamp(value, 0, 100);
         }
 
 
@@ -4684,7 +4741,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             EnsureAddressableLocal(name);
             var isMutable = _localsByName.TryGetValue(name, out var local)
-                ? !local.IsConstant && CanMutateThroughType(local.Type)
+                ? CanFormMutableAddressFromLocal(local)
                 : true;
             return EmitTemporary(
                 new MidLevelIrAddressOfLocalRValue(name, type, AddressType(type, isMutable), $"&{name}"),
@@ -4694,7 +4751,7 @@ internal sealed partial class MidLevelIrLowerer
         private MidLevelIrOperand? CreateAddressOfParameter(string name, StarkTypeSymbol type)
         {
             var isMutable = _parametersByName.TryGetValue(name, out var parameter)
-                ? CanMutateThroughType(parameter.Type)
+                ? CanFormMutableAddressFromParameter(parameter.Type)
                 : true;
             return EmitTemporary(
                 new MidLevelIrAddressOfParameterRValue(name, type, AddressType(type, isMutable), $"&{name}"),
@@ -4752,12 +4809,12 @@ internal sealed partial class MidLevelIrLowerer
             return operand switch
                 {
                     MidLevelIrLocalOperand local => _localsByName.TryGetValue(local.Name, out var localBinding)
-                    ? !localBinding.IsConstant && CanMutateThroughType(localBinding.Type)
+                    ? CanFormMutableAddressFromLocal(localBinding)
                     : true,
                 MidLevelIrGlobalOperand global => _typeModel.Globals.TryGetValue(global.Name, out var globalBinding)
                     ? globalBinding.IsMutable && CanMutateThroughType(globalBinding.Type)
                     : true,
-                MidLevelIrParameterOperand parameter => CanMutateThroughType(parameter.Type),
+                MidLevelIrParameterOperand parameter => CanFormMutableAddressFromParameter(parameter.Type),
                 MidLevelIrGlobalAddressOperand globalAddress => globalAddress.Type.IsMutablePointer,
                 _ => true
             };
@@ -4768,6 +4825,19 @@ internal sealed partial class MidLevelIrLowerer
             return sourceType.AccessKind == StarkAccessKind.Frozen
                 ? StarkTypeSymbols.FreezeReachableView(projectedType)
                 : projectedType;
+        }
+
+        private static bool CanFormMutableAddressFromLocal(MidLevelIrLocal local)
+        {
+            return !local.IsConstant
+                && local.Type.AccessKind != StarkAccessKind.Frozen
+                && (local.IsMutable || local.Type.IsMutableView);
+        }
+
+        private static bool CanFormMutableAddressFromParameter(StarkTypeSymbol type)
+        {
+            return type.IsMutableView
+                && CanMutateThroughType(type);
         }
 
         private static bool CanMutateThroughType(StarkTypeSymbol type) => type.AccessKind != StarkAccessKind.Frozen;

@@ -24,9 +24,10 @@ internal static class EnumLayoutBuilder
         var tagField = new FieldSymbol("$tag", CreateTagType(enumType.Variants.Count));
         orderedFields.Add(tagField);
 
-        for (var variantIndex = 0; variantIndex < enumType.Variants.Count; variantIndex++)
+        var tagOrderedVariants = GetTagOrderedVariants(enumType);
+        for (var variantIndex = 0; variantIndex < tagOrderedVariants.Count; variantIndex++)
         {
-            var variant = enumType.Variants[variantIndex];
+            var variant = tagOrderedVariants[variantIndex];
             var layoutFields = new List<EnumVariantLayoutFieldSymbol>();
 
             foreach (var field in variant.Fields)
@@ -67,6 +68,29 @@ internal static class EnumLayoutBuilder
                 : 32;
 
         return StarkTypeSymbols.Integer(bitWidth, BigInteger.Zero, maxTagValue);
+    }
+
+    private static IReadOnlyList<EnumVariantSymbol> GetTagOrderedVariants(NamedTypeSymbol enumType)
+    {
+        if (enumType.Variants.Count == 0)
+        {
+            return [];
+        }
+
+        var indexedVariants = enumType.Variants
+            .Select(static (variant, index) => new { Variant = variant, Index = index })
+            .ToArray();
+        var zeroTagVariant = indexedVariants.FirstOrDefault(static variant => variant.Variant.IsUnit);
+        if (zeroTagVariant is null || zeroTagVariant.Index == 0)
+        {
+            return enumType.Variants;
+        }
+
+        return indexedVariants
+            .OrderBy(variant => variant.Index == zeroTagVariant.Index ? 0 : 1)
+            .ThenBy(static variant => variant.Index)
+            .Select(static variant => variant.Variant)
+            .ToArray();
     }
 
     private static string BuildStorageFieldName(EnumVariantSymbol variant, EnumVariantFieldSymbol field)

@@ -324,7 +324,8 @@ internal sealed class SsaLowerer
                     SsaTerminatorKind.Branch,
                     terminator.Targets,
                     Condition: terminator.Condition is null ? null : LowerOperand(blockId, block, terminator.Condition),
-                    Location: terminator.Location ?? _function.Location),
+                    Location: terminator.Location ?? _function.Location,
+                    BranchWeights: terminator.BranchWeights),
                 MidLevelIrTerminatorKind.Return => new SsaTerminator(
                     SsaTerminatorKind.Return,
                     terminator.Targets,
@@ -343,7 +344,8 @@ internal sealed class SsaLowerer
                             LowerOperand(blockId, block, switchCase.MatchValue!)))
                         .ToArray(),
                     DefaultTarget: terminator.DefaultTarget,
-                    Location: terminator.Location ?? _function.Location),
+                    Location: terminator.Location ?? _function.Location,
+                    BranchWeights: terminator.BranchWeights),
                 _ => throw new InvalidOperationException($"Unsupported MIR terminator kind '{terminator.Kind}'.")
             };
         }
@@ -1466,7 +1468,8 @@ internal sealed class SsaLowerer
                 DefaultTarget: terminator.DefaultTarget is null
                     ? null
                     : resolveTarget(terminator.DefaultTarget.Value),
-                Location: terminator.Location);
+                Location: terminator.Location,
+                BranchWeights: terminator.BranchWeights);
         }
     }
 }

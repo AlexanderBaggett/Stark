@@ -14,7 +14,7 @@ public sealed class FunctionKindsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("define fastcc i32 @Run()", llvm);
+        Assert.Contains("define fastcc noundef i32 @Run()", llvm);
         Assert.Contains("nounwind", llvm);
         Assert.Contains("nosync", llvm);
         Assert.Contains("nofree", llvm);

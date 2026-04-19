@@ -1,8 +1,8 @@
 module ControlFlow
 
 export ffi fn i32[-2147483648 2147483647] main() {
-    stack i32[-2147483648 2147483647] index = 0;
-    stack i32[-2147483648 2147483647] total = 0;
+    stack mut i32[-2147483648 2147483647] index = 0;
+    stack mut i32[-2147483648 2147483647] total = 0;
 
     while willexit (index < 5) {
         total += index;

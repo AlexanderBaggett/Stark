@@ -64,8 +64,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] limit) {
-                stack i32[-2147483648 2147483647] sum = 0;
-                stack i32[-2147483648 2147483647] i = 0;
+                stack mut i32[-2147483648 2147483647] sum = 0;
+                stack mut i32[-2147483648 2147483647] i = 0;
 
                 while willexit (i < limit) {
                     switch (flag) {
@@ -389,7 +389,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         var accept = effectModel.Functions["Accept"];
         Assert.False(accept.IsPure);
         Assert.False(accept.UseFastCallingConvention);
-        Assert.False(accept.NoUnwind);
+        Assert.True(accept.NoUnwind);
         Assert.True(accept.IsFfi);
         Assert.True(accept.IsCold);
 
@@ -622,7 +622,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         var effects = effectModel.Functions["Syscall2"];
         Assert.Equal(StarkFunctionKind.Fn, effects.Kind);
         Assert.False(effects.IsPure);
-        Assert.False(effects.NoUnwind);
+        Assert.True(effects.NoUnwind);
         Assert.False(effects.WillReturn);
         Assert.False(effects.MustProgress);
         Assert.False(effects.UseFastCallingConvention);
@@ -1141,7 +1141,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     holder.Cells[index].Value += 4;
 
                     stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
-                    stack i32[-2147483648 2147483647][] view = values;
+                    stack mut i32[-2147483648 2147483647][] view = values;
                     view[0] = holder.Cells[index].Value;
 
                     return holder.Cells[index].Value + view[0];
@@ -1189,7 +1189,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             && log.SymbolName == "Run");
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
         Assert.NotNull(llvmModule);
-        Assert.Contains("call noalias noundef align 4 dereferenceable_or_null(4) ptr @malloc(i64 noundef", llvmModule.Text);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment)", llvmModule.Text);
+        Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_heap_alloc(i64 noundef", llvmModule.Text);
         Assert.Contains("call void @free(ptr %slot_box)", llvmModule.Text);
     }
 

@@ -14,7 +14,7 @@ public sealed class FloatingPointFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("define fastcc float @Run()", llvm);
+        Assert.Contains("define fastcc noundef float @Run()", llvm);
         Assert.Contains("ret float 8", llvm);
         Assert.DoesNotContain("@llvm.pow.f32", llvm);
     }

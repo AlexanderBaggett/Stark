@@ -50,8 +50,8 @@ public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right) {
 
     stack i64[-9223372036854775808 9223372036854775807] leftLength = System.Text.AsciiLength(left);
     stack i64[-9223372036854775808 9223372036854775807] rightLength = System.Text.AsciiLength(right);
-    stack i64[-9223372036854775808 9223372036854775807] rightStart = 0;
-    stack i64[-9223372036854775808 9223372036854775807] rightCopyLength = rightLength;
+    stack mut i64[-9223372036854775808 9223372036854775807] rightStart = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] rightCopyLength = rightLength;
 
     stack rawmutptr<i8[-128 127]> data = (*destination).Data;
     stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
@@ -134,7 +134,7 @@ public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right) {
 }
 
 public finite law ascii Extension(ascii path) {
-    stack i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
+    stack mut i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
     while willexit (end > 1) {
         if (!IsDirectorySeparator(path[end - 1, 1])) {
             break;
@@ -180,7 +180,7 @@ public finite law ascii Extension(ascii path) {
 }
 
 public finite law ascii BaseName(ascii path) {
-    stack i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
+    stack mut i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
     while willexit (end > 1) {
         if (!IsDirectorySeparator(path[end - 1, 1])) {
             break;
@@ -226,7 +226,7 @@ public finite law ascii BaseName(ascii path) {
 }
 
 public finite law ascii DirectoryName(ascii path) {
-    stack i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
+    stack mut i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
     while willexit (end > 1) {
         if (!IsDirectorySeparator(path[end - 1, 1])) {
             break;

@@ -189,7 +189,8 @@ internal sealed partial class MidLevelIrLowerer
                 ConditionText: switchStatement.expression().GetText(),
                 Condition: switchValue,
                 SwitchCases: switchCases,
-                DefaultTarget: resolvedDefaultTarget);
+                DefaultTarget: resolvedDefaultTarget,
+                BranchWeights: CreateSwitchBranchWeights(switchStatement.weightSpecifier(), switchCases.Count));
 
             _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             try

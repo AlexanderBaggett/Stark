@@ -170,7 +170,17 @@ internal sealed class LlvmIrEmitter
             GetAllocatorSizeType,
             () => _debugInfo.Enabled,
             () => _debugInfo.EmptyTupleRef,
-            type => _debugInfo.GetValueRangeMetadataRef(type));
+            type => _debugInfo.GetValueRangeMetadataRef(type),
+            (key, displayName) => _debugInfo.GetTbaaTypeDescriptorRef(key, displayName),
+            (key, displayName, fields) => _debugInfo.GetTbaaStructTypeDescriptorRef(key, displayName, fields),
+            (baseTypeDescriptorRef, accessTypeDescriptorRef, offsetBytes) => _debugInfo.GetTbaaAccessTagRef(
+                baseTypeDescriptorRef,
+                accessTypeDescriptorRef,
+                offsetBytes),
+            (key, displayName) => _debugInfo.GetAliasScopeDomainRef(key, displayName),
+            (key, domainRef, displayName) => _debugInfo.GetAliasScopeRef(key, domainRef, displayName),
+            items => _debugInfo.GetMetadataTupleRef(items),
+            functionName => _allFunctionEffects.TryGetValue(functionName, out var effects) ? effects : null);
         _globalInitializerPlanner = new LlvmGlobalInitializerPlanner(_emissionContext);
         _functionAttributeBuilder = new LlvmFunctionAttributeBuilder(_emissionContext);
         _functionSignatureBuilder = new LlvmFunctionSignatureBuilder(_emissionContext, _functionAttributeBuilder);
@@ -179,10 +189,13 @@ internal sealed class LlvmIrEmitter
             (internalize, function, abiFunction, effects, memoryEffects, parameterEffects)
                 => BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects),
             EnumerateBinaryOperations,
+            () => _ssa.Functions,
             EscapeInlineAsmString,
             UsesLifetimeMarkers,
             UsesInvariantStartIntrinsic,
             UsesHeapAllocator,
+            UsesUnreachableTrapHelper,
+            UsesAssumeIntrinsic,
             UsesMemcpyInlineIntrinsic,
             UsesMemsetInlineIntrinsic);
         _moduleSurfaceEmitter = new LlvmModuleSurfaceEmitter(
@@ -1036,6 +1049,18 @@ internal sealed class LlvmIrEmitter
                 or SsaDeallocateLocalInstruction { StorageClass: "heap" });
     }
 
+    private bool UsesUnreachableTrapHelper()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .Any(static block => block.Terminator.Kind == SsaTerminatorKind.Unreachable);
+    }
+
+    private bool UsesAssumeIntrinsic()
+    {
+        return _ssa.Functions.Any(LlvmFunctionBodyEmitter.MayEmitAssumeIntrinsic);
+    }
+
     private string GetAllocatorSizeType()
     {
         var pointerSizeBytes = LlvmAggregateEmissionSupport.TryGetConcreteTypeLayout(
@@ -1115,6 +1140,7 @@ internal sealed class LlvmIrEmitter
             ssaFunction,
             _emissionContext,
             debugFunction,
+            parameterEffects,
             effects.IsStrictFp);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
@@ -2026,7 +2052,7 @@ internal sealed class LlvmIrEmitter
             $"[{terminated.Length} x i8]",
             EncodeLlvmByteString(terminated),
             bytes.Length,
-            AlignmentBytes: 1);
+            AlignmentBytes: GetReadonlyLiteralDataAlignmentBytes(terminated.Length, naturalAlignmentBytes: 1));
     }
 
     private static StringConstantKey CreateUnicodeStringConstantKey(string literalText)
@@ -2040,7 +2066,14 @@ internal sealed class LlvmIrEmitter
             $"[{terminated.Length} x i32]",
             EncodeLlvmI32Array(terminated),
             codeUnits.Length,
-            AlignmentBytes: 4);
+            AlignmentBytes: GetReadonlyLiteralDataAlignmentBytes(checked(terminated.Length * 4), naturalAlignmentBytes: 4));
+    }
+
+    private static int GetReadonlyLiteralDataAlignmentBytes(int sizeBytes, int naturalAlignmentBytes)
+    {
+        return sizeBytes >= 16
+            ? Math.Max(naturalAlignmentBytes, 16)
+            : naturalAlignmentBytes;
     }
 
     private readonly record struct StringConstantKey(

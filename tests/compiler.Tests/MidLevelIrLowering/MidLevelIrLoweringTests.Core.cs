@@ -65,7 +65,7 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             finite law void Run() {
-                for willexit (stack i32[-2147483648 2147483647] i = 0; i < 4; i = i + 1) {
+                for willexit (stack mut i32[-2147483648 2147483647] i = 0; i < 4; i = i + 1) {
                     continue;
                 }
 

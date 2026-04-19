@@ -173,8 +173,11 @@ internal static class LlvmSpecializationEmissionPlanner
             {
                 try
                 {
-                    var availableExternally = loadedModules.TryGet(strategy.DeclaringModuleName, out var declaringModule)
-                        && declaringModule is { PackageImageFacts.HasPublishedTypedTemplateBodies: true };
+                    // Package images publish typed template bodies, not use-site-specific
+                    // monomorphized symbols. Emitting these specializations as
+                    // available_externally lets LLVM discard the only real definition
+                    // and leaves non-law callers with an unresolved symbol at link time.
+                    var availableExternally = false;
                     if (strategy.Linkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
                     {
                         builder.AppendLine($"${escapeIdentifier(strategy.SymbolName)} = comdat any");

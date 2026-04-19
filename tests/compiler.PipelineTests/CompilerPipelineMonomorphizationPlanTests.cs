@@ -623,7 +623,7 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 module Facade
 
                 public cold fn T Choose<T>(T left, T right, bool takeRight) {
-                    stack T current = left;
+                    stack mut T current = left;
                     if (takeRight) {
                         current = right;
                     }
@@ -1380,7 +1380,7 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 module Demo
 
                 cold fn T Choose<T>(T left, T right, bool takeRight) {
-                    stack T current = left;
+                    stack mut T current = left;
                     if (takeRight) {
                         current = right;
                     }

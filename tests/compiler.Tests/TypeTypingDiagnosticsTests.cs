@@ -630,6 +630,78 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void ImmutableLocalAddressCannotInitializeMutableRawPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] value = 1;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Assignment expects 'rawmutptr<i32>'", "found 'rawptr<i32>'");
+    }
+
+    [Fact]
+    public void ImmutableLocalCannotBeReassigned()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] value = 1;
+                value = 2;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot assign to immutable local 'value'");
+    }
+
+    [Fact]
+    public void ImmutableLocalFieldsCannotBeMutated()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Run() {
+                stack Box box = new Box() { Value = 1 };
+                box.Value = 2;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot assign to immutable local 'box'");
+    }
+
+    [Fact]
+    public void ImmutableLocalReadonlyPointerCannotBeUpgradedToMutableRawPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] value = 1;
+                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&value);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawptr<i32>", "rawmutptr<i32>", "strengthen pointer mutability");
+    }
+
+    [Fact]
     public void ConstArrayDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
     {
         var result = Compile(

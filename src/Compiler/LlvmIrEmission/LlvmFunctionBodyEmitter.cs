@@ -13,9 +13,16 @@ internal sealed class LlvmFunctionBodyEmitter
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
+    private const string HeapAllocateHelperName = "__stark_heap_alloc";
+    private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
     private const int AggregateMemcpyThresholdBytes = 32;
+    private const int TbaaFixedArrayFieldLimit = 64;
+    private const int TrapEdgeUnlikelyWeight = 1;
+    private const int NormalEdgeLikelyWeight = 2000;
+    private const int HotIntentLikelyWeight = 2000;
+    private const int ExplicitIntentNeutralWeight = 100;
 
     private readonly StringBuilder _builder;
     private readonly TypedFunctionSignature _function;
@@ -28,16 +35,26 @@ internal sealed class LlvmFunctionBodyEmitter
     private readonly HashSet<string> _referencedValueNames;
     private readonly HashSet<string> _addressTakenParameterNames;
     private readonly IReadOnlyDictionary<string, SsaRValue> _valueDefinitions;
+    private readonly IReadOnlyDictionary<int, SsaBasicBlock> _blocksById;
+    private readonly IReadOnlyDictionary<int, int> _blockOrderById;
+    private readonly IReadOnlyDictionary<int, int> _predecessorCounts;
+    private readonly IReadOnlyDictionary<int, IReadOnlyList<LlvmAssumeFact>> _assumptionsByBlock;
+    private readonly HashSet<string> _tbaaUnsafeAddressRoots;
+    private readonly HashSet<string> _scopedNoAliasUnsafeAddressRoots;
+    private readonly ScopedNoAliasMetadataModel? _scopedNoAliasMetadata;
     private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
     private readonly HashSet<string> _invariantLocalNames;
+    private readonly HashSet<string> _tailCallResultNames;
     private readonly List<string> _entryStaticAllocas = [];
     private readonly Dictionary<string, string> _localStorageClasses;
     private readonly Dictionary<string, bool> _aggregateValueMaterializationRequirements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _indirectAggregateValueSlots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _valueAliases = new(StringComparer.Ordinal);
     private SourceLocation? _currentDebugLocation;
     private int? _entryStaticAllocaInsertionIndex;
     private int _nextAbiTempId;
+    private int _nextAssumeTempId;
 
     public LlvmFunctionBodyEmitter(
         StringBuilder builder,
@@ -47,6 +64,7 @@ internal sealed class LlvmFunctionBodyEmitter
         SsaFunction ssaFunction,
         LlvmEmissionContext context,
         DebugFunctionContext? debugFunction,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         bool isStrictFp)
     {
         _builder = builder;
@@ -60,8 +78,62 @@ internal sealed class LlvmFunctionBodyEmitter
         _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         _addressTakenParameterNames = CollectAddressTakenParameterNames(ssaFunction);
         _valueDefinitions = CollectValueDefinitions(ssaFunction);
+        _blocksById = ssaFunction.Blocks.ToDictionary(static block => block.Id);
+        _blockOrderById = CollectBlockOrder(ssaFunction);
+        _predecessorCounts = CountPredecessors(ssaFunction);
+        _tbaaUnsafeAddressRoots = CollectTbaaUnsafeAddressRoots(ssaFunction, _valueDefinitions);
+        _scopedNoAliasUnsafeAddressRoots = CollectScopedNoAliasUnsafeAddressRoots(
+            ssaFunction,
+            _valueDefinitions,
+            resolveCallAbi,
+            function.Name);
+        _scopedNoAliasMetadata = BuildScopedNoAliasMetadata(parameterEffects);
         _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
         _invariantLocalNames = CollectInvariantLocalNames();
+        _tailCallResultNames = CollectTailCallResultNames(
+            ssaFunction,
+            abiFunction,
+            resolveCallAbi,
+            function.Name,
+            context,
+            isStrictFp);
+        _assumptionsByBlock = BuildAssumptionsByBlock();
+    }
+
+    public static bool MayEmitAssumeIntrinsic(SsaFunction function)
+    {
+        var valueDefinitions = CollectValueDefinitions(function);
+        var blockOrderById = CollectBlockOrder(function);
+        var predecessorCounts = CountPredecessors(function);
+
+        foreach (var block in function.Blocks)
+        {
+            if (block.Terminator.Kind != SsaTerminatorKind.Branch
+                || block.Terminator.Condition is null
+                || block.Terminator.Targets.Count != 2
+                || !IsPotentialAssumableCondition(block.Terminator.Condition, valueDefinitions))
+            {
+                continue;
+            }
+
+            if (CanEmitAssumeInSuccessor(
+                    function.EntryBlockId,
+                    block.Id,
+                    block.Terminator.Targets[0],
+                    blockOrderById,
+                    predecessorCounts)
+                || CanEmitAssumeInSuccessor(
+                    function.EntryBlockId,
+                    block.Id,
+                    block.Terminator.Targets[1],
+                    blockOrderById,
+                    predecessorCounts))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void Emit()
@@ -92,6 +164,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 EmitPhi(phi);
             }
 
+            _currentDebugLocation = block.Terminator.Location ?? _ssaFunction.Location;
+            EmitAssumptionsForBlock(block.Id);
+
             foreach (var instruction in block.Instructions)
             {
                 _currentDebugLocation = GetInstructionLocation(instruction) ?? _ssaFunction.Location;
@@ -111,7 +186,273 @@ internal sealed class LlvmFunctionBodyEmitter
         var incoming = string.Join(
             ", ",
             phi.Incomings.Select(entry => $"[ {FormatValue(entry.Value)}, %{FormatBlockLabel(entry.PredecessorBlockId)} ]"));
-        AppendLine($"  %{EscapeIdentifier(phi.ResultName)} = phi {MapType(phi.Type)} {incoming}");
+        AppendLine($"  %{EscapeIdentifier(phi.ResultName)} = phi{GetFastMathSuffix(phi.Type)} {MapType(phi.Type)} {incoming}");
+    }
+
+    private void EmitAssumptionsForBlock(int blockId)
+    {
+        if (!_assumptionsByBlock.TryGetValue(blockId, out var assumptions))
+        {
+            return;
+        }
+
+        foreach (var assumption in assumptions)
+        {
+            var condition = assumption.Condition is null
+                ? "true"
+                : FormatValue(assumption.Condition);
+            if (assumption.NegateCondition)
+            {
+                var negated = $"%{EscapeIdentifier(CreateAbiTempName($"assume_not_{_nextAssumeTempId++}"))}";
+                AppendLine($"  {negated} = xor i1 {condition}, true");
+                condition = negated;
+            }
+
+            var operandBundleSuffix = assumption.OperandBundles.Count == 0
+                ? string.Empty
+                : " [" + string.Join(", ", assumption.OperandBundles.Select(RenderAssumeOperandBundle)) + "]";
+            AppendLine($"  call void @llvm.assume(i1 {condition}){operandBundleSuffix}");
+        }
+    }
+
+    private string RenderAssumeOperandBundle(LlvmAssumeOperandBundle bundle)
+    {
+        return bundle.Kind switch
+        {
+            LlvmAssumeOperandBundleKind.NonNull => $"\"nonnull\"(ptr {FormatValue(bundle.Pointer)})",
+            LlvmAssumeOperandBundleKind.Align when bundle.AlignmentBytes is int alignmentBytes =>
+                $"\"align\"(ptr {FormatValue(bundle.Pointer)}, i64 {alignmentBytes})",
+            _ => throw new UnsupportedBodyEmissionException("Unsupported llvm.assume operand bundle.")
+        };
+    }
+
+    private IReadOnlyDictionary<int, IReadOnlyList<LlvmAssumeFact>> BuildAssumptionsByBlock()
+    {
+        var assumptionsByBlock = new Dictionary<int, List<LlvmAssumeFact>>();
+
+        foreach (var block in _ssaFunction.Blocks)
+        {
+            if (block.Terminator.Kind != SsaTerminatorKind.Branch
+                || block.Terminator.Condition is null
+                || block.Terminator.Targets.Count != 2)
+            {
+                continue;
+            }
+
+            AddAssumptionsForTarget(block, targetIndex: 0, assumeConditionTrue: true);
+            AddAssumptionsForTarget(block, targetIndex: 1, assumeConditionTrue: false);
+        }
+
+        return assumptionsByBlock.ToDictionary(
+            static entry => entry.Key,
+            static entry => (IReadOnlyList<LlvmAssumeFact>)entry.Value,
+            EqualityComparer<int>.Default);
+
+        void AddAssumptionsForTarget(SsaBasicBlock sourceBlock, int targetIndex, bool assumeConditionTrue)
+        {
+            var targetBlockId = sourceBlock.Terminator.Targets[targetIndex];
+            if (!CanEmitAssumeInSuccessor(_ssaFunction.EntryBlockId, sourceBlock.Id, targetBlockId, _blockOrderById, _predecessorCounts))
+            {
+                return;
+            }
+
+            var assumptions = BuildAssumeFacts(sourceBlock.Terminator.Condition!, assumeConditionTrue);
+            if (assumptions.Count == 0)
+            {
+                return;
+            }
+
+            if (!assumptionsByBlock.TryGetValue(targetBlockId, out var targetAssumptions))
+            {
+                targetAssumptions = [];
+                assumptionsByBlock[targetBlockId] = targetAssumptions;
+            }
+
+            targetAssumptions.AddRange(assumptions);
+        }
+    }
+
+    private IReadOnlyList<LlvmAssumeFact> BuildAssumeFacts(SsaValue condition, bool assumeConditionTrue)
+    {
+        if (!TryResolveComparisonCondition(condition, _valueDefinitions, out var comparison))
+        {
+            return [];
+        }
+
+        var assumptions = new List<LlvmAssumeFact>();
+        AddPointerAssumeFacts(comparison, assumeConditionTrue, assumptions);
+
+        if (IsIntegerValueRangeNarrowingComparison(comparison, _valueDefinitions))
+        {
+            assumptions.Add(new LlvmAssumeFact(condition, !assumeConditionTrue, []));
+        }
+
+        return assumptions;
+    }
+
+    private void AddPointerAssumeFacts(
+        SsaBinaryRValue comparison,
+        bool assumeConditionTrue,
+        List<LlvmAssumeFact> assumptions)
+    {
+        var pointerFacts = new Dictionary<string, List<LlvmAssumeOperandBundle>>(StringComparer.Ordinal);
+
+        if (TryGetNullComparedPointer(comparison, out var nullCheckedPointer, out var nonNullWhenConditionTrue)
+            && assumeConditionTrue == nonNullWhenConditionTrue)
+        {
+            AddPointerBundle(nullCheckedPointer, LlvmAssumeOperandBundleKind.NonNull);
+        }
+
+        if (GetAssumedComparisonOperator(comparison.Operator, assumeConditionTrue) == SsaBinaryOperator.Equal
+            && comparison.Left.Type.Kind == StarkTypeKind.RawPointer
+            && comparison.Right.Type.Kind == StarkTypeKind.RawPointer)
+        {
+            AddEqualityDerivedPointerFacts(comparison.Left, comparison.Right);
+            AddEqualityDerivedPointerFacts(comparison.Right, comparison.Left);
+        }
+
+        foreach (var bundles in pointerFacts.Values)
+        {
+            assumptions.Add(new LlvmAssumeFact(null, false, bundles));
+        }
+
+        void AddEqualityDerivedPointerFacts(SsaValue factSource, SsaValue factTarget)
+        {
+            if (!IsKnownNonNullPointerValue(factSource, new HashSet<string>(StringComparer.Ordinal)))
+            {
+                return;
+            }
+
+            AddPointerBundle(factTarget, LlvmAssumeOperandBundleKind.NonNull);
+            if (TryGetPointerElementType(factTarget, out var pointeeType)
+                && TryGetKnownPointerAlignmentBytes(factSource, pointeeType, out var alignmentBytes))
+            {
+                AddPointerBundle(factTarget, LlvmAssumeOperandBundleKind.Align, alignmentBytes);
+            }
+        }
+
+        void AddPointerBundle(
+            SsaValue pointer,
+            LlvmAssumeOperandBundleKind kind,
+            int? alignmentBytes = null)
+        {
+            if (pointer.Type.Kind != StarkTypeKind.RawPointer)
+            {
+                return;
+            }
+
+            if (kind == LlvmAssumeOperandBundleKind.Align && alignmentBytes is not > 1)
+            {
+                return;
+            }
+
+            var key = FormatAssumePointerKey(pointer);
+            if (!pointerFacts.TryGetValue(key, out var bundles))
+            {
+                bundles = [];
+                pointerFacts[key] = bundles;
+            }
+
+            if (bundles.Any(existing => existing.Kind == kind && existing.AlignmentBytes == alignmentBytes))
+            {
+                return;
+            }
+
+            bundles.Add(new LlvmAssumeOperandBundle(kind, pointer, alignmentBytes));
+        }
+    }
+
+    private bool IsKnownNonNullPointerValue(SsaValue value, ISet<string> visitedValueNames)
+    {
+        if (value is SsaNullConstant)
+        {
+            return false;
+        }
+
+        return value switch
+        {
+            SsaGlobalAddressValue => true,
+            SsaValueReference reference when reference.Type.Kind == StarkTypeKind.RawPointer =>
+                IsKnownNonNullPointerReference(reference, visitedValueNames),
+            _ => value.Type.Kind == StarkTypeKind.RawPointer
+                && TryGetValueDefinition(value, visitedValueNames, out var definition)
+                && IsKnownNonNullPointerDefinition(definition, visitedValueNames)
+        };
+    }
+
+    private bool IsKnownNonNullPointerReference(SsaValueReference reference, ISet<string> visitedValueNames)
+    {
+        if (!visitedValueNames.Add(reference.Name))
+        {
+            return false;
+        }
+
+        if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return IsKnownNonNullPointerDefinition(definition, visitedValueNames);
+        }
+
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.LlvmName, reference.Name, StringComparison.Ordinal)
+                || string.Equals(candidate.SourceName, reference.Name, StringComparison.Ordinal));
+        return parameter is not null
+            && parameter.LlvmType.Kind == StarkTypeKind.RawPointer
+            && (parameter.SourceType.BorrowKind != StarkBorrowKind.None
+                || parameter.SourceType.InitializationKind != StarkInitializationKind.None);
+    }
+
+    private bool IsKnownNonNullPointerDefinition(SsaRValue definition, ISet<string> visitedValueNames)
+    {
+        return definition switch
+        {
+            SsaUseRValue use => IsKnownNonNullPointerValue(use.Value, visitedValueNames),
+            SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer =>
+                IsKnownNonNullPointerValue(convert.Operand, visitedValueNames),
+            SsaAddressOfLocalRValue => true,
+            SsaAddressOfParameterRValue => true,
+            SsaFieldAddressRValue fieldAddress => IsKnownNonNullPointerValue(fieldAddress.Address, visitedValueNames),
+            SsaElementAddressRValue elementAddress => IsKnownNonNullPointerValue(elementAddress.Address, visitedValueNames),
+            SsaSliceElementAddressRValue sliceElementAddress => IsKnownNonNullPointerValue(sliceElementAddress.Slice, visitedValueNames),
+            _ => false
+        };
+    }
+
+    private bool TryGetValueDefinition(
+        SsaValue value,
+        ISet<string> visitedValueNames,
+        out SsaRValue definition)
+    {
+        if (value is SsaValueReference reference
+            && visitedValueNames.Add(reference.Name)
+            && _valueDefinitions.TryGetValue(reference.Name, out definition!))
+        {
+            return true;
+        }
+
+        definition = null!;
+        return false;
+    }
+
+    private static string FormatAssumePointerKey(SsaValue pointer)
+    {
+        return pointer switch
+        {
+            SsaValueReference reference => $"ref:{reference.Name}",
+            SsaGlobalAddressValue global => $"global:{global.GlobalName}",
+            _ => $"value:{pointer.Text}:{pointer.Type.DisplayName}"
+        };
+    }
+
+    private static bool TryGetPointerElementType(SsaValue pointer, out StarkTypeSymbol pointeeType)
+    {
+        if (pointer.Type.Kind == StarkTypeKind.RawPointer && pointer.Type.ElementType is { } elementType)
+        {
+            pointeeType = elementType;
+            return true;
+        }
+
+        pointeeType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private void EmitInstruction(SsaInstruction instruction)
@@ -144,7 +485,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaStoreGlobalInstruction storeGlobal:
                 AppendLine(
-                    $"  store {MapType(storeGlobal.GlobalType)} {FormatValue(storeGlobal.Value)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(storeGlobal.GlobalName))}");
+                    $"  store {MapType(storeGlobal.GlobalType)} {FormatValue(storeGlobal.Value)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(storeGlobal.GlobalName))}{GetGlobalObjectAlignmentSuffix(storeGlobal.GlobalName, storeGlobal.GlobalType)}{GetDirectTbaaMetadataSuffix(CreateTbaaGlobalRootKey(storeGlobal.GlobalName), storeGlobal.GlobalType)}");
                 return;
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA instruction '{instruction.GetType().Name}'.");
@@ -161,22 +502,32 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaLoadGlobalRValue load:
                 AppendLine(
-                    $"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(load.GlobalName))}{GetInvariantLoadMetadataSuffix(load.GlobalName)}{GetValueRangeMetadataSuffix(load.Type)}");
+                    $"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(load.GlobalName))}{GetGlobalObjectAlignmentSuffix(load.GlobalName, load.Type)}{GetInvariantLoadMetadataSuffix(load.GlobalName)}{GetValueRangeMetadataSuffix(load.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaGlobalRootKey(load.GlobalName), load.Type)}");
                 return;
             case SsaLoadLocalRValue loadLocal:
                 EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
-                AppendLine($"  {result} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetTypeAlignmentSuffix(loadLocal.Type)}{GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName)}{GetValueRangeMetadataSuffix(loadLocal.Type)}");
+                AppendLine($"  {result} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetLocalObjectAlignmentSuffix(loadLocal.LocalName, loadLocal.Type)}{GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName)}{GetValueRangeMetadataSuffix(loadLocal.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(loadLocal.LocalName), loadLocal.Type)}");
                 return;
             case SsaConvertRValue convert:
-                EmitConvert(result, convert);
+                EmitConvert(instruction.ResultName, result, convert);
                 return;
             case SsaExtractFieldRValue extract:
+                if (TryEmitAggregateElementLoad(result, extract.Target, extract.FieldIndex, extract.Type, "extract_field_load"))
+                {
+                    return;
+                }
+
                 AppendLine($"  {result} = extractvalue {MapType(extract.Target.Type)} {FormatValue(extract.Target)}, {extract.FieldIndex}");
                 return;
             case SsaInsertFieldRValue insert:
                 AppendLine($"  {result} = insertvalue {MapType(insert.Target.Type)} {FormatValue(insert.Target)}, {MapType(insert.Value.Type)} {FormatValue(insert.Value)}, {insert.FieldIndex}");
                 return;
             case SsaExtractIndexRValue extractIndex:
+                if (TryEmitAggregateElementLoad(result, extractIndex.Target, extractIndex.ElementIndex, extractIndex.Type, "extract_index_load"))
+                {
+                    return;
+                }
+
                 AppendLine($"  {result} = extractvalue {MapType(extractIndex.Target.Type)} {FormatValue(extractIndex.Target)}, {extractIndex.ElementIndex}");
                 return;
             case SsaInsertIndexRValue insertIndex:
@@ -208,7 +559,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaLoadIndirectRValue loadIndirect:
                 AppendLine(
-                    $"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}{GetKnownPointerAlignmentSuffix(loadIndirect.Address, loadIndirect.Type)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}{GetValueRangeMetadataSuffix(loadIndirect.Type)}");
+                    $"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}{GetKnownPointerAlignmentSuffix(loadIndirect.Address, loadIndirect.Type)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}{GetValueRangeMetadataSuffix(loadIndirect.Type)}{GetTbaaMetadataSuffix(loadIndirect.Address, loadIndirect.Type)}{GetScopedNoAliasMetadataSuffix(loadIndirect.Address)}");
                 return;
             case SsaUnaryRValue unary:
                 EmitUnary(result, unary);
@@ -224,7 +575,7 @@ internal sealed class LlvmFunctionBodyEmitter
         }
     }
 
-    private void EmitConvert(string result, SsaConvertRValue convert)
+    private void EmitConvert(string resultName, string result, SsaConvertRValue convert)
     {
         var sourceType = convert.Operand.Type;
         var targetType = convert.TargetType;
@@ -244,12 +595,26 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Float)
         {
+            if (_isStrictFp)
+            {
+                AppendLine(
+                    $"  {result} = call {MapType(targetType)} @{GetConstrainedIntegerToFloatIntrinsicName(sourceType, targetType)}({MapType(sourceType)} {FormatValue(convert.Operand)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
+                return;
+            }
+
             AppendLine($"  {result} = sitofp {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;
         }
 
         if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Integer)
         {
+            if (_isStrictFp)
+            {
+                AppendLine(
+                    $"  {result} = call {MapType(targetType)} @{GetConstrainedFloatToIntegerIntrinsicName(sourceType, targetType)}({MapType(sourceType)} {FormatValue(convert.Operand)}, metadata !\"fpexcept.strict\") strictfp");
+                return;
+            }
+
             AppendLine($"  {result} = fptosi {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;
         }
@@ -258,12 +623,28 @@ internal sealed class LlvmFunctionBodyEmitter
         {
             if (sourceType.BitWidth == targetType.BitWidth)
             {
+                if (_isStrictFp)
+                {
+                    AppendLine($"  {result} = select i1 true, {MapType(targetType)} {FormatValue(convert.Operand)}, {MapType(targetType)} {FormatValue(convert.Operand)}");
+                    return;
+                }
+
                 AppendLine($"  {result} = fadd{GetFastMathSuffix()} {MapType(targetType)} {FormatValue(convert.Operand)}, 0.0");
                 return;
             }
 
             var opcode = sourceType.BitWidth < targetType.BitWidth ? "fpext" : "fptrunc";
-            AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
+            if (_isStrictFp)
+            {
+                var roundingAndExceptionMetadata = opcode == "fptrunc"
+                    ? ", metadata !\"round.dynamic\", metadata !\"fpexcept.strict\""
+                    : ", metadata !\"fpexcept.strict\"";
+                AppendLine(
+                    $"  {result} = call {MapType(targetType)} @{GetConstrainedFloatConversionIntrinsicName(sourceType, targetType)}({MapType(sourceType)} {FormatValue(convert.Operand)}{roundingAndExceptionMetadata}) strictfp");
+                return;
+            }
+
+            AppendLine($"  {result} = {opcode}{GetFastMathSuffix()} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;
         }
 
@@ -275,7 +656,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
         {
-            AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} i8, ptr {FormatValue(convert.Operand)}, i64 0");
+            _valueAliases[resultName] = FormatValue(convert.Operand);
             return;
         }
 
@@ -297,7 +678,14 @@ internal sealed class LlvmFunctionBodyEmitter
                 AppendLine($"  {result} = sub {MapType(unary.Type)} 0, {FormatValue(unary.Operand)}");
                 return;
             case SsaUnaryOperator.Negate when unary.Type.Kind == StarkTypeKind.Float:
-                AppendLine($"  {result} = fneg {MapType(unary.Type)} {FormatValue(unary.Operand)}");
+                if (_isStrictFp)
+                {
+                    AppendLine(
+                        $"  {result} = call {MapType(unary.Type)} @{GetConstrainedUnaryIntrinsicName("fneg", unary.Type)}({MapType(unary.Type)} {FormatValue(unary.Operand)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
+                    return;
+                }
+
+                AppendLine($"  {result} = fneg{GetFastMathSuffix()} {MapType(unary.Type)} {FormatValue(unary.Operand)}");
                 return;
             case SsaUnaryOperator.LogicalNot:
                 AppendLine($"  {result} = xor i1 {FormatValue(unary.Operand)}, true");
@@ -365,6 +753,11 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (binary.Type.Kind == StarkTypeKind.Float)
         {
+            if (TryEmitFusedMultiplyAdd(result, binary))
+            {
+                return;
+            }
+
             var opcode = binary.Operator switch
             {
                 SsaBinaryOperator.Add => "fadd",
@@ -377,6 +770,13 @@ internal sealed class LlvmFunctionBodyEmitter
 
             if (!string.IsNullOrEmpty(opcode))
             {
+                if (_isStrictFp)
+                {
+                    AppendLine(
+                        $"  {result} = call {MapType(binary.Type)} @{GetConstrainedBinaryIntrinsicName(opcode, binary.Type)}({MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {MapType(binary.Right.Type)} {FormatValue(binary.Right)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
+                    return;
+                }
+
                 AppendLine($"  {result} = {opcode}{GetFastMathSuffix()} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
                 return;
             }
@@ -419,6 +819,13 @@ internal sealed class LlvmFunctionBodyEmitter
 
                 if (!string.IsNullOrEmpty(predicate))
                 {
+                    if (_isStrictFp)
+                    {
+                        AppendLine(
+                            $"  {result} = call i1 @{GetConstrainedFloatCompareIntrinsicName(binary.Left.Type)}({MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {MapType(binary.Right.Type)} {FormatValue(binary.Right)}, metadata !\"{predicate}\", metadata !\"fpexcept.strict\") strictfp");
+                        return;
+                    }
+
                     AppendLine($"  {result} = fcmp{GetFastMathSuffix()} {predicate} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
                     return;
                 }
@@ -482,6 +889,111 @@ internal sealed class LlvmFunctionBodyEmitter
 
         throw new UnsupportedBodyEmissionException(
             $"Unsupported SSA binary operator '{binary.Operator}' for '{binary.Left.Type.DisplayName}'.");
+    }
+
+    private bool TryEmitFusedMultiplyAdd(string result, SsaBinaryRValue binary)
+    {
+        if (_isStrictFp
+            || binary.Type.Kind != StarkTypeKind.Float
+            || binary.Operator is not (SsaBinaryOperator.Add or SsaBinaryOperator.Subtract))
+        {
+            return false;
+        }
+
+        if (binary.Operator == SsaBinaryOperator.Add)
+        {
+            if (TryResolveFloatingMultiply(binary.Left, binary.Type, out var leftMultiply))
+            {
+                EmitFusedMultiplyAdd(
+                    result,
+                    binary.Type,
+                    FormatValue(leftMultiply.Left),
+                    FormatValue(leftMultiply.Right),
+                    FormatValue(binary.Right));
+                return true;
+            }
+
+            if (TryResolveFloatingMultiply(binary.Right, binary.Type, out var rightMultiply))
+            {
+                EmitFusedMultiplyAdd(
+                    result,
+                    binary.Type,
+                    FormatValue(rightMultiply.Left),
+                    FormatValue(rightMultiply.Right),
+                    FormatValue(binary.Left));
+                return true;
+            }
+
+            return false;
+        }
+
+        if (TryResolveFloatingMultiply(binary.Left, binary.Type, out var minuendMultiply))
+        {
+            var negatedSubtrahend = EmitFastFloatNegation(binary.Type, binary.Right);
+            EmitFusedMultiplyAdd(
+                result,
+                binary.Type,
+                FormatValue(minuendMultiply.Left),
+                FormatValue(minuendMultiply.Right),
+                negatedSubtrahend);
+            return true;
+        }
+
+        if (TryResolveFloatingMultiply(binary.Right, binary.Type, out var subtrahendMultiply))
+        {
+            var negatedFactor = EmitFastFloatNegation(binary.Type, subtrahendMultiply.Left);
+            EmitFusedMultiplyAdd(
+                result,
+                binary.Type,
+                negatedFactor,
+                FormatValue(subtrahendMultiply.Right),
+                FormatValue(binary.Left));
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveFloatingMultiply(
+        SsaValue value,
+        StarkTypeSymbol expectedType,
+        out SsaBinaryRValue multiply)
+    {
+        multiply = null!;
+
+        if (value is not SsaValueReference reference
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition)
+            || definition is not SsaBinaryRValue
+            {
+                Operator: SsaBinaryOperator.Multiply,
+                Type.Kind: StarkTypeKind.Float
+            } candidate
+            || candidate.Type != expectedType)
+        {
+            return false;
+        }
+
+        multiply = candidate;
+        return true;
+    }
+
+    private void EmitFusedMultiplyAdd(
+        string result,
+        StarkTypeSymbol type,
+        string multiplicand,
+        string multiplier,
+        string addend)
+    {
+        var llvmType = MapType(type);
+        AppendLine(
+            $"  {result} = call{GetFastMathSuffix()} {llvmType} @{GetFusedMultiplyAddIntrinsicName(type)}({llvmType} {multiplicand}, {llvmType} {multiplier}, {llvmType} {addend})");
+    }
+
+    private string EmitFastFloatNegation(StarkTypeSymbol type, SsaValue value)
+    {
+        var result = $"%{EscapeIdentifier(CreateAbiTempName("fmuladd_neg"))}";
+        AppendLine($"  {result} = fneg{GetFastMathSuffix()} {MapType(type)} {FormatValue(value)}");
+        return result;
     }
 
     private bool TryEmitScalarizedAggregateEquality(string result, SsaBinaryRValue binary)
@@ -786,7 +1298,14 @@ internal sealed class LlvmFunctionBodyEmitter
                     return false;
                 }
 
-                AppendLine($"  {result} = fcmp {predicate} {MapType(operandType)} {left}, {right}");
+                if (_isStrictFp)
+                {
+                    AppendLine(
+                        $"  {result} = call i1 @{GetConstrainedFloatCompareIntrinsicName(operandType)}({MapType(operandType)} {left}, {MapType(operandType)} {right}, metadata !\"{predicate}\", metadata !\"fpexcept.strict\") strictfp");
+                    return true;
+                }
+
+                AppendLine($"  {result} = fcmp{GetFastMathSuffix()} {predicate} {MapType(operandType)} {left}, {right}");
                 return true;
             }
             case StarkTypeKind.RawPointer:
@@ -1422,6 +1941,13 @@ internal sealed class LlvmFunctionBodyEmitter
     private void EmitFloatExponent(string result, SsaBinaryRValue binary)
     {
         var llvmType = MapType(binary.Left.Type);
+        if (_isStrictFp)
+        {
+            AppendLine(
+                $"  {result} = call {llvmType} @{GetConstrainedBinaryIntrinsicName("pow", binary.Left.Type)}({llvmType} {FormatValue(binary.Left)}, {llvmType} {FormatValue(binary.Right)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
+            return;
+        }
+
         var intrinsicName = $"@llvm.pow.{GetFloatIntrinsicSuffix(binary.Left.Type)}";
         AppendLine($"  {result} = call{GetFastMathSuffix()} {llvmType} {intrinsicName}({llvmType} {FormatValue(binary.Left)}, {llvmType} {FormatValue(binary.Right)})");
     }
@@ -1520,34 +2046,56 @@ internal sealed class LlvmFunctionBodyEmitter
 
             var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"callarg_{parameter.SourceName}"))}";
             QueueStaticAlloca(tempSlot, parameter.SourceType);
-            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetTypeAlignmentBytes(parameter.SourceType));
+            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
 
             arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot));
         }
 
         var renderedArguments = string.Join(", ", arguments);
-        var callPrefix = abiCallee.UsesFastCallingConvention ? "call fastcc" : "call";
-        var callFastMathSuffix = ShouldUseFastMathFlags(call.Type) ? " fast" : string.Empty;
+        var callPrefixSegments = new List<string>();
+        if (ShouldEmitTailCallMarker(resultName))
+        {
+            callPrefixSegments.Add("tail");
+        }
+
+        callPrefixSegments.Add("call");
+        if (ShouldUseFastMathFlags(call.Type))
+        {
+            callPrefixSegments.Add("fast");
+        }
+
+        if (abiCallee.UsesFastCallingConvention)
+        {
+            callPrefixSegments.Add("fastcc");
+        }
+
+        var callPrefix = string.Join(" ", callPrefixSegments);
+        var strictFpCallSuffix = GetStrictFpCallSuffix();
 
         if (abiCallee.ReturnsIndirect)
         {
-            AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
+            AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}");
             _indirectAggregateValueSlots[resultName] = indirectReturnSlot!;
             if (RequiresAggregateValueMaterialization(resultName, call.Type))
             {
-                AppendLine($"  {result} = load {MapType(call.Type)}, ptr {indirectReturnSlot}{GetValueRangeMetadataSuffix(call.Type)}");
+                AppendLine($"  {result} = load {MapType(call.Type)}, ptr {indirectReturnSlot}{GetStackObjectAlignmentSuffix(call.Type)}{GetValueRangeMetadataSuffix(call.Type)}{GetScopedNoAliasMetadataSuffix(CreateScopedAliasFreshResultRootKey(resultName))}");
             }
             return;
         }
 
         if (call.Type.Kind == StarkTypeKind.Void)
         {
-            AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments})");
+            AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}");
             return;
         }
 
         var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(call.Type);
-        AppendLine($"  {result} = {callPrefix}{callFastMathSuffix} {MapType(abiCallee.LlvmReturnType)} @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){callRangeMetadataSuffix}");
+        AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}");
+    }
+
+    private bool ShouldEmitTailCallMarker(string resultName)
+    {
+        return _tailCallResultNames.Contains(resultName);
     }
 
     private void EmitAllocateLocal(SsaAllocateLocalInstruction allocateLocal)
@@ -1598,9 +2146,60 @@ internal sealed class LlvmFunctionBodyEmitter
         return !_isStrictFp && type.Kind == StarkTypeKind.Float;
     }
 
+    private string GetFastMathSuffix(StarkTypeSymbol type)
+    {
+        return ShouldUseFastMathFlags(type) ? " fast" : string.Empty;
+    }
+
     private string GetFastMathSuffix()
     {
         return _isStrictFp ? string.Empty : " fast";
+    }
+
+    private string GetStrictFpCallSuffix()
+    {
+        return _isStrictFp ? " strictfp" : string.Empty;
+    }
+
+    private static string GetFusedMultiplyAddIntrinsicName(StarkTypeSymbol type)
+    {
+        return $"llvm.fmuladd.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedBinaryIntrinsicName(string operation, StarkTypeSymbol type)
+    {
+        return $"llvm.experimental.constrained.{operation}.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedUnaryIntrinsicName(string operation, StarkTypeSymbol type)
+    {
+        return $"llvm.experimental.constrained.{operation}.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedFloatCompareIntrinsicName(StarkTypeSymbol type)
+    {
+        return $"llvm.experimental.constrained.fcmp.{GetFloatIntrinsicSuffix(type)}";
+    }
+
+    private static string GetConstrainedFloatConversionIntrinsicName(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        return $"llvm.experimental.constrained.{(sourceType.BitWidth < targetType.BitWidth ? "fpext" : "fptrunc")}.{GetFloatIntrinsicSuffix(targetType)}.{GetFloatIntrinsicSuffix(sourceType)}";
+    }
+
+    private static string GetConstrainedIntegerToFloatIntrinsicName(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        return $"llvm.experimental.constrained.sitofp.{GetFloatIntrinsicSuffix(targetType)}.i{sourceType.BitWidth}";
+    }
+
+    private static string GetConstrainedFloatToIntegerIntrinsicName(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        return $"llvm.experimental.constrained.fptosi.i{targetType.BitWidth}.{GetFloatIntrinsicSuffix(sourceType)}";
     }
 
     private string GetTypeAlignmentSuffix(StarkTypeSymbol type)
@@ -1613,6 +2212,80 @@ internal sealed class LlvmFunctionBodyEmitter
         return TryGetConcreteTypeLayout(NormalizeAggregateType(type)) is { AlignmentBytes: > 1 } layout
             ? layout.AlignmentBytes
             : null;
+    }
+
+    private string GetStackObjectAlignmentSuffix(StarkTypeSymbol type)
+    {
+        return GetAlignmentSuffix(GetStackObjectAlignmentBytes(type));
+    }
+
+    private int? GetStackObjectAlignmentBytes(StarkTypeSymbol type)
+    {
+        return GetOwnedObjectAlignmentBytes(type);
+    }
+
+    private int? GetHeapObjectAlignmentBytes(StarkTypeSymbol type)
+    {
+        return GetOwnedObjectAlignmentBytes(type);
+    }
+
+    private int? GetOwnedObjectAlignmentBytes(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        if (TryGetConcreteTypeLayout(normalizedType) is not { } layout)
+        {
+            return null;
+        }
+
+        var alignmentBytes = layout.AlignmentBytes;
+        if (LlvmAggregateEmissionSupport.TryGetVectorizationFriendlyScalarArrayAlignmentBytes(
+                normalizedType,
+                layout) is int vectorFriendlyAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, vectorFriendlyAlignmentBytes);
+        }
+
+        return alignmentBytes > 1 ? alignmentBytes : null;
+    }
+
+    private bool IsVectorizationFriendlyScalarArrayType(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        return LlvmAggregateEmissionSupport.TryGetVectorizationFriendlyScalarArrayAlignmentBytes(
+            normalizedType,
+            TryGetConcreteTypeLayout(normalizedType)) is not null;
+    }
+
+    private string GetLocalObjectAlignmentSuffix(string localName, StarkTypeSymbol type)
+    {
+        return GetAlignmentSuffix(GetLocalObjectAlignmentBytes(localName, type));
+    }
+
+    private int? GetLocalObjectAlignmentBytes(string localName, StarkTypeSymbol type)
+    {
+        return GetLocalStorageClass(localName) switch
+        {
+            "stack" or "heap" => GetOwnedObjectAlignmentBytes(type),
+            _ => GetTypeAlignmentBytes(type)
+        };
+    }
+
+    private string GetGlobalObjectAlignmentSuffix(string globalName, StarkTypeSymbol type)
+    {
+        return GetAlignmentSuffix(GetGlobalObjectAlignmentBytes(globalName, type));
+    }
+
+    private int? GetGlobalObjectAlignmentBytes(string globalName, StarkTypeSymbol type)
+    {
+        var layout = TryGetConcreteTypeLayout(NormalizeAggregateType(type));
+        var alignmentBytes = GetTypeAlignmentBytes(type) ?? 1;
+        if (IsImmutableGlobalName(globalName)
+            && LlvmAggregateEmissionSupport.TryGetReadonlyVectorizationFriendlyAlignmentBytes(type, layout) is int readonlyAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, readonlyAlignmentBytes);
+        }
+
+        return alignmentBytes > 1 ? alignmentBytes : null;
     }
 
     private string GetKnownPointerAlignmentSuffix(SsaValue address, StarkTypeSymbol pointeeType)
@@ -1701,11 +2374,19 @@ internal sealed class LlvmFunctionBodyEmitter
                 }
 
                 return false;
+            case SsaLoadGlobalRValue loadGlobal:
+                alignmentBytes = GetGlobalObjectAlignmentBytes(loadGlobal.GlobalName, loadGlobal.Type) ?? 1;
+                return alignmentBytes > 1;
+            case SsaLoadLocalRValue loadLocal:
+                alignmentBytes = GetLocalObjectAlignmentBytes(loadLocal.LocalName, loadLocal.Type) ?? 1;
+                return alignmentBytes > 1;
+            case SsaLoadIndirectRValue loadIndirect:
+                return TryGetKnownPointerAlignmentBytesCore(loadIndirect.Address, loadIndirect.Type, visitedValueNames, out alignmentBytes);
             case SsaGlobalAddressValue globalAddress:
-                alignmentBytes = GetTypeAlignmentBytes(globalAddress.PointeeType) ?? 1;
+                alignmentBytes = GetGlobalObjectAlignmentBytes(globalAddress.GlobalName, globalAddress.PointeeType) ?? 1;
                 return alignmentBytes > 1;
             case SsaAddressOfLocalRValue addressOfLocal:
-                alignmentBytes = GetTypeAlignmentBytes(addressOfLocal.PointeeType) ?? 1;
+                alignmentBytes = GetLocalObjectAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType) ?? 1;
                 return alignmentBytes > 1;
             case SsaAddressOfParameterRValue addressOfParameter:
             {
@@ -1728,7 +2409,7 @@ internal sealed class LlvmFunctionBodyEmitter
                     return false;
                 }
 
-                alignmentBytes = GetTypeAlignmentBytes(addressOfParameter.PointeeType) ?? 1;
+                alignmentBytes = GetStackObjectAlignmentBytes(addressOfParameter.PointeeType) ?? 1;
                 return alignmentBytes > 1;
             }
             case SsaFieldAddressRValue fieldAddress:
@@ -1806,9 +2487,10 @@ internal sealed class LlvmFunctionBodyEmitter
             case SsaUseRValue use:
                 return TryGetKnownSliceDataAlignmentBytes(use.Value, visitedValueNames, out alignmentBytes);
             case SsaMakeSliceFromLocalRValue makeSlice when makeSlice.SourceType.Kind == StarkTypeKind.FixedArray
-                                                           && makeSlice.SourceType.ElementType is not null
-                                                           && GetTypeAlignmentBytes(makeSlice.SourceType.ElementType) is { } elementAlignmentBytes:
-                alignmentBytes = elementAlignmentBytes;
+                                                           && makeSlice.SourceType.ElementType is not null:
+                alignmentBytes = GetLocalObjectAlignmentBytes(makeSlice.LocalName, makeSlice.SourceType)
+                    ?? GetTypeAlignmentBytes(makeSlice.SourceType.ElementType)
+                    ?? 1;
                 return alignmentBytes > 1;
             case SsaTextSliceRValue textSlice:
             {
@@ -1832,7 +2514,12 @@ internal sealed class LlvmFunctionBodyEmitter
     {
         EnsureLocalSlotExists(storeLocal.LocalName, storeLocal.LocalType);
         var slot = $"%{EscapeIdentifier($"slot_{storeLocal.LocalName}")}";
-        EmitValueToAddress(slot, storeLocal.LocalType, storeLocal.Value, GetTypeAlignmentBytes(storeLocal.LocalType));
+        EmitValueToAddress(
+            slot,
+            storeLocal.LocalType,
+            storeLocal.Value,
+            GetLocalObjectAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
+            GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(storeLocal.LocalName), storeLocal.LocalType));
         EmitInvariantStartForLocalIfNeeded(storeLocal.LocalName, storeLocal.LocalType);
     }
 
@@ -1860,8 +2547,8 @@ internal sealed class LlvmFunctionBodyEmitter
 
         var loadedValue = $"%{EscapeIdentifier(CreateAbiTempName("copy_load"))}";
         AppendLine(
-            $"  {loadedValue} = load {MapType(copyMemory.CopyType)}, ptr {FormatValue(copyMemory.SourceAddress)}{GetKnownPointerAlignmentSuffix(copyMemory.SourceAddress, copyMemory.CopyType)}{GetInvariantLoadMetadataSuffix(copyMemory.SourceAddress)}{GetValueRangeMetadataSuffix(copyMemory.CopyType)}");
-        AppendLine($"  store {MapType(copyMemory.CopyType)} {loadedValue}, ptr {FormatValue(copyMemory.DestinationAddress)}{GetKnownPointerAlignmentSuffix(copyMemory.DestinationAddress, copyMemory.CopyType)}");
+            $"  {loadedValue} = load {MapType(copyMemory.CopyType)}, ptr {FormatValue(copyMemory.SourceAddress)}{GetKnownPointerAlignmentSuffix(copyMemory.SourceAddress, copyMemory.CopyType)}{GetInvariantLoadMetadataSuffix(copyMemory.SourceAddress)}{GetValueRangeMetadataSuffix(copyMemory.CopyType)}{GetTbaaMetadataSuffix(copyMemory.SourceAddress, copyMemory.CopyType)}{GetScopedNoAliasMetadataSuffix(copyMemory.SourceAddress)}");
+        AppendLine($"  store {MapType(copyMemory.CopyType)} {loadedValue}, ptr {FormatValue(copyMemory.DestinationAddress)}{GetKnownPointerAlignmentSuffix(copyMemory.DestinationAddress, copyMemory.CopyType)}{GetTbaaMetadataSuffix(copyMemory.DestinationAddress, copyMemory.CopyType)}{GetScopedNoAliasMetadataSuffix(copyMemory.DestinationAddress)}");
         EmitInvariantStartForLocalIfNeeded(invariantDestinationLocal, copyMemory.CopyType);
     }
 
@@ -1872,10 +2559,22 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EmitValueToAddress(SsaValue destinationAddress, StarkTypeSymbol valueType, SsaValue value)
     {
-        EmitValueToAddress(FormatValue(destinationAddress), valueType, value, GetKnownPointerAlignmentBytes(destinationAddress, valueType));
+        EmitValueToAddress(
+            FormatValue(destinationAddress),
+            valueType,
+            value,
+            GetKnownPointerAlignmentBytes(destinationAddress, valueType),
+            GetTbaaMetadataSuffix(destinationAddress, valueType),
+            GetScopedNoAliasMetadataSuffix(destinationAddress));
     }
 
-    private void EmitValueToAddress(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? alignmentBytes)
+    private void EmitValueToAddress(
+        string destinationAddress,
+        StarkTypeSymbol valueType,
+        SsaValue value,
+        int? alignmentBytes,
+        string tbaaMetadataSuffix = "",
+        string scopedNoAliasMetadataSuffix = "")
     {
         if (TryEmitInlineAggregateZeroFill(destinationAddress, valueType, value, alignmentBytes))
         {
@@ -1895,12 +2594,12 @@ internal sealed class LlvmFunctionBodyEmitter
             }
         }
 
-        if (TryEmitScalarizedAggregateStore(destinationAddress, valueType, value, alignmentBytes))
+        if (TryEmitScalarizedAggregateStore(destinationAddress, valueType, value, alignmentBytes, tbaaMetadataSuffix, scopedNoAliasMetadataSuffix))
         {
             return;
         }
 
-        AppendLine($"  store {MapType(valueType)} {FormatValue(value)}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes)}");
+        AppendLine($"  store {MapType(valueType)} {FormatValue(value)}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
     }
 
     private bool TryEmitInlineAggregateZeroFill(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? alignmentBytes)
@@ -1951,6 +2650,11 @@ internal sealed class LlvmFunctionBodyEmitter
         int? sourceAlignmentBytes,
         string invariantLoadMetadataSuffix)
     {
+        if (IsVectorizationFriendlyScalarArrayType(copyType))
+        {
+            return false;
+        }
+
         if (!TryGetScalarizableAggregateLeaves(
                 copyType,
                 requireRepresentationPreserving: true,
@@ -2089,6 +2793,25 @@ internal sealed class LlvmFunctionBodyEmitter
                 sourceAddress = string.Empty;
                 return false;
         }
+    }
+
+    private bool TryEmitAggregateElementLoad(
+        string result,
+        SsaValue target,
+        int elementIndex,
+        StarkTypeSymbol elementType,
+        string purpose)
+    {
+        if (!CanExtractAggregateElementFromAddress(target.Type, elementIndex, elementType)
+            || !TryResolveAggregateSourceAddress(target, target.Type, out var sourceAddress))
+        {
+            return false;
+        }
+
+        var elementAddress = EmitScalarizedAggregateLeafAddress(sourceAddress, target.Type, [elementIndex], purpose);
+        var alignmentBytes = GetLeafAlignmentBytes(GetTypeAlignmentBytes(target.Type), elementType);
+        AppendLine($"  {result} = load {MapType(elementType)}, ptr {elementAddress}{GetAlignmentSuffix(alignmentBytes)}{GetValueRangeMetadataSuffix(elementType)}");
+        return true;
     }
 
     private bool TryEmitStructuredAggregateStore(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? destinationAlignmentBytes = null)
@@ -2290,6 +3013,10 @@ internal sealed class LlvmFunctionBodyEmitter
                     valueInstruction.ResultName,
                     valueInstruction.Value.Type,
                     visitingValueNames);
+            case SsaExtractFieldRValue extractField when IsNamedReference(extractField.Target, valueName):
+                return !CanExtractAggregateElementFromAddress(valueType, extractField.FieldIndex, extractField.Type);
+            case SsaExtractIndexRValue extractIndex when IsNamedReference(extractIndex.Target, valueName):
+                return !CanExtractAggregateElementFromAddress(valueType, extractIndex.ElementIndex, extractIndex.Type);
             case SsaCallRValue call:
                 for (var index = 0; index < call.Arguments.Count; index++)
                 {
@@ -2356,6 +3083,15 @@ internal sealed class LlvmFunctionBodyEmitter
             && NormalizeAggregateType(destinationType) == NormalizeAggregateType(valueType);
     }
 
+    private bool CanExtractAggregateElementFromAddress(
+        StarkTypeSymbol aggregateType,
+        int elementIndex,
+        StarkTypeSymbol elementType)
+    {
+        return GetAggregateElementType(aggregateType, elementIndex) is { } resolvedElementType
+            && NormalizeAggregateType(resolvedElementType) == NormalizeAggregateType(elementType);
+    }
+
     private static bool IsNamedReference(SsaValue? value, string valueName)
     {
         return value is SsaValueReference reference
@@ -2385,8 +3121,19 @@ internal sealed class LlvmFunctionBodyEmitter
         };
     }
 
-    private bool TryEmitScalarizedAggregateStore(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? destinationAlignmentBytes)
+    private bool TryEmitScalarizedAggregateStore(
+        string destinationAddress,
+        StarkTypeSymbol valueType,
+        SsaValue value,
+        int? destinationAlignmentBytes,
+        string tbaaMetadataSuffix = "",
+        string scopedNoAliasMetadataSuffix = "")
     {
+        if (IsVectorizationFriendlyScalarArrayType(valueType))
+        {
+            return false;
+        }
+
         if (!TryGetScalarizableAggregateLeaves(
                 valueType,
                 requireRepresentationPreserving: true,
@@ -2402,7 +3149,8 @@ internal sealed class LlvmFunctionBodyEmitter
         {
             var leafValue = EmitScalarizedAggregateLeafValue(value, valueType, leaf.Indices, leaf.Type);
             var leafAddress = EmitScalarizedAggregateLeafAddress(destinationAddress, valueType, leaf.Indices, "store_dest");
-            AppendLine($"  store {MapType(leaf.Type)} {leafValue}, ptr {leafAddress}{GetAlignmentSuffix(GetLeafAlignmentBytes(destinationAlignmentBytes, leaf.Type))}");
+            var leafTbaaMetadataSuffix = leaf.Indices.Count == 0 ? tbaaMetadataSuffix : string.Empty;
+            AppendLine($"  store {MapType(leaf.Type)} {leafValue}, ptr {leafAddress}{GetAlignmentSuffix(GetLeafAlignmentBytes(destinationAlignmentBytes, leaf.Type))}{leafTbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
         }
 
         return true;
@@ -2739,7 +3487,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         AppendLine($"  {dataPointer} = extractvalue {MapType(loadSlice.Slice.Type)} {FormatValue(loadSlice.Slice)}, 0");
         AppendLine($"  {elementPointer} = getelementptr{GetSliceElementGepFlags(loadSlice.Slice, loadSlice.Index)} {MapType(loadSlice.Type)}, ptr {dataPointer}, {MapType(loadSlice.Index.Type)} {FormatValue(loadSlice.Index)}");
-        AppendLine($"  {result} = load {MapType(loadSlice.Type)}, ptr {elementPointer}{GetAlignmentSuffix(alignmentBytes)}{GetInvariantLoadMetadataSuffix(loadSlice.Slice)}{GetValueRangeMetadataSuffix(loadSlice.Type)}");
+        AppendLine($"  {result} = load {MapType(loadSlice.Type)}, ptr {elementPointer}{GetAlignmentSuffix(alignmentBytes)}{GetInvariantLoadMetadataSuffix(loadSlice.Slice)}{GetValueRangeMetadataSuffix(loadSlice.Type)}{GetSliceElementTbaaMetadataSuffix(loadSlice.Slice, loadSlice.Type)}{GetScopedNoAliasMetadataSuffixForSlice(loadSlice.Slice)}");
     }
 
     private void EmitTextSlice(string result, SsaTextSliceRValue textSlice)
@@ -2846,7 +3594,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 }
 
                 AppendLine(
-                    $"  br i1 {FormatValue(terminator.Condition)}, label %{FormatBlockLabel(terminator.Targets[0])}, label %{FormatBlockLabel(terminator.Targets[1])}");
+                    $"  br i1 {FormatValue(terminator.Condition)}, label %{FormatBlockLabel(terminator.Targets[0])}, label %{FormatBlockLabel(terminator.Targets[1])}{GetBranchPredictionMetadataSuffix(terminator)}");
                 return;
             case SsaTerminatorKind.Switch:
                 if (terminator.Condition is null || terminator.DefaultTarget is null)
@@ -2866,7 +3614,7 @@ internal sealed class LlvmFunctionBodyEmitter
                         switchCase => $"{MapType(switchCase.MatchValue.Type)} {FormatValue(switchCase.MatchValue)}, label %{FormatBlockLabel(switchCase.TargetBlockId)}"));
 
                 AppendLine(
-                    $"  switch {MapType(terminator.Condition.Type)} {FormatValue(terminator.Condition)}, label %{FormatBlockLabel(terminator.DefaultTarget.Value)} [ {switchCases} ]");
+                    $"  switch {MapType(terminator.Condition.Type)} {FormatValue(terminator.Condition)}, label %{FormatBlockLabel(terminator.DefaultTarget.Value)} [ {switchCases} ]{GetBranchPredictionMetadataSuffix(terminator)}");
                 return;
             case SsaTerminatorKind.Return:
                 if (_abiFunction.ReturnsIndirect)
@@ -2880,7 +3628,8 @@ internal sealed class LlvmFunctionBodyEmitter
                         $"%{EscapeIdentifier(_abiFunction.ReturnBufferParameter.LlvmName)}",
                         _function.ReturnType,
                         terminator.Value,
-                        GetTypeAlignmentBytes(_function.ReturnType));
+                        GetTypeAlignmentBytes(_function.ReturnType),
+                        scopedNoAliasMetadataSuffix: GetScopedNoAliasMetadataSuffix(CreateScopedAliasParameterRootKey(_abiFunction.ReturnBufferParameter.SourceName)));
                     AppendLine("  ret void");
                     return;
                 }
@@ -2899,11 +3648,190 @@ internal sealed class LlvmFunctionBodyEmitter
                 AppendLine($"  ret {MapType(_function.ReturnType)} {FormatValue(terminator.Value)}");
                 return;
             case SsaTerminatorKind.Unreachable:
+                AppendLine($"  call coldcc void @{UnreachableTrapHelperName}()");
                 AppendLine("  unreachable");
                 return;
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA terminator '{terminator.Kind}'.");
         }
+    }
+
+    private string GetBranchPredictionMetadataSuffix(SsaTerminator terminator)
+    {
+        var weights = GetBranchPredictionWeights(terminator);
+        if (weights is null || weights.Count < 2)
+        {
+            return string.Empty;
+        }
+
+        var items = weights
+            .Select(static weight => $"i32 {Math.Max(1, weight)}")
+            .Prepend("!\"branch_weights\"")
+            .ToArray();
+        return $", !prof {_context.GetMetadataTupleRef(items)}";
+    }
+
+    private IReadOnlyList<int>? GetBranchPredictionWeights(SsaTerminator terminator)
+    {
+        return terminator.Kind switch
+        {
+            SsaTerminatorKind.Branch => GetBranchWeights(terminator),
+            SsaTerminatorKind.Switch => GetSwitchWeights(terminator),
+            _ => null
+        };
+    }
+
+    private IReadOnlyList<int>? GetBranchWeights(SsaTerminator terminator)
+    {
+        if (terminator.BranchWeights is { Count: 2 } explicitWeights)
+        {
+            return explicitWeights;
+        }
+
+        if (terminator.Targets.Count != 2)
+        {
+            return null;
+        }
+
+        var trueTargetIsCold = IsColdBranchTarget(terminator.Targets[0]);
+        var falseTargetIsCold = IsColdBranchTarget(terminator.Targets[1]);
+        if (trueTargetIsCold == falseTargetIsCold)
+        {
+            var trueTargetIsHot = IsHotBranchTarget(terminator.Targets[0]);
+            var falseTargetIsHot = IsHotBranchTarget(terminator.Targets[1]);
+            if (trueTargetIsHot == falseTargetIsHot)
+            {
+                return null;
+            }
+
+            return trueTargetIsHot
+                ? [HotIntentLikelyWeight, ExplicitIntentNeutralWeight]
+                : [ExplicitIntentNeutralWeight, HotIntentLikelyWeight];
+        }
+
+        return trueTargetIsCold
+            ? [TrapEdgeUnlikelyWeight, NormalEdgeLikelyWeight]
+            : [NormalEdgeLikelyWeight, TrapEdgeUnlikelyWeight];
+    }
+
+    private IReadOnlyList<int>? GetSwitchWeights(SsaTerminator terminator)
+    {
+        if (terminator.SwitchCases is not { Count: > 0 } switchCases || terminator.DefaultTarget is null)
+        {
+            return null;
+        }
+
+        var expectedWeightCount = switchCases.Count + 1;
+        if (terminator.BranchWeights is { } explicitWeights && explicitWeights.Count == expectedWeightCount)
+        {
+            return explicitWeights;
+        }
+
+        var weights = new int[expectedWeightCount];
+        var sawNonNeutralWeight = false;
+
+        AssignInferredWeight(0, terminator.DefaultTarget.Value);
+        for (var index = 0; index < switchCases.Count; index++)
+        {
+            AssignInferredWeight(index + 1, switchCases[index].TargetBlockId);
+        }
+
+        return sawNonNeutralWeight ? weights : null;
+
+        void AssignInferredWeight(int index, int targetBlockId)
+        {
+            weights[index] = IsColdBranchTarget(targetBlockId)
+                ? TrapEdgeUnlikelyWeight
+                : IsHotBranchTarget(targetBlockId)
+                    ? HotIntentLikelyWeight
+                    : ExplicitIntentNeutralWeight;
+            sawNonNeutralWeight |= weights[index] != ExplicitIntentNeutralWeight;
+        }
+    }
+
+    private bool IsColdBranchTarget(int targetBlockId)
+    {
+        return IsColdBranchTarget(targetBlockId, new HashSet<int>());
+    }
+
+    private bool IsColdBranchTarget(int targetBlockId, HashSet<int> visited)
+    {
+        if (!_blocksById.TryGetValue(targetBlockId, out var block) || !visited.Add(targetBlockId))
+        {
+            return false;
+        }
+
+        if (block.Terminator.Kind == SsaTerminatorKind.Unreachable)
+        {
+            return true;
+        }
+
+        if (ContainsCallWithTemperature(block, isCold: true))
+        {
+            return true;
+        }
+
+        if (block.Phis.Count == 0
+            && block.Instructions.Count == 0
+            && block.Terminator.Kind == SsaTerminatorKind.Goto
+            && block.Terminator.Targets.Count == 1)
+        {
+            return IsColdBranchTarget(block.Terminator.Targets[0], visited);
+        }
+
+        return false;
+    }
+
+    private bool IsHotBranchTarget(int targetBlockId)
+    {
+        return IsHotBranchTarget(targetBlockId, new HashSet<int>());
+    }
+
+    private bool IsHotBranchTarget(int targetBlockId, HashSet<int> visited)
+    {
+        if (!_blocksById.TryGetValue(targetBlockId, out var block) || !visited.Add(targetBlockId))
+        {
+            return false;
+        }
+
+        if (ContainsCallWithTemperature(block, isCold: false))
+        {
+            return true;
+        }
+
+        if (block.Phis.Count == 0
+            && block.Instructions.Count == 0
+            && block.Terminator.Kind == SsaTerminatorKind.Goto
+            && block.Terminator.Targets.Count == 1)
+        {
+            return IsHotBranchTarget(block.Terminator.Targets[0], visited);
+        }
+
+        return false;
+    }
+
+    private bool ContainsCallWithTemperature(SsaBasicBlock block, bool isCold)
+    {
+        foreach (var instruction in block.Instructions)
+        {
+            if (instruction is not SsaValueInstruction { Value: SsaCallRValue call })
+            {
+                continue;
+            }
+
+            var effects = _context.TryGetFunctionEffects(call.FunctionName);
+            if (effects is null)
+            {
+                continue;
+            }
+
+            if (isCold ? effects.IsCold : effects.IsHot)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void EmitFallbackTerminal()
@@ -2970,6 +3898,806 @@ internal sealed class LlvmFunctionBodyEmitter
             ? $", !range {rangeMetadataRef}"
             : string.Empty;
     }
+
+    private ScopedNoAliasMetadataModel? BuildScopedNoAliasMetadata(
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        var roots = new Dictionary<string, ScopedNoAliasRoot>(StringComparer.Ordinal);
+        foreach (var parameter in _abiFunction.Parameters)
+        {
+            if (TryCreateScopedNoAliasParameterRoot(parameter, parameterEffects, out var root))
+            {
+                roots.TryAdd(root.Key, root);
+            }
+        }
+
+        foreach (var root in CollectFreshResultScopedNoAliasRoots())
+        {
+            roots.TryAdd(root.Key, root);
+        }
+
+        if (roots.Count == 0)
+        {
+            return null;
+        }
+
+        var domainKey = $"function:{_abiFunction.SymbolName}";
+        var domainRef = _context.GetAliasScopeDomainRef(domainKey, $"stark.noalias.{_abiFunction.SymbolName}");
+        var scopeRefs = roots.Values.ToDictionary(
+            static root => root.Key,
+            root => _context.GetAliasScopeRef(
+                $"{domainKey}:{root.Key}",
+                domainRef,
+                $"stark.noalias.{_abiFunction.SymbolName}.{root.DisplayName}"),
+            StringComparer.Ordinal);
+
+        var accessMetadata = new Dictionary<string, ScopedNoAliasAccessMetadata>(StringComparer.Ordinal);
+        foreach (var root in roots.Values)
+        {
+            var aliasScopeListRef = _context.GetMetadataTupleRef([scopeRefs[root.Key]]);
+            var noAliasScopeRefs = scopeRefs
+                .Where(scope => !string.Equals(scope.Key, root.Key, StringComparison.Ordinal))
+                .Select(static scope => scope.Value)
+                .ToArray();
+            var noAliasListRef = noAliasScopeRefs.Length == 0
+                ? null
+                : _context.GetMetadataTupleRef(noAliasScopeRefs);
+            accessMetadata[root.Key] = new ScopedNoAliasAccessMetadata(aliasScopeListRef, noAliasListRef);
+        }
+
+        return new ScopedNoAliasMetadataModel(accessMetadata);
+    }
+
+    private bool TryCreateScopedNoAliasParameterRoot(
+        AbiParameterSymbol parameter,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out ScopedNoAliasRoot root)
+    {
+        root = default;
+
+        var rootKey = CreateScopedAliasParameterRootKey(parameter.SourceName);
+        if (_scopedNoAliasUnsafeAddressRoots.Contains(rootKey)
+            || !IsScopedNoAliasParameter(parameter, parameterEffects))
+        {
+            return false;
+        }
+
+        var displayName = parameter.Kind == AbiParameterKind.SRet
+            ? "sret"
+            : $"param.{parameter.SourceName}";
+        root = new ScopedNoAliasRoot(rootKey, displayName);
+        return true;
+    }
+
+    private bool IsScopedNoAliasParameter(
+        AbiParameterSymbol parameter,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        if (parameter.Kind == AbiParameterKind.SRet)
+        {
+            return true;
+        }
+
+        if (parameter.Kind != AbiParameterKind.IndirectIn)
+        {
+            return TryGetParameterEffect(parameter, parameterEffects, out var directEffects)
+                && directEffects.IsMemoryBacked
+                && directEffects.GuaranteedNoAlias;
+        }
+
+        return parameter.SourceType.InitializationKind != StarkInitializationKind.None
+            || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && parameter.SourceType.IsMutableView)
+            || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+            || (TryGetParameterEffect(parameter, parameterEffects, out var indirectEffects)
+                && indirectEffects.IsMemoryBacked
+                && indirectEffects.GuaranteedNoAlias);
+    }
+
+    private static bool TryGetParameterEffect(
+        AbiParameterSymbol parameter,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out ParameterMemoryEffectSummary effects)
+    {
+        if (parameterEffects is not null
+            && (parameterEffects.TryGetValue(parameter.SourceName, out effects!)
+                || parameterEffects.TryGetValue(parameter.LlvmName, out effects!)))
+        {
+            return true;
+        }
+
+        effects = default!;
+        return false;
+    }
+
+    private IReadOnlyList<ScopedNoAliasRoot> CollectFreshResultScopedNoAliasRoots()
+    {
+        var roots = new List<ScopedNoAliasRoot>();
+        foreach (var block in _ssaFunction.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                if (instruction is not SsaValueInstruction { Value: SsaCallRValue call } valueInstruction)
+                {
+                    continue;
+                }
+
+                var abiCallee = _resolveCallAbi(_function.Name, call.FunctionName);
+                if (abiCallee?.ReturnsIndirect == true)
+                {
+                    roots.Add(new ScopedNoAliasRoot(
+                        CreateScopedAliasFreshResultRootKey(valueInstruction.ResultName),
+                        $"fresh.{valueInstruction.ResultName}"));
+                }
+            }
+        }
+
+        return roots;
+    }
+
+    private string GetScopedNoAliasMetadataSuffix(SsaValue address)
+    {
+        return TryResolveScopedNoAliasRoot(
+                address,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var rootKey)
+            ? GetScopedNoAliasMetadataSuffix(rootKey)
+            : string.Empty;
+    }
+
+    private string GetScopedNoAliasMetadataSuffixForSlice(SsaValue slice)
+    {
+        return TryResolveScopedNoAliasSliceRoot(
+                slice,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var rootKey)
+            ? GetScopedNoAliasMetadataSuffix(rootKey)
+            : string.Empty;
+    }
+
+    private string GetScopedNoAliasMetadataSuffix(string rootKey)
+    {
+        if (_scopedNoAliasMetadata is null
+            || !_scopedNoAliasMetadata.Accesses.TryGetValue(rootKey, out var metadata)
+            || metadata.NoAliasListRef is null)
+        {
+            return string.Empty;
+        }
+
+        return $", !alias.scope {metadata.AliasScopeListRef}, !noalias {metadata.NoAliasListRef}";
+    }
+
+    private bool TryResolveScopedNoAliasRoot(
+        SsaValue address,
+        ISet<string> visitedValueNames,
+        out string rootKey)
+    {
+        switch (address)
+        {
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name))
+                {
+                    rootKey = string.Empty;
+                    return false;
+                }
+
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return TryResolveScopedNoAliasRoot(definition, visitedValueNames, out rootKey);
+                }
+
+                return TryResolveScopedNoAliasParameterReference(reference.Name, out rootKey);
+            default:
+                rootKey = string.Empty;
+                return false;
+        }
+    }
+
+    private bool TryResolveScopedNoAliasRoot(
+        SsaRValue address,
+        ISet<string> visitedValueNames,
+        out string rootKey)
+    {
+        switch (address)
+        {
+            case SsaUseRValue use:
+                return TryResolveScopedNoAliasRoot(use.Value, visitedValueNames, out rootKey);
+            case SsaAddressOfParameterRValue addressOfParameter:
+                return TryUseScopedNoAliasRoot(
+                    CreateScopedAliasParameterRootKey(addressOfParameter.ParameterName),
+                    out rootKey);
+            case SsaFieldAddressRValue fieldAddress:
+                return TryResolveScopedNoAliasRoot(fieldAddress.Address, visitedValueNames, out rootKey);
+            case SsaElementAddressRValue elementAddress:
+                return TryResolveScopedNoAliasRoot(elementAddress.Address, visitedValueNames, out rootKey);
+            case SsaSliceElementAddressRValue sliceElementAddress:
+                return TryResolveScopedNoAliasSliceRoot(sliceElementAddress.Slice, visitedValueNames, out rootKey);
+            default:
+                rootKey = string.Empty;
+                return false;
+        }
+    }
+
+    private bool TryResolveScopedNoAliasSliceRoot(
+        SsaValue slice,
+        ISet<string> visitedValueNames,
+        out string rootKey)
+    {
+        switch (slice)
+        {
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name))
+                {
+                    rootKey = string.Empty;
+                    return false;
+                }
+
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return TryResolveScopedNoAliasSliceRoot(definition, visitedValueNames, out rootKey);
+                }
+
+                return TryResolveScopedNoAliasParameterReference(reference.Name, out rootKey);
+            default:
+                rootKey = string.Empty;
+                return false;
+        }
+    }
+
+    private bool TryResolveScopedNoAliasSliceRoot(
+        SsaRValue slice,
+        ISet<string> visitedValueNames,
+        out string rootKey)
+    {
+        switch (slice)
+        {
+            case SsaUseRValue use:
+                return TryResolveScopedNoAliasSliceRoot(use.Value, visitedValueNames, out rootKey);
+            case SsaTextSliceRValue textSlice:
+                return TryResolveScopedNoAliasSliceRoot(textSlice.TextValue, visitedValueNames, out rootKey);
+            case SsaLoadIndirectRValue loadIndirect:
+                return TryResolveScopedNoAliasRoot(loadIndirect.Address, visitedValueNames, out rootKey);
+            default:
+                rootKey = string.Empty;
+                return false;
+        }
+    }
+
+    private bool TryResolveScopedNoAliasParameterReference(string parameterName, out string rootKey)
+    {
+        var parameter = _abiFunction.Parameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, parameterName, StringComparison.Ordinal)
+                || string.Equals(candidate.LlvmName, parameterName, StringComparison.Ordinal));
+        if (parameter is not null)
+        {
+            return TryUseScopedNoAliasRoot(CreateScopedAliasParameterRootKey(parameter.SourceName), out rootKey);
+        }
+
+        if (parameterName.StartsWith("arg_", StringComparison.Ordinal) && parameterName.Length > 4)
+        {
+            return TryUseScopedNoAliasRoot(CreateScopedAliasParameterRootKey(parameterName[4..]), out rootKey);
+        }
+
+        rootKey = string.Empty;
+        return false;
+    }
+
+    private bool TryUseScopedNoAliasRoot(string candidateRootKey, out string rootKey)
+    {
+        if (_scopedNoAliasMetadata is not null
+            && _scopedNoAliasMetadata.Accesses.ContainsKey(candidateRootKey))
+        {
+            rootKey = candidateRootKey;
+            return true;
+        }
+
+        rootKey = string.Empty;
+        return false;
+    }
+
+    private string GetDirectTbaaMetadataSuffix(string rootKey, StarkTypeSymbol accessType)
+    {
+        if (_tbaaUnsafeAddressRoots.Contains(rootKey) || !CanUseTbaaAsAccessType(accessType))
+        {
+            return string.Empty;
+        }
+
+        return $", !tbaa {GetSimpleTbaaAccessTagRef(accessType)}";
+    }
+
+    private string GetTbaaMetadataSuffix(SsaValue address, StarkTypeSymbol accessType)
+    {
+        if (!CanUseTbaaAsAccessType(accessType)
+            || !TryResolveTbaaAddressAccess(
+                address,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var access))
+        {
+            return string.Empty;
+        }
+
+        var tagRef = access.UseStructPath
+            ? GetStructPathTbaaAccessTagRef(access.RootType, accessType, access.OffsetBytes)
+            : GetSimpleTbaaAccessTagRef(accessType);
+        return $", !tbaa {tagRef}";
+    }
+
+    private string GetSliceElementTbaaMetadataSuffix(SsaValue slice, StarkTypeSymbol elementType)
+    {
+        if (!CanUseTbaaAsAccessType(elementType)
+            || !IsTbaaSafeSliceValue(slice, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            return string.Empty;
+        }
+
+        return $", !tbaa {GetSimpleTbaaAccessTagRef(elementType)}";
+    }
+
+    private string GetSimpleTbaaAccessTagRef(StarkTypeSymbol accessType)
+    {
+        var accessDescriptorRef = GetTbaaTypeDescriptorRef(accessType);
+        return _context.GetTbaaAccessTagRef(accessDescriptorRef, accessDescriptorRef, 0);
+    }
+
+    private string GetStructPathTbaaAccessTagRef(StarkTypeSymbol rootType, StarkTypeSymbol accessType, long offsetBytes)
+    {
+        var rootDescriptorRef = GetTbaaTypeDescriptorRef(rootType);
+        var accessDescriptorRef = GetTbaaTypeDescriptorRef(accessType);
+        return _context.GetTbaaAccessTagRef(rootDescriptorRef, accessDescriptorRef, offsetBytes);
+    }
+
+    private string GetTbaaTypeDescriptorRef(StarkTypeSymbol type)
+    {
+        return GetTbaaTypeDescriptorRef(type, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private string GetTbaaTypeDescriptorRef(StarkTypeSymbol type, ISet<string> activeTypeKeys)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        var key = GetTbaaTypeKey(normalizedType);
+        var displayName = GetTbaaTypeDisplayName(normalizedType);
+
+        if (!activeTypeKeys.Add(key))
+        {
+            return _context.GetTbaaTypeDescriptorRef(key, displayName);
+        }
+
+        try
+        {
+            switch (normalizedType.Kind)
+            {
+                case StarkTypeKind.FixedArray
+                    when normalizedType.ElementType is not null
+                         && normalizedType.FixedLength is int fixedLength
+                         && fixedLength is > 0 and <= TbaaFixedArrayFieldLimit
+                         && TryGetConcreteTypeLayout(normalizedType.ElementType) is { } elementLayout:
+                {
+                    var elementDescriptorRef = GetTbaaTypeDescriptorRef(normalizedType.ElementType, activeTypeKeys);
+                    var fields = Enumerable.Range(0, fixedLength)
+                        .Select(index => (elementDescriptorRef, OffsetBytes: (long)index * elementLayout.SizeBytes))
+                        .ToArray();
+                    return _context.GetTbaaStructTypeDescriptorRef(key, displayName, fields);
+                }
+                case StarkTypeKind.Slice:
+                case StarkTypeKind.Ascii:
+                case StarkTypeKind.Unicode:
+                    if (TryBuildViewTbaaFields(normalizedType, activeTypeKeys, out var viewFields))
+                    {
+                        return _context.GetTbaaStructTypeDescriptorRef(key, displayName, viewFields);
+                    }
+
+                    break;
+                case StarkTypeKind.Named:
+                    if (TryBuildNamedAggregateTbaaFields(normalizedType, activeTypeKeys, out var aggregateFields))
+                    {
+                        return _context.GetTbaaStructTypeDescriptorRef(key, displayName, aggregateFields);
+                    }
+
+                    break;
+            }
+
+            return _context.GetTbaaTypeDescriptorRef(key, displayName);
+        }
+        finally
+        {
+            activeTypeKeys.Remove(key);
+        }
+    }
+
+    private bool TryBuildViewTbaaFields(
+        StarkTypeSymbol viewType,
+        ISet<string> activeTypeKeys,
+        out IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)> fields)
+    {
+        fields = Array.Empty<(string TypeDescriptorRef, long OffsetBytes)>();
+
+        var elementType = viewType.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+            StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+            _ => viewType.ElementType
+        };
+        if (elementType is null)
+        {
+            return false;
+        }
+
+        var pointerType = StarkTypeSymbols.RawPointer(elementType, isMutable: false);
+        var lengthType = StarkTypeSymbols.Integer(64);
+        var pointerLayout = TryGetConcreteTypeLayout(pointerType);
+        var lengthLayout = TryGetConcreteTypeLayout(lengthType);
+        if (pointerLayout is null || lengthLayout is null)
+        {
+            return false;
+        }
+
+        var lengthOffset = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        fields =
+        [
+            (GetTbaaTypeDescriptorRef(pointerType, activeTypeKeys), 0L),
+            (GetTbaaTypeDescriptorRef(lengthType, activeTypeKeys), (long)lengthOffset)
+        ];
+        return true;
+    }
+
+    private bool TryBuildNamedAggregateTbaaFields(
+        StarkTypeSymbol aggregateType,
+        ISet<string> activeTypeKeys,
+        out IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)> fields)
+    {
+        fields = Array.Empty<(string TypeDescriptorRef, long OffsetBytes)>();
+
+        var namedType = ResolveNamedTypeSymbol(aggregateType);
+        if (namedType is null || !TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields))
+        {
+            return false;
+        }
+
+        var sizeBytes = 0;
+        var collectedFields = new List<(string TypeDescriptorRef, long OffsetBytes)>(orderedFields.Count);
+        foreach (var field in orderedFields)
+        {
+            var fieldLayout = TryGetConcreteTypeLayout(field.Type);
+            if (fieldLayout is null)
+            {
+                return false;
+            }
+
+            var offsetBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+            collectedFields.Add((GetTbaaTypeDescriptorRef(field.Type, activeTypeKeys), offsetBytes));
+            sizeBytes = checked(offsetBytes + fieldLayout.SizeBytes);
+        }
+
+        fields = collectedFields;
+        return true;
+    }
+
+    private bool TryResolveTbaaAddressAccess(
+        SsaValue address,
+        ISet<string> visitedValueNames,
+        out TbaaAddressAccess access)
+    {
+        switch (address)
+        {
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name))
+                {
+                    access = default;
+                    return false;
+                }
+
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return TryResolveTbaaAddressAccess(definition, visitedValueNames, out access);
+                }
+
+                return TryResolveTbaaParameterReference(reference, out access);
+            case SsaGlobalAddressValue globalAddress:
+                return TryCreateTbaaRootAccess(
+                    CreateTbaaGlobalRootKey(globalAddress.GlobalName),
+                    globalAddress.PointeeType,
+                    out access);
+            default:
+                access = default;
+                return false;
+        }
+    }
+
+    private bool TryResolveTbaaAddressAccess(
+        SsaRValue address,
+        ISet<string> visitedValueNames,
+        out TbaaAddressAccess access)
+    {
+        switch (address)
+        {
+            case SsaUseRValue use:
+                return TryResolveTbaaAddressAccess(use.Value, visitedValueNames, out access);
+            case SsaAddressOfLocalRValue addressOfLocal:
+                return TryCreateTbaaRootAccess(
+                    CreateTbaaLocalRootKey(addressOfLocal.LocalName),
+                    addressOfLocal.PointeeType,
+                    out access);
+            case SsaAddressOfParameterRValue addressOfParameter:
+                return TryCreateTbaaRootAccess(
+                    CreateTbaaParameterRootKey(addressOfParameter.ParameterName),
+                    addressOfParameter.PointeeType,
+                    out access);
+            case SsaFieldAddressRValue fieldAddress:
+                return TryResolveTbaaAggregateElementAccess(
+                    fieldAddress.Address,
+                    fieldAddress.AggregateType,
+                    fieldAddress.FieldIndex,
+                    visitedValueNames,
+                    out access);
+            case SsaElementAddressRValue { AggregateType.Kind: StarkTypeKind.FixedArray } elementAddress
+                when elementAddress.ConstantIndex is int constantIndex:
+                return TryResolveTbaaAggregateElementAccess(
+                    elementAddress.Address,
+                    elementAddress.AggregateType,
+                    constantIndex,
+                    visitedValueNames,
+                    out access);
+            case SsaElementAddressRValue { AggregateType.Kind: StarkTypeKind.FixedArray } elementAddress:
+            {
+                if (!TryResolveTbaaAddressAccess(elementAddress.Address, visitedValueNames, out var baseAccess)
+                    || elementAddress.AggregateType.ElementType is null
+                    || !CanEmitTbaaForType(elementAddress.AggregateType.ElementType))
+                {
+                    access = default;
+                    return false;
+                }
+
+                access = new TbaaAddressAccess(elementAddress.AggregateType.ElementType, 0, UseStructPath: false);
+                return true;
+            }
+            case SsaSliceElementAddressRValue sliceElementAddress:
+            {
+                if (!IsTbaaSafeSliceValue(sliceElementAddress.Slice, visitedValueNames)
+                    || sliceElementAddress.Type.ElementType is not { } elementType
+                    || !CanEmitTbaaForType(elementType))
+                {
+                    access = default;
+                    return false;
+                }
+
+                access = new TbaaAddressAccess(elementType, 0, UseStructPath: false);
+                return true;
+            }
+            default:
+                access = default;
+                return false;
+        }
+    }
+
+    private bool TryResolveTbaaAggregateElementAccess(
+        SsaValue aggregateAddress,
+        StarkTypeSymbol aggregateType,
+        int elementIndex,
+        ISet<string> visitedValueNames,
+        out TbaaAddressAccess access)
+    {
+        if (!TryResolveTbaaAddressAccess(aggregateAddress, visitedValueNames, out var baseAccess)
+            || !TryGetAggregateElementOffsetBytes(aggregateType, elementIndex, out var elementType, out var elementOffsetBytes))
+        {
+            access = default;
+            return false;
+        }
+
+        if (!CanUseStructPathTbaaForAggregateElement(aggregateType))
+        {
+            access = new TbaaAddressAccess(elementType, 0, UseStructPath: false);
+            return true;
+        }
+
+        access = new TbaaAddressAccess(
+            baseAccess.RootType,
+            checked(baseAccess.OffsetBytes + elementOffsetBytes),
+            UseStructPath: true);
+        return true;
+    }
+
+    private bool TryResolveTbaaParameterReference(SsaValueReference reference, out TbaaAddressAccess access)
+    {
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.LlvmName, reference.Name, StringComparison.Ordinal)
+                || string.Equals(candidate.SourceName, reference.Name, StringComparison.Ordinal));
+        if (parameter is null
+            || parameter.Kind != AbiParameterKind.IndirectIn
+            || parameter.SourceType.Kind == StarkTypeKind.RawPointer)
+        {
+            access = default;
+            return false;
+        }
+
+        return TryCreateTbaaRootAccess(
+            CreateTbaaParameterRootKey(parameter.SourceName),
+            parameter.SourceType,
+            out access);
+    }
+
+    private bool TryCreateTbaaRootAccess(string rootKey, StarkTypeSymbol rootType, out TbaaAddressAccess access)
+    {
+        if (_tbaaUnsafeAddressRoots.Contains(rootKey) || !CanEmitTbaaForType(rootType))
+        {
+            access = default;
+            return false;
+        }
+
+        access = new TbaaAddressAccess(rootType, 0, UseStructPath: false);
+        return true;
+    }
+
+    private bool TryGetAggregateElementOffsetBytes(
+        StarkTypeSymbol aggregateType,
+        int elementIndex,
+        out StarkTypeSymbol elementType,
+        out long offsetBytes)
+    {
+        elementType = StarkTypeSymbols.Error;
+        offsetBytes = 0;
+
+        var normalizedType = NormalizeAggregateType(aggregateType);
+        switch (normalizedType.Kind)
+        {
+            case StarkTypeKind.FixedArray
+                when elementIndex >= 0
+                     && normalizedType.ElementType is not null
+                     && normalizedType.FixedLength is int fixedLength
+                     && elementIndex < fixedLength
+                     && TryGetConcreteTypeLayout(normalizedType.ElementType) is { } elementLayout:
+                elementType = normalizedType.ElementType;
+                offsetBytes = (long)elementIndex * elementLayout.SizeBytes;
+                return true;
+            case StarkTypeKind.Named
+                when ResolveNamedTypeSymbol(normalizedType) is { } namedType
+                     && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
+                     && elementIndex >= 0
+                     && elementIndex < orderedFields.Count:
+            {
+                var sizeBytes = 0;
+                for (var index = 0; index <= elementIndex; index++)
+                {
+                    var field = orderedFields[index];
+                    var fieldLayout = TryGetConcreteTypeLayout(field.Type);
+                    if (fieldLayout is null)
+                    {
+                        return false;
+                    }
+
+                    var fieldOffsetBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                    if (index == elementIndex)
+                    {
+                        elementType = field.Type;
+                        offsetBytes = fieldOffsetBytes;
+                        return true;
+                    }
+
+                    sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
+                }
+
+                return false;
+            }
+            default:
+                return false;
+        }
+    }
+
+    private static bool CanUseStructPathTbaaForAggregateElement(StarkTypeSymbol aggregateType)
+    {
+        var normalizedType = NormalizeAggregateType(aggregateType);
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.FixedArray => normalizedType.FixedLength is >= 0 and <= TbaaFixedArrayFieldLimit,
+            StarkTypeKind.Named => true,
+            _ => false
+        };
+    }
+
+    private bool IsTbaaSafeSliceValue(SsaValue slice, ISet<string> visitedValueNames)
+    {
+        switch (slice)
+        {
+            case SsaStringConstant:
+                return true;
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name))
+                {
+                    return false;
+                }
+
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return IsTbaaSafeSliceValue(definition, visitedValueNames);
+                }
+
+                var parameter = _abiFunction.UserParameters.FirstOrDefault(
+                    candidate => string.Equals(candidate.LlvmName, reference.Name, StringComparison.Ordinal)
+                        || string.Equals(candidate.SourceName, reference.Name, StringComparison.Ordinal));
+                return parameter is { SourceType.Kind: StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode }
+                    && !_tbaaUnsafeAddressRoots.Contains(CreateTbaaParameterRootKey(parameter.SourceName));
+            default:
+                return false;
+        }
+    }
+
+    private bool IsTbaaSafeSliceValue(SsaRValue slice, ISet<string> visitedValueNames)
+    {
+        return slice switch
+        {
+            SsaUseRValue use => IsTbaaSafeSliceValue(use.Value, visitedValueNames),
+            SsaMakeSliceFromLocalRValue makeSlice
+                => !_tbaaUnsafeAddressRoots.Contains(CreateTbaaLocalRootKey(makeSlice.LocalName)),
+            SsaTextSliceRValue textSlice => IsTbaaSafeSliceValue(textSlice.TextValue, visitedValueNames),
+            _ => false
+        };
+    }
+
+    private static bool CanEmitTbaaForType(StarkTypeSymbol type)
+    {
+        return NormalizeAggregateType(type).Kind is
+            StarkTypeKind.Bool
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Float
+            or StarkTypeKind.FixedArray
+            or StarkTypeKind.Slice
+            or StarkTypeKind.Named;
+    }
+
+    private static bool CanUseTbaaAsAccessType(StarkTypeSymbol type)
+    {
+        return NormalizeAggregateType(type).Kind is
+            StarkTypeKind.Bool
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Float
+            or StarkTypeKind.RawPointer;
+    }
+
+    private static string GetTbaaTypeKey(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.Bool => "bool",
+            StarkTypeKind.Integer => $"integer:{normalizedType.BitWidth}",
+            StarkTypeKind.Float => $"float:{normalizedType.BitWidth}",
+            StarkTypeKind.RawPointer => "rawptr",
+            StarkTypeKind.Ascii => "text:ascii",
+            StarkTypeKind.Unicode => "text:unicode",
+            StarkTypeKind.FixedArray => $"array:{normalizedType.FixedLength}:{GetTbaaTypeKey(normalizedType.ElementType ?? StarkTypeSymbols.Error)}",
+            StarkTypeKind.Slice => $"slice:{GetTbaaTypeKey(normalizedType.ElementType ?? StarkTypeSymbols.Error)}",
+            StarkTypeKind.Named => $"named:{normalizedType.NamedType ?? normalizedType.DisplayName}",
+            _ => normalizedType.DisplayName
+        };
+    }
+
+    private static string GetTbaaTypeDisplayName(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.Bool => "stark.bool",
+            StarkTypeKind.Integer => $"stark.i{normalizedType.BitWidth}",
+            StarkTypeKind.Float => $"stark.f{normalizedType.BitWidth}",
+            StarkTypeKind.RawPointer => "stark.ptr",
+            StarkTypeKind.Ascii => "stark.text.ascii",
+            StarkTypeKind.Unicode => "stark.text.unicode",
+            StarkTypeKind.FixedArray => $"stark.array.{normalizedType.DisplayName}",
+            StarkTypeKind.Slice => $"stark.slice.{normalizedType.DisplayName}",
+            StarkTypeKind.Named => $"stark.{normalizedType.NamedType ?? normalizedType.DisplayName}",
+            _ => $"stark.{normalizedType.DisplayName}"
+        };
+    }
+
+    private static string CreateTbaaLocalRootKey(string localName) => $"local:{localName}";
+
+    private static string CreateTbaaParameterRootKey(string parameterName) => $"param:{parameterName}";
+
+    private static string CreateTbaaGlobalRootKey(string globalName) => $"global:{globalName}";
+
+    private static string CreateScopedAliasParameterRootKey(string parameterName) => $"param:{parameterName}";
+
+    private static string CreateScopedAliasFreshResultRootKey(string resultName) => $"fresh-result:{resultName}";
 
     private bool IsImmutableMemoryReference(SsaValue value, ISet<string> visitedValueNames)
     {
@@ -3157,7 +4885,14 @@ internal sealed class LlvmFunctionBodyEmitter
             return $"ptr {ExtractStringDataPointer(argument)}";
         }
 
-        return $"{MapType(parameter.LlvmType)} {FormatValue(argument)}";
+        var segments = new List<string> { MapType(parameter.LlvmType) };
+        if (LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out var rangeAttribute))
+        {
+            segments.Add(rangeAttribute);
+        }
+
+        segments.Add(FormatValue(argument));
+        return string.Join(" ", segments);
     }
 
     private string RenderIndirectArgumentPointer(AbiParameterSymbol parameter, string pointerValue)
@@ -3180,9 +4915,9 @@ internal sealed class LlvmFunctionBodyEmitter
     private string RenderSRetArgumentPointer(StarkTypeSymbol returnType, string pointerValue)
     {
         var segments = new List<string> { "ptr", $"sret({MapType(returnType)})" };
-        if (TryGetConcreteTypeLayout(returnType) is { AlignmentBytes: > 1 } layout)
+        if (GetStackObjectAlignmentBytes(returnType) is { } alignmentBytes)
         {
-            segments.Add($"align {layout.AlignmentBytes}");
+            segments.Add($"align {alignmentBytes}");
         }
 
         segments.Add(pointerValue);
@@ -3245,10 +4980,11 @@ internal sealed class LlvmFunctionBodyEmitter
     {
         var sizePointer = $"%{EscapeIdentifier(CreateAbiTempName("heap_size_ptr"))}";
         var sizeValue = $"%{EscapeIdentifier(CreateAbiTempName("heap_size"))}";
+        var alignmentBytes = GetHeapObjectAlignmentBytes(localType) ?? 1;
         AppendLine($"  {sizePointer} = getelementptr {MapType(localType)}, ptr null, i32 1");
         AppendLine($"  {sizeValue} = ptrtoint ptr {sizePointer} to {AllocatorSizeType}");
         AppendLine(
-            $"  %{slotName} = call {BuildFreshAllocationResultAttributes(localType)} ptr @malloc({AllocatorSizeType} noundef {sizeValue})");
+            $"  %{slotName} = call {BuildFreshAllocationResultAttributes(localType)} ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef {sizeValue}, {AllocatorSizeType} noundef {alignmentBytes})");
     }
 
     private string BuildFreshAllocationResultAttributes(StarkTypeSymbol allocatedType)
@@ -3256,19 +4992,21 @@ internal sealed class LlvmFunctionBodyEmitter
         var attributes = new List<string>
         {
             "noalias",
+            "nonnull",
             "noundef"
         };
 
         if (TryGetConcreteTypeLayout(allocatedType) is { } layout)
         {
-            if (layout.AlignmentBytes > 1)
+            var alignmentBytes = GetHeapObjectAlignmentBytes(allocatedType) ?? layout.AlignmentBytes;
+            if (alignmentBytes > 1)
             {
-                attributes.Add($"align {layout.AlignmentBytes}");
+                attributes.Add($"align {alignmentBytes}");
             }
 
             if (layout.SizeBytes > 0)
             {
-                attributes.Add($"dereferenceable_or_null({layout.SizeBytes})");
+                attributes.Add($"dereferenceable({layout.SizeBytes})");
             }
         }
 
@@ -3292,7 +5030,7 @@ internal sealed class LlvmFunctionBodyEmitter
             var incomingValue = _materializedParameters.TryGetValue(parameter.LlvmName, out var materialized)
                 ? materialized
                 : $"%{EscapeIdentifier(parameter.LlvmName)}";
-            AppendLine($"  store {MapType(parameterType)} {incomingValue}, ptr %{slotName}{GetTypeAlignmentSuffix(parameterType)}");
+            AppendLine($"  store {MapType(parameterType)} {incomingValue}, ptr %{slotName}{GetStackObjectAlignmentSuffix(parameterType)}{GetDirectTbaaMetadataSuffix(CreateTbaaParameterRootKey(parameter.SourceName), parameterType)}");
         }
     }
 
@@ -3318,7 +5056,7 @@ internal sealed class LlvmFunctionBodyEmitter
             }
 
             var materializedName = $"%{EscapeIdentifier(CreateAbiTempName($"arg_{parameter.SourceName}_value"))}";
-            AppendLine($"  {materializedName} = load {MapType(parameter.SourceType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}{GetTypeAlignmentSuffix(parameter.SourceType)}{GetValueRangeMetadataSuffix(parameter.SourceType)}");
+            AppendLine($"  {materializedName} = load {MapType(parameter.SourceType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}{GetTypeAlignmentSuffix(parameter.SourceType)}{GetValueRangeMetadataSuffix(parameter.SourceType)}{GetDirectTbaaMetadataSuffix(CreateTbaaParameterRootKey(parameter.SourceName), parameter.SourceType)}{GetScopedNoAliasMetadataSuffix(CreateScopedAliasParameterRootKey(parameter.SourceName))}");
             _materializedParameters[parameter.LlvmName] = materializedName;
             _materializedParameters[parameter.SourceName] = materializedName;
         }
@@ -3379,7 +5117,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void QueueStaticAlloca(string slotName, StarkTypeSymbol slotType)
     {
-        _entryStaticAllocas.Add($"  {slotName} = alloca {MapType(slotType)}{GetTypeAlignmentSuffix(slotType)}");
+        _entryStaticAllocas.Add($"  {slotName} = alloca {MapType(slotType)}{GetStackObjectAlignmentSuffix(slotType)}");
     }
 
     private void FlushEntryStaticAllocas()
@@ -3558,6 +5296,707 @@ internal sealed class LlvmFunctionBodyEmitter
         return definitions;
     }
 
+    private static IReadOnlyDictionary<int, int> CollectBlockOrder(SsaFunction function)
+    {
+        return function.Blocks
+            .Select(static (block, index) => (BlockId: block.Id, Index: index))
+            .ToDictionary(static item => item.BlockId, static item => item.Index);
+    }
+
+    private static IReadOnlyDictionary<int, int> CountPredecessors(SsaFunction function)
+    {
+        var predecessorSets = function.Blocks.ToDictionary(
+            static block => block.Id,
+            static _ => new HashSet<int>(),
+            EqualityComparer<int>.Default);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var target in EnumerateTerminatorTargets(block.Terminator).Distinct())
+            {
+                if (predecessorSets.TryGetValue(target, out var predecessors))
+                {
+                    predecessors.Add(block.Id);
+                }
+            }
+        }
+
+        return predecessorSets.ToDictionary(
+            static entry => entry.Key,
+            static entry => entry.Value.Count,
+            EqualityComparer<int>.Default);
+    }
+
+    private static IEnumerable<int> EnumerateTerminatorTargets(SsaTerminator terminator)
+    {
+        foreach (var target in terminator.Targets)
+        {
+            yield return target;
+        }
+
+        if (terminator.DefaultTarget is int defaultTarget)
+        {
+            yield return defaultTarget;
+        }
+
+        if (terminator.SwitchCases is null)
+        {
+            yield break;
+        }
+
+        foreach (var switchCase in terminator.SwitchCases)
+        {
+            yield return switchCase.TargetBlockId;
+        }
+    }
+
+    private static bool CanEmitAssumeInSuccessor(
+        int entryBlockId,
+        int sourceBlockId,
+        int targetBlockId,
+        IReadOnlyDictionary<int, int> blockOrderById,
+        IReadOnlyDictionary<int, int> predecessorCounts)
+    {
+        if (targetBlockId == entryBlockId
+            || !predecessorCounts.TryGetValue(targetBlockId, out var predecessorCount)
+            || predecessorCount != 1
+            || !blockOrderById.TryGetValue(sourceBlockId, out var sourceOrder)
+            || !blockOrderById.TryGetValue(targetBlockId, out var targetOrder))
+        {
+            return false;
+        }
+
+        // Avoid emitting a non-PHI instruction in a block that appears before
+        // the branch condition definition in textual LLVM order.
+        return sourceOrder < targetOrder;
+    }
+
+    private static bool IsPotentialAssumableCondition(
+        SsaValue condition,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions)
+    {
+        return TryResolveComparisonCondition(condition, valueDefinitions, out var comparison)
+            && (IsIntegerValueRangeNarrowingComparison(comparison, valueDefinitions)
+                || IsPointerComparisonCandidate(comparison, valueDefinitions));
+    }
+
+    private static bool TryResolveComparisonCondition(
+        SsaValue condition,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        out SsaBinaryRValue comparison)
+    {
+        if (condition is SsaValueReference reference
+            && valueDefinitions.TryGetValue(reference.Name, out var definition)
+            && definition is SsaBinaryRValue binary
+            && binary.Type.Kind == StarkTypeKind.Bool
+            && IsComparisonOperator(binary.Operator))
+        {
+            comparison = binary;
+            return true;
+        }
+
+        comparison = null!;
+        return false;
+    }
+
+    private static bool IsComparisonOperator(SsaBinaryOperator operation)
+    {
+        return operation is SsaBinaryOperator.Equal
+            or SsaBinaryOperator.NotEqual
+            or SsaBinaryOperator.LessThan
+            or SsaBinaryOperator.LessThanOrEqual
+            or SsaBinaryOperator.GreaterThan
+            or SsaBinaryOperator.GreaterThanOrEqual;
+    }
+
+    private static bool IsIntegerValueRangeNarrowingComparison(
+        SsaBinaryRValue comparison,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions)
+    {
+        return comparison.Left.Type.Kind == StarkTypeKind.Integer
+            && comparison.Right.Type.Kind == StarkTypeKind.Integer
+            && (TryResolveIntegerConstant(comparison.Left, valueDefinitions, new HashSet<string>(StringComparer.Ordinal), out _)
+                || TryResolveIntegerConstant(comparison.Right, valueDefinitions, new HashSet<string>(StringComparer.Ordinal), out _));
+    }
+
+    private static bool TryResolveIntegerConstant(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedValueNames,
+        out BigInteger constant)
+    {
+        switch (value)
+        {
+            case SsaIntegerConstant integer:
+                constant = integer.Value;
+                return true;
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name)
+                    || !valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    constant = default;
+                    return false;
+                }
+
+                return definition switch
+                {
+                    SsaUseRValue use => TryResolveIntegerConstant(use.Value, valueDefinitions, visitedValueNames, out constant),
+                    SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.Integer =>
+                        TryResolveIntegerConstant(convert.Operand, valueDefinitions, visitedValueNames, out constant),
+                    _ => Fail(out constant)
+                };
+            default:
+                constant = default;
+                return false;
+        }
+
+        static bool Fail(out BigInteger value)
+        {
+            value = default;
+            return false;
+        }
+    }
+
+    private static bool IsPointerComparisonCandidate(
+        SsaBinaryRValue comparison,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions)
+    {
+        if (comparison.Left.Type.Kind != StarkTypeKind.RawPointer
+            || comparison.Right.Type.Kind != StarkTypeKind.RawPointer
+            || comparison.Operator is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+        {
+            return false;
+        }
+
+        if (comparison.Left is SsaNullConstant || comparison.Right is SsaNullConstant)
+        {
+            return true;
+        }
+
+        return IsPotentialKnownNonNullPointerValue(comparison.Left, valueDefinitions, new HashSet<string>(StringComparer.Ordinal))
+            || IsPotentialKnownNonNullPointerValue(comparison.Right, valueDefinitions, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private static bool IsPotentialKnownNonNullPointerValue(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedValueNames)
+    {
+        return value switch
+        {
+            SsaGlobalAddressValue => true,
+            SsaValueReference reference when reference.Type.Kind == StarkTypeKind.RawPointer
+                && visitedValueNames.Add(reference.Name)
+                && valueDefinitions.TryGetValue(reference.Name, out var definition) =>
+                IsPotentialKnownNonNullPointerDefinition(definition, valueDefinitions, visitedValueNames),
+            _ => false
+        };
+    }
+
+    private static bool IsPotentialKnownNonNullPointerDefinition(
+        SsaRValue definition,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedValueNames)
+    {
+        return definition switch
+        {
+            SsaUseRValue use => IsPotentialKnownNonNullPointerValue(use.Value, valueDefinitions, visitedValueNames),
+            SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer =>
+                IsPotentialKnownNonNullPointerValue(convert.Operand, valueDefinitions, visitedValueNames),
+            SsaAddressOfLocalRValue => true,
+            SsaAddressOfParameterRValue => true,
+            SsaFieldAddressRValue fieldAddress =>
+                IsPotentialKnownNonNullPointerValue(fieldAddress.Address, valueDefinitions, visitedValueNames),
+            SsaElementAddressRValue elementAddress =>
+                IsPotentialKnownNonNullPointerValue(elementAddress.Address, valueDefinitions, visitedValueNames),
+            _ => false
+        };
+    }
+
+    private static bool TryGetNullComparedPointer(
+        SsaBinaryRValue comparison,
+        out SsaValue pointer,
+        out bool nonNullWhenConditionTrue)
+    {
+        if (comparison.Operator is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+        {
+            pointer = null!;
+            nonNullWhenConditionTrue = false;
+            return false;
+        }
+
+        if (comparison.Left is SsaNullConstant && comparison.Right.Type.Kind == StarkTypeKind.RawPointer)
+        {
+            pointer = comparison.Right;
+            nonNullWhenConditionTrue = comparison.Operator == SsaBinaryOperator.NotEqual;
+            return true;
+        }
+
+        if (comparison.Right is SsaNullConstant && comparison.Left.Type.Kind == StarkTypeKind.RawPointer)
+        {
+            pointer = comparison.Left;
+            nonNullWhenConditionTrue = comparison.Operator == SsaBinaryOperator.NotEqual;
+            return true;
+        }
+
+        pointer = null!;
+        nonNullWhenConditionTrue = false;
+        return false;
+    }
+
+    private static SsaBinaryOperator? GetAssumedComparisonOperator(SsaBinaryOperator operation, bool assumeConditionTrue)
+    {
+        if (assumeConditionTrue)
+        {
+            return operation;
+        }
+
+        return operation switch
+        {
+            SsaBinaryOperator.Equal => SsaBinaryOperator.NotEqual,
+            SsaBinaryOperator.NotEqual => SsaBinaryOperator.Equal,
+            SsaBinaryOperator.LessThan => SsaBinaryOperator.GreaterThanOrEqual,
+            SsaBinaryOperator.LessThanOrEqual => SsaBinaryOperator.GreaterThan,
+            SsaBinaryOperator.GreaterThan => SsaBinaryOperator.LessThanOrEqual,
+            SsaBinaryOperator.GreaterThanOrEqual => SsaBinaryOperator.LessThan,
+            _ => null
+        };
+    }
+
+    private static HashSet<string> CollectTailCallResultNames(
+        SsaFunction function,
+        AbiFunctionSignature callerAbi,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi,
+        string currentFunctionName,
+        LlvmEmissionContext context,
+        bool isStrictFp)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (isStrictFp
+            || callerAbi.ReturnsIndirect
+            || callerAbi.LlvmReturnType.Kind == StarkTypeKind.Void
+            || callerAbi.IsFfi
+            || !callerAbi.UsesFastCallingConvention)
+        {
+            return names;
+        }
+
+        foreach (var block in function.Blocks)
+        {
+            if (block.Terminator.Kind != SsaTerminatorKind.Return
+                || block.Terminator.Value is not SsaValueReference returnedValue
+                || block.Instructions.Count == 0
+                || block.Instructions[^1] is not SsaValueInstruction
+                {
+                    ResultName: var resultName,
+                    Value: SsaCallRValue call
+                }
+                || !string.Equals(resultName, returnedValue.Name, StringComparison.Ordinal)
+                || !CanEmitTailCallMarker(callerAbi, call, resolveCallAbi, currentFunctionName, context))
+            {
+                continue;
+            }
+
+            names.Add(resultName);
+        }
+
+        return names;
+    }
+
+    private static bool CanEmitTailCallMarker(
+        AbiFunctionSignature callerAbi,
+        SsaCallRValue call,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi,
+        string currentFunctionName,
+        LlvmEmissionContext context)
+    {
+        var calleeAbi = resolveCallAbi(currentFunctionName, call.FunctionName);
+        return calleeAbi is not null
+            && !calleeAbi.ReturnsIndirect
+            && !calleeAbi.IsFfi
+            && calleeAbi.UsesFastCallingConvention
+            && calleeAbi.LlvmReturnType.Kind != StarkTypeKind.Void
+            && string.Equals(context.MapType(callerAbi.LlvmReturnType), context.MapType(calleeAbi.LlvmReturnType), StringComparison.Ordinal)
+            && calleeAbi.UserParameters.All(static parameter => parameter.Kind == AbiParameterKind.Direct)
+            && call.Arguments.All(static argument => !MayContainPointerStorage(argument.Type));
+    }
+
+    private static bool MayContainPointerStorage(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Named => true,
+            StarkTypeKind.FixedArray when type.ElementType is not null => MayContainPointerStorage(type.ElementType),
+            _ => false
+        };
+    }
+
+    private static HashSet<string> CollectTbaaUnsafeAddressRoots(
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions)
+    {
+        var roots = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                foreach (var incoming in phi.Incomings)
+                {
+                    if (incoming.Value.Type.Kind == StarkTypeKind.RawPointer)
+                    {
+                        AddAddressValueRootsFresh(incoming.Value);
+                    }
+                }
+            }
+
+            foreach (var instruction in block.Instructions)
+            {
+                VisitInstruction(instruction);
+            }
+
+            VisitEscapingValue(block.Terminator.Value);
+            if (block.Terminator.SwitchCases is not null)
+            {
+                foreach (var switchCase in block.Terminator.SwitchCases)
+                {
+                    VisitEscapingValue(switchCase.MatchValue);
+                }
+            }
+        }
+
+        return roots;
+
+        void VisitInstruction(SsaInstruction instruction)
+        {
+            switch (instruction)
+            {
+                case SsaStoreLocalInstruction storeLocal:
+                    VisitEscapingValue(storeLocal.Value);
+                    break;
+                case SsaStoreGlobalInstruction storeGlobal:
+                    VisitEscapingValue(storeGlobal.Value);
+                    break;
+                case SsaStoreIndirectInstruction storeIndirect:
+                    VisitEscapingValue(storeIndirect.Value);
+                    break;
+                case SsaValueInstruction { Value: SsaCallRValue call }:
+                    foreach (var argument in call.Arguments)
+                    {
+                        VisitEscapingValue(argument);
+                    }
+
+                    break;
+                case SsaValueInstruction { Value: SsaConvertRValue convert }
+                    when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
+                         || convert.TargetType.Kind == StarkTypeKind.RawPointer:
+                    AddAddressValueRootsFresh(convert.Operand);
+                    break;
+            }
+        }
+
+        void VisitEscapingValue(SsaValue? value)
+        {
+            if (value?.Type.Kind == StarkTypeKind.RawPointer)
+            {
+                AddAddressValueRootsFresh(value);
+            }
+        }
+
+        void AddAddressValueRootsFresh(SsaValue value)
+        {
+            AddAddressValueRoots(value, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        void AddAddressValueRoots(SsaValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaValueReference reference:
+                    if (!visitedValueNames.Add(reference.Name))
+                    {
+                        return;
+                    }
+
+                    if (valueDefinitions.TryGetValue(reference.Name, out var definition))
+                    {
+                        AddAddressRValueRoots(definition, visitedValueNames);
+                    }
+                    else if (reference.Type.Kind == StarkTypeKind.RawPointer)
+                    {
+                        AddParameterRoot(reference.Name);
+                    }
+
+                    break;
+                case SsaGlobalAddressValue globalAddress:
+                    roots.Add(CreateTbaaGlobalRootKey(globalAddress.GlobalName));
+                    break;
+            }
+        }
+
+        void AddAddressRValueRoots(SsaRValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaUseRValue use:
+                    AddAddressValueRoots(use.Value, visitedValueNames);
+                    break;
+                case SsaAddressOfLocalRValue addressOfLocal:
+                    roots.Add(CreateTbaaLocalRootKey(addressOfLocal.LocalName));
+                    break;
+                case SsaAddressOfParameterRValue addressOfParameter:
+                    roots.Add(CreateTbaaParameterRootKey(addressOfParameter.ParameterName));
+                    break;
+                case SsaFieldAddressRValue fieldAddress:
+                    AddAddressValueRoots(fieldAddress.Address, visitedValueNames);
+                    break;
+                case SsaElementAddressRValue elementAddress:
+                    AddAddressValueRoots(elementAddress.Address, visitedValueNames);
+                    break;
+                case SsaSliceElementAddressRValue sliceElementAddress:
+                    AddSliceRoots(sliceElementAddress.Slice, visitedValueNames);
+                    break;
+                case SsaMakeSliceFromLocalRValue makeSlice:
+                    roots.Add(CreateTbaaLocalRootKey(makeSlice.LocalName));
+                    break;
+                case SsaTextSliceRValue textSlice:
+                    AddSliceRoots(textSlice.TextValue, visitedValueNames);
+                    break;
+                case SsaConvertRValue convert:
+                    AddAddressValueRoots(convert.Operand, visitedValueNames);
+                    break;
+            }
+        }
+
+        void AddSliceRoots(SsaValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaValueReference reference:
+                    if (!visitedValueNames.Add(reference.Name))
+                    {
+                        return;
+                    }
+
+                    if (valueDefinitions.TryGetValue(reference.Name, out var definition))
+                    {
+                        AddAddressRValueRoots(definition, visitedValueNames);
+                    }
+                    else
+                    {
+                        AddParameterRoot(reference.Name);
+                    }
+
+                    break;
+                case SsaStringConstant:
+                    break;
+                default:
+                    AddAddressValueRoots(value, visitedValueNames);
+                    break;
+            }
+        }
+
+        void AddParameterRoot(string parameterName)
+        {
+            roots.Add(CreateTbaaParameterRootKey(parameterName));
+            if (parameterName.StartsWith("arg_", StringComparison.Ordinal) && parameterName.Length > 4)
+            {
+                roots.Add(CreateTbaaParameterRootKey(parameterName[4..]));
+            }
+        }
+    }
+
+    private static HashSet<string> CollectScopedNoAliasUnsafeAddressRoots(
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        Func<string, string, AbiFunctionSignature?> resolveCallAbi,
+        string currentFunctionName)
+    {
+        var roots = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                foreach (var incoming in phi.Incomings)
+                {
+                    if (incoming.Value.Type.Kind == StarkTypeKind.RawPointer)
+                    {
+                        AddAddressValueRootsFresh(incoming.Value);
+                    }
+                }
+            }
+
+            foreach (var instruction in block.Instructions)
+            {
+                VisitInstruction(instruction);
+            }
+
+            VisitEscapingValue(block.Terminator.Value);
+            if (block.Terminator.SwitchCases is not null)
+            {
+                foreach (var switchCase in block.Terminator.SwitchCases)
+                {
+                    VisitEscapingValue(switchCase.MatchValue);
+                }
+            }
+        }
+
+        return roots;
+
+        void VisitInstruction(SsaInstruction instruction)
+        {
+            switch (instruction)
+            {
+                case SsaStoreLocalInstruction storeLocal:
+                    VisitEscapingValue(storeLocal.Value);
+                    break;
+                case SsaStoreGlobalInstruction storeGlobal:
+                    VisitEscapingValue(storeGlobal.Value);
+                    break;
+                case SsaStoreIndirectInstruction storeIndirect:
+                    VisitEscapingValue(storeIndirect.Value);
+                    break;
+                case SsaValueInstruction { Value: SsaCallRValue call }:
+                    VisitCallArguments(call);
+                    break;
+                case SsaValueInstruction { Value: SsaConvertRValue convert }
+                    when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
+                         || convert.TargetType.Kind == StarkTypeKind.RawPointer:
+                    AddAddressValueRootsFresh(convert.Operand);
+                    break;
+            }
+        }
+
+        void VisitCallArguments(SsaCallRValue call)
+        {
+            var calleeAbi = resolveCallAbi(currentFunctionName, call.FunctionName);
+            if (calleeAbi is null || calleeAbi.IsFfi)
+            {
+                foreach (var argument in call.Arguments)
+                {
+                    VisitEscapingValue(argument);
+                }
+
+                return;
+            }
+
+            var userParameters = calleeAbi.UserParameters;
+            for (var index = 0; index < call.Arguments.Count; index++)
+            {
+                var argument = call.Arguments[index];
+                if (argument.Type.Kind != StarkTypeKind.RawPointer)
+                {
+                    continue;
+                }
+
+                if (index >= userParameters.Count || userParameters[index].SourceType.Kind == StarkTypeKind.RawPointer)
+                {
+                    AddAddressValueRootsFresh(argument);
+                }
+            }
+        }
+
+        void VisitEscapingValue(SsaValue? value)
+        {
+            if (value?.Type.Kind == StarkTypeKind.RawPointer)
+            {
+                AddAddressValueRootsFresh(value);
+            }
+        }
+
+        void AddAddressValueRootsFresh(SsaValue value)
+        {
+            AddAddressValueRoots(value, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        void AddAddressValueRoots(SsaValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaValueReference reference:
+                    if (!visitedValueNames.Add(reference.Name))
+                    {
+                        return;
+                    }
+
+                    if (valueDefinitions.TryGetValue(reference.Name, out var definition))
+                    {
+                        AddAddressRValueRoots(definition, visitedValueNames);
+                    }
+                    else if (reference.Type.Kind == StarkTypeKind.RawPointer)
+                    {
+                        AddParameterRoot(reference.Name);
+                    }
+
+                    break;
+            }
+        }
+
+        void AddAddressRValueRoots(SsaRValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaUseRValue use:
+                    AddAddressValueRoots(use.Value, visitedValueNames);
+                    break;
+                case SsaAddressOfParameterRValue addressOfParameter:
+                    roots.Add(CreateScopedAliasParameterRootKey(addressOfParameter.ParameterName));
+                    break;
+                case SsaFieldAddressRValue fieldAddress:
+                    AddAddressValueRoots(fieldAddress.Address, visitedValueNames);
+                    break;
+                case SsaElementAddressRValue elementAddress:
+                    AddAddressValueRoots(elementAddress.Address, visitedValueNames);
+                    break;
+                case SsaSliceElementAddressRValue sliceElementAddress:
+                    AddSliceRoots(sliceElementAddress.Slice, visitedValueNames);
+                    break;
+                case SsaTextSliceRValue textSlice:
+                    AddSliceRoots(textSlice.TextValue, visitedValueNames);
+                    break;
+                case SsaConvertRValue convert:
+                    AddAddressValueRoots(convert.Operand, visitedValueNames);
+                    break;
+            }
+        }
+
+        void AddSliceRoots(SsaValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaValueReference reference:
+                    if (!visitedValueNames.Add(reference.Name))
+                    {
+                        return;
+                    }
+
+                    if (valueDefinitions.TryGetValue(reference.Name, out var definition))
+                    {
+                        AddAddressRValueRoots(definition, visitedValueNames);
+                    }
+                    else
+                    {
+                        AddParameterRoot(reference.Name);
+                    }
+
+                    break;
+                default:
+                    AddAddressValueRoots(value, visitedValueNames);
+                    break;
+            }
+        }
+
+        void AddParameterRoot(string parameterName)
+        {
+            roots.Add(CreateScopedAliasParameterRootKey(parameterName));
+            if (parameterName.StartsWith("arg_", StringComparison.Ordinal) && parameterName.Length > 4)
+            {
+                roots.Add(CreateScopedAliasParameterRootKey(parameterName[4..]));
+            }
+        }
+    }
+
     private static Dictionary<string, string> CollectLocalStorageClasses(SsaFunction function)
     {
         var storageClasses = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -3642,6 +6081,11 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private string FormatValueReference(SsaValueReference reference)
     {
+        if (_valueAliases.TryGetValue(reference.Name, out var alias))
+        {
+            return alias;
+        }
+
         return _materializedParameters.TryGetValue(reference.Name, out var materialized)
             ? materialized
             : $"%{EscapeIdentifier(reference.Name)}";
@@ -3722,10 +6166,42 @@ internal sealed class LlvmFunctionBodyEmitter
         };
     }
 
+    private readonly record struct TbaaAddressAccess(
+        StarkTypeSymbol RootType,
+        long OffsetBytes,
+        bool UseStructPath);
+
+    private readonly record struct ScopedNoAliasRoot(
+        string Key,
+        string DisplayName);
+
+    private sealed record ScopedNoAliasMetadataModel(
+        IReadOnlyDictionary<string, ScopedNoAliasAccessMetadata> Accesses);
+
+    private sealed record ScopedNoAliasAccessMetadata(
+        string AliasScopeListRef,
+        string? NoAliasListRef);
+
     private static bool IsStringType(StarkTypeSymbol type)
     {
         return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
     }
+
+    private enum LlvmAssumeOperandBundleKind
+    {
+        NonNull,
+        Align
+    }
+
+    private sealed record LlvmAssumeOperandBundle(
+        LlvmAssumeOperandBundleKind Kind,
+        SsaValue Pointer,
+        int? AlignmentBytes = null);
+
+    private sealed record LlvmAssumeFact(
+        SsaValue? Condition,
+        bool NegateCondition,
+        IReadOnlyList<LlvmAssumeOperandBundle> OperandBundles);
 
     private static StarkTypeSymbol GetTextUnitType(StarkTypeSymbol textType)
     {

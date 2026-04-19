@@ -379,7 +379,7 @@ public sealed class SsaLoweringTests
             }
 
             fn i32[-2147483648 2147483647] Run() {
-                stack Pair source = new Pair() { Left = 1, Right = 2 };
+                stack mut Pair source = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> sourcePtr = &source;
                 Touch(source);
                 source = new Pair() { Left = 3, Right = 4 };
@@ -619,7 +619,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 view[index] = 9;
                 return view[index];
             }

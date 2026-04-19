@@ -27,10 +27,10 @@ public sealed class FunctionClassesFeatureTests : FeatureLlvmTestBase
             """);
 
         Assert.Contains(
-            "define fastcc i32 @Plain(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline",
+            "define fastcc noundef i32 @Plain(i32 noundef %arg_left, i32 noundef %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline",
             llvm);
-        Assert.Contains("define fastcc i32 @Pure()", llvm);
-        Assert.Contains("define fastcc i32 @Bounded()", llvm);
-        Assert.Contains("define fastcc i32 @Run()", llvm);
+        Assert.Contains("define fastcc noundef i32 @Pure()", llvm);
+        Assert.Contains("define fastcc noundef i32 @Bounded()", llvm);
+        Assert.Contains("define fastcc noundef i32 @Run()", llvm);
     }
 }

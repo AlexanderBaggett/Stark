@@ -405,7 +405,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 if (targetName is not { } name
                     || !_localsByName.TryGetValue(name, out var local)
-                    || local.IsConstant)
+                    || local.IsConstant
+                    || !local.IsMutable)
                 {
                     return false;
                 }
@@ -417,13 +418,18 @@ internal sealed partial class MidLevelIrLowerer
                     local.Type,
                     Path: [],
                     UsesAddressModel: false,
-                    IsAddressMutable: CanMutateThroughType(local.Type));
+                    IsAddressMutable: CanFormMutableAddressFromLocal(local));
                 assignmentTargetText = name;
             }
 
             if (target.RootName is { } rootName
                 && _localsByName.TryGetValue(rootName, out var localBinding)
                 && localBinding.IsConstant)
+            {
+                return false;
+            }
+
+            if (!CanAssignImportedTypedTemplatePlace(target))
             {
                 return false;
             }
@@ -475,6 +481,38 @@ internal sealed partial class MidLevelIrLowerer
 
             assignment = BuildAssignment(target, assignedValue, assignmentText);
             return true;
+        }
+
+        private bool CanAssignImportedTypedTemplatePlace(PlaceTarget target)
+        {
+            if (target.RootAddress is not null)
+            {
+                return target.IsAddressMutable;
+            }
+
+            if (target.RootName is not { } rootName)
+            {
+                return target.IsAddressMutable;
+            }
+
+            if (target.Path.Count == 0)
+            {
+                if (_localsByName.TryGetValue(rootName, out var local))
+                {
+                    return local.IsMutable && !local.IsConstant;
+                }
+
+                if (_parametersByName.ContainsKey(rootName))
+                {
+                    return false;
+                }
+
+                return _typeModel.Globals.TryGetValue(rootName, out var global)
+                    ? global.IsMutable
+                    : target.IsAddressMutable;
+            }
+
+            return target.IsAddressMutable;
         }
 
         private bool TryResolveImportedTypedTemplateAssignmentTarget(

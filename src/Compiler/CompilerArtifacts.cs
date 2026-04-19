@@ -2246,7 +2246,8 @@ public sealed record MidLevelIrTerminator(
     MidLevelIrOperand? Value = null,
     IReadOnlyList<MidLevelIrSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<int>? BranchWeights = null);
 
 public sealed record MidLevelIrBasicBlock(
     int Id,
@@ -2579,7 +2580,8 @@ public sealed record SsaTerminator(
     SsaValue? Value = null,
     IReadOnlyList<SsaSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<int>? BranchWeights = null);
 
 public sealed record SsaBasicBlock(
     int Id,

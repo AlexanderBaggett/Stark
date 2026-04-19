@@ -86,7 +86,7 @@ fn i64[-9223372036854775808 9223372036854775807] Utf8ChunkByteLengthLimited(rawp
     stack mut i64[-9223372036854775808 9223372036854775807] read = 0;
     while willexit (read < limit) {
         stack i32[-2147483648 2147483647] first = UnsignedByte(*(&data[read]));
-        stack i64[-9223372036854775808 9223372036854775807] needed = 1;
+        stack mut i64[-9223372036854775808 9223372036854775807] needed = 1;
         if (194 <= first && first <= 223) {
             needed = 2;
         }
@@ -242,7 +242,7 @@ fn i32[-2147483648 2147483647] WriteUnicodeUtf16(rawptr<i8[-128 127]> handle, un
     stack mut i16[-32768 32767][2048] utf16Storage;
     stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
-        stack i64[-9223372036854775808 9223372036854775807] chunkLength = sourceLength - sourceIndex;
+        stack mut i64[-9223372036854775808 9223372036854775807] chunkLength = sourceLength - sourceIndex;
         if (chunkLength > 1024) {
             chunkLength = 1024;
         }
@@ -277,7 +277,7 @@ fn i32[-2147483648 2147483647] WriteUnicodeUtf32(rawptr<i8[-128 127]> handle, un
 
     stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
-        stack i64[-9223372036854775808 9223372036854775807] chunkLength = sourceLength - sourceIndex;
+        stack mut i64[-9223372036854775808 9223372036854775807] chunkLength = sourceLength - sourceIndex;
         if (chunkLength > 2048) {
             chunkLength = 2048;
         }
@@ -358,8 +358,8 @@ fn FileBuffering DefaultBufferingForHandle(rawptr<i8[-128 127]> handle) {
 }
 
 fn File CreateFile(rawptr<i8[-128 127]> handle, System.Text.Encoding encoding, FileBuffering buffering) {
-    stack bool bufferWrites = true;
-    stack bool flushOnLine = false;
+    stack mut bool bufferWrites = true;
+    stack mut bool flushOnLine = false;
 
     switch (buffering) {
         case FileBuffering.None:

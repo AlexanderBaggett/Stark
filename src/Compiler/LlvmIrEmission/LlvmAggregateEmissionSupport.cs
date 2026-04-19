@@ -44,6 +44,13 @@ internal static class LlvmAggregateEmissionSupport
         StarkTypeSymbol type,
         ConcreteTypeLayout? layout)
     {
+        return TryGetVectorizationFriendlyScalarArrayAlignmentBytes(type, layout);
+    }
+
+    public static int? TryGetVectorizationFriendlyScalarArrayAlignmentBytes(
+        StarkTypeSymbol type,
+        ConcreteTypeLayout? layout)
+    {
         var normalizedType = NormalizeTypeForLayout(type);
         if (normalizedType.Kind != StarkTypeKind.FixedArray
             || normalizedType.ElementType is null

@@ -100,6 +100,7 @@ public sealed class CompilerPipelineFunctionEffectsTests
             var sink = effectModel.Functions["Facade.Sink"];
             Assert.True(sink.IsFfi);
             Assert.True(sink.IsCold);
+            Assert.True(sink.NoUnwind);
             Assert.False(sink.UseFastCallingConvention);
         }
         finally

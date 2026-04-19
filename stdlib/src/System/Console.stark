@@ -266,7 +266,7 @@ fn i64[-9223372036854775808 9223372036854775807] DecodeUtf8BytesToUnicode(rawptr
         }
 
         stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-        stack i32[-2147483648 2147483647] codePoint = 65533;
+        stack mut i32[-2147483648 2147483647] codePoint = 65533;
         if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint)) {
             readIndex = start + 1;
         }
@@ -414,7 +414,7 @@ public fn Unicode ReadLine() {
         byteLength += 1;
     }
 
-    stack rawptr<i8[-128 127]> lineData = null;
+    stack mut rawptr<i8[-128 127]> lineData = null;
     if (byteLength > 0) {
         lineData = &lineBytes.Storage[0];
     }
@@ -452,7 +452,7 @@ public fn Unicode Read() {
     }
 
     stack mut i64[-9223372036854775808 9223372036854775807] consumed = 0;
-    stack i32[-2147483648 2147483647] codePoint = 65533;
+    stack mut i32[-2147483648 2147483647] codePoint = 65533;
     if (TryDecodeUtf8CodePoint(&utf8Bytes.Storage[0], expectedLength, &consumed, &codePoint)
         && consumed == expectedLength) {
         return BuildConsoleReadUnitResult(codePoint, 1);

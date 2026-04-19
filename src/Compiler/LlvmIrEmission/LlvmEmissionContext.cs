@@ -13,12 +13,19 @@ internal sealed class LlvmEmissionContext
     private readonly Func<string, string> _resolveGlobalSymbolName;
     private readonly Func<string, bool> _isImmutableGlobalName;
     private readonly Func<StarkVisibility, bool> _shouldInternalize;
+    private readonly Func<string, FunctionEffectProfile?> _tryGetFunctionEffects;
     private readonly Func<StarkParser.ExpressionContext, StarkParser.PrimaryExpressionContext?> _tryUnwrapSimplePrimaryExpression;
     private readonly Func<StarkParser.ObjectCreationExpressionContext, TypedConstructorShape?> _resolveObjectCreationConstructor;
     private readonly Func<string> _getAllocatorSizeType;
     private readonly Func<bool> _isDebugInfoEnabled;
     private readonly Func<string> _getEmptyTupleMetadataRef;
     private readonly Func<StarkTypeSymbol, string?> _getValueRangeMetadataRef;
+    private readonly Func<string, string, string> _getTbaaTypeDescriptorRef;
+    private readonly Func<string, string, IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)>, string> _getTbaaStructTypeDescriptorRef;
+    private readonly Func<string, string, long, string> _getTbaaAccessTagRef;
+    private readonly Func<string, string, string> _getAliasScopeDomainRef;
+    private readonly Func<string, string, string, string> _getAliasScopeRef;
+    private readonly Func<IReadOnlyList<string>, string> _getMetadataTupleRef;
 
     public LlvmEmissionContext(
         string moduleName,
@@ -39,12 +46,19 @@ internal sealed class LlvmEmissionContext
         Func<string, string> resolveGlobalSymbolName,
         Func<string, bool> isImmutableGlobalName,
         Func<StarkVisibility, bool> shouldInternalize,
+        Func<string, FunctionEffectProfile?> tryGetFunctionEffects,
         Func<StarkParser.ExpressionContext, StarkParser.PrimaryExpressionContext?> tryUnwrapSimplePrimaryExpression,
         Func<StarkParser.ObjectCreationExpressionContext, TypedConstructorShape?> resolveObjectCreationConstructor,
         Func<string> getAllocatorSizeType,
         Func<bool> isDebugInfoEnabled,
         Func<string> getEmptyTupleMetadataRef,
-        Func<StarkTypeSymbol, string?> getValueRangeMetadataRef)
+        Func<StarkTypeSymbol, string?> getValueRangeMetadataRef,
+        Func<string, string, string> getTbaaTypeDescriptorRef,
+        Func<string, string, IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)>, string> getTbaaStructTypeDescriptorRef,
+        Func<string, string, long, string> getTbaaAccessTagRef,
+        Func<string, string, string> getAliasScopeDomainRef,
+        Func<string, string, string, string> getAliasScopeRef,
+        Func<IReadOnlyList<string>, string> getMetadataTupleRef)
     {
         ModuleName = moduleName;
         AsciiStringTypeName = asciiStringTypeName;
@@ -64,12 +78,19 @@ internal sealed class LlvmEmissionContext
         _resolveGlobalSymbolName = resolveGlobalSymbolName;
         _isImmutableGlobalName = isImmutableGlobalName;
         _shouldInternalize = shouldInternalize;
+        _tryGetFunctionEffects = tryGetFunctionEffects;
         _tryUnwrapSimplePrimaryExpression = tryUnwrapSimplePrimaryExpression;
         _resolveObjectCreationConstructor = resolveObjectCreationConstructor;
         _getAllocatorSizeType = getAllocatorSizeType;
         _isDebugInfoEnabled = isDebugInfoEnabled;
         _getEmptyTupleMetadataRef = getEmptyTupleMetadataRef;
         _getValueRangeMetadataRef = getValueRangeMetadataRef;
+        _getTbaaTypeDescriptorRef = getTbaaTypeDescriptorRef;
+        _getTbaaStructTypeDescriptorRef = getTbaaStructTypeDescriptorRef;
+        _getTbaaAccessTagRef = getTbaaAccessTagRef;
+        _getAliasScopeDomainRef = getAliasScopeDomainRef;
+        _getAliasScopeRef = getAliasScopeRef;
+        _getMetadataTupleRef = getMetadataTupleRef;
     }
 
     public string ModuleName { get; }
@@ -98,6 +119,26 @@ internal sealed class LlvmEmissionContext
 
     public string? GetValueRangeMetadataRef(StarkTypeSymbol type) => _getValueRangeMetadataRef(type);
 
+    public string GetTbaaTypeDescriptorRef(string key, string displayName) =>
+        _getTbaaTypeDescriptorRef(key, displayName);
+
+    public string GetTbaaStructTypeDescriptorRef(
+        string key,
+        string displayName,
+        IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)> fields) =>
+        _getTbaaStructTypeDescriptorRef(key, displayName, fields);
+
+    public string GetTbaaAccessTagRef(string baseTypeDescriptorRef, string accessTypeDescriptorRef, long offsetBytes) =>
+        _getTbaaAccessTagRef(baseTypeDescriptorRef, accessTypeDescriptorRef, offsetBytes);
+
+    public string GetAliasScopeDomainRef(string key, string displayName) =>
+        _getAliasScopeDomainRef(key, displayName);
+
+    public string GetAliasScopeRef(string key, string domainRef, string displayName) =>
+        _getAliasScopeRef(key, domainRef, displayName);
+
+    public string GetMetadataTupleRef(IReadOnlyList<string> items) => _getMetadataTupleRef(items);
+
     public string MapType(StarkTypeSymbol type) => _mapType(type);
 
     public ConcreteTypeLayout? TryGetConcreteTypeLayout(StarkTypeSymbol type) => _tryGetConcreteTypeLayout(type);
@@ -117,6 +158,8 @@ internal sealed class LlvmEmissionContext
     public bool IsImmutableGlobalName(string globalName) => _isImmutableGlobalName(globalName);
 
     public bool ShouldInternalize(StarkVisibility visibility) => _shouldInternalize(visibility);
+
+    public FunctionEffectProfile? TryGetFunctionEffects(string functionName) => _tryGetFunctionEffects(functionName);
 
     public StarkParser.PrimaryExpressionContext? TryUnwrapSimplePrimaryExpression(StarkParser.ExpressionContext expression) =>
         _tryUnwrapSimplePrimaryExpression(expression);

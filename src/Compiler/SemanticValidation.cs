@@ -1175,7 +1175,12 @@ internal sealed class SemanticValidator
     {
         if (scope.TryLookup(name, out var local))
         {
-            return new ValidationValue(local.Type, IsAssignable: local.IsMutable && !local.IsConstant, RootSymbol: local, NamedType: ResolveNamedTypeSymbol(local.Type));
+            return new ValidationValue(
+                local.Type,
+                IsAssignable: local.IsMutable && !local.IsConstant,
+                RootSymbol: local,
+                NamedType: ResolveNamedTypeSymbol(local.Type),
+                IsAddressMutable: CanFormMutableAddressFromLocal(local));
         }
 
         if (_typeModel.Globals.TryGetValue(name, out var globalType))
@@ -1203,7 +1208,8 @@ internal sealed class SemanticValidator
                     isMutable,
                     IsConstant: !isMutable,
                     BindingKind: globalType.BindingKind),
-                NamedType: ResolveNamedTypeSymbol(globalType.Type));
+                NamedType: ResolveNamedTypeSymbol(globalType.Type),
+                IsAddressMutable: isMutable);
         }
 
         if (TryGetFunctionOverloads(name, out var targetFunctions))
@@ -1725,7 +1731,7 @@ internal sealed class SemanticValidator
         }
 
         var currentType = target.Type;
-        var currentIsAssignable = target.IsAssignable;
+        var currentIsAddressMutable = target.IsAddressMutable;
         var currentUsesFrozenProjectionSemantics = UsesFrozenProjectionSemantics(target);
         foreach (var indexExpression in indexes.expression())
         {
@@ -1736,20 +1742,24 @@ internal sealed class SemanticValidator
                 continue;
             }
 
-            currentIsAssignable &= currentType.AccessKind != StarkAccessKind.Frozen;
+            currentIsAddressMutable = currentType.Kind == StarkTypeKind.RawPointer
+                ? currentType.IsMutablePointer
+                : currentIsAddressMutable && currentType.AccessKind != StarkAccessKind.Frozen;
             currentType = currentUsesFrozenProjectionSemantics
                 ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
                 : ProjectFrozenView(currentType, currentType.ElementType);
+            currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
             currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
                 || currentType.AccessKind == StarkAccessKind.Frozen;
         }
 
         return new ValidationValue(
             currentType,
-            IsAssignable: currentIsAssignable,
+            IsAssignable: currentIsAddressMutable,
             RootSymbol: target.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(currentType),
             IsIndirectStorageAccess: true,
+            IsAddressMutable: currentIsAddressMutable,
             UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics);
     }
 
@@ -1782,7 +1792,8 @@ internal sealed class SemanticValidator
                         isMutable,
                         IsConstant: !isMutable,
                         BindingKind: globalType.BindingKind),
-                    NamedType: ResolveNamedTypeSymbol(globalType.Type));
+                    NamedType: ResolveNamedTypeSymbol(globalType.Type),
+                    IsAddressMutable: isMutable);
             }
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
@@ -1838,10 +1849,11 @@ internal sealed class SemanticValidator
             var projectedType = ProjectProjectionType(target, field.Type);
             return new ValidationValue(
                 projectedType,
-                IsAssignable: target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen,
+                IsAssignable: CanMutateAddressProjection(target, projectedType),
                 RootSymbol: target.RootSymbol,
                 NamedType: ResolveNamedTypeSymbol(projectedType),
                 IsIndirectStorageAccess: true,
+                IsAddressMutable: CanMutateAddressProjection(target, projectedType),
                 UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target));
         }
 
@@ -1956,7 +1968,7 @@ internal sealed class SemanticValidator
         var pointeeType = UsesFrozenProjectionSemantics(operand)
             ? StarkTypeSymbols.FreezeAddressPointeeType(operand.Type)
             : operand.Type;
-        var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAssignable);
+        var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAddressMutable);
         return new ValidationValue(
             pointerType,
             RootSymbol: operand.RootSymbol,
@@ -1977,7 +1989,8 @@ internal sealed class SemanticValidator
             IsAssignable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
             RootSymbol: operand.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(pointeeType),
-            IsIndirectStorageAccess: true);
+            IsIndirectStorageAccess: true,
+            IsAddressMutable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen);
     }
 
     private PendingCallArgument CreatePendingCallArgument(
@@ -3094,6 +3107,20 @@ internal sealed class SemanticValidator
             : ProjectFrozenView(source.Type, projectedType);
     }
 
+    private static bool CanFormMutableAddressFromLocal(VariableSymbol local)
+    {
+        return !local.IsConstant
+            && local.Type.AccessKind != StarkAccessKind.Frozen
+            && (local.IsMutable || local.Type.IsMutableView);
+    }
+
+    private static bool CanMutateAddressProjection(ValidationValue target, StarkTypeSymbol projectedType)
+    {
+        return target.IsAddressMutable
+            && target.Type.AccessKind != StarkAccessKind.Frozen
+            && projectedType.AccessKind != StarkAccessKind.Frozen;
+    }
+
     private static bool IsMemoryBackedType(StarkTypeSymbol type)
     {
         return type.Kind switch
@@ -3463,6 +3490,7 @@ internal sealed class SemanticValidator
         string? NamespaceName = null,
         ValidationValue? Receiver = null,
         EnumConstructorBinding? EnumConstructor = null,
+        bool IsAddressMutable = false,
         bool UsesFrozenProjectionSemantics = false);
 
     private sealed record EnumConstructorBinding(

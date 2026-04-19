@@ -391,7 +391,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 module Facade
 
                 public cold noinline fn T Choose<T>(T left, T right, bool takeRight) {
-                    stack T current = left;
+                    stack mut T current = left;
                     if (takeRight) {
                         current = right;
                     }

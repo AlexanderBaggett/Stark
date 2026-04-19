@@ -96,7 +96,9 @@ internal sealed class SsaCleanupOptimizer
             canonicalTerminator = new SsaTerminator(
                 SsaTerminatorKind.Branch,
                 [terminator.Targets[1], terminator.Targets[0]],
-                Condition: logicalNot.Operand);
+                Condition: logicalNot.Operand,
+                Location: terminator.Location,
+                BranchWeights: ReverseBranchWeights(terminator));
             return true;
         }
 
@@ -121,11 +123,20 @@ internal sealed class SsaCleanupOptimizer
             canonicalTerminator = new SsaTerminator(
                 SsaTerminatorKind.Branch,
                 targets,
-                Condition: branchCondition);
+                Condition: branchCondition,
+                Location: terminator.Location,
+                BranchWeights: swapTargets ? ReverseBranchWeights(terminator) : terminator.BranchWeights);
             return true;
         }
 
         return false;
+    }
+
+    private static IReadOnlyList<int>? ReverseBranchWeights(SsaTerminator terminator)
+    {
+        return terminator.BranchWeights is { Count: 2 } weights
+            ? [weights[1], weights[0]]
+            : null;
     }
 
     private static bool TryMatchBooleanComparison(
@@ -259,7 +270,9 @@ internal sealed class SsaCleanupOptimizer
                     new SsaTerminator(
                         SsaTerminatorKind.Branch,
                         [switchCase.TargetBlockId, block.Terminator.DefaultTarget.Value],
-                        Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool)));
+                        Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
+                        Location: block.Terminator.Location,
+                        BranchWeights: TryCreateSwitchCaseBranchWeights(block.Terminator, switchCase, trueTargetIsCase: true)));
             })
             .ToArray();
 
@@ -375,7 +388,9 @@ internal sealed class SsaCleanupOptimizer
         branchTerminator = new SsaTerminator(
             SsaTerminatorKind.Branch,
             [trueCase.TargetBlockId, falseCase.TargetBlockId],
-            Condition: terminator.Condition);
+            Condition: terminator.Condition,
+            Location: terminator.Location,
+            BranchWeights: TryCreateBoolSwitchBranchWeights(terminator, trueCase, falseCase));
         return true;
     }
 
@@ -462,6 +477,7 @@ internal sealed class SsaCleanupOptimizer
         var currentInstructions = block.Instructions;
         var condition = block.Terminator.Condition!;
         var defaultTarget = block.Terminator.DefaultTarget!.Value;
+        var remainingWeight = TryGetSwitchCompareChainWeightTotal(block.Terminator, orderedCases);
 
         for (var index = 0; index < orderedCases.Count; index++)
         {
@@ -479,6 +495,7 @@ internal sealed class SsaCleanupOptimizer
             var falseTarget = index == orderedCases.Count - 1
                 ? defaultTarget
                 : nextBlockId++;
+            var branchWeights = TryCreateSwitchCompareChainBranchWeights(block.Terminator, switchCase, ref remainingWeight);
 
             replacementBlocks.Add(new SsaBasicBlock(
                 currentBlockId,
@@ -488,7 +505,9 @@ internal sealed class SsaCleanupOptimizer
                 new SsaTerminator(
                     SsaTerminatorKind.Branch,
                     [switchCase.TargetBlockId, falseTarget],
-                    Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool))));
+                    Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
+                    Location: block.Terminator.Location,
+                    BranchWeights: branchWeights)));
 
             currentBlockId = falseTarget;
             currentLabel = $"{block.Label}_switch_cmp_{index + 1}";
@@ -497,6 +516,49 @@ internal sealed class SsaCleanupOptimizer
         }
 
         return replacementBlocks;
+    }
+
+    private static int? TryGetSwitchCompareChainWeightTotal(
+        SsaTerminator terminator,
+        IReadOnlyList<SsaSwitchCase> orderedCases)
+    {
+        if (terminator.SwitchCases is not { Count: > 0 } switchCases
+            || terminator.BranchWeights is not { } weights
+            || weights.Count != switchCases.Count + 1)
+        {
+            return null;
+        }
+
+        var total = Math.Max(1, weights[0]);
+        foreach (var switchCase in orderedCases)
+        {
+            if (!TryGetSwitchCaseWeight(terminator, switchCase, out var caseWeight, out _))
+            {
+                return null;
+            }
+
+            total = Math.Min(int.MaxValue, total + Math.Max(1, caseWeight));
+        }
+
+        return total;
+    }
+
+    private static IReadOnlyList<int>? TryCreateSwitchCompareChainBranchWeights(
+        SsaTerminator terminator,
+        SsaSwitchCase switchCase,
+        ref int? remainingWeight)
+    {
+        if (remainingWeight is not { } total
+            || !TryGetSwitchCaseWeight(terminator, switchCase, out var caseWeight, out _))
+        {
+            remainingWeight = null;
+            return null;
+        }
+
+        caseWeight = Math.Max(1, caseWeight);
+        var falseWeight = Math.Max(1, total - caseWeight);
+        remainingWeight = falseWeight;
+        return [caseWeight, falseWeight];
     }
 
     private static SsaTerminator SimplifyTrivialTerminator(
@@ -571,14 +633,49 @@ internal sealed class SsaCleanupOptimizer
             return terminator;
         }
 
+        var branchWeights = TryRemoveDefaultTargetSwitchCaseWeights(terminator, filteredCases);
+
         return terminator with
         {
             Targets = filteredCases
                 .Select(static switchCase => switchCase.TargetBlockId)
                 .Distinct()
                 .ToArray(),
-            SwitchCases = filteredCases
+            SwitchCases = filteredCases,
+            BranchWeights = branchWeights
         };
+    }
+
+    private static IReadOnlyList<int>? TryRemoveDefaultTargetSwitchCaseWeights(
+        SsaTerminator terminator,
+        IReadOnlyList<SsaSwitchCase> filteredCases)
+    {
+        if (terminator.SwitchCases is not { Count: > 0 } switchCases
+            || terminator.BranchWeights is not { } weights
+            || weights.Count != switchCases.Count + 1)
+        {
+            return null;
+        }
+
+        var keptCases = filteredCases.ToHashSet();
+        var adjustedDefaultWeight = Math.Max(1, weights[0]);
+        var filteredWeights = new List<int>(filteredCases.Count + 1);
+        filteredWeights.Add(0);
+
+        for (var index = 0; index < switchCases.Count; index++)
+        {
+            var caseWeight = Math.Max(1, weights[index + 1]);
+            if (keptCases.Contains(switchCases[index]))
+            {
+                filteredWeights.Add(caseWeight);
+                continue;
+            }
+
+            adjustedDefaultWeight = Math.Min(int.MaxValue, adjustedDefaultWeight + caseWeight);
+        }
+
+        filteredWeights[0] = adjustedDefaultWeight;
+        return filteredWeights;
     }
 
     private static bool TryBuildSingleCaseSwitchBranch(
@@ -596,11 +693,70 @@ internal sealed class SsaCleanupOptimizer
             branchTerminator = new SsaTerminator(
                 SsaTerminatorKind.Branch,
                 targets,
-                Condition: terminator.Condition);
+                Condition: terminator.Condition,
+                Location: terminator.Location,
+                BranchWeights: TryCreateSwitchCaseBranchWeights(terminator, switchCase, trueTargetIsCase: match.Value));
             return true;
         }
 
         branchTerminator = new SsaTerminator(SsaTerminatorKind.Unreachable, []);
+        return false;
+    }
+
+    private static IReadOnlyList<int>? TryCreateBoolSwitchBranchWeights(
+        SsaTerminator terminator,
+        SsaSwitchCase trueCase,
+        SsaSwitchCase falseCase)
+    {
+        return TryGetSwitchCaseWeight(terminator, trueCase, out var trueWeight, out _)
+               && TryGetSwitchCaseWeight(terminator, falseCase, out var falseWeight, out _)
+            ? [trueWeight, falseWeight]
+            : null;
+    }
+
+    private static IReadOnlyList<int>? TryCreateSwitchCaseBranchWeights(
+        SsaTerminator terminator,
+        SsaSwitchCase switchCase,
+        bool trueTargetIsCase)
+    {
+        if (!TryGetSwitchCaseWeight(terminator, switchCase, out var caseWeight, out var defaultWeight))
+        {
+            return null;
+        }
+
+        return trueTargetIsCase
+            ? [caseWeight, defaultWeight]
+            : [defaultWeight, caseWeight];
+    }
+
+    private static bool TryGetSwitchCaseWeight(
+        SsaTerminator terminator,
+        SsaSwitchCase switchCase,
+        out int caseWeight,
+        out int defaultWeight)
+    {
+        caseWeight = 0;
+        defaultWeight = 0;
+
+        if (terminator.SwitchCases is not { Count: > 0 } switchCases
+            || terminator.BranchWeights is not { } weights
+            || weights.Count != switchCases.Count + 1)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < switchCases.Count; index++)
+        {
+            if (!Equals(switchCases[index], switchCase))
+            {
+                continue;
+            }
+
+            defaultWeight = weights[0];
+            caseWeight = weights[index + 1];
+            return true;
+        }
+
         return false;
     }
 
@@ -2059,7 +2215,9 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(switchCase.MatchValue, replacements))).ToArray(),
             DefaultTarget: terminator.DefaultTarget is null
                 ? null
-                : resolveTarget(terminator.DefaultTarget.Value));
+                : resolveTarget(terminator.DefaultTarget.Value),
+            Location: terminator.Location,
+            BranchWeights: terminator.BranchWeights);
     }
 
     private static SsaValue RewriteValue(
@@ -3113,7 +3271,9 @@ internal sealed class SsaConstantPropagator
                     terminator.Targets,
                     Condition: rewrittenCondition,
                     SwitchCases: rewrittenCases,
-                    DefaultTarget: terminator.DefaultTarget),
+                    DefaultTarget: terminator.DefaultTarget,
+                    Location: terminator.Location,
+                    BranchWeights: terminator.BranchWeights),
                 out var targetBlockId))
         {
             return new SsaTerminator(SsaTerminatorKind.Goto, [targetBlockId]);
@@ -3125,7 +3285,9 @@ internal sealed class SsaConstantPropagator
             Condition: rewrittenCondition,
             Value: rewrittenValue,
             SwitchCases: rewrittenCases,
-            DefaultTarget: terminator.DefaultTarget);
+            DefaultTarget: terminator.DefaultTarget,
+            Location: terminator.Location,
+            BranchWeights: terminator.BranchWeights);
     }
 
     private enum ConstantStateKind

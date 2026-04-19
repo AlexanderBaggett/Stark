@@ -48,7 +48,7 @@ public sealed class LlvmEmitterConversionTests
     }
 
     [Fact]
-    public void RawPointerToRawPointerConversionEmitsZeroOffsetGep()
+    public void RawPointerToRawPointerConversionIsLlvmNoOp()
     {
         var sourceType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: true);
         var targetType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false);
@@ -58,8 +58,10 @@ public sealed class LlvmEmitterConversionTests
 
         Assert.Contains("define", llvm);
         Assert.Contains("@Run()", llvm);
-        Assert.Contains("getelementptr inbounds nuw i8, ptr null, i64 0", llvm);
-        Assert.Contains("ret ptr", llvm);
+        Assert.DoesNotContain("getelementptr inbounds nuw i8, ptr null, i64 0", llvm);
+        Assert.DoesNotContain("ptrtoint", llvm);
+        Assert.DoesNotContain("inttoptr", llvm);
+        Assert.Contains("ret ptr null", llvm);
     }
 
     [Fact]

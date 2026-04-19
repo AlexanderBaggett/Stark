@@ -83,7 +83,7 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
-                stack i32[-2147483648 2147483647] count = 0;
+                stack mut i32[-2147483648 2147483647] count = 0;
 
                 while willexit (count < 1) {
                     Consume(box);
@@ -805,7 +805,7 @@ public sealed class OwnershipRoadmapRegressionTests
             fn retborrow i32[-2147483648 2147483647] Source();
 
             fn void Run() {
-                stack retborrow i32[-2147483648 2147483647] borrowAlias = Source();
+                stack mut retborrow i32[-2147483648 2147483647] borrowAlias = Source();
                 borrowAlias = Source();
 
                 return;
@@ -826,7 +826,7 @@ public sealed class OwnershipRoadmapRegressionTests
             fn retborrow i32[-2147483648 2147483647] Source();
 
             fn void Run() {
-                stack retborrow i32[-2147483648 2147483647] outer;
+                stack mut retborrow i32[-2147483648 2147483647] outer;
 
                 {
                     stack retborrow i32[-2147483648 2147483647] innerAlias = Source();

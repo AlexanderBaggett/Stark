@@ -254,12 +254,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            law void Touch(i32[-2147483648 2147483647][] view) {
+            law void Touch(mut i32[-2147483648 2147483647][] view) {
                 view[0] = 1;
                 return;
             }
 
-            law void Outer(i32[-2147483648 2147483647][] view) {
+            law void Outer(mut i32[-2147483648 2147483647][] view) {
                 Touch(view);
                 return;
             }

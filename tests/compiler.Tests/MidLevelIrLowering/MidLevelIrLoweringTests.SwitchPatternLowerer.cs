@@ -40,7 +40,7 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
-                stack i32[-2147483648 2147483647] result = 0;
+                stack mut i32[-2147483648 2147483647] result = 0;
                 switch (value) {
                     case 1:
                         result = 10;

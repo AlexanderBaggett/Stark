@@ -28,7 +28,14 @@ internal static class LlvmEmissionContextBuilder
         Func<string> getAllocatorSizeType,
         Func<bool> isDebugInfoEnabled,
         Func<string> getEmptyTupleMetadataRef,
-        Func<StarkTypeSymbol, string?> getValueRangeMetadataRef)
+        Func<StarkTypeSymbol, string?> getValueRangeMetadataRef,
+        Func<string, string, string> getTbaaTypeDescriptorRef,
+        Func<string, string, IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)>, string> getTbaaStructTypeDescriptorRef,
+        Func<string, string, long, string> getTbaaAccessTagRef,
+        Func<string, string, string> getAliasScopeDomainRef,
+        Func<string, string, string, string> getAliasScopeRef,
+        Func<IReadOnlyList<string>, string> getMetadataTupleRef,
+        Func<string, FunctionEffectProfile?>? tryGetFunctionEffects = null)
     {
         return new LlvmEmissionContext(
             moduleName,
@@ -49,11 +56,18 @@ internal static class LlvmEmissionContextBuilder
             resolveGlobalSymbolName,
             isImmutableGlobalName,
             shouldInternalize,
+            tryGetFunctionEffects ?? (static _ => null),
             tryUnwrapSimplePrimaryExpression,
             resolveObjectCreationConstructor,
             getAllocatorSizeType,
             isDebugInfoEnabled,
             getEmptyTupleMetadataRef,
-            getValueRangeMetadataRef);
+            getValueRangeMetadataRef,
+            getTbaaTypeDescriptorRef,
+            getTbaaStructTypeDescriptorRef,
+            getTbaaAccessTagRef,
+            getAliasScopeDomainRef,
+            getAliasScopeRef,
+            getMetadataTupleRef);
     }
 }

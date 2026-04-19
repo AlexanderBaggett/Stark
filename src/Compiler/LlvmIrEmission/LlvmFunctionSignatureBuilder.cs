@@ -72,15 +72,15 @@ internal sealed class LlvmFunctionSignatureBuilder
         segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeName: true, parameterEffects)))})");
 
+        if (ResolveDefinitionAddressAttribute(internalize, specializationLinkage) is { } addressAttribute)
+        {
+            segments.Add(addressAttribute);
+        }
+
         var attributes = _attributeBuilder.BuildFunctionAttributes(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
-        }
-
-        if (ResolveDefinitionAddressAttribute(internalize, specializationLinkage) is { } addressAttribute)
-        {
-            segments.Add(addressAttribute);
         }
 
         if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)

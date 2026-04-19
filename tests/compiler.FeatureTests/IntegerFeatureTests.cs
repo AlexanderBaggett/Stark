@@ -14,7 +14,7 @@ public sealed class IntegerFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("define fastcc i32 @Run()", llvm);
+        Assert.Contains("define fastcc noundef i32 @Run()", llvm);
         Assert.Contains("ret i32 3", llvm);
         Assert.DoesNotContain("add i32", llvm);
     }

@@ -3193,13 +3193,15 @@ internal sealed class TypeChecker
 
         var fieldType = EnsureMonomorphizedType(publishedFieldAccess.FieldType, Location(postfixPart));
         var projectedType = ProjectProjectionType(target, fieldType);
-        var isAssignable = target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen;
+        var isAddressMutable = CanMutateAddressProjection(target, projectedType);
+        var isAssignable = isAddressMutable;
         binding = new ExpressionBinding(
             projectedType,
             IsAssignable: isAssignable,
             NamedType: ResolveNamedTypeSymbol(projectedType),
             DiagnosticName: $"member '{publishedFieldAccess.FieldName}'",
             IsAddressable: target.IsAddressable,
+            IsAddressMutable: isAddressMutable,
             RootGlobalName: target.RootGlobalName,
             RootGlobalBindingKind: target.RootGlobalBindingKind,
             AssignmentErrorMessage: target.RootGlobalBindingKind is not null
@@ -4379,7 +4381,7 @@ internal sealed class TypeChecker
         }
 
         var currentType = target.Type;
-        var currentIsAssignable = target.IsAssignable;
+        var currentIsAddressMutable = target.IsAddressMutable;
         var currentUsesFrozenProjectionSemantics = UsesFrozenProjectionSemantics(target);
 
         foreach (var indexExpression in indexes.expression())
@@ -4395,10 +4397,11 @@ internal sealed class TypeChecker
 
             if (currentType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Slice && currentType.ElementType is not null)
             {
-                currentIsAssignable &= currentType.AccessKind != StarkAccessKind.Frozen;
+                currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
                 currentType = currentUsesFrozenProjectionSemantics
                     ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
                     : ProjectFrozenView(currentType, currentType.ElementType);
+                currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
                 currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
                     || currentType.AccessKind == StarkAccessKind.Frozen;
                 continue;
@@ -4406,8 +4409,9 @@ internal sealed class TypeChecker
 
             if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
             {
-                currentIsAssignable &= currentType.IsMutablePointer;
+                currentIsAddressMutable = currentType.IsMutablePointer;
                 currentType = currentType.ElementType;
+                currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
                 currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
                     || currentType.AccessKind == StarkAccessKind.Frozen;
                 continue;
@@ -4419,15 +4423,16 @@ internal sealed class TypeChecker
 
         return new ExpressionBinding(
             currentType,
-            IsAssignable: currentIsAssignable,
+            IsAssignable: currentIsAddressMutable,
             NamedType: ResolveNamedTypeSymbol(currentType),
             DiagnosticName: target.DiagnosticName is null ? "indexed element" : $"indexed element of {target.DiagnosticName}",
             IsAddressable: target.IsAddressable,
+            IsAddressMutable: currentIsAddressMutable,
             RootGlobalName: target.RootGlobalName,
             RootGlobalBindingKind: target.RootGlobalBindingKind,
             AssignmentErrorMessage: target.RootGlobalBindingKind is not null
                 && target.RootGlobalName is not null
-                && !currentIsAssignable
+                && !currentIsAddressMutable
                 ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, "indexed element")
                 : target.Type.AccessKind == StarkAccessKind.Frozen
                     ? DescribeFrozenMutationError("indexed element")
@@ -4458,6 +4463,7 @@ internal sealed class TypeChecker
                     NamedType: ResolveNamedTypeSymbol(global.Type),
                     DiagnosticName: global.IsConstant ? $"constant '{qualifiedName}'" : $"variable '{qualifiedName}'",
                     IsAddressable: true,
+                    IsAddressMutable: global.IsMutable,
                     RootGlobalName: qualifiedName,
                     RootGlobalBindingKind: global.BindingKind,
                     AssignmentErrorMessage: global.IsMutable
@@ -4542,13 +4548,15 @@ internal sealed class TypeChecker
         {
             RecordFieldAccess(field.Name, fieldIndex, field.Type, context);
             var projectedType = ProjectProjectionType(target, field.Type);
-            var isAssignable = target.IsAssignable && target.Type.AccessKind != StarkAccessKind.Frozen;
+            var isAddressMutable = CanMutateAddressProjection(target, projectedType);
+            var isAssignable = isAddressMutable;
             return new ExpressionBinding(
                 projectedType,
                 IsAssignable: isAssignable,
                 NamedType: ResolveNamedTypeSymbol(projectedType),
                 DiagnosticName: $"member '{memberName}'",
                 IsAddressable: target.IsAddressable,
+                IsAddressMutable: isAddressMutable,
                 RootGlobalName: target.RootGlobalName,
                 RootGlobalBindingKind: target.RootGlobalBindingKind,
                 AssignmentErrorMessage: target.RootGlobalBindingKind is not null
@@ -4633,6 +4641,7 @@ internal sealed class TypeChecker
                     NamedType: ResolveNamedTypeSymbol(local.Type),
                     DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
                     IsAddressable: true,
+                    IsAddressMutable: local.IsMutable,
                     RootGlobalName: name,
                     RootGlobalBindingKind: local.BindingKind,
                     AssignmentErrorMessage: local.IsMutable
@@ -4642,10 +4651,16 @@ internal sealed class TypeChecker
 
             return new ExpressionBinding(
                 local.Type,
-                IsAssignable: !local.IsConstant,
+                IsAssignable: local.IsMutable && !local.IsConstant,
                 NamedType: ResolveNamedTypeSymbol(local.Type),
                 DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
-                IsAddressable: true);
+                IsAddressable: true,
+                IsAddressMutable: CanFormMutableAddressFromLocal(local),
+                AssignmentErrorMessage: local.IsMutable
+                    ? null
+                    : local.IsConstant
+                        ? $"Cannot assign to constant '{name}'."
+                        : $"Cannot assign to immutable local '{name}'.");
         }
 
         if (_globals.TryGetValue(name, out var global))
@@ -4656,6 +4671,7 @@ internal sealed class TypeChecker
                 NamedType: ResolveNamedTypeSymbol(global.Type),
                 DiagnosticName: global.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
                 IsAddressable: true,
+                IsAddressMutable: global.IsMutable,
                 RootGlobalName: name,
                 RootGlobalBindingKind: global.BindingKind,
                 AssignmentErrorMessage: global.IsMutable
@@ -5419,7 +5435,7 @@ internal sealed class TypeChecker
         var pointeeType = UsesFrozenProjectionSemantics(operand)
             ? StarkTypeSymbols.FreezeAddressPointeeType(operand.Type)
             : operand.Type;
-        var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAssignable);
+        var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAddressMutable);
         return new ExpressionBinding(pointerType, NamedType: ResolveNamedTypeSymbol(pointerType));
     }
 
@@ -5437,7 +5453,8 @@ internal sealed class TypeChecker
             IsAssignable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
             NamedType: ResolveNamedTypeSymbol(pointeeType),
             DiagnosticName: "dereferenced value",
-            IsAddressable: true);
+            IsAddressable: true,
+            IsAddressMutable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen);
     }
 
     private void EnsureBoolean(StarkTypeSymbol type, ParserRuleContext context, string message)
@@ -5736,6 +5753,20 @@ internal sealed class TypeChecker
         return binding.DiagnosticName is not null
             ? $"{binding.DiagnosticName} of type '{binding.Type.DisplayName}'"
             : $"expression of type '{binding.Type.DisplayName}'";
+    }
+
+    private static bool CanFormMutableAddressFromLocal(VariableSymbol local)
+    {
+        return !local.IsConstant
+            && local.Type.AccessKind != StarkAccessKind.Frozen
+            && (local.IsMutable || local.Type.IsMutableView);
+    }
+
+    private static bool CanMutateAddressProjection(ExpressionBinding target, StarkTypeSymbol projectedType)
+    {
+        return target.IsAddressMutable
+            && target.Type.AccessKind != StarkAccessKind.Frozen
+            && projectedType.AccessKind != StarkAccessKind.Frozen;
     }
 
     private static string DescribeGlobalRebindingError(string name, GlobalBindingKind bindingKind)
@@ -7064,6 +7095,7 @@ internal sealed class TypeChecker
         string? DiagnosticName = null,
         ExpressionBinding? Receiver = null,
         bool IsAddressable = false,
+        bool IsAddressMutable = false,
         string? RootGlobalName = null,
         GlobalBindingKind? RootGlobalBindingKind = null,
         string? AssignmentErrorMessage = null,
