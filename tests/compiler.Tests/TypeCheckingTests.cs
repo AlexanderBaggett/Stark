@@ -1,3 +1,4 @@
+using System.Numerics;
 using Stark.Compiler;
 
 namespace compiler.Tests;
@@ -17,6 +18,212 @@ public sealed class TypeCheckingTests
             """);
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void TypeRelativeIntegerRangeEndpointsResolveAgainstContainingIntegerType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Signed(i32[min max] value) {
+                return value;
+            }
+
+            fn i64[0 max] NonNegative(i64[0 max] value) {
+                return value;
+            }
+
+            fn u8[min 127] BytePrefix(u8[min 127] value) {
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var signed = typeCheckModel.Functions["Signed"];
+        AssertIntegerRange(signed.ReturnType, 32, new BigInteger(int.MinValue), new BigInteger(int.MaxValue));
+        AssertIntegerRange(signed.Parameters[0].Type, 32, new BigInteger(int.MinValue), new BigInteger(int.MaxValue));
+
+        var nonNegative = typeCheckModel.Functions["NonNegative"];
+        AssertIntegerRange(nonNegative.ReturnType, 64, BigInteger.Zero, new BigInteger(long.MaxValue));
+        AssertIntegerRange(nonNegative.Parameters[0].Type, 64, BigInteger.Zero, new BigInteger(long.MaxValue));
+
+        var bytePrefix = typeCheckModel.Functions["BytePrefix"];
+        AssertIntegerRange(bytePrefix.ReturnType, 8, BigInteger.Zero, new BigInteger(127));
+        AssertIntegerRange(bytePrefix.Parameters[0].Type, 8, BigInteger.Zero, new BigInteger(127));
+    }
+
+    [Fact]
+    public void ConstantArithmeticIntegerRangeEndpointsResolveAtCompileTime()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[10**2 10**10] DecimalPowers(i32[10**2 10**10] value) {
+                return value;
+            }
+
+            fn i32[2**4 2**16] BinaryPowers(i32[2**4 2**16] value) {
+                return value;
+            }
+
+            fn i64[1024 * 1024 1024 * 1024 * 1024] Sizes(i64[1024 * 1024 1024 * 1024 * 1024] value) {
+                return value;
+            }
+
+            fn i32[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(i32[(1 + 2) * 3 20 / 2 + 1] value) {
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var decimalPowers = typeCheckModel.Functions["DecimalPowers"];
+        AssertIntegerRange(decimalPowers.ReturnType, 32, new BigInteger(100), BigInteger.Parse("10000000000"));
+        AssertIntegerRange(decimalPowers.Parameters[0].Type, 32, new BigInteger(100), BigInteger.Parse("10000000000"));
+
+        var binaryPowers = typeCheckModel.Functions["BinaryPowers"];
+        AssertIntegerRange(binaryPowers.ReturnType, 32, new BigInteger(16), new BigInteger(65536));
+        AssertIntegerRange(binaryPowers.Parameters[0].Type, 32, new BigInteger(16), new BigInteger(65536));
+
+        var sizes = typeCheckModel.Functions["Sizes"];
+        AssertIntegerRange(sizes.ReturnType, 64, new BigInteger(1048576), new BigInteger(1073741824));
+        AssertIntegerRange(sizes.Parameters[0].Type, 64, new BigInteger(1048576), new BigInteger(1073741824));
+
+        var mixedArithmetic = typeCheckModel.Functions["MixedArithmetic"];
+        AssertIntegerRange(mixedArithmetic.ReturnType, 32, new BigInteger(9), new BigInteger(11));
+        AssertIntegerRange(mixedArithmetic.Parameters[0].Type, 32, new BigInteger(9), new BigInteger(11));
+    }
+
+    [Fact]
+    public void UnsupportedIntegerRangeEndpointIdentifiersAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[foo max] Bad() {
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("Integer range endpoint 'foo'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstantArithmeticIntegerRangeEndpointOverflowIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 2**2048] Bad() {
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("overflowed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstantArithmeticIntegerRangeEndpointDivisionByZeroIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 10 / 0] Bad() {
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("divide by zero", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReversedTypeRelativeIntegerRangeEndpointsAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[max min] Bad() {
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("lower bound", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("upper bound", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReversedConstantArithmeticIntegerRangeEndpointsAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[2**8 2**4] Bad() {
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("lower bound", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("upper bound", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TypeRelativeIntegerEndpointNamesAreRejectedOutsideIntegerRanges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Bad() {
+                return min;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3003"
+                && diagnostic.Message.Contains("Unknown symbol 'min'", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1098,6 +1305,14 @@ public sealed class TypeCheckingTests
         Assert.Equal(
             2,
             typeCheckModel.Functions.Keys.Count(static name => name.StartsWith("Counter.Scale#(", StringComparison.Ordinal)));
+    }
+
+    private static void AssertIntegerRange(StarkTypeSymbol type, int bitWidth, BigInteger min, BigInteger max)
+    {
+        Assert.Equal(StarkTypeKind.Integer, type.Kind);
+        Assert.Equal(bitWidth, type.BitWidth);
+        Assert.Equal((BigInteger?)min, type.RangeMin);
+        Assert.Equal((BigInteger?)max, type.RangeMax);
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

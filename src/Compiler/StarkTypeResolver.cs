@@ -23,6 +23,11 @@ internal sealed class StarkTypeResolver
     private readonly IReadOnlyDictionary<string, TypeAliasResolutionSource> _typeAliasSources;
     private readonly Dictionary<string, TypeAliasSymbol>? _mutableTypeAliases;
     private readonly HashSet<string> _resolvingTypeAliases = new(StringComparer.Ordinal);
+    private const int MaximumCompileTimeIntegerEndpointBitWidth = 1024;
+    private static readonly BigInteger MinimumCompileTimeIntegerEndpoint =
+        -(BigInteger.One << (MaximumCompileTimeIntegerEndpointBitWidth - 1));
+    private static readonly BigInteger MaximumCompileTimeIntegerEndpoint =
+        (BigInteger.One << MaximumCompileTimeIntegerEndpointBitWidth) - BigInteger.One;
 
     public StarkTypeResolver(
         CompilerPassContext context,
@@ -277,13 +282,501 @@ internal sealed class StarkTypeResolver
         return ResolveQualifiedType(qualifiedName, genericParameters, simpleType.Start, currentModuleName);
     }
 
-    private static StarkTypeSymbol ResolveIntegerType(StarkParser.IntegerTypeContext integerType)
+    private StarkTypeSymbol ResolveIntegerType(StarkParser.IntegerTypeContext integerType)
     {
-        var width = int.Parse(integerType.INTEGER_TYPE().GetText()[1..], CultureInfo.InvariantCulture);
+        var integerTypeText = integerType.INTEGER_TYPE().GetText();
+        var isUnsigned = integerTypeText[0] == 'u';
+        var width = int.Parse(integerTypeText[1..], CultureInfo.InvariantCulture);
+        GetIntegerTypeBounds(width, isUnsigned, out var typeMin, out var typeMax);
+
         var rangeConstraint = integerType.rangeConstraint();
-        var min = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(0));
-        var max = ParseSignedIntegerLiteral(rangeConstraint.signedIntegerLiteral(1));
-        return StarkTypeSymbols.Integer(width, min, max);
+        var endpointTokens = rangeConstraint.rangeEndpointToken()
+            .Select(static endpointToken => endpointToken.Start)
+            .ToArray();
+        if (!TryFindIntegerRangeEndpointSplit(endpointTokens, out var upperEndpointStart))
+        {
+            ReportError(
+                "STK3014",
+                "Integer range constraints must contain exactly two compile-time integer endpoint expressions.",
+                rangeConstraint);
+            return StarkTypeSymbols.Integer(width);
+        }
+
+        var lower = ResolveIntegerRangeEndpoint(endpointTokens, 0, upperEndpointStart, typeMin, typeMax, rangeConstraint);
+        var upper = ResolveIntegerRangeEndpoint(endpointTokens, upperEndpointStart, endpointTokens.Length, typeMin, typeMax, rangeConstraint);
+
+        if (lower is null || upper is null)
+        {
+            return StarkTypeSymbols.Integer(width);
+        }
+
+        if (lower.Value > upper.Value)
+        {
+            ReportError(
+                "STK3014",
+                $"Integer range lower bound '{lower.Value}' cannot exceed upper bound '{upper.Value}'.",
+                rangeConstraint);
+            return StarkTypeSymbols.Integer(width);
+        }
+
+        return StarkTypeSymbols.Integer(width, lower.Value, upper.Value);
+    }
+
+    private BigInteger? ResolveIntegerRangeEndpoint(
+        IReadOnlyList<IToken> tokens,
+        int start,
+        int end,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        ParserRuleContext fallbackContext)
+    {
+        var diagnosticCount = _context.Diagnostics.Count;
+        if (TryParseIntegerRangeEndpointExpression(
+            tokens,
+            start,
+            end,
+            evaluate: true,
+            containingTypeMin,
+            containingTypeMax,
+            out var value))
+        {
+            return value;
+        }
+
+        if (_context.Diagnostics.Count == diagnosticCount)
+        {
+            ReportError(
+                "STK3014",
+                $"Integer range endpoint '{FormatIntegerRangeEndpoint(tokens, start, end)}' must be a compile-time integer expression.",
+                start < end ? tokens[start] : fallbackContext.Start);
+        }
+
+        return null;
+    }
+
+    private bool TryFindIntegerRangeEndpointSplit(IReadOnlyList<IToken> tokens, out int upperEndpointStart)
+    {
+        upperEndpointStart = -1;
+
+        for (var split = 1; split < tokens.Count; split++)
+        {
+            if (TryParseIntegerRangeEndpointExpression(
+                    tokens,
+                    0,
+                    split,
+                    evaluate: false,
+                    BigInteger.Zero,
+                    BigInteger.Zero,
+                    out _)
+                && TryParseIntegerRangeEndpointExpression(
+                    tokens,
+                    split,
+                    tokens.Count,
+                    evaluate: false,
+                    BigInteger.Zero,
+                    BigInteger.Zero,
+                    out _))
+            {
+                upperEndpointStart = split;
+            }
+        }
+
+        return upperEndpointStart > 0;
+    }
+
+    private bool TryParseIntegerRangeEndpointExpression(
+        IReadOnlyList<IToken> tokens,
+        int start,
+        int end,
+        bool evaluate,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        out BigInteger value)
+    {
+        value = BigInteger.Zero;
+        var position = start;
+        return start < end
+            && TryParseIntegerRangeEndpointAdditive(
+                tokens,
+                ref position,
+                end,
+                evaluate,
+                containingTypeMin,
+                containingTypeMax,
+                out value)
+            && position == end;
+    }
+
+    private bool TryParseIntegerRangeEndpointAdditive(
+        IReadOnlyList<IToken> tokens,
+        ref int position,
+        int end,
+        bool evaluate,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        out BigInteger value)
+    {
+        if (!TryParseIntegerRangeEndpointMultiplicative(
+                tokens,
+                ref position,
+                end,
+                evaluate,
+                containingTypeMin,
+                containingTypeMax,
+                out value))
+        {
+            return false;
+        }
+
+        while (position < end && tokens[position].Type is StarkParser.PLUS or StarkParser.MINUS)
+        {
+            var operatorToken = tokens[position++];
+            if (!TryParseIntegerRangeEndpointMultiplicative(
+                    tokens,
+                    ref position,
+                    end,
+                    evaluate,
+                    containingTypeMin,
+                    containingTypeMax,
+                    out var right))
+            {
+                return false;
+            }
+
+            if (!evaluate)
+            {
+                continue;
+            }
+
+            var result = operatorToken.Type == StarkParser.PLUS
+                ? value + right
+                : value - right;
+            if (!TryValidateIntegerRangeEndpointValue(result, operatorToken))
+            {
+                return false;
+            }
+
+            value = result;
+        }
+
+        return true;
+    }
+
+    private bool TryParseIntegerRangeEndpointMultiplicative(
+        IReadOnlyList<IToken> tokens,
+        ref int position,
+        int end,
+        bool evaluate,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        out BigInteger value)
+    {
+        if (!TryParseIntegerRangeEndpointPower(
+                tokens,
+                ref position,
+                end,
+                evaluate,
+                containingTypeMin,
+                containingTypeMax,
+                out value))
+        {
+            return false;
+        }
+
+        while (position < end && tokens[position].Type is StarkParser.STAR or StarkParser.DIV or StarkParser.MOD)
+        {
+            var operatorToken = tokens[position++];
+            if (!TryParseIntegerRangeEndpointPower(
+                    tokens,
+                    ref position,
+                    end,
+                    evaluate,
+                    containingTypeMin,
+                    containingTypeMax,
+                    out var right))
+            {
+                return false;
+            }
+
+            if (!evaluate)
+            {
+                continue;
+            }
+
+            if ((operatorToken.Type == StarkParser.DIV || operatorToken.Type == StarkParser.MOD)
+                && right.IsZero)
+            {
+                ReportError("STK3014", "Integer range endpoint evaluation cannot divide by zero.", operatorToken);
+                return false;
+            }
+
+            var result = operatorToken.Type switch
+            {
+                StarkParser.STAR => value * right,
+                StarkParser.DIV => value / right,
+                StarkParser.MOD => value % right,
+                _ => value
+            };
+            if (!TryValidateIntegerRangeEndpointValue(result, operatorToken))
+            {
+                return false;
+            }
+
+            value = result;
+        }
+
+        return true;
+    }
+
+    private bool TryParseIntegerRangeEndpointPower(
+        IReadOnlyList<IToken> tokens,
+        ref int position,
+        int end,
+        bool evaluate,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        out BigInteger value)
+    {
+        if (!TryParseIntegerRangeEndpointUnary(
+                tokens,
+                ref position,
+                end,
+                evaluate,
+                containingTypeMin,
+                containingTypeMax,
+                out value))
+        {
+            return false;
+        }
+
+        if (position >= end || tokens[position].Type != StarkParser.POW)
+        {
+            return true;
+        }
+
+        var operatorToken = tokens[position++];
+        if (!TryParseIntegerRangeEndpointPower(
+                tokens,
+                ref position,
+                end,
+                evaluate,
+                containingTypeMin,
+                containingTypeMax,
+                out var exponent))
+        {
+            return false;
+        }
+
+        return !evaluate || TryEvaluateIntegerRangeEndpointPower(value, exponent, operatorToken, out value);
+    }
+
+    private bool TryParseIntegerRangeEndpointUnary(
+        IReadOnlyList<IToken> tokens,
+        ref int position,
+        int end,
+        bool evaluate,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        out BigInteger value)
+    {
+        if (position < end && tokens[position].Type == StarkParser.MINUS)
+        {
+            var operatorToken = tokens[position++];
+            if (!TryParseIntegerRangeEndpointUnary(
+                    tokens,
+                    ref position,
+                    end,
+                    evaluate,
+                    containingTypeMin,
+                    containingTypeMax,
+                    out value))
+            {
+                return false;
+            }
+
+            if (!evaluate)
+            {
+                return true;
+            }
+
+            value = -value;
+            return TryValidateIntegerRangeEndpointValue(value, operatorToken);
+        }
+
+        return TryParseIntegerRangeEndpointPrimary(
+            tokens,
+            ref position,
+            end,
+            evaluate,
+            containingTypeMin,
+            containingTypeMax,
+            out value);
+    }
+
+    private bool TryParseIntegerRangeEndpointPrimary(
+        IReadOnlyList<IToken> tokens,
+        ref int position,
+        int end,
+        bool evaluate,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        out BigInteger value)
+    {
+        value = BigInteger.Zero;
+        if (position >= end)
+        {
+            return false;
+        }
+
+        var token = tokens[position++];
+        switch (token.Type)
+        {
+            case StarkParser.IntegerLiteral:
+                if (!evaluate)
+                {
+                    return true;
+                }
+
+                value = BigInteger.Parse(token.Text, CultureInfo.InvariantCulture);
+                return TryValidateIntegerRangeEndpointValue(value, token);
+
+            case StarkParser.Identifier:
+                if (!evaluate)
+                {
+                    return true;
+                }
+
+                return token.Text switch
+                {
+                    "min" => SetRangeEndpointValue(containingTypeMin, out value),
+                    "max" => SetRangeEndpointValue(containingTypeMax, out value),
+                    _ => ReportUnsupportedIntegerRangeEndpoint(token, token.Text)
+                };
+
+            case StarkParser.LPAREN:
+                if (!TryParseIntegerRangeEndpointAdditive(
+                        tokens,
+                        ref position,
+                        end,
+                        evaluate,
+                        containingTypeMin,
+                        containingTypeMax,
+                        out value)
+                    || position >= end
+                    || tokens[position].Type != StarkParser.RPAREN)
+                {
+                    return false;
+                }
+
+                position++;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private bool TryEvaluateIntegerRangeEndpointPower(
+        BigInteger baseValue,
+        BigInteger exponent,
+        IToken operatorToken,
+        out BigInteger value)
+    {
+        value = BigInteger.Zero;
+        if (exponent.Sign < 0)
+        {
+            ReportError("STK3014", "Integer range endpoint exponentiation requires a non-negative exponent.", operatorToken);
+            return false;
+        }
+
+        if (exponent.IsZero)
+        {
+            value = BigInteger.One;
+            return TryValidateIntegerRangeEndpointValue(value, operatorToken);
+        }
+
+        if (baseValue.IsZero)
+        {
+            value = BigInteger.Zero;
+            return true;
+        }
+
+        if (baseValue == BigInteger.One)
+        {
+            value = BigInteger.One;
+            return true;
+        }
+
+        if (baseValue == -BigInteger.One)
+        {
+            value = exponent.IsEven ? BigInteger.One : -BigInteger.One;
+            return true;
+        }
+
+        if (exponent > MaximumCompileTimeIntegerEndpointBitWidth)
+        {
+            ReportIntegerRangeEndpointOverflow(operatorToken);
+            return false;
+        }
+
+        value = BigInteger.Pow(baseValue, (int)exponent);
+        return TryValidateIntegerRangeEndpointValue(value, operatorToken);
+    }
+
+    private static bool SetRangeEndpointValue(BigInteger source, out BigInteger value)
+    {
+        value = source;
+        return true;
+    }
+
+    private bool ReportUnsupportedIntegerRangeEndpoint(IToken token, string endpointText)
+    {
+        ReportError(
+            "STK3014",
+            $"Integer range endpoint '{endpointText}' is not supported here; use an integer literal, 'min', 'max', or compile-time integer arithmetic over those values.",
+            token);
+        return false;
+    }
+
+    private bool TryValidateIntegerRangeEndpointValue(BigInteger value, IToken token)
+    {
+        if (value >= MinimumCompileTimeIntegerEndpoint && value <= MaximumCompileTimeIntegerEndpoint)
+        {
+            return true;
+        }
+
+        ReportIntegerRangeEndpointOverflow(token);
+        return false;
+    }
+
+    private void ReportIntegerRangeEndpointOverflow(IToken token)
+    {
+        ReportError(
+            "STK3014",
+            $"Integer range endpoint constant evaluation overflowed the supported compile-time endpoint range of {MaximumCompileTimeIntegerEndpointBitWidth} bits.",
+            token);
+    }
+
+    private static string FormatIntegerRangeEndpoint(IReadOnlyList<IToken> tokens, int start, int end)
+    {
+        return string.Concat(tokens.Skip(start).Take(end - start).Select(static token => token.Text));
+    }
+
+    private static void GetIntegerTypeBounds(
+        int bitWidth,
+        bool isUnsigned,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        if (isUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return;
+        }
+
+        min = -(BigInteger.One << (bitWidth - 1));
+        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
     }
 
     private bool TryResolveTypeAlias(

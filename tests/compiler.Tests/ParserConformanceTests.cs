@@ -206,6 +206,35 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "type relative integer range endpoints parse",
+            """
+            module Ranges
+
+            fn void Accept(
+                i32[min max] signedValue,
+                i64[0 max] nonNegative,
+                u8[min 127] bytePrefix)
+            {
+                return;
+            }
+            """
+        },
+        {
+            "constant arithmetic integer range endpoints parse",
+            """
+            module Ranges
+
+            fn void Accept(
+                i32[10**2 10**10] decimalPowers,
+                i32[2**4 2**16] binaryPowers,
+                i64[1024 * 1024 1024 * 1024 * 1024] sizes,
+                i32[(1 + 2) * 3 20 / 2 + 1] parenthesized)
+            {
+                return;
+            }
+            """
+        },
+        {
             "all supported integer and floating point widths parse in source types",
             """
             module Scalars

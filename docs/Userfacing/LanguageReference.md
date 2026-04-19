@@ -191,7 +191,16 @@ For example:
 
 ```stark
 i32[0 255]
+i32[min max]
+i64[0 max]
+u8[min 127]
+i32[10**2 10**10]
+i64[1024 * 1024 1024 * 1024 * 1024]
 ```
+
+Within an integer range, `min` and `max` are type-relative endpoint names. For signed `iN` ranges they mean the signed minimum and maximum for that width. For unsigned-width `uN` range spellings they mean `0` and `2^N - 1`; this currently normalizes into Stark's existing integer range model.
+
+Range endpoints also support compile-time integer arithmetic over literals and type-relative endpoint names. Supported endpoint operators are `+`, `-`, `*`, `/`, `%`, `**`, unary `-`, and parentheses. Endpoint arithmetic is checked during compile-time evaluation.
 
 Bare width names such as `i32` are convenient family labels in prose, but they are not the full Stark integer source form by themselves. The source-level type must carry an explicit range.
 

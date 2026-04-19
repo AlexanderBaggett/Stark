@@ -313,7 +313,20 @@ arraySuffix
     ;
 
 rangeConstraint
-    : LBRACK signedIntegerLiteral signedIntegerLiteral RBRACK
+    : LBRACK rangeEndpointToken+ RBRACK
+    ;
+
+rangeEndpointToken
+    : IntegerLiteral
+    | Identifier
+    | PLUS
+    | MINUS
+    | STAR
+    | DIV
+    | MOD
+    | POW
+    | LPAREN
+    | RPAREN
     ;
 
 typeArgumentList
@@ -735,19 +748,33 @@ WEIGHT_LITERAL
 
 INTEGER_TYPE
     : 'i8'
+    | 'u8'
     | 'i16'
+    | 'u16'
     | 'i24'
+    | 'u24'
     | 'i32'
+    | 'u32'
     | 'i48'
+    | 'u48'
     | 'i64'
+    | 'u64'
     | 'i96'
+    | 'u96'
     | 'i128'
+    | 'u128'
     | 'i192'
+    | 'u192'
     | 'i256'
+    | 'u256'
     | 'i384'
+    | 'u384'
     | 'i512'
+    | 'u512'
     | 'i768'
+    | 'u768'
     | 'i1024'
+    | 'u1024'
     ;
 
 FLOAT_TYPE
@@ -759,7 +786,7 @@ FLOAT_TYPE
     ;
 
 INVALID_INTEGER_TYPE
-    : 'i' DIGIT+
+    : [iu] DIGIT+
     ;
 
 INVALID_FLOAT_TYPE

@@ -423,6 +423,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitRangeConstraint([NotNull] StarkParser.RangeConstraintContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.rangeEndpointToken"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitRangeEndpointToken([NotNull] StarkParser.RangeEndpointTokenContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.typeArgumentList"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

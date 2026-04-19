@@ -17,18 +17,18 @@ i64[0 sizeof(Buffer) - 1]
 ## Accepted Scope
 ### Compile Time Scope
 
-- [ ] Add type-relative integer bounds.
-  - [ ] Support `min` as the minimum value of the containing integer type.
-  - [ ] Support `max` as the maximum value of the containing integer type.
-  - [ ] Support examples such as `i32[min max]`, `i64[0 max]`, and `u8[min 127]`.
-  - [ ] Reject `min` or `max` where there is no containing integer type that gives them meaning.
+- [x] Add type-relative integer bounds.
+  - [x] Support `min` as the minimum value of the containing integer type.
+  - [x] Support `max` as the maximum value of the containing integer type.
+  - [x] Support examples such as `i32[min max]`, `i64[0 max]`, and `u8[min 127]`.
+  - [x] Reject `min` or `max` where there is no containing integer type that gives them meaning.
 
-- [ ] Add constant arithmetic in range endpoints.
-  - [ ] Support ordinary integer arithmetic in endpoint expressions.
-  - [ ] Support exponentiation with `**`.
-  - [ ] Support examples such as `i32[10**2 10**10]`, `i32[2**4 2**16]`, and `i64[1024 * 1024 1024 * 1024 * 1024]`.
-  - [ ] Diagnose constant endpoint overflow during compile-time evaluation.
-  - [ ] Preserve the current requirement that the lower endpoint must not exceed the upper endpoint when both are compile-time-known.
+- [x] Add constant arithmetic in range endpoints.
+  - [x] Support ordinary integer arithmetic in endpoint expressions.
+  - [x] Support exponentiation with `**`.
+  - [x] Support examples such as `i32[10**2 10**10]`, `i32[2**4 2**16]`, and `i64[1024 * 1024 1024 * 1024 * 1024]`.
+  - [x] Diagnose constant endpoint overflow during compile-time evaluation.
+  - [x] Preserve the current requirement that the lower endpoint must not exceed the upper endpoint when both are compile-time-known.
 
 - [ ] Add named constants in range endpoints.
   - [ ] Allow constants declared with `const` to appear in endpoint expressions.
