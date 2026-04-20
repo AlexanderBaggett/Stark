@@ -96,6 +96,182 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropState()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            record Box(Resource Item) {
+            }
+
+            fn void Run() {
+                stack Resource owned = new Resource() { Value = 5 };
+                stack Box box = new Box(owned);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+
+        Assert.Equal(1, bumpCalls);
+    }
+
+    [Fact]
+    public void ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropState()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            struct Box {
+                Resource Item;
+
+                Box(Resource item) {
+                    self.Item = item;
+                }
+            }
+
+            fn void Run() {
+                stack Resource owned = new Resource() { Value = 5 };
+                stack Box box = new Box(owned);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+
+        Assert.Equal(1, bumpCalls);
+    }
+
+    [Fact]
+    public void FixedArrayElementsCascadeRuntimeDrops()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            fn void Run() {
+                stack Resource first = new Resource() { Value = 1 };
+                stack Resource second = new Resource() { Value = 2 };
+                stack Resource[2] resources = { first, second };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+
+        Assert.Equal(2, bumpCalls);
+    }
+
+    [Fact]
+    public void HeapBackedFixedArrayElementsDropBeforeStorageDead()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            fn void Run() {
+                stack Resource first = new Resource() { Value = 1 };
+                stack Resource second = new Resource() { Value = 2 };
+                heap Resource[2] resources = { first, second };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        var bumpCallIndexes = statements
+            .Select((statement, index) => (statement, index))
+            .Where(static item => item.statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" })
+            .Select(static item => item.index)
+            .ToArray();
+        var storageDeadIndex = Array.FindIndex(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "resources");
+
+        Assert.Equal(2, bumpCallIndexes.Length);
+        Assert.True(storageDeadIndex > bumpCallIndexes[^1]);
+    }
+
+    [Fact]
     public void ImportedTypeDestructorsResolveHelpersInTheirDefiningModule()
     {
         var result = Compile(

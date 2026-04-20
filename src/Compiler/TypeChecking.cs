@@ -76,6 +76,7 @@ internal sealed class TypeChecker
     private readonly List<FieldAccessTypingRecord> _fieldAccesses = [];
     private readonly List<MemberCallTypingRecord> _memberCalls = [];
     private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
+    private readonly List<TypeLayoutExpressionTypingRecord> _typeLayoutExpressions = [];
     private readonly List<FunctionInstantiationTriggerRecord> _functionInstantiationTriggers = [];
     private readonly List<DeferredFunctionInstantiationTriggerRecord> _deferredFunctionInstantiationTriggers = [];
     private readonly List<DeferredTypeInstantiationTriggerRecord> _deferredTypeInstantiationTriggers = [];
@@ -84,6 +85,8 @@ internal sealed class TypeChecker
     private readonly HashSet<string> _deferredFunctionInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deferredTypeInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _typeInstantiationKeys = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<StarkTypeSymbol>> _genericInstantiationArguments = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _refreshingConcreteTypes = new(StringComparer.Ordinal);
     private StarkTypeResolver? _typeResolver;
     private ISet<string>? _currentFunctionGenericParameters;
     private string? _currentFunctionName;
@@ -138,6 +141,7 @@ internal sealed class TypeChecker
         BuildConstructorShapes();
         BuildFunctionSignatures();
         CheckGlobalDeclarations();
+        CheckConstructorBodies();
         CheckFunctionBodies();
 
         return new TypeCheckModel(
@@ -171,7 +175,8 @@ internal sealed class TypeChecker
             _conversions,
             _directCalls,
             _fieldAccesses,
-            _memberCalls);
+            _memberCalls,
+            _typeLayoutExpressions);
     }
 
     private void CollectTypeAliasSources()
@@ -305,6 +310,7 @@ internal sealed class TypeChecker
                             .Select(static member => member.fieldDeclaration())
                             .Where(static field => field is not null)!,
                         module.SyntaxModel.ModuleName,
+                        declarationModel.Visibility,
                         structGenericParams);
                     continue;
                 }
@@ -337,7 +343,9 @@ internal sealed class TypeChecker
                                     ValidateRuntimeValueType(
                                         fieldType,
                                         parameter.type_(),
-                                        $"field '{fieldName}' in type '{recordName}'")));
+                                        $"field '{fieldName}' in type '{recordName}'"),
+                                    InheritedFieldVisibility(declarationModel.Visibility),
+                                    module.SyntaxModel.ModuleName));
                         }
                     }
 
@@ -345,7 +353,7 @@ internal sealed class TypeChecker
                                  .Select(static member => member.fieldDeclaration())
                                  .Where(static field => field is not null)!)
                     {
-                        AddFields(fields, orderedFields, field, genericParameters, module.SyntaxModel.ModuleName, recordName);
+                        AddFields(fields, orderedFields, field, genericParameters, module.SyntaxModel.ModuleName, recordName, declarationModel.Visibility);
                     }
 
                     _namedTypes[recordName] = new NamedTypeSymbol(
@@ -419,18 +427,28 @@ internal sealed class TypeChecker
         DeclarationKind kind,
         IEnumerable<StarkParser.FieldDeclarationContext> fieldDeclarations,
         string currentModuleName,
+        StarkVisibility containingVisibility,
         ISet<string>? genericParameters = null)
     {
         var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var orderedFields = new List<FieldSymbol>();
+        var genericParameterNames = genericParameters?.ToList();
+        _namedTypes[name] = new NamedTypeSymbol(
+            name,
+            kind,
+            fields,
+            orderedFields,
+            GenericParameterNames: genericParameterNames);
 
         foreach (var field in fieldDeclarations)
         {
-            AddFields(fields, orderedFields, field, genericParameters, currentModuleName, name);
+            AddFields(fields, orderedFields, field, genericParameters, currentModuleName, name, containingVisibility);
         }
 
-        return new NamedTypeSymbol(name, kind, fields, orderedFields,
-            GenericParameterNames: genericParameters?.ToList());
+        var namedType = new NamedTypeSymbol(name, kind, fields, orderedFields,
+            GenericParameterNames: genericParameterNames);
+        RefreshConcreteInstantiationsForTemplate(namedType);
+        return namedType;
     }
 
     private NamedTypeSymbol BuildEnumNamedType(
@@ -520,9 +538,19 @@ internal sealed class TypeChecker
         StarkParser.FieldDeclarationContext fieldDeclaration,
         ISet<string>? genericParameters,
         string currentModuleName,
-        string containingTypeName)
+        string containingTypeName,
+        StarkVisibility containingVisibility)
     {
         var fieldType = ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName);
+        var fieldVisibility = ResolveFieldVisibility(containingVisibility, fieldDeclaration.visibilityModifier());
+
+        if (fieldDeclaration.visibilityModifier() is not null && IsMoreVisible(fieldVisibility, containingVisibility))
+        {
+            ReportError(
+                "STK3015",
+                $"Field visibility '{RenderVisibility(fieldVisibility)}' is more visible than enclosing type visibility '{RenderVisibility(containingVisibility)}'.",
+                fieldDeclaration.visibilityModifier()!);
+        }
 
         foreach (var declarator in fieldDeclaration.variableDeclarators().variableDeclarator())
         {
@@ -535,7 +563,9 @@ internal sealed class TypeChecker
                     ValidateRuntimeValueType(
                         fieldType,
                         fieldDeclaration.type_(),
-                        $"field '{fieldName}' in type '{containingTypeName}'")));
+                        $"field '{fieldName}' in type '{containingTypeName}'"),
+                    fieldVisibility,
+                    currentModuleName));
         }
     }
 
@@ -641,7 +671,8 @@ internal sealed class TypeChecker
                     returnType,
                     parameters,
                     SourceName: sourceQualifiedName,
-                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
+                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                    IsStatic: functionSyntax.IsStatic);
                 RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
             }
         }
@@ -709,7 +740,8 @@ internal sealed class TypeChecker
                             .Select(static constructor => new ConstructorShape(
                                 constructor.TypeName,
                                 constructor.Parameters.ToArray(),
-                                constructor.IsPrimaryShape))
+                                constructor.IsPrimaryShape,
+                                constructor.BodyKey))
                             .ToList();
                     }
                 }
@@ -765,6 +797,8 @@ internal sealed class TypeChecker
                 }
             }
         }
+
+        PopulateConcreteConstructorShapesForKnownGenericInstantiations();
     }
 
     private void RegisterConstructors(
@@ -782,7 +816,8 @@ internal sealed class TypeChecker
             constructors.Add(new ConstructorShape(
                 localTypeName,
                 BuildTypedParameters(primaryConstructorParameters.parameterList().parameter(), genericParameters, currentModuleName),
-                IsPrimaryShape: true));
+                IsPrimaryShape: true,
+                BodyKey: null));
         }
 
         foreach (var constructor in constructorDeclarations)
@@ -795,7 +830,8 @@ internal sealed class TypeChecker
             constructors.Add(new ConstructorShape(
                 localTypeName,
                 BuildTypedParameters(constructor.parameterList().parameter(), genericParameters, currentModuleName),
-                IsPrimaryShape: false));
+                IsPrimaryShape: false,
+                BuildConstructorBodyKey(qualifiedTypeName, constructor)));
         }
 
         if (constructors.Count != 0)
@@ -816,6 +852,106 @@ internal sealed class TypeChecker
                 return new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType);
             })
             .ToArray();
+    }
+
+    private void CheckConstructorBodies()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            if (module.IsPackageImageImport)
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    CheckStructLikeConstructorBodies(
+                        module,
+                        DeclarationKind.Struct,
+                        structDeclaration.Identifier().GetText(),
+                        structDeclaration.typeParameterList(),
+                        structDeclaration.structBody().structMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!);
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    CheckStructLikeConstructorBodies(
+                        module,
+                        DeclarationKind.Record,
+                        recordDeclaration.Identifier().GetText(),
+                        recordDeclaration.typeParameterList(),
+                        recordDeclaration.recordBody().recordMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!);
+                }
+            }
+        }
+    }
+
+    private void CheckStructLikeConstructorBodies(
+        LoadedModuleDocument module,
+        DeclarationKind declarationKind,
+        string localTypeName,
+        StarkParser.TypeParameterListContext? typeParameterList,
+        IEnumerable<StarkParser.ConstructorDeclarationContext> constructors)
+    {
+        var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
+            candidate => candidate.Kind == declarationKind && string.Equals(candidate.Name, localTypeName, StringComparison.Ordinal));
+        if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
+        {
+            return;
+        }
+
+        var qualifiedTypeName = QualifyName(module, localTypeName);
+        var genericParameters = GetGenericParameterNames(typeParameterList);
+        var selfType = StarkTypeSymbols.Named(qualifiedTypeName);
+
+        foreach (var constructor in constructors)
+        {
+            if (!string.Equals(constructor.Identifier().GetText(), localTypeName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var scope = Scope.CreateRoot(_globals);
+            scope.Declare(new VariableSymbol("self", selfType, IsMutable: true, IsConstant: false));
+
+            var parameters = BuildTypedParameters(constructor.parameterList().parameter(), genericParameters, module.SyntaxModel.ModuleName);
+            foreach (var parameter in parameters)
+            {
+                if (string.Equals(parameter.Name, "self", StringComparison.Ordinal))
+                {
+                    ReportError("STK3006", "Constructor parameters cannot be named 'self'.", constructor);
+                    continue;
+                }
+
+                scope.Declare(new VariableSymbol(parameter.Name, parameter.Type, IsMutable: false, IsConstant: false));
+            }
+
+            var previousGenericParameters = _currentFunctionGenericParameters;
+            var previousFunctionName = _currentFunctionName;
+            var previousFunctionModuleName = _currentFunctionModuleName;
+
+            _currentFunctionGenericParameters = genericParameters;
+            _currentFunctionName = null;
+            _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+
+            try
+            {
+                CheckBlock(constructor.block(), scope, StarkTypeSymbols.Void);
+            }
+            finally
+            {
+                _currentFunctionGenericParameters = previousGenericParameters;
+                _currentFunctionName = previousFunctionName;
+                _currentFunctionModuleName = previousFunctionModuleName;
+            }
+        }
     }
 
     private void CheckGlobalDeclarations()
@@ -1297,8 +1433,8 @@ internal sealed class TypeChecker
                 return;
             }
 
-            var valueType = EvaluateExpression(returnStatement.expression(), scope, allowFunctionReference: false).Type;
-            EnsureReturnCompatible(returnType, valueType, returnStatement.expression());
+            var value = EvaluateExpression(returnStatement.expression(), scope, allowFunctionReference: false, expectedType: returnType);
+            EnsureReturnCompatible(returnType, value, returnStatement.expression());
             return;
         }
 
@@ -3295,8 +3431,7 @@ internal sealed class TypeChecker
         void Collect(Antlr4.Runtime.Tree.IParseTree current)
         {
             if (current is StarkParser.ObjectCreationExpressionContext objectCreation
-                && (objectCreation.objectInitializer() is not null
-                    || objectCreation.argumentList() is { } argumentList && argumentList.argument().Length > 0))
+                && ShouldTrackObjectCreation(objectCreation))
             {
                 ordinals[objectCreation] = nextOrdinal++;
             }
@@ -3493,7 +3628,7 @@ internal sealed class TypeChecker
     {
         if (initializer.expression() is { } expression)
         {
-            var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
+            var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false, expectedType: declaredType).Type;
             EnsureAssignmentCompatible(variableName: null, declaredType, valueType, expression, isConstant: false);
             return;
         }
@@ -3556,6 +3691,15 @@ internal sealed class TypeChecker
                     continue;
                 }
 
+                if (!IsFieldAccessible(field))
+                {
+                    ReportError(
+                        "STK3015",
+                        $"Field '{memberName}' is {RenderVisibility(field.Visibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                        initializer);
+                    continue;
+                }
+
                 fieldType = field.Type;
             }
 
@@ -3572,7 +3716,7 @@ internal sealed class TypeChecker
 
             if (initializer.variableInitializer().expression() is { } expression)
             {
-                var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
+                var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false, expectedType: fieldType).Type;
                 EnsureObjectInitializerCompatible(memberName, fieldType, valueType, expression);
                 continue;
             }
@@ -3599,7 +3743,7 @@ internal sealed class TypeChecker
         {
             if (initializer.expression() is { } expression)
             {
-                var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
+                var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false, expectedType: elementType).Type;
                 EnsureArrayElementCompatible(elementType, valueType, expression);
                 continue;
             }
@@ -3618,21 +3762,34 @@ internal sealed class TypeChecker
         }
     }
 
-    private ExpressionBinding EvaluateExpression(StarkParser.ExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateExpression(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType = null)
     {
-        return EvaluateAssignmentExpression(expression.assignmentExpression(), scope, allowFunctionReference);
+        return EvaluateAssignmentExpression(expression.assignmentExpression(), scope, allowFunctionReference, expectedType);
     }
 
-    private ExpressionBinding EvaluateAssignmentExpression(StarkParser.AssignmentExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateAssignmentExpression(
+        StarkParser.AssignmentExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType = null)
     {
         if (expression.conditionalExpression() is { } conditionalExpression)
         {
-            return EvaluateConditionalExpression(conditionalExpression, scope, allowFunctionReference);
+            return EvaluateConditionalExpression(conditionalExpression, scope, allowFunctionReference, expectedType);
         }
 
         var left = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: true);
-        var right = EvaluateAssignmentExpression(expression.assignmentExpression(), scope, allowFunctionReference: false);
         var assignmentOperator = expression.assignmentOperator().GetText();
+        var rightExpectedType = assignmentOperator == "=" ? left.Type : null;
+        var right = EvaluateAssignmentExpression(
+            expression.assignmentExpression(),
+            scope,
+            allowFunctionReference: false,
+            rightExpectedType);
 
         if (!left.IsAssignable)
         {
@@ -3682,18 +3839,22 @@ internal sealed class TypeChecker
         return left;
     }
 
-    private ExpressionBinding EvaluateConditionalExpression(StarkParser.ConditionalExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateConditionalExpression(
+        StarkParser.ConditionalExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), scope, allowFunctionReference);
         if (expression.expression().Length == 0)
         {
-            return condition;
+            return EvaluateLogicalOrExpression(expression.logicalOrExpression(), scope, allowFunctionReference, expectedType);
         }
 
+        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), scope, allowFunctionReference, expectedType: null);
         EnsureBoolean(condition.Type, expression.logicalOrExpression(), "Conditional expressions require a boolean condition");
 
-        var whenTrue = EvaluateExpression(expression.expression(0), scope, allowFunctionReference: false);
-        var whenFalse = EvaluateExpression(expression.expression(1), scope, allowFunctionReference: false);
+        var whenTrue = EvaluateExpression(expression.expression(0), scope, allowFunctionReference: false, expectedType);
+        var whenFalse = EvaluateExpression(expression.expression(1), scope, allowFunctionReference: false, expectedType);
         var resultType = FindCommonType(whenTrue.Type, whenFalse.Type);
         if (resultType.Kind == StarkTypeKind.Error)
         {
@@ -3706,13 +3867,19 @@ internal sealed class TypeChecker
         return new ExpressionBinding(resultType);
     }
 
-    private ExpressionBinding EvaluateLogicalOrExpression(StarkParser.LogicalOrExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateLogicalOrExpression(
+        StarkParser.LogicalOrExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.logicalAndExpression().Select(item => EvaluateLogicalAndExpression(item, scope, allowFunctionReference)).ToArray();
-        if (operands.Length == 1)
+        var expressions = expression.logicalAndExpression();
+        if (expressions.Length == 1)
         {
-            return operands[0];
+            return EvaluateLogicalAndExpression(expressions[0], scope, allowFunctionReference, expectedType);
         }
+
+        var operands = expressions.Select(item => EvaluateLogicalAndExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
 
         foreach (var operand in operands)
         {
@@ -3722,13 +3889,19 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Bool);
     }
 
-    private ExpressionBinding EvaluateLogicalAndExpression(StarkParser.LogicalAndExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateLogicalAndExpression(
+        StarkParser.LogicalAndExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.bitwiseOrExpression().Select(item => EvaluateBitwiseOrExpression(item, scope, allowFunctionReference)).ToArray();
-        if (operands.Length == 1)
+        var expressions = expression.bitwiseOrExpression();
+        if (expressions.Length == 1)
         {
-            return operands[0];
+            return EvaluateBitwiseOrExpression(expressions[0], scope, allowFunctionReference, expectedType);
         }
+
+        var operands = expressions.Select(item => EvaluateBitwiseOrExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
 
         foreach (var operand in operands)
         {
@@ -3738,32 +3911,68 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Bool);
     }
 
-    private ExpressionBinding EvaluateBitwiseOrExpression(StarkParser.BitwiseOrExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateBitwiseOrExpression(
+        StarkParser.BitwiseOrExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.bitwiseXorExpression().Select(item => EvaluateBitwiseXorExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.bitwiseXorExpression();
+        if (expressions.Length == 1)
+        {
+            return EvaluateBitwiseXorExpression(expressions[0], scope, allowFunctionReference, expectedType);
+        }
+
+        var operands = expressions.Select(item => EvaluateBitwiseXorExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
         return EvaluateBinaryChain(operands, ExtractOperators<StarkParser.BitwiseXorExpressionContext>(expression), expression, "Bitwise '|'", requireInteger: true);
     }
 
-    private ExpressionBinding EvaluateBitwiseXorExpression(StarkParser.BitwiseXorExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateBitwiseXorExpression(
+        StarkParser.BitwiseXorExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.bitwiseAndExpression().Select(item => EvaluateBitwiseAndExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.bitwiseAndExpression();
+        if (expressions.Length == 1)
+        {
+            return EvaluateBitwiseAndExpression(expressions[0], scope, allowFunctionReference, expectedType);
+        }
+
+        var operands = expressions.Select(item => EvaluateBitwiseAndExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
         return EvaluateBinaryChain(operands, ExtractOperators<StarkParser.BitwiseAndExpressionContext>(expression), expression, "Bitwise '^'", requireInteger: true);
     }
 
-    private ExpressionBinding EvaluateBitwiseAndExpression(StarkParser.BitwiseAndExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateBitwiseAndExpression(
+        StarkParser.BitwiseAndExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.equalityExpression().Select(item => EvaluateEqualityExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.equalityExpression();
+        if (expressions.Length == 1)
+        {
+            return EvaluateEqualityExpression(expressions[0], scope, allowFunctionReference, expectedType);
+        }
+
+        var operands = expressions.Select(item => EvaluateEqualityExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
         return EvaluateBinaryChain(operands, ExtractOperators<StarkParser.EqualityExpressionContext>(expression), expression, "Bitwise '&'", requireInteger: true);
     }
 
-    private ExpressionBinding EvaluateEqualityExpression(StarkParser.EqualityExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateEqualityExpression(
+        StarkParser.EqualityExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.relationalExpression().Select(item => EvaluateRelationalExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.relationalExpression();
         var operators = ExtractOperators<StarkParser.RelationalExpressionContext>(expression);
         if (operators.Count == 0)
         {
-            return operands[0];
+            return EvaluateRelationalExpression(expressions[0], scope, allowFunctionReference, expectedType);
         }
+
+        var operands = expressions.Select(item => EvaluateRelationalExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
 
         for (var index = 1; index < operands.Length; index++)
         {
@@ -3779,14 +3988,20 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Bool);
     }
 
-    private ExpressionBinding EvaluateRelationalExpression(StarkParser.RelationalExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateRelationalExpression(
+        StarkParser.RelationalExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.shiftExpression().Select(item => EvaluateShiftExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.shiftExpression();
         var operators = ExtractOperators<StarkParser.ShiftExpressionContext>(expression);
         if (operators.Count == 0)
         {
-            return operands[0];
+            return EvaluateShiftExpression(expressions[0], scope, allowFunctionReference, expectedType);
         }
+
+        var operands = expressions.Select(item => EvaluateShiftExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
 
         for (var index = 1; index < operands.Length; index++)
         {
@@ -3802,14 +4017,20 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Bool);
     }
 
-    private ExpressionBinding EvaluateShiftExpression(StarkParser.ShiftExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateShiftExpression(
+        StarkParser.ShiftExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.additiveExpression().Select(item => EvaluateAdditiveExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.additiveExpression();
         var operators = ExtractOperators<StarkParser.AdditiveExpressionContext>(expression);
         if (operators.Count == 0)
         {
-            return operands[0];
+            return EvaluateAdditiveExpression(expressions[0], scope, allowFunctionReference, expectedType);
         }
+
+        var operands = expressions.Select(item => EvaluateAdditiveExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
 
         var resultType = operands[0].Type;
         for (var index = 1; index < operands.Length; index++)
@@ -3824,25 +4045,49 @@ internal sealed class TypeChecker
         return new ExpressionBinding(resultType);
     }
 
-    private ExpressionBinding EvaluateAdditiveExpression(StarkParser.AdditiveExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateAdditiveExpression(
+        StarkParser.AdditiveExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.multiplicativeExpression().Select(item => EvaluateMultiplicativeExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.multiplicativeExpression();
         var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(expression);
+        if (operators.Count == 0)
+        {
+            return EvaluateMultiplicativeExpression(expressions[0], scope, allowFunctionReference, expectedType);
+        }
+
+        var operands = expressions.Select(item => EvaluateMultiplicativeExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
         return EvaluateArithmeticChain(operands, operators, expression, "Additive operator");
     }
 
-    private ExpressionBinding EvaluateMultiplicativeExpression(StarkParser.MultiplicativeExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateMultiplicativeExpression(
+        StarkParser.MultiplicativeExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var operands = expression.unaryExpression().Select(item => EvaluateUnaryExpression(item, scope, allowFunctionReference)).ToArray();
+        var expressions = expression.unaryExpression();
         var operators = ExtractOperators<StarkParser.UnaryExpressionContext>(expression);
+        if (operators.Count == 0)
+        {
+            return EvaluateUnaryExpression(expressions[0], scope, allowFunctionReference, expectedType);
+        }
+
+        var operands = expressions.Select(item => EvaluateUnaryExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
         return EvaluateArithmeticChain(operands, operators, expression, "Multiplicative operator");
     }
 
-    private ExpressionBinding EvaluateUnaryExpression(StarkParser.UnaryExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluateUnaryExpression(
+        StarkParser.UnaryExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType = null)
     {
         if (expression.powerExpression() is { } powerExpression)
         {
-            return EvaluatePowerExpression(powerExpression, scope, allowFunctionReference);
+            return EvaluatePowerExpression(powerExpression, scope, allowFunctionReference, expectedType);
         }
 
         if (expression.conversionType() is { } conversionType)
@@ -3850,7 +4095,10 @@ internal sealed class TypeChecker
             var convertedOperand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
             var targetType = TryGetPublishedTemplateConversionType(expression, out var publishedTargetType)
                 ? EnsureMonomorphizedType(publishedTargetType, Location(conversionType))
-                : _typeResolver!.ResolveConversionType(conversionType);
+                : _typeResolver!.ResolveConversionType(
+                    conversionType,
+                    _currentFunctionGenericParameters,
+                    _currentFunctionModuleName);
             EnsureExplicitConversionCompatible(targetType, convertedOperand, expression);
             RecordConversion(targetType, expression);
             return new ExpressionBinding(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
@@ -3871,14 +4119,18 @@ internal sealed class TypeChecker
         };
     }
 
-    private ExpressionBinding EvaluatePowerExpression(StarkParser.PowerExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluatePowerExpression(
+        StarkParser.PowerExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
-        var left = EvaluatePostfixExpression(expression.postfixExpression(), scope, allowFunctionReference);
         if (expression.unaryExpression() is not { } rightExpression)
         {
-            return left;
+            return EvaluatePostfixExpression(expression.postfixExpression(), scope, allowFunctionReference, expectedType);
         }
 
+        var left = EvaluatePostfixExpression(expression.postfixExpression(), scope, allowFunctionReference, expectedType: null);
         var right = EvaluateUnaryExpression(rightExpression, scope, allowFunctionReference: false);
         if (!IsNumeric(left.Type) || !IsNumeric(right.Type))
         {
@@ -3896,14 +4148,22 @@ internal sealed class TypeChecker
         return new ExpressionBinding(resultType);
     }
 
-    private ExpressionBinding EvaluatePostfixExpression(StarkParser.PostfixExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluatePostfixExpression(
+        StarkParser.PostfixExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
         var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
         var binding = TryGetPublishedTemplateEnumCallBinding(expression, out var publishedEnumCall)
             ? publishedEnumCall
             : TryGetPublishedTemplateDirectCallBinding(expression, out var publishedBinding)
             ? publishedBinding
-            : EvaluatePrimaryExpression(expression.primaryExpression(), scope, allowFunctionReference || requiresCallableTarget);
+            : EvaluatePrimaryExpression(
+                expression.primaryExpression(),
+                scope,
+                allowFunctionReference || requiresCallableTarget,
+                expression.postfixPart().Length == 0 ? expectedType : null);
 
         var postfixParts = expression.postfixPart();
         for (var index = 0; index < postfixParts.Length; index++)
@@ -3954,11 +4214,37 @@ internal sealed class TypeChecker
         return binding;
     }
 
-    private ExpressionBinding EvaluatePrimaryExpression(StarkParser.PrimaryExpressionContext expression, Scope scope, bool allowFunctionReference)
+    private ExpressionBinding EvaluatePrimaryExpression(
+        StarkParser.PrimaryExpressionContext expression,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
         if (expression.literal() is { } literal)
         {
             return EvaluateLiteral(literal);
+        }
+
+        if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
+        {
+            var kind = expression.SIZEOF() is not null ? "sizeof" : "alignof";
+            var targetType = ResolveType(
+                expression.type_(),
+                _currentFunctionGenericParameters,
+                _currentFunctionModuleName);
+            _typeLayoutExpressions.Add(new TypeLayoutExpressionTypingRecord(
+                kind,
+                targetType,
+                Location(expression),
+                _currentFunctionName));
+
+            var resultType = expression.ALIGNOF() is not null
+                ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
+                : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+
+            return new ExpressionBinding(
+                resultType,
+                DiagnosticName: $"{kind}({targetType.DisplayName})");
         }
 
         if (expression.Identifier() is { } identifier)
@@ -3988,18 +4274,19 @@ internal sealed class TypeChecker
 
         if (expression.objectCreationExpression() is { } objectCreationExpression)
         {
-            return EvaluateObjectCreation(objectCreationExpression, scope);
+            return EvaluateObjectCreation(objectCreationExpression, scope, expectedType);
         }
 
-        return EvaluateExpression(expression.expression(), scope, allowFunctionReference: false);
+        return EvaluateExpression(expression.expression(), scope, allowFunctionReference: false, expectedType);
     }
 
-    private ExpressionBinding EvaluateObjectCreation(StarkParser.ObjectCreationExpressionContext expression, Scope scope)
+    private ExpressionBinding EvaluateObjectCreation(
+        StarkParser.ObjectCreationExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
     {
         TryGetPublishedTemplateObjectCreationSummary(expression, out var publishedObjectCreation);
-        var createdType = publishedObjectCreation is not null
-            ? EnsureMonomorphizedType(publishedObjectCreation.CreatedType, Location(expression.type_()))
-            : ResolveType(expression.type_(), currentModuleName: CurrentFunctionModuleName);
+        var createdType = ResolveObjectCreationType(expression, publishedObjectCreation, expectedType);
         var namedType = ResolveNamedTypeSymbol(createdType);
         if (namedType is not null
             && namedType.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
@@ -4020,13 +4307,15 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
+        if (createdType.Kind == StarkTypeKind.Error)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
         ConstructorShape? matchedConstructor = null;
         IReadOnlyList<ObjectInitializerMemberTypingRecord>? initializerMembers = null;
 
-        if (expression.argumentList() is { } argumentList)
-        {
-            matchedConstructor = CheckObjectCreationArguments(argumentList, createdType, scope);
-        }
+        matchedConstructor = CheckObjectCreationArguments(expression.argumentList(), expression, createdType, scope);
 
         if (expression.objectInitializer() is { } objectInitializer)
         {
@@ -4038,21 +4327,67 @@ internal sealed class TypeChecker
                 publishedObjectCreation?.InitializerMembers);
         }
 
-        if ((expression.argumentList()?.argument().Length ?? 0) > 0
-            || expression.objectInitializer() is not null)
+        if (ShouldTrackObjectCreation(expression) || matchedConstructor is not null)
         {
             _objectCreations.Add(new ObjectCreationTypingRecord(
                 expression.GetText(),
                 createdType,
                 matchedConstructor is null
                     ? null
-                    : new TypedConstructorShape(createdType.DisplayName, matchedConstructor.Parameters, matchedConstructor.IsPrimaryShape),
+                    : new TypedConstructorShape(
+                        createdType.DisplayName,
+                        matchedConstructor.Parameters,
+                        matchedConstructor.IsPrimaryShape,
+                        matchedConstructor.BodyKey),
                 Location(expression.Start),
                 _currentFunctionName,
                 initializerMembers));
         }
 
         return new ExpressionBinding(createdType, NamedType: ResolveNamedTypeSymbol(createdType), DiagnosticName: $"new '{createdType.DisplayName}'");
+    }
+
+    private static bool ShouldTrackObjectCreation(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.type_() is null
+            || expression.objectInitializer() is not null
+            || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private StarkTypeSymbol ResolveObjectCreationType(
+        StarkParser.ObjectCreationExpressionContext expression,
+        ImportedTemplateObjectCreationSummary? publishedObjectCreation,
+        StarkTypeSymbol? expectedType)
+    {
+        if (publishedObjectCreation is not null)
+        {
+            return EnsureMonomorphizedType(publishedObjectCreation.CreatedType, Location(expression.Start));
+        }
+
+        if (expression.type_() is { } explicitType)
+        {
+            return ResolveType(explicitType, currentModuleName: CurrentFunctionModuleName);
+        }
+
+        if (expectedType is null || expectedType.Kind is StarkTypeKind.Error or StarkTypeKind.Void)
+        {
+            ReportError(
+                "STK3002",
+                "Target-typed object creation requires an expected named target type. Use an explicit type such as 'new TypeName(...)' when the target type is not known.",
+                expression);
+            return StarkTypeSymbols.Error;
+        }
+
+        if (expectedType.Kind != StarkTypeKind.Named || expectedType.NamedType is null)
+        {
+            ReportError(
+                "STK3002",
+                $"Target-typed object creation requires a named target type, but got '{expectedType.DisplayName}'.",
+                expression);
+            return StarkTypeSymbols.Error;
+        }
+
+        return expectedType;
     }
 
     private ExpressionBinding EvaluateEnumConstructorExpression(
@@ -4154,7 +4489,7 @@ internal sealed class TypeChecker
                 continue;
             }
 
-            var valueType = EvaluateExpression(member.expression(), scope, allowFunctionReference: false).Type;
+            var valueType = EvaluateExpression(member.expression(), scope, allowFunctionReference: false, expectedType: fieldType).Type;
             recordedMembers.Add(new EnumConstructorMemberTypingRecord(memberName, fieldIndex, fieldType));
 
             if (!CanAssign(fieldType, valueType))
@@ -4193,9 +4528,8 @@ internal sealed class TypeChecker
             return InvokeEnumConstructor(target, arguments, scope);
         }
 
-        var argumentTypes = arguments.argument()
-            .Select(argument => EvaluateExpression(argument.expression(), scope, allowFunctionReference: false).Type)
-            .ToArray();
+        StarkTypeSymbol[]? argumentTypes = null;
+        ExpressionBinding[]? argumentBindings = null;
 
         if (target.OverloadSourceName is { } overloadSourceName)
         {
@@ -4205,6 +4539,8 @@ internal sealed class TypeChecker
                 return new ExpressionBinding(StarkTypeSymbols.Error);
             }
 
+            argumentBindings = EvaluateArguments(arguments, expectedParameters: null, scope);
+            argumentTypes = argumentBindings.Select(static argument => argument.Type).ToArray();
             var resolution = FunctionOverloadFacts.Resolve(overloads, target.Receiver?.Type, argumentTypes, CanAssign);
             if (!resolution.Succeeded)
             {
@@ -4236,6 +4572,11 @@ internal sealed class TypeChecker
 
         var receiverOffset = target.Receiver is null ? 0 : 1;
         var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
+        argumentBindings ??= EvaluateArguments(
+            arguments,
+            target.Function.Parameters.Skip(receiverOffset).ToArray(),
+            scope);
+        argumentTypes ??= argumentBindings.Select(static argument => argument.Type).ToArray();
 
         if (explicitParameterCount != arguments.argument().Length)
         {
@@ -4257,8 +4598,8 @@ internal sealed class TypeChecker
         for (var index = 0; index < Math.Min(explicitParameterCount, argumentTypes.Length); index++)
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
-            var argumentType = argumentTypes[index];
-            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter.Type, argumentType, arguments.argument(index).expression());
+            var argument = argumentBindings[index];
+            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter.Type, argument, arguments.argument(index).expression());
         }
 
         if (target.Receiver is null)
@@ -4270,7 +4611,21 @@ internal sealed class TypeChecker
             RecordMemberCall(target.Function, arguments);
         }
 
-        return new ExpressionBinding(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType), DiagnosticName: $"call to '{target.Function.DisplaySourceName}'");
+        var returnType = target.Function.ReturnType;
+        if (returnType.BorrowKind != StarkBorrowKind.None)
+        {
+            var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            var isPointerBacked = StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType);
+            return new ExpressionBinding(
+                valueType,
+                IsAssignable: isPointerBacked && returnType.IsMutableView,
+                NamedType: ResolveNamedTypeSymbol(valueType),
+                DiagnosticName: $"call to '{target.Function.DisplaySourceName}'",
+                IsAddressable: true,
+                IsAddressMutable: returnType.IsMutableView);
+        }
+
+        return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"call to '{target.Function.DisplaySourceName}'");
     }
 
     private ExpressionBinding InvokeEnumConstructor(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
@@ -4297,13 +4652,16 @@ internal sealed class TypeChecker
 
         for (var index = 0; index < arguments.argument().Length; index++)
         {
-            var argumentType = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
+            var parameterType = index < constructor.Variant.Fields.Count
+                ? constructor.Variant.Fields[index].Type
+                : null;
+            var argumentType = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false, expectedType: parameterType).Type;
             if (index >= constructor.Variant.Fields.Count)
             {
                 continue;
             }
 
-            var parameterType = constructor.Variant.Fields[index].Type;
+            parameterType = constructor.Variant.Fields[index].Type;
             if (!CanAssign(parameterType, argumentType))
             {
                 hasErrors = true;
@@ -4482,6 +4840,11 @@ internal sealed class TypeChecker
                     return new ExpressionBinding(StarkTypeSymbols.Error);
                 }
 
+                if (!TryFilterDirectCallableTypeMemberFunctions(qualifiedName, namespaceFunctions, context, out namespaceFunctions))
+                {
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
                 if (namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric)
                 {
                     var function = namespaceFunctions[0];
@@ -4496,6 +4859,15 @@ internal sealed class TypeChecker
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (qualifiedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+                {
+                    return new ExpressionBinding(
+                        StarkTypeSymbols.Error,
+                        NamespaceName: qualifiedName,
+                        NamedType: qualifiedType,
+                        DiagnosticName: $"type '{qualifiedName}'");
+                }
+
                 if (qualifiedType.Kind == DeclarationKind.Enum)
                 {
                     return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"enum '{qualifiedName}'");
@@ -4546,6 +4918,15 @@ internal sealed class TypeChecker
 
         if (namedType.TryGetField(memberName, out var field, out var fieldIndex))
         {
+            if (!IsFieldAccessible(field))
+            {
+                ReportError(
+                    "STK3015",
+                    $"Field '{memberName}' is {RenderVisibility(field.Visibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                    context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
             RecordFieldAccess(field.Name, fieldIndex, field.Type, context);
             var projectedType = ProjectProjectionType(target, field.Type);
             var isAddressMutable = CanMutateAddressProjection(target, projectedType);
@@ -4601,15 +4982,25 @@ internal sealed class TypeChecker
 
         if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            if (methods.Count == 1 && !methods[0].IsGeneric && methods[0].Parameters.Count != 0)
+            var instanceMethods = methods.Where(static method => !method.IsStatic).ToArray();
+            if (instanceMethods.Length == 1 && !instanceMethods[0].IsGeneric && instanceMethods[0].Parameters.Count != 0)
             {
-                var method = methods[0];
+                var method = instanceMethods[0];
                 return new ExpressionBinding(
                     method.ReturnType,
                     NamedType: ResolveNamedTypeSymbol(method.ReturnType),
                     Function: method,
                     DiagnosticName: $"method '{method.DisplaySourceName}'",
                     Receiver: target);
+            }
+
+            if (instanceMethods.Length == 0 && methods.Any(static method => method.IsStatic))
+            {
+                ReportError(
+                    "STK3014",
+                    $"Static member function '{methodSourceName}' must be called through the type name, not through an instance.",
+                    context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
             }
 
             return new ExpressionBinding(
@@ -4649,21 +5040,22 @@ internal sealed class TypeChecker
                         : DescribeGlobalRebindingError(name, local.BindingKind.Value));
             }
 
+            var canAssignLocal = CanAssignToLocal(local);
             return new ExpressionBinding(
                 local.Type,
-                IsAssignable: local.IsMutable && !local.IsConstant,
+                IsAssignable: canAssignLocal,
                 NamedType: ResolveNamedTypeSymbol(local.Type),
                 DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
                 IsAddressable: true,
                 IsAddressMutable: CanFormMutableAddressFromLocal(local),
-                AssignmentErrorMessage: local.IsMutable
+                AssignmentErrorMessage: canAssignLocal
                     ? null
                     : local.IsConstant
                         ? $"Cannot assign to constant '{name}'."
                         : $"Cannot assign to immutable local '{name}'.");
         }
 
-        if (_globals.TryGetValue(name, out var global))
+        if (TryResolveGlobalBySourceName(name, out var global, out var ambiguousGlobalNames))
         {
             return new ExpressionBinding(
                 global.Type,
@@ -4672,11 +5064,20 @@ internal sealed class TypeChecker
                 DiagnosticName: global.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
                 IsAddressable: true,
                 IsAddressMutable: global.IsMutable,
-                RootGlobalName: name,
+                RootGlobalName: global.Name,
                 RootGlobalBindingKind: global.BindingKind,
                 AssignmentErrorMessage: global.IsMutable
                     ? null
-                    : DescribeGlobalRebindingError(name, global.BindingKind ?? GlobalBindingKind.Immutable));
+                    : DescribeGlobalRebindingError(global.Name, global.BindingKind ?? GlobalBindingKind.Immutable));
+        }
+
+        if (ambiguousGlobalNames.Count > 0)
+        {
+            ReportError(
+                "STK3003",
+                $"Imported symbol '{name}' is ambiguous between {string.Join(", ", ambiguousGlobalNames)}. Use a fully qualified name.",
+                token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
         if (TryGetFunctionOverloads(name, out var functions))
@@ -4687,6 +5088,11 @@ internal sealed class TypeChecker
                     "STK3013",
                     $"Trait method '{name}' is a compile-time-only contract and cannot be called directly.",
                     token);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (!TryFilterDirectCallableTypeMemberFunctions(name, functions, token, out functions))
+            {
                 return new ExpressionBinding(StarkTypeSymbols.Error);
             }
 
@@ -4713,8 +5119,17 @@ internal sealed class TypeChecker
                 OverloadSourceName: name);
         }
 
-        if (TryResolveNamedTypeBySourceName(name, out var namedType))
+        if (TryResolveNamedTypeBySourceName(name, out var namedType, out var ambiguousTypeNames))
         {
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+            {
+                return new ExpressionBinding(
+                    StarkTypeSymbols.Error,
+                    NamespaceName: namedType.Name,
+                    NamedType: namedType,
+                    DiagnosticName: $"type '{name}'");
+            }
+
             if (namedType.Kind == DeclarationKind.Doctrine)
             {
                 if (!allowFunctionReference)
@@ -4750,6 +5165,15 @@ internal sealed class TypeChecker
             }
         }
 
+        if (ambiguousTypeNames.Count > 0)
+        {
+            ReportError(
+                "STK3003",
+                $"Imported type name '{name}' is ambiguous between {string.Join(", ", ambiguousTypeNames)}. Use a fully qualified name.",
+                token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
         if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
         {
             return CreateEnumCaseValueBinding(name, enumTypeSymbol, enumType, variant, token, allowFunctionReference);
@@ -4757,7 +5181,7 @@ internal sealed class TypeChecker
 
         if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
         {
-            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"enum '{name}'");
+            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: namedType.Name, DiagnosticName: $"enum '{name}'");
         }
 
         if (_moduleGraph.CanAccessModule(CurrentFunctionModuleName, name))
@@ -4774,9 +5198,86 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Error);
     }
 
+    private bool TryFilterDirectCallableTypeMemberFunctions(
+        string sourceName,
+        IReadOnlyList<TypedFunctionSignature> functions,
+        IToken token,
+        out IReadOnlyList<TypedFunctionSignature> callableFunctions)
+    {
+        callableFunctions = functions;
+
+        if (!IsStructOrRecordMemberFunctionSourceName(sourceName, out var typeName))
+        {
+            return true;
+        }
+
+        var staticFunctions = functions.Where(static function => function.IsStatic).ToArray();
+        if (staticFunctions.Length > 0)
+        {
+            callableFunctions = staticFunctions;
+            return true;
+        }
+
+        ReportError(
+            "STK3014",
+            $"Instance member function '{sourceName}' must be called through a value of type '{typeName}'.",
+            token);
+        callableFunctions = [];
+        return false;
+    }
+
+    private bool TryFilterDirectCallableTypeMemberFunctions(
+        string sourceName,
+        IReadOnlyList<TypedFunctionSignature> functions,
+        ParserRuleContext context,
+        out IReadOnlyList<TypedFunctionSignature> callableFunctions)
+    {
+        callableFunctions = functions;
+
+        if (!IsStructOrRecordMemberFunctionSourceName(sourceName, out var typeName))
+        {
+            return true;
+        }
+
+        var staticFunctions = functions.Where(static function => function.IsStatic).ToArray();
+        if (staticFunctions.Length > 0)
+        {
+            callableFunctions = staticFunctions;
+            return true;
+        }
+
+        ReportError(
+            "STK3014",
+            $"Instance member function '{sourceName}' must be called through a value of type '{typeName}'.",
+            context);
+        callableFunctions = [];
+        return false;
+    }
+
+    private bool IsStructOrRecordMemberFunctionSourceName(string sourceName, out string typeName)
+    {
+        typeName = string.Empty;
+        var separator = sourceName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        typeName = sourceName[..separator];
+        return TryResolveNamedTypeBySourceName(typeName, out var namedType)
+            && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record;
+    }
+
     private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
     {
         if (_functionOverloads.TryGetValue(sourceName, out var candidates))
+        {
+            overloads = candidates;
+            return true;
+        }
+
+        if (TryResolveTypeQualifiedMemberSourceName(sourceName, out var resolvedMemberSourceName)
+            && _functionOverloads.TryGetValue(resolvedMemberSourceName, out candidates))
         {
             overloads = candidates;
             return true;
@@ -4789,8 +5290,45 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (!sourceName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedCandidates = new List<TypedFunctionSignature>();
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, sourceName))
+            {
+                if (_functionOverloads.TryGetValue(candidateName, out candidates))
+                {
+                    importedCandidates.AddRange(candidates);
+                }
+            }
+
+            if (importedCandidates.Count > 0)
+            {
+                overloads = importedCandidates;
+                return true;
+            }
+        }
+
         overloads = [];
         return false;
+    }
+
+    private bool TryResolveTypeQualifiedMemberSourceName(string sourceName, out string resolvedSourceName)
+    {
+        resolvedSourceName = string.Empty;
+        var separator = sourceName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var qualifier = sourceName[..separator];
+        if (!TryResolveNamedTypeBySourceName(qualifier, out var namedType))
+        {
+            return false;
+        }
+
+        resolvedSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{sourceName[(separator + 1)..]}";
+        return !string.Equals(resolvedSourceName, sourceName, StringComparison.Ordinal);
     }
 
     private void ReportOverloadResolutionFailure(
@@ -5007,8 +5545,24 @@ internal sealed class TypeChecker
         }
 
         var key = monomorphizedType.NamedType!;
-        if (_namedTypes.ContainsKey(key))
+        if (monomorphizedType.TypeArguments is { Count: > 0 } typeArguments)
         {
+            _genericInstantiationArguments.TryAdd(key, typeArguments.ToArray());
+        }
+
+        if (_namedTypes.TryGetValue(key, out var existingNamedType))
+        {
+            if (monomorphizedType.TypeArguments is { Count: > 0 } refreshTypeArguments
+                && TryRefreshIncompleteConcreteType(key, refreshTypeArguments))
+            {
+                existingNamedType = _namedTypes[key];
+            }
+
+            if (monomorphizedType.TypeArguments is { Count: > 0 } existingTypeArguments)
+            {
+                EnsureConcreteConstructorShapes(key, existingTypeArguments);
+            }
+
             if (triggerLocation is { } existingTriggerLocation)
             {
                 RecordTypeInstantiationTriggers(monomorphizedType, existingTriggerLocation);
@@ -5045,6 +5599,12 @@ internal sealed class TypeChecker
             substitution[template.GenericParams[i]] = EnsureMonomorphizedType(monomorphizedType.TypeArguments[i]);
         }
 
+        _namedTypes[key] = new NamedTypeSymbol(
+            key,
+            template.Kind,
+            new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
+            [],
+            GenericParameterNames: template.GenericParams.ToArray());
         _namedTypes[key] = template.Kind == DeclarationKind.Enum
             ? CreateConcreteEnum(key, template, substitution)
             : CreateConcreteStructLike(key, template, substitution);
@@ -5059,6 +5619,71 @@ internal sealed class TypeChecker
         }
 
         return monomorphizedType;
+    }
+
+    private void RefreshConcreteInstantiationsForTemplate(NamedTypeSymbol template)
+    {
+        if (!template.IsGeneric || template.OrderedFields.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var (key, typeArguments) in _genericInstantiationArguments.ToArray())
+        {
+            if (!string.Equals(StarkTypeSymbols.GetGenericBaseName(key), template.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            _ = TryRefreshIncompleteConcreteType(key, typeArguments);
+        }
+    }
+
+    private bool TryRefreshIncompleteConcreteType(string key, IReadOnlyList<StarkTypeSymbol> typeArguments)
+    {
+        if (!_refreshingConcreteTypes.Add(key))
+        {
+            return false;
+        }
+
+        try
+        {
+            var baseName = StarkTypeSymbols.GetGenericBaseName(key);
+            if (!_namedTypes.TryGetValue(baseName, out var template)
+                && !TryResolveNamedTypeBySourceName(baseName, out template))
+            {
+                return false;
+            }
+
+            if (!template.IsGeneric
+                || template.GenericParams.Count != typeArguments.Count
+                || (template.Kind is DeclarationKind.Struct or DeclarationKind.Record && template.OrderedFields.Count == 0))
+            {
+                return false;
+            }
+
+            if (_namedTypes.TryGetValue(key, out var existing)
+                && template.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                && existing.OrderedFields.Count >= template.OrderedFields.Count)
+            {
+                return false;
+            }
+
+            var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            for (var i = 0; i < template.GenericParams.Count; i++)
+            {
+                substitution[template.GenericParams[i]] = typeArguments[i];
+            }
+
+            _namedTypes[key] = template.Kind == DeclarationKind.Enum
+                ? CreateConcreteEnum(key, template, substitution)
+                : CreateConcreteStructLike(key, template, substitution);
+            return true;
+        }
+        finally
+        {
+            _refreshingConcreteTypes.Remove(key);
+        }
     }
 
     private NamedTypeSymbol CreateConcreteEnum(
@@ -5093,7 +5718,7 @@ internal sealed class TypeChecker
 
         foreach (var field in template.OrderedFields)
         {
-            var concreteField = new FieldSymbol(field.Name, SubstituteType(field.Type, substitution));
+            var concreteField = field with { Type = SubstituteType(field.Type, substitution) };
             concreteFields[field.Name] = concreteField;
             concreteOrderedFields.Add(concreteField);
         }
@@ -5111,8 +5736,43 @@ internal sealed class TypeChecker
                 constructor.Parameters
                     .Select(parameter => new TypedParameterSymbol(parameter.Name, SubstituteType(parameter.Type, substitution)))
                     .ToArray(),
-                constructor.IsPrimaryShape))
+                constructor.IsPrimaryShape,
+                constructor.BodyKey))
             .ToList();
+    }
+
+    private void PopulateConcreteConstructorShapesForKnownGenericInstantiations()
+    {
+        foreach (var (key, typeArguments) in _genericInstantiationArguments.ToArray())
+        {
+            EnsureConcreteConstructorShapes(key, typeArguments);
+        }
+    }
+
+    private void EnsureConcreteConstructorShapes(string key, IReadOnlyList<StarkTypeSymbol> typeArguments)
+    {
+        if (_constructors.ContainsKey(key))
+        {
+            return;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(key);
+        if (!_constructors.TryGetValue(baseName, out var templateConstructors)
+            || templateConstructors.Count == 0
+            || !_namedTypes.TryGetValue(baseName, out var template)
+            || !template.IsGeneric
+            || template.GenericParams.Count != typeArguments.Count)
+        {
+            return;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var i = 0; i < template.GenericParams.Count; i++)
+        {
+            substitution[template.GenericParams[i]] = typeArguments[i];
+        }
+
+        _constructors[key] = CreateConcreteConstructors(templateConstructors, substitution);
     }
 
     private StarkTypeSymbol SubstituteType(
@@ -5260,8 +5920,57 @@ internal sealed class TypeChecker
         return TryResolveEnumCaseReference(enumCaseTarget.dottedName().GetText(), out enumType, out enumTypeSymbol, out variant);
     }
 
+    private bool TryResolveGlobalBySourceName(
+        string name,
+        out VariableSymbol global,
+        out IReadOnlyList<string> ambiguousImportedNames)
+    {
+        ambiguousImportedNames = [];
+
+        if (_globals.TryGetValue(name, out global!))
+        {
+            return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && _globals.TryGetValue($"{CurrentFunctionModuleName}.{name}", out global!))
+        {
+            return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, name)
+                .Where(_globals.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                global = _globals[importedMatches[0]];
+                return true;
+            }
+
+            if (importedMatches.Length > 1)
+            {
+                ambiguousImportedNames = importedMatches;
+            }
+        }
+
+        global = null!;
+        return false;
+    }
+
     private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
     {
+        return TryResolveNamedTypeBySourceName(typeName, out namedType, out _);
+    }
+
+    private bool TryResolveNamedTypeBySourceName(
+        string typeName,
+        out NamedTypeSymbol namedType,
+        out IReadOnlyList<string> ambiguousImportedNames)
+    {
+        ambiguousImportedNames = [];
+
         if (_namedTypes.TryGetValue(typeName, out namedType!))
         {
             return true;
@@ -5271,6 +5980,23 @@ internal sealed class TypeChecker
             && _namedTypes.TryGetValue($"{CurrentFunctionModuleName}.{typeName}", out namedType!))
         {
             return true;
+        }
+
+        if (!typeName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, typeName)
+                .Where(_namedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                namedType = _namedTypes[importedMatches[0]];
+                return true;
+            }
+
+            if (importedMatches.Length > 1)
+            {
+                ambiguousImportedNames = importedMatches;
+            }
         }
 
         namedType = null!;
@@ -5466,27 +6192,25 @@ internal sealed class TypeChecker
     }
 
     private ConstructorShape? CheckObjectCreationArguments(
-        StarkParser.ArgumentListContext arguments,
+        StarkParser.ArgumentListContext? arguments,
+        ParserRuleContext diagnosticContext,
         StarkTypeSymbol createdType,
         Scope scope)
     {
-        if (arguments.argument().Length == 0)
-        {
-            return null;
-        }
-
-        var argumentTypes = new StarkTypeSymbol[arguments.argument().Length];
-        for (var index = 0; index < arguments.argument().Length; index++)
-        {
-            argumentTypes[index] = EvaluateExpression(arguments.argument(index).expression(), scope, allowFunctionReference: false).Type;
-        }
+        var suppliedArguments = arguments?.argument() ?? [];
+        var argumentCount = suppliedArguments.Length;
 
         if (createdType.Kind != StarkTypeKind.Named || createdType.NamedType is null)
         {
+            if (argumentCount == 0)
+            {
+                return null;
+            }
+
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare constructors and cannot be created with arguments.",
-                arguments);
+                diagnosticContext);
             return null;
         }
 
@@ -5497,15 +6221,20 @@ internal sealed class TypeChecker
 
         if (!_constructors.TryGetValue(createdType.NamedType, out var constructors) || constructors.Count == 0)
         {
+            if (argumentCount == 0)
+            {
+                return null;
+            }
+
             ReportError(
                 "STK3009",
-                $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {arguments.argument().Length} argument{Pluralize(arguments.argument().Length)}.",
-                arguments);
+                $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}.",
+                diagnosticContext);
             return null;
         }
 
         var arityMatches = constructors
-            .Where(candidate => candidate.Parameters.Count == argumentTypes.Length)
+            .Where(candidate => candidate.Parameters.Count == argumentCount)
             .ToArray();
 
         if (arityMatches.Length == 0)
@@ -5513,14 +6242,30 @@ internal sealed class TypeChecker
             var availableArities = string.Join(", ", constructors.Select(static candidate => candidate.Parameters.Count).Distinct().OrderBy(static value => value));
             ReportError(
                 "STK3009",
-                $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentTypes.Length} argument{Pluralize(argumentTypes.Length)}. Available constructor arities: {availableArities}.",
-                arguments);
+                $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}. Available constructor arities: {availableArities}.",
+                diagnosticContext);
             return null;
         }
 
-        var matchedConstructor = arityMatches
-            .OrderBy(candidate => CountMismatchedParameters(candidate.Parameters, argumentTypes))
-            .First();
+        StarkTypeSymbol[] argumentTypes;
+        ConstructorShape matchedConstructor;
+        if (arityMatches.Length == 1)
+        {
+            matchedConstructor = arityMatches[0];
+            argumentTypes = arguments is null
+                ? []
+                : EvaluateArgumentTypes(arguments, matchedConstructor.Parameters, scope);
+        }
+        else
+        {
+            argumentTypes = arguments is null
+                ? []
+                : EvaluateArgumentTypes(arguments, expectedParameters: null, scope);
+            matchedConstructor = arityMatches
+                .OrderBy(candidate => CountMismatchedParameters(candidate.Parameters, argumentTypes))
+                .First();
+        }
+
         var hadMismatch = false;
 
         for (var index = 0; index < matchedConstructor.Parameters.Count; index++)
@@ -5536,10 +6281,41 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3002",
                 $"Constructor argument {index + 1} for '{createdType.DisplayName}' expects '{parameter.Type.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameter.Type, argumentType)}",
-                arguments.argument(index).expression());
+                suppliedArguments[index].expression());
         }
 
         return hadMismatch ? null : matchedConstructor;
+    }
+
+    private StarkTypeSymbol[] EvaluateArgumentTypes(
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<TypedParameterSymbol>? expectedParameters,
+        Scope scope)
+    {
+        return EvaluateArguments(arguments, expectedParameters, scope)
+            .Select(static argument => argument.Type)
+            .ToArray();
+    }
+
+    private ExpressionBinding[] EvaluateArguments(
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<TypedParameterSymbol>? expectedParameters,
+        Scope scope)
+    {
+        var argumentBindings = new ExpressionBinding[arguments.argument().Length];
+        for (var index = 0; index < arguments.argument().Length; index++)
+        {
+            var expectedType = expectedParameters is not null && index < expectedParameters.Count
+                ? expectedParameters[index].Type
+                : null;
+            argumentBindings[index] = EvaluateExpression(
+                arguments.argument(index).expression(),
+                scope,
+                allowFunctionReference: false,
+                expectedType);
+        }
+
+        return argumentBindings;
     }
 
     private int CountMismatchedParameters(IReadOnlyList<TypedParameterSymbol> parameters, IReadOnlyList<StarkTypeSymbol> arguments)
@@ -5583,17 +6359,49 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (target.Type.InitializationKind != StarkInitializationKind.None)
+        {
+            var storageType = StarkTypeSymbols.WithQualifiers(target.Type, initializationKind: StarkInitializationKind.None);
+            var valueStorageType = valueType.InitializationKind == StarkInitializationKind.None
+                ? valueType
+                : StarkTypeSymbols.WithQualifiers(valueType, initializationKind: StarkInitializationKind.None);
+            if (CanAssign(storageType, valueStorageType))
+            {
+                return;
+            }
+        }
+
         ReportError(
             "STK3002",
             $"Assignment to {target.DiagnosticName ?? "target"} expects '{target.Type.DisplayName}' but found '{valueType.DisplayName}'.{GetExplicitConversionHint(target.Type, valueType)}",
             context);
     }
 
-    private void EnsureReturnCompatible(StarkTypeSymbol returnType, StarkTypeSymbol valueType, ParserRuleContext context)
+    private void EnsureReturnCompatible(StarkTypeSymbol returnType, ExpressionBinding value, ParserRuleContext context)
     {
+        var valueType = value.Type;
         if (CanAssign(returnType, valueType))
         {
             return;
+        }
+
+        if (returnType.BorrowKind != StarkBorrowKind.None
+            && !StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType)
+            && CanAssign(StarkTypeSymbols.BorrowReturnValueType(returnType), valueType))
+        {
+            return;
+        }
+
+        if (returnType.BorrowKind != StarkBorrowKind.None
+            && StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType)
+            && value.IsAddressable
+            && (!returnType.IsMutableView || value.IsAddressMutable))
+        {
+            var returnedStorageType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            if (CanAssign(returnedStorageType, valueType))
+            {
+                return;
+            }
         }
 
         ReportError(
@@ -5606,9 +6414,40 @@ internal sealed class TypeChecker
         string functionName,
         int position,
         StarkTypeSymbol parameterType,
-        StarkTypeSymbol argumentType,
+        ExpressionBinding argument,
         ParserRuleContext context)
     {
+        var argumentType = argument.Type;
+        if (parameterType.InitializationKind != StarkInitializationKind.None)
+        {
+            if (!argument.IsAddressable)
+            {
+                ReportError(
+                    "STK3002",
+                    $"Argument {position} for '{functionName}' must be an addressable storage location because parameter type '{parameterType.DisplayName}' writes through it.",
+                    context);
+                return;
+            }
+
+            if (!argument.IsAddressMutable)
+            {
+                ReportError(
+                    "STK3002",
+                    $"Argument {position} for '{functionName}' must be mutable because parameter type '{parameterType.DisplayName}' writes through it.",
+                    context);
+                return;
+            }
+
+            var parameterStorageType = StarkTypeSymbols.WithQualifiers(parameterType, initializationKind: StarkInitializationKind.None);
+            var argumentStorageType = argumentType.InitializationKind == StarkInitializationKind.None
+                ? argumentType
+                : StarkTypeSymbols.WithQualifiers(argumentType, initializationKind: StarkInitializationKind.None);
+            if (CanAssign(parameterStorageType, argumentStorageType))
+            {
+                return;
+            }
+        }
+
         if (CanAssign(parameterType, argumentType))
         {
             return;
@@ -5759,7 +6598,13 @@ internal sealed class TypeChecker
     {
         return !local.IsConstant
             && local.Type.AccessKind != StarkAccessKind.Frozen
-            && (local.IsMutable || local.Type.IsMutableView);
+            && (local.IsMutable || local.Type.IsMutableView || local.Type.InitializationKind != StarkInitializationKind.None);
+    }
+
+    private static bool CanAssignToLocal(VariableSymbol local)
+    {
+        return !local.IsConstant
+            && (local.IsMutable || local.Type.InitializationKind != StarkInitializationKind.None);
     }
 
     private static bool CanMutateAddressProjection(ExpressionBinding target, StarkTypeSymbol projectedType)
@@ -7026,6 +7871,74 @@ internal sealed class TypeChecker
         };
     }
 
+    private static StarkVisibility ResolveFieldVisibility(
+        StarkVisibility containingVisibility,
+        StarkParser.VisibilityModifierContext? explicitVisibility)
+    {
+        return explicitVisibility is null
+            ? InheritedFieldVisibility(containingVisibility)
+            : ParseVisibility(explicitVisibility);
+    }
+
+    private static StarkVisibility InheritedFieldVisibility(StarkVisibility containingVisibility)
+    {
+        return containingVisibility == StarkVisibility.Export
+            ? StarkVisibility.Public
+            : containingVisibility;
+    }
+
+    private static StarkVisibility ParseVisibility(StarkParser.VisibilityModifierContext visibilityModifier)
+    {
+        return visibilityModifier.GetText() switch
+        {
+            "internal" => StarkVisibility.Internal,
+            "public" => StarkVisibility.Public,
+            "export" => StarkVisibility.Export,
+            _ => StarkVisibility.Module
+        };
+    }
+
+    private static bool IsMoreVisible(StarkVisibility candidate, StarkVisibility containing)
+    {
+        return VisibilityRank(candidate) > VisibilityRank(containing);
+    }
+
+    private static int VisibilityRank(StarkVisibility visibility)
+    {
+        return visibility switch
+        {
+            StarkVisibility.Module => 0,
+            StarkVisibility.Internal => 1,
+            StarkVisibility.Public => 2,
+            StarkVisibility.Export => 3,
+            _ => 0
+        };
+    }
+
+    private static string RenderVisibility(StarkVisibility visibility)
+    {
+        return visibility.ToString().ToLowerInvariant();
+    }
+
+    private bool IsFieldAccessible(FieldSymbol field)
+    {
+        return field.Visibility switch
+        {
+            StarkVisibility.Module => string.Equals(field.DeclaringModuleName, CurrentFunctionModuleName, StringComparison.Ordinal),
+            StarkVisibility.Internal => field.DeclaringModuleName is null || IsSamePackageField(field),
+            StarkVisibility.Public => true,
+            StarkVisibility.Export => true,
+            _ => false
+        };
+    }
+
+    private bool IsSamePackageField(FieldSymbol field)
+    {
+        return field.DeclaringModuleName is null
+            || !_loadedModules.TryGet(field.DeclaringModuleName, out var declaringModule)
+            || !declaringModule.Reference.IsExternal;
+    }
+
     private string QualifyName(LoadedModuleDocument module, string localName)
     {
         return module.Reference.IsRoot
@@ -7111,12 +8024,18 @@ internal sealed class TypeChecker
     private sealed record ConstructorShape(
         string Name,
         IReadOnlyList<TypedParameterSymbol> Parameters,
-        bool IsPrimaryShape)
+        bool IsPrimaryShape,
+        string? BodyKey)
     {
         public ISet<string>? InitializedMembers =>
             IsPrimaryShape
                 ? Parameters.Select(static parameter => parameter.Name).ToHashSet(StringComparer.Ordinal)
                 : null;
+    }
+
+    private static string BuildConstructorBodyKey(string qualifiedTypeName, StarkParser.ConstructorDeclarationContext constructor)
+    {
+        return $"{qualifiedTypeName}@{constructor.Start.Line}:{constructor.Start.Column + 1}";
     }
 
     private sealed class Scope

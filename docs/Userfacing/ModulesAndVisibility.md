@@ -88,6 +88,17 @@ Additional rules:
 
 Plain imports are compile-time name-resolution constructs. They do not by themselves imply re-export or linker export.
 
+Importing a module brings that module's visible top-level declarations into
+ordinary unqualified lookup by their final name. After `import
+System.Collections`, code may write `List<T>` instead of
+`System.Collections.List<T>`. This applies to visible `struct`, `record`,
+`enum`, `trait`, `doctrine`, type alias, global, and function declarations.
+
+If more than one imported module exposes the same final type or alias name, the
+reference is ambiguous and Stark requires the fully qualified name. Local
+declarations and declarations in the current module still take priority over
+imported final-name lookup.
+
 `export import` makes the imported module part of the package-facing Stark surface.
 
 ## File and Module Mapping
@@ -121,7 +132,11 @@ Stark uses the following visibility keywords:
 - `public`
 - `export`
 
-If no visibility keyword is written, the declaration is module-private.
+If no visibility keyword is written on a top-level declaration, the declaration
+is module-private.
+
+Member functions inside a `struct` or `record` inherit the visibility of their
+enclosing type unless they declare an explicit member visibility.
 
 These are source-language keywords, not just descriptive terms.
 
@@ -138,7 +153,7 @@ Meaning:
 - not visible to downstream packages
 - not linker-exported
 
-This is the default for all ordinary declarations.
+This is the default for ordinary top-level declarations.
 
 ### `internal`
 
@@ -206,6 +221,35 @@ Visibility keywords apply to top-level module declarations of the following kind
 
 These keywords may also apply to submodule declarations if Stark later adds explicit nested submodule declarations in source.
 
+Visibility keywords may also apply to member functions inside `struct` and
+`record` bodies.
+
+Member-function visibility follows these rules:
+
+- if no visibility keyword is written, the member function inherits the
+  visibility of the enclosing type, except that omitted members inside an
+  `export` type resolve to `public` rather than accidental ABI visibility
+- an explicit member-function visibility overrides the inherited visibility
+- a member function may narrow visibility relative to the enclosing type
+- a member function may not be more visible than the enclosing type
+- `export` is never inherited accidentally; an ABI-visible member function must
+  write `export` explicitly and must still satisfy the enclosing-type visibility
+  cap
+
+Examples:
+
+```stark
+public struct TcpClient {
+    fn bool IsOpen(self);             // public, inherited from TcpClient
+    internal fn i64 RuntimeHandle(self); // internal, explicit narrowing
+}
+
+internal struct PlatformSocket {
+    fn bool IsOpen(self);             // internal, inherited from PlatformSocket
+    public fn i64 Handle(self);       // error: more visible than PlatformSocket
+}
+```
+
 ## What Visibility Keywords May Not Apply To
 
 Visibility keywords do not apply to:
@@ -221,17 +265,23 @@ Visibility keywords do not apply to:
 
 `export import` is a dedicated import form, not a general visibility modifier applied to imports.
 
-In the initial model, visibility keywords also do not apply to individual fields or individual methods inside a type body.
+In the initial model, visibility keywords do not apply to individual fields
+inside a type body. Field visibility remains a separate type-opacity and
+representation-stability design topic.
 
 Visibility is defined at the top-level module declaration boundary.
+Member functions are the only current exception: they may explicitly narrow the
+visibility inherited from the enclosing type.
 
 ## Recommended Simplicity Rule
 
 The simplest good rule set is:
 
 - top-level declarations may carry `internal`, `public`, or `export`
-- everything else is module-private by default
+- member functions inherit enclosing type visibility unless explicitly narrowed
+- member functions may not be more visible than the enclosing type
 - fields and local declarations do not carry visibility modifiers
+- everything else is module-private by default
 
 This keeps the surface model small and easy to reason about.
 
@@ -616,10 +666,13 @@ The Stark module and visibility model is defined by the following rules:
 - one source file equals one module
 - imports appear before the module declaration
 - `module SomeModule` declares the module in the file
+- importing a module makes its visible top-level declarations available by final name
 - top-level declarations are module-private by default
 - `internal`, `public`, and `export` are the visibility keywords
 - `public` and `export` are not the same concept
-- visibility modifiers apply to top-level declarations, not to locals or statements
+- visibility modifiers apply to top-level declarations and member functions, not to locals or statements
+- member functions inherit enclosing type visibility unless explicitly narrowed
+- member functions may not be more visible than their enclosing type
 - fields and local declarations do not carry visibility modifiers in the initial model
 - executables and shared libraries both default to the most restrictive practical visibility
 

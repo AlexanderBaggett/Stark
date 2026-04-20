@@ -288,7 +288,7 @@ internal sealed class SemanticValidator
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)
     {
-        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters);
+        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
     }
 
     private void ValidateFunction(DeclaredFunctionSyntax functionDeclaration)
@@ -305,6 +305,7 @@ internal sealed class SemanticValidator
         var summary = GetOrCreateSummary(name);
         summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody, syntaxDeclaration.Function.Kind);
         summary.SetParameters(signature.Parameters, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        ApplyBuiltinDeclarationMemoryEffects(syntaxDeclaration.Function, summary);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
         if (functionDeclaration.Body.block() is not { } block)
@@ -350,6 +351,7 @@ internal sealed class SemanticValidator
         FunctionValidationBuilder summary)
     {
         ValidateFunctionModifiers(functionDeclaration, summary);
+        ValidatePublicSafeApiDoesNotExposeRawAllocation(functionDeclaration, declaration, signature, summary);
         ValidateTypeUsage(signature.ReturnType, TypeUsage.Return, functionDeclaration.ReturnType, declaration.Modifiers.IsFfi);
 
         if (signature.ReturnType.BorrowKind == StarkBorrowKind.Borrow)
@@ -394,8 +396,41 @@ internal sealed class SemanticValidator
         }
     }
 
+    private void ValidatePublicSafeApiDoesNotExposeRawAllocation(
+        DeclaredFunctionSyntax functionDeclaration,
+        FunctionDeclarationModel declaration,
+        TypedFunctionSignature signature,
+        FunctionValidationBuilder summary)
+    {
+        if (declaration.Modifiers.IsFfi
+            || !IsPublicSafeSurface(functionDeclaration.Visibility)
+            || !LooksLikeRawAllocationApi(functionDeclaration.DisplaySourceName)
+            || !SignatureContainsRawPointer(signature))
+        {
+            return;
+        }
+
+        EffectError(
+            summary,
+            "STK4118",
+            $"Public safe API '{functionDeclaration.DisplaySourceName}' exposes raw allocation through raw pointer types. Keep raw allocation behind internal/FFI-adjacent runtime APIs and expose a safe owner type instead.",
+            functionDeclaration.DeclarationContext);
+    }
+
     private void ValidateFunctionModifiers(DeclaredFunctionSyntax functionDeclaration, FunctionValidationBuilder summary)
     {
+        ValidateMemberVisibility(functionDeclaration, summary);
+
+        if (functionDeclaration.IsStatic
+            && functionDeclaration.DeclarationContext is not StarkParser.MethodDeclarationContext)
+        {
+            EffectError(
+                summary,
+                "STK4115",
+                "Function modifier 'static' is only valid on member functions inside 'struct' or 'record' declarations.",
+                functionDeclaration.DeclarationContext);
+        }
+
         var inlineModifiers = functionDeclaration.Modifiers
             .Where(static modifier =>
             {
@@ -426,6 +461,75 @@ internal sealed class SemanticValidator
                 $"Function '{functionDeclaration.DisplaySourceName}' may not combine 'hot' and 'cold'.",
                 functionDeclaration.DeclarationContext);
         }
+    }
+
+    private void ValidateMemberVisibility(DeclaredFunctionSyntax functionDeclaration, FunctionValidationBuilder summary)
+    {
+        if (functionDeclaration.DeclarationContext is not StarkParser.MethodDeclarationContext
+            || functionDeclaration.EnclosingTypeVisibility is not { } enclosingVisibility)
+        {
+            return;
+        }
+
+        if (IsMoreVisible(functionDeclaration.Visibility, enclosingVisibility))
+        {
+            EffectError(
+                summary,
+                "STK4116",
+                $"Member function '{functionDeclaration.DisplaySourceName}' has visibility '{RenderVisibility(functionDeclaration.Visibility)}', which is more visible than its enclosing type visibility '{RenderVisibility(enclosingVisibility)}'.",
+                functionDeclaration.DeclarationContext);
+        }
+
+        if (functionDeclaration.Visibility == StarkVisibility.Export && !functionDeclaration.HasExplicitVisibility)
+        {
+            EffectError(
+                summary,
+                "STK4117",
+                $"Member function '{functionDeclaration.DisplaySourceName}' must write 'export' explicitly to become ABI-visible.",
+                functionDeclaration.DeclarationContext);
+        }
+    }
+
+    private static bool IsMoreVisible(StarkVisibility memberVisibility, StarkVisibility enclosingVisibility)
+    {
+        return VisibilityRank(memberVisibility) > VisibilityRank(enclosingVisibility);
+    }
+
+    private static int VisibilityRank(StarkVisibility visibility)
+    {
+        return visibility switch
+        {
+            StarkVisibility.Module => 0,
+            StarkVisibility.Internal => 1,
+            StarkVisibility.Public => 2,
+            StarkVisibility.Export => 3,
+            _ => 0
+        };
+    }
+
+    private static string RenderVisibility(StarkVisibility visibility)
+    {
+        return visibility.ToString().ToLowerInvariant();
+    }
+
+    private static bool IsPublicSafeSurface(StarkVisibility visibility)
+    {
+        return visibility is StarkVisibility.Public or StarkVisibility.Export;
+    }
+
+    private static bool SignatureContainsRawPointer(TypedFunctionSignature signature)
+    {
+        return ContainsRawPointer(signature.ReturnType)
+            || signature.Parameters.Any(static parameter => ContainsRawPointer(parameter.Type));
+    }
+
+    private static bool LooksLikeRawAllocationApi(string name)
+    {
+        var simpleName = name.Split('.').Last();
+        return simpleName.Contains("Alloc", StringComparison.OrdinalIgnoreCase)
+            || simpleName.Contains("Free", StringComparison.OrdinalIgnoreCase)
+            || simpleName.Contains("Dealloc", StringComparison.OrdinalIgnoreCase)
+            || simpleName.Contains("Realloc", StringComparison.OrdinalIgnoreCase);
     }
 
     private void CheckBlock(
@@ -976,7 +1080,7 @@ internal sealed class SemanticValidator
         if (expression.conversionType() is { } conversionType)
         {
             var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            var targetType = _typeResolver.ResolveConversionType(conversionType);
+            var targetType = _typeResolver.ResolveConversionType(conversionType, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
             return CreateConvertedValidationValue(targetType, operand);
         }
 
@@ -1077,6 +1181,15 @@ internal sealed class SemanticValidator
             return new ValidationValue(EvaluateLiteralType(literal));
         }
 
+        if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
+        {
+            _ = ResolveType(expression.type_());
+            return new ValidationValue(
+                expression.ALIGNOF() is not null
+                    ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
+                    : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)));
+        }
+
         if (expression.Identifier() is { } identifier)
         {
             return ResolveValue(identifier.GetText(), scope, function, effects, summary, allowFunctionReference, observation, identifier.Symbol);
@@ -1112,7 +1225,9 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
-        var createdType = ResolveType(expression.type_());
+        var createdType = expression.type_() is { } explicitType
+            ? ResolveType(explicitType)
+            : StarkTypeSymbols.Error;
 
         if (expression.argumentList() is { } argumentList)
         {
@@ -1177,13 +1292,13 @@ internal sealed class SemanticValidator
         {
             return new ValidationValue(
                 local.Type,
-                IsAssignable: local.IsMutable && !local.IsConstant,
+                IsAssignable: CanAssignToLocal(local),
                 RootSymbol: local,
                 NamedType: ResolveNamedTypeSymbol(local.Type),
                 IsAddressMutable: CanFormMutableAddressFromLocal(local));
         }
 
-        if (_typeModel.Globals.TryGetValue(name, out var globalType))
+        if (TryResolveGlobalBySourceName(name, out var globalType))
         {
             if (observation == ExpressionObservation.Read)
             {
@@ -1201,7 +1316,7 @@ internal sealed class SemanticValidator
                 globalType.Type,
                 IsAssignable: isMutable,
                 RootSymbol: new VariableSymbol(
-                    name,
+                    globalType.Name,
                     globalType.Type,
                     SymbolOrigin.Global,
                     LocalStorageClass.Static,
@@ -1214,6 +1329,12 @@ internal sealed class SemanticValidator
 
         if (TryGetFunctionOverloads(name, out var targetFunctions))
         {
+            targetFunctions = FilterDirectCallableTypeMemberFunctions(name, targetFunctions);
+            if (targetFunctions.Count == 0)
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+
             if (!allowFunctionReference)
             {
                 return new ValidationValue(StarkTypeSymbols.Error);
@@ -1229,6 +1350,11 @@ internal sealed class SemanticValidator
 
         if (TryResolveNamedTypeBySourceName(name, out var namedType))
         {
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+            {
+                return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: namedType.Name, NamedType: namedType);
+            }
+
             if (namedType.Kind == DeclarationKind.Doctrine && allowFunctionReference)
             {
                 return new ValidationValue(StarkTypeSymbols.Named(namedType.Name), NamedType: namedType);
@@ -1242,7 +1368,7 @@ internal sealed class SemanticValidator
 
         if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
         {
-            return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
+            return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: namedType.Name);
         }
 
         if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, name))
@@ -1798,6 +1924,12 @@ internal sealed class SemanticValidator
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
+                namespaceFunctions = FilterDirectCallableTypeMemberFunctions(qualifiedName, namespaceFunctions);
+                if (namespaceFunctions.Count == 0)
+                {
+                    return new ValidationValue(StarkTypeSymbols.Error);
+                }
+
                 if (namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric)
                 {
                     return new ValidationValue(namespaceFunctions[0].ReturnType, Function: namespaceFunctions[0]);
@@ -1808,6 +1940,11 @@ internal sealed class SemanticValidator
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (qualifiedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+                {
+                    return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName, NamedType: qualifiedType);
+                }
+
                 if (qualifiedType.Kind == DeclarationKind.Enum)
                 {
                     return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
@@ -1871,16 +2008,19 @@ internal sealed class SemanticValidator
 
         if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            if (methods.Count == 1 && !methods[0].IsGeneric && methods[0].Parameters.Count != 0)
+            var instanceMethods = methods.Where(static method => !method.IsStatic).ToArray();
+            if (instanceMethods.Length == 1 && !instanceMethods[0].IsGeneric && instanceMethods[0].Parameters.Count != 0)
             {
                 return new ValidationValue(
-                    methods[0].ReturnType,
-                    Function: methods[0],
-                    NamedType: ResolveNamedTypeSymbol(methods[0].ReturnType),
+                    instanceMethods[0].ReturnType,
+                    Function: instanceMethods[0],
+                    NamedType: ResolveNamedTypeSymbol(instanceMethods[0].ReturnType),
                     Receiver: target);
             }
 
-            return new ValidationValue(StarkTypeSymbols.Error, Receiver: target, OverloadSourceName: methodSourceName);
+            return instanceMethods.Length == 0
+                ? new ValidationValue(StarkTypeSymbols.Error)
+                : new ValidationValue(StarkTypeSymbols.Error, Receiver: target, OverloadSourceName: methodSourceName);
         }
 
         return new ValidationValue(
@@ -1906,8 +2046,79 @@ internal sealed class SemanticValidator
             return true;
         }
 
+        if (TryResolveTypeQualifiedMemberSourceName(sourceName, out var resolvedMemberSourceName)
+            && _typeModel.Overloads.TryGetValue(resolvedMemberSourceName, out overloads!))
+        {
+            return true;
+        }
+
+        if (!sourceName.Contains('.', StringComparison.Ordinal)
+            && _typeModel.Overloads.TryGetValue($"{_syntaxModel.ModuleName}.{sourceName}", out overloads!))
+        {
+            return true;
+        }
+
+        if (!sourceName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedCandidates = new List<TypedFunctionSignature>();
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, sourceName))
+            {
+                if (_typeModel.Overloads.TryGetValue(candidateName, out var candidates))
+                {
+                    importedCandidates.AddRange(candidates);
+                }
+            }
+
+            if (importedCandidates.Count > 0)
+            {
+                overloads = importedCandidates;
+                return true;
+            }
+        }
+
         overloads = [];
         return false;
+    }
+
+    private bool TryResolveTypeQualifiedMemberSourceName(string sourceName, out string resolvedSourceName)
+    {
+        resolvedSourceName = string.Empty;
+        var separator = sourceName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var qualifier = sourceName[..separator];
+        if (!TryResolveNamedTypeBySourceName(qualifier, out var namedType))
+        {
+            return false;
+        }
+
+        resolvedSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{sourceName[(separator + 1)..]}";
+        return !string.Equals(resolvedSourceName, sourceName, StringComparison.Ordinal);
+    }
+
+    private IReadOnlyList<TypedFunctionSignature> FilterDirectCallableTypeMemberFunctions(
+        string sourceName,
+        IReadOnlyList<TypedFunctionSignature> functions)
+    {
+        return IsStructOrRecordMemberFunctionSourceName(sourceName)
+            ? functions.Where(static function => function.IsStatic).ToArray()
+            : functions;
+    }
+
+    private bool IsStructOrRecordMemberFunctionSourceName(string sourceName)
+    {
+        var separator = sourceName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var typeName = sourceName[..separator];
+        return TryResolveNamedTypeBySourceName(typeName, out var namedType)
+            && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record;
     }
 
     private bool TryResolveEnumCaseReference(
@@ -1941,6 +2152,35 @@ internal sealed class SemanticValidator
         return true;
     }
 
+    private bool TryResolveGlobalBySourceName(string name, out TypedGlobalSymbol global)
+    {
+        if (_typeModel.Globals.TryGetValue(name, out global!))
+        {
+            return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && _typeModel.Globals.TryGetValue($"{_syntaxModel.ModuleName}.{name}", out global!))
+        {
+            return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, name)
+                .Where(_typeModel.Globals.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                global = _typeModel.Globals[importedMatches[0]];
+                return true;
+            }
+        }
+
+        global = null!;
+        return false;
+    }
+
     private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
     {
         if (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!))
@@ -1952,6 +2192,18 @@ internal sealed class SemanticValidator
             && _typeModel.NamedTypes.TryGetValue($"{_syntaxModel.ModuleName}.{typeName}", out namedType!))
         {
             return true;
+        }
+
+        if (!typeName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, typeName)
+                .Where(_typeModel.NamedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                namedType = _typeModel.NamedTypes[importedMatches[0]];
+                return true;
+            }
         }
 
         namedType = null!;
@@ -2892,6 +3144,12 @@ internal sealed class SemanticValidator
         return type.ElementType is not null && ContainsNestedRawPointer(type.ElementType);
     }
 
+    private static bool ContainsRawPointer(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.RawPointer
+            || type.ElementType is not null && ContainsRawPointer(type.ElementType);
+    }
+
     private static bool IsVisibleMemoryWrite(ValidationValue target)
     {
         if (target.RootSymbol is null)
@@ -3111,7 +3369,13 @@ internal sealed class SemanticValidator
     {
         return !local.IsConstant
             && local.Type.AccessKind != StarkAccessKind.Frozen
-            && (local.IsMutable || local.Type.IsMutableView);
+            && (local.IsMutable || local.Type.IsMutableView || local.Type.InitializationKind != StarkInitializationKind.None);
+    }
+
+    private static bool CanAssignToLocal(VariableSymbol local)
+    {
+        return !local.IsConstant
+            && (local.IsMutable || local.Type.InitializationKind != StarkInitializationKind.None);
     }
 
     private static bool CanMutateAddressProjection(ValidationValue target, StarkTypeSymbol projectedType)
@@ -3388,6 +3652,36 @@ internal sealed class SemanticValidator
         }
 
         return false;
+    }
+
+    private void ApplyBuiltinDeclarationMemoryEffects(
+        FunctionDeclarationModel declaration,
+        FunctionValidationBuilder summary)
+    {
+        if (!IsSystemMemoryAllocatorBuiltin(declaration))
+        {
+            return;
+        }
+
+        summary.MarkOtherMemoryRead();
+        summary.MarkOtherMemoryWrite();
+    }
+
+    private bool IsSystemMemoryAllocatorBuiltin(FunctionDeclarationModel declaration)
+    {
+        if (!string.Equals(_syntaxModel.ModuleName, "System.Memory", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var sourceName = declaration.Name;
+        const string qualifiedPrefix = "System.Memory.";
+        if (sourceName.StartsWith(qualifiedPrefix, StringComparison.Ordinal))
+        {
+            sourceName = sourceName[qualifiedPrefix.Length..];
+        }
+
+        return sourceName is "Allocate" or "Reallocate" or "Free";
     }
 
     private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);

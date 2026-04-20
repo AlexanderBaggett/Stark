@@ -42,6 +42,9 @@ The rules are:
 - `import` and `module` declarations do not end in semicolons
 - wildcard imports are forbidden
 - `export import` is the only re-export form
+- importing a module makes its visible top-level declarations available by
+  final name, so `import System.Collections` allows `List<T>` instead of
+  `System.Collections.List<T>`
 
 ## 3. Top-Level Declarations
 
@@ -59,13 +62,14 @@ The top-level declaration categories are:
 
 ## 4. Modules and Visibility
 
-Stark has three explicit visibility modifiers for top-level declarations:
+Stark has three explicit visibility modifiers:
 
 - `internal`
 - `public`
 - `export`
 
-If no visibility modifier is present, the declaration is module-private.
+If no visibility modifier is present on a top-level declaration, the declaration
+is module-private.
 
 The meanings are:
 
@@ -83,7 +87,14 @@ The meanings are:
 - `public` is source visibility
 - `export` is binary visibility
 
-Visibility applies to top-level declarations, not to locals, statements, expressions, or fields.
+Visibility applies to top-level declarations and to member functions inside
+`struct` and `record` bodies. Member functions inherit the visibility of their
+enclosing type unless explicitly overridden, and a member function may not be
+more visible than its enclosing type. `export` is the one careful edge: an
+`export struct` or `export record` makes omitted member visibility `public`, not
+`export`, so ABI-visible member functions must write `export` explicitly.
+
+Visibility does not apply to locals, statements, expressions, or fields.
 
 ## 5. Functions
 
@@ -120,6 +131,7 @@ The function modifiers are:
 - `cold`
 - `ffi`
 - `strictfp`
+- `static`
 
 Rules:
 
@@ -127,6 +139,34 @@ Rules:
 - `hot` and `cold` are mutually exclusive
 - `ffi` marks a foreign-facing function boundary
 - `strictfp` selects strict IEEE-style floating-point semantics for the function
+- `static` is only valid on member functions inside `struct` or `record`
+  declarations
+
+Static member functions belong to the type rather than to a value. They are
+called through the type name and do not receive a `self` argument:
+
+```stark
+struct Thread {
+    static fn void Yield();
+}
+
+fn void Run() {
+    Thread.Yield();
+}
+```
+
+Instance member functions are called through a value and use an explicit
+receiver parameter by convention:
+
+```stark
+struct Counter {
+    i32[0 max] Value;
+
+    finite law i32[0 max] Get(borrow Counter self) {
+        return self.Value;
+    }
+}
+```
 
 ### 5.3 Declarations and Bodies
 
@@ -596,6 +636,27 @@ The expression surface includes:
 - binary operators
 - ternary conditional `?:`
 - assignments and compound assignments
+
+Object creation supports both explicit and target-typed forms:
+
+```stark
+stack Box explicitBox = new Box();        // calls Box's default constructor
+stack Box defaultBox = new();             // calls the target type's default constructor
+stack Box constructedBox = new(value);    // calls the corresponding constructor
+stack Box initializedBox = new() { Value = value };
+```
+
+Target-typed `new()` and `new(args)` require the surrounding code to already
+say which `struct` or `record` type is being created. That target type can come
+from a local declaration, assignment target, return type, object-initializer
+field type, or fixed-array element type. If Stark cannot tell which `struct` or
+`record` you mean, use the explicit form such as `new Box(...)`.
+
+`new()` calls the zero-argument constructor for the target `struct` or `record`.
+If the type declares no constructors, Stark provides an implicit default
+constructor that default-initializes the value. `new(value)` and `new(args)` call
+a matching constructor if one exists. If the type declares constructors but none
+match the supplied arguments, compilation fails.
 
 Text views use the existing postfix indexing form:
 

@@ -226,7 +226,8 @@ internal static partial class PackageImageBuilder
                 fieldDeclaration.variableDeclarators().variableDeclarator()
                     .Select(variable => new StarkPackageFieldManifest(
                         variable.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, fieldDeclaration.type_()))))
+                        GetContextSourceText(module.ParseResult, fieldDeclaration.type_()),
+                        fieldDeclaration.visibilityModifier()?.GetText())))
             .ToArray();
     }
 

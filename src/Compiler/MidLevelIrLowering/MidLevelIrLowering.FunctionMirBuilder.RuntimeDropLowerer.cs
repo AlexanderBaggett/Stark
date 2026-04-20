@@ -106,6 +106,12 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            if (type.Kind == StarkTypeKind.FixedArray)
+            {
+                return type.ElementType is not null
+                    && RequiresRuntimeDropCore(type.ElementType, visiting);
+            }
+
             if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
             {
                 return false;
@@ -213,9 +219,17 @@ internal sealed partial class MidLevelIrLowerer
             var temporary = CreateTemporaryLocal(type, "drop");
             EmitOperandAssignment(temporary, operand, operand.Text);
 
+            if (type.Kind == StarkTypeKind.FixedArray
+                && type.ElementType is not null
+                && type.FixedLength is int fixedLength)
+            {
+                EmitFixedArrayElementDropsCore(temporary, type.ElementType, fixedLength);
+                return;
+            }
+
             if (TryGetDestructorCore(type, out var destructor))
             {
-                using var destructorContext = PushDestructorContextCore(destructor.ModuleName, "self", temporary.Name);
+                using var destructorContext = PushDestructorContextCore(destructor.ModuleName, "self", temporary.Name, type);
                 LowerBlock(destructor.Body);
             }
 
@@ -255,6 +269,29 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             visiting.Remove(type.NamedType);
+        }
+
+        private void EmitFixedArrayElementDropsCore(
+            MidLevelIrLocalOperand aggregate,
+            StarkTypeSymbol elementType,
+            int fixedLength)
+        {
+            if (!RequiresRuntimeDropCore(elementType))
+            {
+                return;
+            }
+
+            for (var index = fixedLength - 1; index >= 0; index--)
+            {
+                var elementValue = EmitRequiredTemporary(
+                    new MidLevelIrExtractIndexRValue(
+                        aggregate,
+                        index,
+                        elementType,
+                        $"{aggregate.Text}[{index}]"),
+                    "index");
+                EmitRuntimeDropFromOperandCore(elementValue, elementType);
+            }
         }
 
         private void EmitEnumPayloadDropsCore(
@@ -337,13 +374,19 @@ internal sealed partial class MidLevelIrLowerer
             }
         }
 
-        private IDisposable PushDestructorContextCore(string moduleName, string aliasName, string localName)
+        private IDisposable PushDestructorContextCore(
+            string moduleName,
+            string aliasName,
+            string localName,
+            StarkTypeSymbol selfType)
         {
             var previousModuleName = _moduleNameOverride;
+            var previousGenericTypeSubstitution = _activeGenericTypeSubstitution;
             var hadAlias = _nameAliases.TryGetValue(aliasName, out var previousAlias);
             _moduleNameOverride = moduleName;
+            _activeGenericTypeSubstitution = BuildNamedTypeGenericSubstitution(selfType);
             _nameAliases[aliasName] = localName;
-            return new DestructorContext(this, previousModuleName, aliasName, previousAlias, hadAlias);
+            return new DestructorContext(this, previousModuleName, previousGenericTypeSubstitution, aliasName, previousAlias, hadAlias);
         }
 
         private void EmitStorageDeadCore(ScopeFrame scope)
@@ -414,6 +457,7 @@ internal sealed partial class MidLevelIrLowerer
                     targetType: assignment.TargetType,
                     value: new MidLevelIrUseRValue(assignment.ResultValue),
                     address: assignment.Address);
+                RecordMoveFromOperandCore(assignment.ResultValue, assignment.TargetType);
                 return;
             }
 

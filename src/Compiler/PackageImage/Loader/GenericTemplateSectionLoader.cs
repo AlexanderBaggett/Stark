@@ -701,6 +701,20 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "type-layout", StringComparison.Ordinal))
+        {
+            if (manifest.Name is null || manifest.Type is null)
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.TypeLayout,
+                Name: manifest.Name,
+                Type: BuildTypeSymbol(manifest.Type));
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "object-creation", StringComparison.Ordinal))
         {
             if (manifest.Ordinal is null)

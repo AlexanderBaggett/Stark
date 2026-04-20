@@ -14,6 +14,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
+    private const string HeapFreeHelperName = "__stark_heap_free";
     private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
@@ -1976,7 +1977,8 @@ internal sealed class LlvmFunctionBodyEmitter
             throw new UnsupportedBodyEmissionException($"Missing ABI lowering for call target '{call.FunctionName}'.");
         }
 
-        if (IsStringType(call.Type) && abiCallee.LlvmReturnType.Kind == StarkTypeKind.RawPointer)
+        var sourceReturnType = call.SourceReturnType ?? call.Type;
+        if (IsStringType(sourceReturnType) && abiCallee.LlvmReturnType.Kind == StarkTypeKind.RawPointer)
         {
             throw new UnsupportedBodyEmissionException(
                 $"FFI string returns are not yet supported for '{call.FunctionName}'.");
@@ -1988,8 +1990,8 @@ internal sealed class LlvmFunctionBodyEmitter
         if (abiCallee.ReturnsIndirect)
         {
             indirectReturnSlot = $"%{EscapeIdentifier(CreateAbiTempName("callret_slot"))}";
-            QueueStaticAlloca(indirectReturnSlot, call.Type);
-            arguments.Add(RenderSRetArgumentPointer(call.Type, indirectReturnSlot));
+            QueueStaticAlloca(indirectReturnSlot, sourceReturnType);
+            arguments.Add(RenderSRetArgumentPointer(sourceReturnType, indirectReturnSlot));
         }
 
         var userParameters = abiCallee.UserParameters;
@@ -2076,9 +2078,9 @@ internal sealed class LlvmFunctionBodyEmitter
         {
             AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}");
             _indirectAggregateValueSlots[resultName] = indirectReturnSlot!;
-            if (RequiresAggregateValueMaterialization(resultName, call.Type))
+            if (RequiresAggregateValueMaterialization(resultName, sourceReturnType))
             {
-                AppendLine($"  {result} = load {MapType(call.Type)}, ptr {indirectReturnSlot}{GetStackObjectAlignmentSuffix(call.Type)}{GetValueRangeMetadataSuffix(call.Type)}{GetScopedNoAliasMetadataSuffix(CreateScopedAliasFreshResultRootKey(resultName))}");
+                AppendLine($"  {result} = load {MapType(sourceReturnType)}, ptr {indirectReturnSlot}{GetStackObjectAlignmentSuffix(sourceReturnType)}{GetValueRangeMetadataSuffix(sourceReturnType)}{GetScopedNoAliasMetadataSuffix(CreateScopedAliasFreshResultRootKey(resultName))}");
             }
             return;
         }
@@ -2127,7 +2129,7 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         var slotName = $"%{EscapeIdentifier($"slot_{deallocateLocal.LocalName}")}";
-        AppendLine($"  call void @free(ptr {slotName})");
+        AppendLine($"  call void @{HeapFreeHelperName}(ptr {slotName})");
     }
 
     private void EmitLifetimeMarker(string phase, string localName, StarkTypeSymbol localType)
@@ -3645,7 +3647,7 @@ internal sealed class LlvmFunctionBodyEmitter
                     throw new UnsupportedBodyEmissionException("SSA return is missing a return value.");
                 }
 
-                AppendLine($"  ret {MapType(_function.ReturnType)} {FormatValue(terminator.Value)}");
+                AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {FormatValue(terminator.Value)}");
                 return;
             case SsaTerminatorKind.Unreachable:
                 AppendLine($"  call coldcc void @{UnreachableTrapHelperName}()");

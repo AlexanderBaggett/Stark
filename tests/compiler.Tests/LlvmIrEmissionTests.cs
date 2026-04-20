@@ -2362,6 +2362,38 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThrough()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+
+                fn retborrow mut i32[-2147483648 2147483647] Field(mut borrow Box self) {
+                    return self.Value;
+                }
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut Box box = new Box() { Value = 0 };
+                box.Field() = 7;
+                return box.Field();
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvmRaw(result);
+        var fieldHeader = ExtractDefinitionHeader(llvm, "Box_Field");
+
+        Assert.Contains("define fastcc noundef ptr @Box_Field(ptr noundef", fieldHeader);
+        Assert.Contains("ret ptr", llvm);
+        Assert.Contains("store i32 7, ptr", llvm);
+        Assert.Contains("load i32, ptr", llvm);
+    }
+
+    [Fact]
     public void ScalarAbiValuesEmitNoundefOnParametersAndReturns()
     {
         var result = Compile(
@@ -3101,14 +3133,38 @@ public sealed class LlvmIrEmissionTests
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare noalias noundef ptr @malloc(i64 noundef) allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"malloc\" nounwind", llvm);
-        Assert.Contains("declare void @free(ptr allocptr) allockind(\"free\") \"alloc-family\"=\"malloc\" nounwind", llvm);
-        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"malloc\" nounwind", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
+        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr nounwind", llvm);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
+        Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm);
+        Assert.Contains("@__stark_alloc_lock = internal global i32 0, align 4", llvm);
+        Assert.Contains("@__stark_alloc_bucket_16 = internal global ptr null, align 8", llvm);
+        Assert.Contains("@__stark_alloc_bucket_4096 = internal global ptr null, align 8", llvm);
+        Assert.Contains("define internal dso_local void @__stark_alloc_lock_acquire() unnamed_addr nounwind", llvm);
+        Assert.Contains("atomicrmw xchg ptr @__stark_alloc_lock, i32 1 acquire, align 4", llvm);
+        Assert.Contains("store atomic i32 0, ptr @__stark_alloc_lock release, align 4", llvm);
+        Assert.Contains("%bucket_alignment_ok = icmp ule i64 %effective_alignment, 16", llvm);
+        Assert.Contains("%bucket_size_ok = icmp ule i64 %requested_size, 4096", llvm);
+        Assert.Contains("br i1 %can_bucket, label %bucket_select_16, label %large_allocate", llvm);
+        Assert.Contains("%payload_size = phi i64 [16, %bucket_16_allocate]", llvm);
+        Assert.Contains("[%requested_size, %large_allocate]", llvm);
+        Assert.Contains("%block_alignment = phi i64 [16, %bucket_16_allocate]", llvm);
+        Assert.Contains("[%effective_alignment, %large_allocate]", llvm);
+        Assert.Contains("%bucket_size = phi i64 [16, %bucket_16_allocate]", llvm);
+        Assert.Contains("[0, %large_allocate]", llvm);
+        Assert.Contains("store i64 %bucket_size, ptr %bucket_size_slot, align 8", llvm);
+        Assert.Contains("store ptr %ptr, ptr @__stark_alloc_bucket_16, align 8", llvm);
+        Assert.Contains("br i1 %bucket_is_4096, label %bucket_4096_push, label %free_os", llvm);
+        Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
         Assert.Contains("define internal dso_local coldcc void @__stark_oom_trap() unnamed_addr cold noreturn nounwind", llvm);
         Assert.Contains("call void @llvm.trap()", llvm);
         Assert.Contains("call coldcc void @__stark_oom_trap()", llvm);
@@ -3116,9 +3172,216 @@ public sealed class LlvmIrEmissionTests
         Assert.Matches(@"!\d+ = !\{!""branch_weights"", i32 1, i32 2000\}", llvm);
         Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_heap_alloc(i64 noundef", llvm);
         Assert.Contains(", i64 noundef 4)", llvm);
-        Assert.Contains("call void @free(ptr %slot_box)", llvm);
+        Assert.Contains("call void @__stark_heap_free(ptr %slot_box)", llvm);
         Assert.DoesNotContain("alloca %Box", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorContract()
+    {
+        var result = Compile(
+            """
+            module System.Memory
+
+            public struct Allocator {
+                u8[0 127] Kind;
+
+                static finite law Allocator Default() {
+                    return new Allocator() {
+                        Kind = 0
+                    };
+                }
+
+                finite law bool IsDefault(borrow Allocator self) {
+                    return self.Kind == 0;
+                }
+            }
+
+            internal struct Allocation {
+                rawmutptr<i8[-128 127]> Pointer;
+                i64[0 max] ByteLength;
+                i64[1 max] Alignment;
+                Allocator Allocator;
+            }
+
+            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn void Free(Allocation allocation);
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack Allocator allocator = Allocator.Default();
+                stack Allocation allocation = Allocate(allocator, 16, 8);
+                stack Allocation grown = Reallocate(allocation, 32, 8);
+                Free(grown);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.trap() cold noreturn nounwind", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
+        Assert.Contains("define internal dso_local nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind", llvm);
+        Assert.DoesNotContain("define internal dso_local noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
+        Assert.Contains("define internal dso_local void @__stark_runtime_free(ptr %ptr) unnamed_addr nounwind", llvm);
+        Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm);
+        Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
+        Assert.Contains("@Allocate(", llvm);
+        var allocateHeader = ExtractDefinitionHeader(llvm, "Allocate");
+        var reallocateHeader = ExtractDefinitionHeader(llvm, "Reallocate");
+        var freeHeader = ExtractDefinitionHeader(llvm, "Free");
+        Assert.Contains("memory(readwrite, argmem: write)", allocateHeader);
+        Assert.DoesNotContain("memory(argmem:", allocateHeader);
+        Assert.DoesNotContain("memory(argmem:", reallocateHeader);
+        Assert.Contains("memory(readwrite, argmem: read)", freeHeader);
+        Assert.DoesNotContain("memory(argmem:", freeHeader);
+        Assert.Contains("@Reallocate(", llvm);
+        Assert.Contains("call noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef", llvm);
+        Assert.Contains("call nonnull noundef ptr @__stark_runtime_realloc(ptr %memory_old_ptr, i64 noundef %memory_old_byte_length, i64 noundef", llvm);
+        Assert.DoesNotContain("call noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
+        Assert.Contains("%realloc_bucket_size = load i64, ptr %realloc_bucket_size_slot, align 8", llvm);
+        Assert.Contains("%realloc_bucket_size_fits = icmp ule i64 %new_size, %realloc_bucket_size", llvm);
+        Assert.Contains("%realloc_bucket_alignment_fits = icmp ule i64 %realloc_effective_alignment, 16", llvm);
+        Assert.Contains("br i1 %realloc_bucket_can_reuse, label %reuse_old, label %fallback", llvm);
+        Assert.Contains("reuse_old:", llvm);
+        Assert.Contains("ret ptr %old_ptr", llvm);
+        Assert.Contains("fallback:", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8 %new_ptr, ptr align 8 %old_ptr, i64 %copy_length, i1 false)", llvm);
+        Assert.Contains("call void @__stark_runtime_free(ptr %memory_old_ptr)", llvm);
+        Assert.Contains("call void @__stark_runtime_free(ptr %memory_ptr)", llvm);
+        Assert.Contains("extractvalue", llvm);
+        Assert.Contains(", 3", llvm);
+        Assert.Contains("insertvalue", llvm);
+        Assert.Contains("call void @llvm.trap()", llvm);
+        Assert.DoesNotContain("LLVM body emission fallback", llvm);
+    }
+
+    [Fact]
+    public void RuntimeAllocatorUsesWindowsHeapApisForWindowsTargets()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                heap Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare ptr @GetProcessHeap() nounwind", llvm);
+        Assert.Contains("declare ptr @HeapAlloc(ptr, i32, i64) nounwind", llvm);
+        Assert.Contains("declare i32 @HeapFree(ptr, i32, ptr) nounwind", llvm);
+        Assert.Contains("call ptr @HeapAlloc(ptr %heap, i32 0, i64 %size)", llvm);
+        Assert.Contains("call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.DoesNotContain("asm sideeffect \"syscall\"", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void RuntimeAllocatorUsesMmap2ForThirtyTwoBitLinuxTargets()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                heap Box box = new Box() { Value = 7 };
+                return box.Value;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("i686-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Equal(2, CountOccurrences(llvm, "call i32 asm sideeffect \"int $$0x80\""));
+        Assert.Contains("(i32 192, i32 0, i32 %size, i32 3, i32 34, i32 -1, i32 0)", llvm);
+        Assert.Contains("(i32 91, i32 %ptr_int, i32 %size, i32 0, i32 0, i32 0, i32 0)", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void SystemMemoryAllocatorBoundsChecksRuntimeSizesForThirtyTwoBitTargets()
+    {
+        var result = Compile(
+            """
+            module System.Memory
+
+            public struct Allocator {
+                u8[0 127] Kind;
+
+                static finite law Allocator Default() {
+                    return new Allocator() {
+                        Kind = 0
+                    };
+                }
+
+                finite law bool IsDefault(borrow Allocator self) {
+                    return self.Kind == 0;
+                }
+            }
+
+            internal struct Allocation {
+                rawmutptr<i8[-128 127]> Pointer;
+                i64[0 max] ByteLength;
+                i64[1 max] Alignment;
+                Allocator Allocator;
+            }
+
+            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn void Free(Allocation allocation);
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack Allocator allocator = Allocator.Default();
+                stack Allocation allocation = Allocate(allocator, 16, 8);
+                stack Allocation grown = Reallocate(allocation, 32, 8);
+                Free(grown);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("i686-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("%memory_byte_length_too_large = icmp ugt i64 %arg_byteLength, 4294967295", llvm);
+        Assert.Contains("%memory_alignment_too_large = icmp ugt i64 %arg_alignment, 4294967295", llvm);
+        Assert.Contains("%memory_byte_length_runtime = trunc i64 %arg_byteLength to i32", llvm);
+        Assert.Contains("%memory_alignment_runtime = trunc i64 %arg_alignment to i32", llvm);
+        Assert.Contains("%memory_old_byte_length_runtime = trunc i64 %memory_old_byte_length to i32", llvm);
+        Assert.Contains("call noalias nonnull noundef ptr @__stark_runtime_alloc(i32 noundef %memory_byte_length_runtime, i32 noundef %memory_alignment_runtime)", llvm);
+        Assert.Contains("call nonnull noundef ptr @__stark_runtime_realloc(ptr %memory_old_ptr, i32 noundef %memory_old_byte_length_runtime, i32 noundef %memory_byte_length_runtime, i32 noundef %memory_alignment_runtime)", llvm);
+        Assert.DoesNotContain("call noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.DoesNotContain("LLVM body emission fallback", llvm);
     }
 
     [Fact]
@@ -3688,7 +3951,7 @@ public sealed class LlvmIrEmissionTests
             record Point(i32[-2147483648 2147483647] X, i32[-2147483648 2147483647] Y) { }
 
             fn i32[-2147483648 2147483647] Run() {
-                stack Point point = new Point() { X = 3, Y = 4 };
+                stack Point point = new Point(3, 4);
                 return point.Y;
             }
             """);

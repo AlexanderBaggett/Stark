@@ -463,7 +463,8 @@ internal sealed class SsaLowerer
                 call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
                 call.Type,
                 call.Text,
-                call.IndirectArgumentLocalNames));
+                call.IndirectArgumentLocalNames,
+                call.SourceReturnType));
 
             InvalidateMovedAggregateCallArguments(blockId, block, call);
             return loweredCall;
@@ -477,7 +478,8 @@ internal sealed class SsaLowerer
                     => EmitValue(block, new SsaLoadLocalRValue(local.Name, local.Type)),
                 MidLevelIrLocalOperand local => ReadVariable(blockId, local.Name, local.Type),
                 MidLevelIrParameterOperand parameter when parameter.Type.BorrowKind != StarkBorrowKind.None
-                    => LoadBorrowedParameter(block, parameter),
+                                                       || parameter.Type.InitializationKind != StarkInitializationKind.None
+                    => LoadIndirectParameter(block, parameter),
                 MidLevelIrParameterOperand parameter => ReadVariable(blockId, parameter.Name, parameter.Type),
                 MidLevelIrGlobalOperand global => EmitValue(block, new SsaLoadGlobalRValue(global.Name, global.Type)),
                 MidLevelIrGlobalAddressOperand globalAddress => new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type),
@@ -525,7 +527,7 @@ internal sealed class SsaLowerer
             return result;
         }
 
-        private SsaValue LoadBorrowedParameter(SsaBlockBuilder block, MidLevelIrParameterOperand parameter)
+        private SsaValue LoadIndirectParameter(SsaBlockBuilder block, MidLevelIrParameterOperand parameter)
         {
             var address = EmitValue(block, new SsaAddressOfParameterRValue(
                 parameter.Name,
@@ -1376,10 +1378,11 @@ internal sealed class SsaLowerer
                     binary.Text),
                 SsaCallRValue call => new SsaCallRValue(
                     call.FunctionName,
-                    call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
-                    call.Type,
-                    call.Text,
-                    call.IndirectArgumentLocalNames),
+                        call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
+                        call.Type,
+                        call.Text,
+                        call.IndirectArgumentLocalNames,
+                        call.SourceReturnType),
                 SsaConvertRValue convert => new SsaConvertRValue(
                     RewriteValue(convert.Operand, replacements),
                     convert.TargetType,

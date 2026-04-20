@@ -154,7 +154,8 @@ public sealed record FunctionDeclarationModel(
     bool HasBody,
     AsmFunctionModel? Asm = null,
     IReadOnlyList<string>? GenericParameterNames = null,
-    string? PublishedOverloadKey = null)
+    string? PublishedOverloadKey = null,
+    bool IsStatic = false)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
@@ -220,6 +221,28 @@ public sealed record ModuleGraph(
     IReadOnlySet<string> AccessibleModules)
 {
     public bool HasModule(string moduleName) => AccessibleModules.Contains(moduleName);
+
+    public IReadOnlySet<string> GetAccessibleModules(string fromModule)
+    {
+        return string.Equals(fromModule, RootModuleName, StringComparison.Ordinal)
+            ? AccessibleModules
+            : CollectAccessibleModules(fromModule);
+    }
+
+    public IEnumerable<string> EnumerateAccessibleModuleQualifiedNames(string fromModule, string localName)
+    {
+        if (string.IsNullOrWhiteSpace(fromModule)
+            || string.IsNullOrWhiteSpace(localName)
+            || localName.Contains('.', StringComparison.Ordinal))
+        {
+            yield break;
+        }
+
+        foreach (var moduleName in GetAccessibleModules(fromModule).OrderBy(static moduleName => moduleName, StringComparer.Ordinal))
+        {
+            yield return $"{moduleName}.{localName}";
+        }
+    }
 
     public bool HasModuleNamespace(string moduleNamePrefix)
     {
@@ -433,7 +456,8 @@ public enum ImportedTemplateTypedBodyExpressionKind
     DirectCall,
     IndexAccess,
     FieldAccess,
-    MemberCall
+    MemberCall,
+    TypeLayout
 }
 
 public sealed record ImportedTemplateTypedBodyExpressionSummary(
@@ -951,6 +975,42 @@ public static class StarkTypeSymbols
             isMutableView ?? type.IsMutableView);
     }
 
+    public static bool IsDirectBorrowViewType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    public static bool IsPointerBackedBorrowReturn(StarkTypeSymbol type)
+    {
+        return type.BorrowKind != StarkBorrowKind.None && !IsDirectBorrowViewType(type);
+    }
+
+    public static StarkTypeSymbol BorrowReturnValueType(StarkTypeSymbol type)
+    {
+        return WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: IsPointerBackedBorrowReturn(type) ? false : type.IsMutableView);
+    }
+
+    public static StarkTypeSymbol BorrowReturnRuntimeType(StarkTypeSymbol type)
+    {
+        if (type.BorrowKind == StarkBorrowKind.None)
+        {
+            return type;
+        }
+
+        var valueType = BorrowReturnValueType(type);
+        if (IsDirectBorrowViewType(valueType))
+        {
+            return valueType;
+        }
+
+        var pointeeType = WithQualifiers(valueType, isMutableView: false);
+        return RawPointer(pointeeType, type.IsMutableView);
+    }
+
     public static StarkTypeSymbol FreezeReachableView(StarkTypeSymbol type)
     {
         if (type.Kind == StarkTypeKind.Error)
@@ -1037,7 +1097,11 @@ public static class StarkTypeSymbols
     }
 }
 
-public sealed record FieldSymbol(string Name, StarkTypeSymbol Type);
+public sealed record FieldSymbol(
+    string Name,
+    StarkTypeSymbol Type,
+    StarkVisibility Visibility = StarkVisibility.Public,
+    string? DeclaringModuleName = null);
 
 public sealed record EnumVariantFieldSymbol(
     int Position,
@@ -1141,7 +1205,8 @@ public sealed record TypedParameterSymbol(string Name, StarkTypeSymbol Type);
 public sealed record TypedConstructorShape(
     string TypeName,
     IReadOnlyList<TypedParameterSymbol> Parameters,
-    bool IsPrimaryShape)
+    bool IsPrimaryShape,
+    string? BodyKey = null)
 {
     public ISet<string>? InitializedMembers =>
         IsPrimaryShape
@@ -1156,7 +1221,8 @@ public sealed record TypedFunctionSignature(
     string? SourceName = null,
     IReadOnlyList<string>? GenericParameterNames = null,
     string? TemplateName = null,
-    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null)
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    bool IsStatic = false)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -1185,6 +1251,12 @@ public sealed record LiteralTypingRecord(
     string LiteralText,
     StarkTypeSymbol Type,
     SourceLocation Location);
+
+public sealed record TypeLayoutExpressionTypingRecord(
+    string Kind,
+    StarkTypeSymbol TargetType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
 
 public sealed record LocalDeclarationTypingRecord(
     string Kind,
@@ -1323,7 +1395,8 @@ public sealed record TypeCheckModel(
     IReadOnlyList<ConversionTypingRecord>? ConversionRecords = null,
     IReadOnlyList<DirectCallTypingRecord>? DirectCallRecords = null,
     IReadOnlyList<FieldAccessTypingRecord>? FieldAccessRecords = null,
-    IReadOnlyList<MemberCallTypingRecord>? MemberCallRecords = null)
+    IReadOnlyList<MemberCallTypingRecord>? MemberCallRecords = null,
+    IReadOnlyList<TypeLayoutExpressionTypingRecord>? TypeLayoutExpressionRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -1375,6 +1448,9 @@ public sealed record TypeCheckModel(
 
     public IReadOnlyList<MemberCallTypingRecord> MemberCalls =>
         MemberCallRecords ?? [];
+
+    public IReadOnlyList<TypeLayoutExpressionTypingRecord> TypeLayoutExpressions =>
+        TypeLayoutExpressionRecords ?? [];
 }
 
 internal static class TemplateLocalDeclarationFacts
@@ -2114,7 +2190,8 @@ public sealed record MidLevelIrCallRValue(
     IReadOnlyList<MidLevelIrOperand> Arguments,
     StarkTypeSymbol Type,
     string Text,
-    IReadOnlyList<string?>? IndirectArgumentLocalNames = null)
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    StarkTypeSymbol? SourceReturnType = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrConvertRValue(
@@ -2362,7 +2439,8 @@ public sealed record SsaCallRValue(
     IReadOnlyList<SsaValue> Arguments,
     StarkTypeSymbol Type,
     string Text,
-    IReadOnlyList<string?>? IndirectArgumentLocalNames = null)
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    StarkTypeSymbol? SourceReturnType = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaConvertRValue(

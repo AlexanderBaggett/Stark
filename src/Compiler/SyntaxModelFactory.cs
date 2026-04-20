@@ -630,10 +630,11 @@ internal static class SyntaxModelFactory
                          .Select(static member => member.methodDeclaration())
                          .Where(static method => method is not null)!)
             {
+                var methodVisibility = ResolveMemberVisibility(visibility, method.visibilityModifier());
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                     DeclarationKind.Function,
-                    visibility,
+                    methodVisibility,
                     CreateFunctionModel(
                         $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                         ParseFunctionKind(method.functionKind()),
@@ -665,10 +666,11 @@ internal static class SyntaxModelFactory
                          .Select(static member => member.methodDeclaration())
                          .Where(static method => method is not null)!)
             {
+                var methodVisibility = ResolveMemberVisibility(visibility, method.visibilityModifier());
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                     DeclarationKind.Function,
-                    visibility,
+                    methodVisibility,
                     CreateFunctionModel(
                         $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                         ParseFunctionKind(method.functionKind()),
@@ -845,7 +847,8 @@ internal static class SyntaxModelFactory
                 modifiers.Contains("strictfp")),
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody),
-            GenericParameterNames: genericParameters);
+            GenericParameterNames: genericParameters,
+            IsStatic: modifiers.Contains("static"));
     }
 
     private static DestructorDeclarationModel? CreateDestructorModel(
@@ -941,6 +944,20 @@ internal static class SyntaxModelFactory
             "export" => StarkVisibility.Export,
             _ => StarkVisibility.Module
         };
+    }
+
+    private static StarkVisibility ResolveMemberVisibility(
+        StarkVisibility enclosingVisibility,
+        StarkParser.VisibilityModifierContext? explicitVisibility)
+    {
+        if (explicitVisibility is not null)
+        {
+            return ParseVisibility(explicitVisibility);
+        }
+
+        return enclosingVisibility == StarkVisibility.Export
+            ? StarkVisibility.Public
+            : enclosingVisibility;
     }
 
     private static StarkFunctionKind ParseFunctionKind(StarkParser.FunctionKindContext functionKind)

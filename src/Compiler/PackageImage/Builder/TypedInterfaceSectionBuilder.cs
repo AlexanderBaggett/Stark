@@ -107,7 +107,8 @@ internal static partial class PackageImageBuilder
                 : namedType.OrderedFields
                     .Select(field => new StarkPackageFieldManifest(
                         field.Name,
-                        RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName)))
+                        RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName),
+                        RenderFieldVisibility(field.Visibility)))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -152,7 +153,8 @@ internal static partial class PackageImageBuilder
                 : namedType.OrderedFields
                     .Select(field => new StarkPackageTypedFieldManifest(
                         field.Name,
-                        BuildTypeReference(field.Type, module.SyntaxModel.ModuleName)))
+                        BuildTypeReference(field.Type, module.SyntaxModel.ModuleName),
+                        RenderFieldVisibility(field.Visibility)))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypedTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -372,7 +374,9 @@ internal static partial class PackageImageBuilder
                     IsHot: declaration.Function.Modifiers.IsHot,
                     IsCold: declaration.Function.Modifiers.IsCold,
                     InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),
-                    HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference);
+                    HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference,
+                    IsStatic: declaration.Function.IsStatic,
+                    Visibility: declaration.Visibility.ToString().ToLowerInvariant());
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -429,7 +433,9 @@ internal static partial class PackageImageBuilder
                     IsHot: declaration.Function.Modifiers.IsHot,
                     IsCold: declaration.Function.Modifiers.IsCold,
                     InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),
-                    HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference);
+                    HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference,
+                    IsStatic: declaration.Function.IsStatic,
+                    Visibility: declaration.Visibility.ToString().ToLowerInvariant());
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()
@@ -477,5 +483,12 @@ internal static partial class PackageImageBuilder
         }
 
         return $"{moduleName}.{lookupName}";
+    }
+
+    private static string? RenderFieldVisibility(StarkVisibility visibility)
+    {
+        return visibility == StarkVisibility.Public
+            ? null
+            : visibility.ToString().ToLowerInvariant();
     }
 }

@@ -7,6 +7,48 @@ namespace compiler.PipelineTests;
 public sealed class CompilerPipelineLowerMirTests
 {
     [Fact]
+    public void ExplicitConstructorBodiesLowerIntoObjectCreation()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Box {
+                    i32[-2147483648 2147483647] Value;
+
+                    Box() {
+                        self.Value = 41;
+                    }
+
+                    Box(i32[-2147483648 2147483647] value) {
+                        self.Value = value + 1;
+                    }
+                }
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    stack Box defaultBox = new();
+                    stack Box constructedBox = new(value);
+                    return defaultBox.Value + constructedBox.Value;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+
+        var run = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        Assert.True(run.SupportsDirectCodeGeneration);
+
+        var statements = run.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.True(
+            statements.Count(static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "Value" }) >= 2,
+            string.Join(Environment.NewLine, statements.Select(static statement => statement.Text)));
+    }
+
+    [Fact]
     public void ManifestBackedTypedTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-body-bridge-");

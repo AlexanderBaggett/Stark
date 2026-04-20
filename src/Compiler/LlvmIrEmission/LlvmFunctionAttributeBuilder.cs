@@ -54,6 +54,7 @@ internal sealed class LlvmFunctionAttributeBuilder
 
         if (!abiFunction.IsFfi
             && !abiFunction.ReturnsIndirect
+            && abiFunction.SourceReturnType.BorrowKind == StarkBorrowKind.None
             && LlvmValueRangeFacts.TryBuildRangeAttribute(abiFunction.SourceReturnType, out var rangeAttribute))
         {
             segments.Add(rangeAttribute);

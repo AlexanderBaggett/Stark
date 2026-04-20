@@ -2381,6 +2381,13 @@ internal static partial class PackageImageBuilder
 
         if (postfixParts.Length == 0
             && primaryExpression is not null
+            && TryBuildPublishedTypedTemplateTypeLayoutExpression(module, primaryExpression, out publishedExpression))
+        {
+            return true;
+        }
+
+        if (postfixParts.Length == 0
+            && primaryExpression is not null
             && enumValueOrdinals.TryGetValue(primaryExpression, out var enumValueOrdinal))
         {
             publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
@@ -3865,8 +3872,7 @@ internal static partial class PackageImageBuilder
             List<StarkParser.ObjectCreationExpressionContext> accumulator)
         {
             if (current is StarkParser.ObjectCreationExpressionContext objectCreation
-                && (objectCreation.objectInitializer() is not null
-                    || objectCreation.argumentList() is { } argumentList && argumentList.argument().Length > 0))
+                && ShouldTrackObjectCreation(objectCreation))
             {
                 accumulator.Add(objectCreation);
             }
@@ -3876,6 +3882,190 @@ internal static partial class PackageImageBuilder
                 Collect(current.GetChild(index), accumulator);
             }
         }
+    }
+
+    private static bool ShouldTrackObjectCreation(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.type_() is null
+            || expression.objectInitializer() is not null
+            || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateTypeLayoutExpression(
+        LoadedModuleDocument module,
+        StarkParser.PrimaryExpressionContext primaryExpression,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        var name = primaryExpression.SIZEOF() is not null
+            ? "sizeof"
+            : primaryExpression.ALIGNOF() is not null
+                ? "alignof"
+                : null;
+        if (name is null
+            || primaryExpression.type_() is not { } type
+            || !TryBuildPublishedAbiTypeReferenceFromSyntax(module, type, out var typeReference))
+        {
+            return false;
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "type-layout",
+            Name: name,
+            Type: typeReference);
+        return true;
+    }
+
+    private static bool TryBuildPublishedAbiTypeReferenceFromSyntax(
+        LoadedModuleDocument module,
+        StarkParser.Type_Context type,
+        out StarkPackageTypeReference typeReference)
+    {
+        typeReference = null!;
+
+        if (!TryBuildPublishedAbiNonArrayTypeReferenceFromSyntax(module, type.nonArrayType(), out var current))
+        {
+            return false;
+        }
+
+        foreach (var suffix in type.arraySuffix())
+        {
+            if (suffix.expression() is null)
+            {
+                current = new StarkPackageTypeReference(
+                    "slice",
+                    ElementType: current);
+                continue;
+            }
+
+            if (!CompileTimeExpressionEvaluator.TryEvaluateInteger(suffix.expression(), out var length)
+                || length < 0
+                || length > int.MaxValue)
+            {
+                return false;
+            }
+
+            current = new StarkPackageTypeReference(
+                "fixedarray",
+                FixedLength: (int)length,
+                ElementType: current);
+        }
+
+        foreach (var qualifier in type.typeQualifier())
+        {
+            current = qualifier.GetText() switch
+            {
+                "borrow" => current with { BorrowKind = "borrow" },
+                "retborrow" => current with { BorrowKind = "retborrow" },
+                "storeborrow" => current with { BorrowKind = "storeborrow" },
+                "frozen" => current with { AccessKind = "frozen" },
+                "shared" => current with { AccessKind = "shared" },
+                "out" => current with { InitializationKind = "out" },
+                "init" => current with { InitializationKind = "init" },
+                "mut" => current with { IsMutableView = true },
+                _ => current
+            };
+        }
+
+        typeReference = current;
+        return true;
+    }
+
+    private static bool TryBuildPublishedAbiNonArrayTypeReferenceFromSyntax(
+        LoadedModuleDocument module,
+        StarkParser.NonArrayTypeContext type,
+        out StarkPackageTypeReference typeReference)
+    {
+        typeReference = null!;
+
+        if (type.rawPointerType() is { } rawPointerType)
+        {
+            if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, rawPointerType.type_(), out var elementType))
+            {
+                return false;
+            }
+
+            typeReference = new StarkPackageTypeReference(
+                "rawpointer",
+                IsMutablePointer: rawPointerType.RAWMUTPTR() is not null,
+                ElementType: elementType);
+            return true;
+        }
+
+        if (type.integerType() is { } integerType)
+        {
+            var text = integerType.INTEGER_TYPE().GetText();
+            if (text.Length < 2 || !int.TryParse(text[1..], out var bitWidth))
+            {
+                return false;
+            }
+
+            typeReference = new StarkPackageTypeReference(
+                "integer",
+                BitWidth: bitWidth);
+            return true;
+        }
+
+        return type.simpleType() is { } simpleType
+            && TryBuildPublishedAbiSimpleTypeReferenceFromSyntax(module, simpleType, out typeReference);
+    }
+
+    private static bool TryBuildPublishedAbiSimpleTypeReferenceFromSyntax(
+        LoadedModuleDocument module,
+        StarkParser.SimpleTypeContext type,
+        out StarkPackageTypeReference typeReference)
+    {
+        typeReference = null!;
+
+        if (type.builtinType() is { } builtinType)
+        {
+            var builtinText = builtinType.GetText();
+            if (builtinText.Length >= 2 && builtinText[0] == 'f' && int.TryParse(builtinText[1..], out var floatBitWidth))
+            {
+                typeReference = new StarkPackageTypeReference("float", BitWidth: floatBitWidth);
+                return true;
+            }
+
+            typeReference = builtinText switch
+            {
+                "bool" => new StarkPackageTypeReference("bool"),
+                "ascii" => new StarkPackageTypeReference("ascii"),
+                "unicode" => new StarkPackageTypeReference("unicode"),
+                "asciistring" => BuildPublishedAbiTypeReference(StarkTypeSymbols.OwnedAscii, module),
+                "unicodestring" => BuildPublishedAbiTypeReference(StarkTypeSymbols.OwnedUnicode, module),
+                _ => null!
+            };
+            return typeReference is not null;
+        }
+
+        var name = type.qualifiedName()?.GetText();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        var localNamedTypes = GetModuleLocalNamedTypes(module);
+        var qualifiedName = name.Contains('.', StringComparison.Ordinal) || !localNamedTypes.Contains(name)
+            ? name
+            : $"{module.SyntaxModel.ModuleName}.{name}";
+        var typeArguments = new List<StarkPackageTypeReference>();
+        var typeArgumentSyntax = type.typeArgumentList()?.type_() ?? Array.Empty<StarkParser.Type_Context>();
+        foreach (var typeArgument in typeArgumentSyntax)
+        {
+            if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+            {
+                return false;
+            }
+
+            typeArguments.Add(publishedTypeArgument);
+        }
+
+        typeReference = new StarkPackageTypeReference(
+            "named",
+            Name: qualifiedName,
+            TypeArguments: typeArguments.Count == 0 ? null : typeArguments);
+        return true;
     }
 
     private static IReadOnlyList<StarkParser.ArgumentListContext> CollectTemplateDirectCallArgumentLists(ParserRuleContext node)

@@ -18,6 +18,7 @@ internal sealed class StarkTypeResolver
 {
     private readonly CompilerPassContext _context;
     private readonly string _stage;
+    private readonly ModuleGraph _moduleGraph;
     private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
     private readonly IReadOnlyDictionary<string, TypeAliasSymbol> _typeAliases;
     private readonly IReadOnlyDictionary<string, TypeAliasResolutionSource> _typeAliasSources;
@@ -58,6 +59,7 @@ internal sealed class StarkTypeResolver
     {
         _context = context;
         _stage = stage;
+        _moduleGraph = moduleGraph;
         _namedTypes = namedTypes;
         _typeAliases = typeAliases;
         _typeAliasSources = typeAliasSources;
@@ -74,6 +76,7 @@ internal sealed class StarkTypeResolver
     {
         _context = context;
         _stage = stage;
+        _moduleGraph = moduleGraph;
         _namedTypes = namedTypes;
         _typeAliases = typeAliases ?? EmptyTypeAliases;
         _typeAliasSources = typeAliasSources ?? EmptyTypeAliasSources;
@@ -190,6 +193,23 @@ internal sealed class StarkTypeResolver
             if (_namedTypes.ContainsKey(moduleQualifiedName))
             {
                 return StarkTypeSymbols.Named(moduleQualifiedName);
+            }
+
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, qualifiedName)
+                .Where(_namedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                return StarkTypeSymbols.Named(importedMatches[0]);
+            }
+
+            if (importedMatches.Length > 1)
+            {
+                ReportError(
+                    "STK3004",
+                    $"Imported type name '{qualifiedName}' is ambiguous between {string.Join(", ", importedMatches)}. Use a fully qualified name.",
+                    token);
+                return StarkTypeSymbols.Error;
             }
         }
 
@@ -786,7 +806,7 @@ internal sealed class StarkTypeResolver
         IReadOnlyList<StarkTypeSymbol>? typeArguments,
         out StarkTypeSymbol aliasType)
     {
-        foreach (var candidate in EnumerateAliasLookupNames(qualifiedName, currentModuleName))
+        foreach (var candidate in EnumerateLocalAliasLookupNames(qualifiedName, currentModuleName))
         {
             if (!TryResolveTypeAliasSymbol(candidate, currentModuleName, out var alias))
             {
@@ -795,6 +815,35 @@ internal sealed class StarkTypeResolver
 
             aliasType = InstantiateTypeAlias(alias, qualifiedName, typeArguments, token);
             return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentModuleName)
+            && !qualifiedName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedAliases = new List<TypeAliasSymbol>();
+            foreach (var candidate in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, qualifiedName))
+            {
+                if (TryResolveTypeAliasSymbol(candidate, currentModuleName, out var alias))
+                {
+                    importedAliases.Add(alias);
+                }
+            }
+
+            if (importedAliases.Count == 1)
+            {
+                aliasType = InstantiateTypeAlias(importedAliases[0], qualifiedName, typeArguments, token);
+                return true;
+            }
+
+            if (importedAliases.Count > 1)
+            {
+                ReportError(
+                    "STK3004",
+                    $"Imported type alias '{qualifiedName}' is ambiguous between {string.Join(", ", importedAliases.Select(static alias => alias.Name))}. Use a fully qualified name.",
+                    token);
+                aliasType = StarkTypeSymbols.Error;
+                return true;
+            }
         }
 
         aliasType = StarkTypeSymbols.Error;
@@ -968,7 +1017,7 @@ internal sealed class StarkTypeResolver
             isMutableView: type.IsMutableView);
     }
 
-    private static IEnumerable<string> EnumerateAliasLookupNames(string qualifiedName, string? currentModuleName)
+    private static IEnumerable<string> EnumerateLocalAliasLookupNames(string qualifiedName, string? currentModuleName)
     {
         yield return qualifiedName;
 

@@ -1,3 +1,4 @@
+using System.Numerics;
 using Antlr4.Runtime;
 using Antlr4.Runtime.Tree;
 using Stark.Parsing;
@@ -61,6 +62,14 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature)
     {
         var summary = new FunctionOwnershipBuilder(signature.Name);
+        if (signature.IsGeneric && functionDeclaration.Body.block() is not null)
+        {
+            // Open generic templates can depend on ownership and drop behavior of
+            // unknown type parameters. Validate concrete instantiations instead
+            // of rejecting the package template before T has a real layout.
+            return summary.Build();
+        }
+
         var state = new FlowState(_typeModel.NamedTypes);
         var functionScope = state.EnterScope();
         var parameterDeclarations = functionDeclaration.ParameterList.parameter();
@@ -904,6 +913,15 @@ internal sealed class OwnershipValidator
             return ApplyUse(new ExpressionInfo(EvaluateLiteralType(literal)), state, summary, use, literal);
         }
 
+        if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
+        {
+            _ = ResolveType(expression.type_());
+            var resultType = expression.ALIGNOF() is not null
+                ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
+                : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+            return ApplyUse(new ExpressionInfo(resultType), state, summary, use, expression);
+        }
+
         if (expression.Identifier() is { } identifier)
         {
             return ResolveValue(identifier.GetText(), identifier.Symbol, state, summary, use, allowFunctionReference);
@@ -927,7 +945,7 @@ internal sealed class OwnershipValidator
 
         if (expression.objectCreationExpression() is { } objectCreationExpression)
         {
-            var created = EvaluateObjectCreation(objectCreationExpression, state, signature, summary);
+            var created = EvaluateObjectCreation(objectCreationExpression, state, signature, summary, use);
             return ApplyUse(created, state, summary, use, objectCreationExpression);
         }
 
@@ -938,9 +956,12 @@ internal sealed class OwnershipValidator
         StarkParser.ObjectCreationExpressionContext expression,
         FlowState state,
         TypedFunctionSignature signature,
-        FunctionOwnershipBuilder summary)
+        FunctionOwnershipBuilder summary,
+        ValueUse use)
     {
-        var type = ResolveType(expression.type_());
+        var type = expression.type_() is { } explicitType
+            ? ResolveType(explicitType)
+            : use.TargetType ?? StarkTypeSymbols.Error;
 
         if (expression.argumentList() is { } argumentList)
         {
@@ -1057,13 +1078,13 @@ internal sealed class OwnershipValidator
             return ApplyUse(binding, state, summary, use, token);
         }
 
-        if (_typeModel.Globals.TryGetValue(name, out var globalType))
+        if (TryResolveGlobalBySourceName(name, out var globalType))
         {
             var isMutable = globalType.IsMutable;
             var binding = new ExpressionInfo(
                 globalType.Type,
                 Variable: new VariableInfo(
-                    name,
+                    globalType.Name,
                     globalType.Type,
                     StorageClass.Static,
                     VariableOrigin.Global,
@@ -1077,7 +1098,7 @@ internal sealed class OwnershipValidator
 
             if (use.Kind == ValueUseKind.Consume && IsMoveOnly(globalType.Type))
             {
-                OwnershipError(summary, "STK4204", $"Cannot move out of global or static storage '{name}'.", token);
+                OwnershipError(summary, "STK4204", $"Cannot move out of global or static storage '{globalType.Name}'.", token);
             }
 
             return binding;
@@ -1085,6 +1106,7 @@ internal sealed class OwnershipValidator
 
         if (TryGetFunctionOverloads(name, out var functions))
         {
+            functions = FilterDirectCallableTypeMemberFunctions(name, functions);
             if (!allowFunctionReference)
             {
                 return new ExpressionInfo(StarkTypeSymbols.Error);
@@ -1097,6 +1119,11 @@ internal sealed class OwnershipValidator
 
         if (TryResolveNamedTypeBySourceName(name, out var namedType))
         {
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: namedType.Name);
+            }
+
             if (namedType.Kind == DeclarationKind.Doctrine && allowFunctionReference)
             {
                 return new ExpressionInfo(StarkTypeSymbols.Named(namedType.Name));
@@ -1110,7 +1137,7 @@ internal sealed class OwnershipValidator
 
         if (TryResolveNamedTypeBySourceName(name, out namedType) && namedType.Kind == DeclarationKind.Enum)
         {
-            return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: name);
+            return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: namedType.Name);
         }
 
             if (TryResolveEnumCaseReference(name, out var enumType, out var enumTypeSymbol, out var variant))
@@ -1152,8 +1179,79 @@ internal sealed class OwnershipValidator
             return true;
         }
 
+        if (TryResolveTypeQualifiedMemberSourceName(sourceName, out var resolvedMemberSourceName)
+            && _typeModel.Overloads.TryGetValue(resolvedMemberSourceName, out overloads!))
+        {
+            return true;
+        }
+
+        if (!sourceName.Contains('.', StringComparison.Ordinal)
+            && _typeModel.Overloads.TryGetValue($"{_syntaxModel.ModuleName}.{sourceName}", out overloads!))
+        {
+            return true;
+        }
+
+        if (!sourceName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedCandidates = new List<TypedFunctionSignature>();
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, sourceName))
+            {
+                if (_typeModel.Overloads.TryGetValue(candidateName, out var candidates))
+                {
+                    importedCandidates.AddRange(candidates);
+                }
+            }
+
+            if (importedCandidates.Count > 0)
+            {
+                overloads = importedCandidates;
+                return true;
+            }
+        }
+
         overloads = [];
         return false;
+    }
+
+    private bool TryResolveTypeQualifiedMemberSourceName(string sourceName, out string resolvedSourceName)
+    {
+        resolvedSourceName = string.Empty;
+        var separator = sourceName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var qualifier = sourceName[..separator];
+        if (!TryResolveNamedTypeBySourceName(qualifier, out var namedType))
+        {
+            return false;
+        }
+
+        resolvedSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{sourceName[(separator + 1)..]}";
+        return !string.Equals(resolvedSourceName, sourceName, StringComparison.Ordinal);
+    }
+
+    private IReadOnlyList<TypedFunctionSignature> FilterDirectCallableTypeMemberFunctions(
+        string sourceName,
+        IReadOnlyList<TypedFunctionSignature> functions)
+    {
+        return IsStructOrRecordMemberFunctionSourceName(sourceName)
+            ? functions.Where(static function => function.IsStatic).ToArray()
+            : functions;
+    }
+
+    private bool IsStructOrRecordMemberFunctionSourceName(string sourceName)
+    {
+        var separator = sourceName.LastIndexOf('.');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var typeName = sourceName[..separator];
+        return TryResolveNamedTypeBySourceName(typeName, out var namedType)
+            && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record;
     }
 
     private void BindSwitchPattern(StarkParser.PatternContext pattern, ExpressionInfo switchValue, FlowState state, FunctionOwnershipBuilder summary)
@@ -1476,12 +1574,12 @@ internal sealed class OwnershipValidator
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)
     {
-        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters);
+        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
     }
 
     private StarkTypeSymbol ResolveConversionType(StarkParser.ConversionTypeContext type)
     {
-        return _typeResolver.ResolveConversionType(type, _currentFunctionGenericParameters);
+        return _typeResolver.ResolveConversionType(type, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
     }
 
     private static bool SupportsAggregateFieldSubpattern(StarkTypeSymbol type)
@@ -1685,6 +1783,7 @@ internal sealed class OwnershipValidator
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
             {
+                namespaceFunctions = FilterDirectCallableTypeMemberFunctions(qualifiedName, namespaceFunctions);
                 return namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric
                     ? new ExpressionInfo(namespaceFunctions[0].ReturnType, Function: namespaceFunctions[0])
                     : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: qualifiedName);
@@ -1692,6 +1791,11 @@ internal sealed class OwnershipValidator
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (qualifiedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+                {
+                    return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
+                }
+
                 if (qualifiedType.Kind == DeclarationKind.Enum)
                 {
                     return new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
@@ -1764,16 +1868,19 @@ internal sealed class OwnershipValidator
 
         if (TryGetFunctionOverloads(methodSourceName, out var methods))
         {
-            if (methods.Count == 1 && !methods[0].IsGeneric && methods[0].Parameters.Count != 0)
+            var instanceMethods = methods.Where(static method => !method.IsStatic).ToArray();
+            if (instanceMethods.Length == 1 && !instanceMethods[0].IsGeneric && instanceMethods[0].Parameters.Count != 0)
             {
                 return new ExpressionInfo(
-                    methods[0].ReturnType,
-                    Function: methods[0],
+                    instanceMethods[0].ReturnType,
+                    Function: instanceMethods[0],
                     BorrowLifetime: BorrowLifetime.None,
                     Receiver: target);
             }
 
-            return new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: methodSourceName, Receiver: target);
+            return instanceMethods.Length == 0
+                ? new ExpressionInfo(StarkTypeSymbols.Error)
+                : new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: methodSourceName, Receiver: target);
         }
 
         return new ExpressionInfo(
@@ -2398,6 +2505,35 @@ internal sealed class OwnershipValidator
         return true;
     }
 
+    private bool TryResolveGlobalBySourceName(string name, out TypedGlobalSymbol global)
+    {
+        if (_typeModel.Globals.TryGetValue(name, out global!))
+        {
+            return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && _typeModel.Globals.TryGetValue($"{_syntaxModel.ModuleName}.{name}", out global!))
+        {
+            return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, name)
+                .Where(_typeModel.Globals.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                global = _typeModel.Globals[importedMatches[0]];
+                return true;
+            }
+        }
+
+        global = null!;
+        return false;
+    }
+
     private bool TryResolveNamedTypeBySourceName(string typeName, out NamedTypeSymbol namedType)
     {
         if (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!))
@@ -2409,6 +2545,18 @@ internal sealed class OwnershipValidator
             && _typeModel.NamedTypes.TryGetValue($"{_syntaxModel.ModuleName}.{typeName}", out namedType!))
         {
             return true;
+        }
+
+        if (!typeName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, typeName)
+                .Where(_typeModel.NamedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                namedType = _typeModel.NamedTypes[importedMatches[0]];
+                return true;
+            }
         }
 
         namedType = null!;
@@ -2650,7 +2798,10 @@ internal sealed class OwnershipValidator
         ControlFlow
     }
 
-    private readonly record struct ValueUse(ValueUseKind Kind, bool CaptureBorrowLifetime = false)
+    private readonly record struct ValueUse(
+        ValueUseKind Kind,
+        bool CaptureBorrowLifetime = false,
+        StarkTypeSymbol? TargetType = null)
     {
         public static readonly ValueUse Read = new(ValueUseKind.Read);
         public static readonly ValueUse ConsumeTemporary = new(ValueUseKind.Consume);
@@ -2659,22 +2810,22 @@ internal sealed class OwnershipValidator
 
         public static ValueUse ForAssignment(StarkTypeSymbol targetType) =>
             targetType.BorrowKind != StarkBorrowKind.None
-                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true)
-                : IsMoveOnly(targetType) ? new(ValueUseKind.Consume) : Read;
+                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: targetType)
+                : IsMoveOnly(targetType) ? new(ValueUseKind.Consume, TargetType: targetType) : new(ValueUseKind.Read, TargetType: targetType);
 
         public static ValueUse ForCallArgument(StarkTypeSymbol parameterType) =>
             parameterType.BorrowKind != StarkBorrowKind.None
-                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true)
+                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: parameterType)
                 : parameterType.Kind == StarkTypeKind.RawPointer || !IsMoveOnly(parameterType)
-                ? Read
-                : new(ValueUseKind.Consume);
+                ? new(ValueUseKind.Read, TargetType: parameterType)
+                : new(ValueUseKind.Consume, TargetType: parameterType);
 
         public static ValueUse ForReturn(StarkTypeSymbol returnType) =>
             returnType.BorrowKind != StarkBorrowKind.None
-                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true)
+                ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: returnType)
                 : !IsMoveOnly(returnType)
-                ? Read
-                : new(ValueUseKind.Consume);
+                ? new(ValueUseKind.Read, TargetType: returnType)
+                : new(ValueUseKind.Consume, TargetType: returnType);
 
         public static ValueUse ForAssignment(StarkParser.ExpressionContext _) => ConsumeTemporary;
     }

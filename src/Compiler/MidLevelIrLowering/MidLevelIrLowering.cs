@@ -17,6 +17,7 @@ internal sealed partial class MidLevelIrLowerer(
     private readonly TypeCheckModel _typeModel = typeModel;
     private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
     private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules);
+    private readonly Dictionary<string, ConstructorLoweringContext> _constructorsByBodyKey = CollectConstructorsByBodyKey(loadedModules);
     private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
     private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases);
     private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
@@ -49,8 +50,8 @@ internal sealed partial class MidLevelIrLowerer(
     {
         var loweringTemplateName = function.BodyTemplateName ?? function.Name;
         _importedFunctionTemplates.TryGetValue(loweringTemplateName, out var importedTemplateSummary);
-        var keepImportedGenericTemplateDeclarationBodyless =
-            ShouldKeepImportedGenericTemplateDeclarationBodyless(function, importedTemplateSummary);
+        var keepOpenGenericTemplateDeclarationBodyless =
+            ShouldKeepOpenGenericTemplateDeclarationBodyless(function, importedTemplateSummary);
 
         if (function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass)
         {
@@ -67,9 +68,24 @@ internal sealed partial class MidLevelIrLowerer(
                 BodyLoweringKind: function.BodyLoweringKind);
         }
 
+        if (keepOpenGenericTemplateDeclarationBodyless)
+        {
+            return new MidLevelIrFunction(
+                function.Name,
+                BuildSignature(function.Signature),
+                function.Signature.ReturnType,
+                function.Signature.Parameters,
+                function.HasBody,
+                SupportsDirectCodeGeneration: false,
+                EntryBlockId: 0,
+                Locals: [],
+                Blocks: [],
+                BodyLoweringKind: function.BodyLoweringKind);
+        }
+
         if (!_functionsByName.TryGetValue(loweringTemplateName, out var loweringContext))
         {
-            if (function.HasBody && !keepImportedGenericTemplateDeclarationBodyless)
+            if (function.HasBody && !keepOpenGenericTemplateDeclarationBodyless)
             {
                 _logs.GapWarning(
                     "lowering",
@@ -109,8 +125,10 @@ internal sealed partial class MidLevelIrLowerer(
             loweringContext.ModuleName,
             _typeModel,
             _enumLayoutModel,
+            moduleGraph,
             _typeResolver,
             _functionsByName,
+            _constructorsByBodyKey,
             _destructorsByTypeName,
             _logs,
             loweringContext.FilePath,
@@ -144,7 +162,7 @@ internal sealed partial class MidLevelIrLowerer(
         {
             if (body is null)
             {
-                if (function.HasBody && !keepImportedGenericTemplateDeclarationBodyless)
+                if (function.HasBody && !keepOpenGenericTemplateDeclarationBodyless)
                 {
                     _logs.GapWarning(
                         "lowering",
@@ -211,13 +229,13 @@ internal sealed partial class MidLevelIrLowerer(
             functionLocation);
     }
 
-    private static bool ShouldKeepImportedGenericTemplateDeclarationBodyless(
+    private static bool ShouldKeepOpenGenericTemplateDeclarationBodyless(
         HighLevelIrFunction function,
         ImportedFunctionTemplateSummary? importedTemplateSummary)
     {
         return function.GenericTypeSubstitution is null
             && function.Signature.IsGeneric
-            && importedTemplateSummary?.TypedBody is not null;
+            && (function.HasBody || importedTemplateSummary?.TypedBody is not null);
     }
 
     private static Dictionary<string, string> CollectMaterializedSpecializationSymbols(HighLevelIrModule hir)
@@ -262,8 +280,7 @@ internal sealed partial class MidLevelIrLowerer(
         void Collect(Antlr4.Runtime.Tree.IParseTree current)
         {
             if (current is StarkParser.ObjectCreationExpressionContext objectCreation
-                && (objectCreation.objectInitializer() is not null
-                    || objectCreation.argumentList() is { } argumentList && argumentList.argument().Length > 0))
+                && ShouldTrackObjectCreation(objectCreation))
             {
                 ordinals[objectCreation] = nextOrdinal++;
             }
@@ -273,6 +290,13 @@ internal sealed partial class MidLevelIrLowerer(
                 Collect(current.GetChild(index));
             }
         }
+    }
+
+    private static bool ShouldTrackObjectCreation(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.type_() is null
+            || expression.objectInitializer() is not null
+            || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
     }
 
     private static IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> CollectTemplateEnumConstructorOrdinals(
@@ -511,6 +535,72 @@ internal sealed partial class MidLevelIrLowerer(
         return functions;
     }
 
+    private static Dictionary<string, ConstructorLoweringContext> CollectConstructorsByBodyKey(LoadedModuleSet loadedModules)
+    {
+        var constructors = new Dictionary<string, ConstructorLoweringContext>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            if (module.IsPackageImageImport)
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    CollectStructLikeConstructors(
+                        constructors,
+                        module,
+                        structDeclaration.Identifier().GetText(),
+                        structDeclaration.structBody().structMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!);
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    CollectStructLikeConstructors(
+                        constructors,
+                        module,
+                        recordDeclaration.Identifier().GetText(),
+                        recordDeclaration.recordBody().recordMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!);
+                }
+            }
+        }
+
+        return constructors;
+    }
+
+    private static void CollectStructLikeConstructors(
+        Dictionary<string, ConstructorLoweringContext> constructors,
+        LoadedModuleDocument module,
+        string localTypeName,
+        IEnumerable<StarkParser.ConstructorDeclarationContext> constructorDeclarations)
+    {
+        var qualifiedTypeName = QualifyName(module, localTypeName);
+        foreach (var constructor in constructorDeclarations)
+        {
+            if (!string.Equals(constructor.Identifier().GetText(), localTypeName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var bodyKey = BuildConstructorBodyKey(qualifiedTypeName, constructor);
+            constructors[bodyKey] = new ConstructorLoweringContext(
+                bodyKey,
+                qualifiedTypeName,
+                module.SyntaxModel.ModuleName,
+                module.Reference.FilePath,
+                constructor,
+                constructor.block());
+        }
+    }
+
     private static Dictionary<string, DestructorLoweringContext> CollectDestructorsByTypeName(LoadedModuleSet loadedModules)
     {
         var destructors = new Dictionary<string, DestructorLoweringContext>(StringComparer.Ordinal);
@@ -574,7 +664,8 @@ internal sealed partial class MidLevelIrLowerer(
                     resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
                     parameters,
                     SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
-                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
+                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                    IsStatic: declaration.IsStatic);
             }
         }
 
@@ -635,12 +726,24 @@ internal sealed partial class MidLevelIrLowerer(
             : $"{module.SyntaxModel.ModuleName}.{localName}";
     }
 
+    private static string BuildConstructorBodyKey(string qualifiedTypeName, StarkParser.ConstructorDeclarationContext constructor)
+    {
+        return $"{qualifiedTypeName}@{constructor.Start.Line}:{constructor.Start.Column + 1}";
+    }
+
     private sealed record FunctionLoweringContext(
         string ModuleName,
         string? FilePath,
         DeclaredFunctionSyntax? ParsedDeclaration,
         SourceLocation Location,
         StarkParser.BlockContext? ParsedBody);
+    private sealed record ConstructorLoweringContext(
+        string BodyKey,
+        string QualifiedTypeName,
+        string ModuleName,
+        string? FilePath,
+        StarkParser.ConstructorDeclarationContext Declaration,
+        StarkParser.BlockContext Body);
     private sealed record DestructorLoweringContext(
         string QualifiedTypeName,
         string ModuleName,

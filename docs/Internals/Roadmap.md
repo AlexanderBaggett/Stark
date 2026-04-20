@@ -1,6 +1,6 @@
 # Stark Roadmap
 
-Remember this languge aims to be faster than idiomatic C or Rust on most projects, we must chose the best posible optimization strategy and explore optimization opportunities.
+Remember this language aims to be faster than idiomatic C or Rust on most projects, we must choose the best possible optimization strategy and explore optimization opportunities.
 
 This document is the working implementation roadmap for Stark.
 
@@ -1167,21 +1167,202 @@ Everything before this point is frozen
 
 ### Expand Standard Library Definition For Full IO/Threading/Collections/TCP/HTTP
 
-- [ ] Define the public module layout for `System.IO`
-- [ ] Define the public module layout for `System.FileSystem`
-- [ ] Define the public module layout for `System.Threading`
-- [ ] Define the public module layout for `System.Collections`including Stack, Queue, List, Linked List, and Dictionary
-- [ ] Define the public module layout for `System.Net.Tcp`
-- [ ] Define the public module layout for `System.Net.Http`
-- [ ] Define the error/result model used by stdlib APIs that can fail
-- [ ] Define the allocator contract used by collections, buffering, and text-building APIs
-- [ ] Define the text and buffer model used by IO and networking APIs
-- [ ] Define ownership and borrowing rules for file handles, sockets, iterators, and collection views
-- [ ] Decide the blocking and non-blocking API story for TCP and HTTP
-- [ ] Define the minimum thread primitives Stark ships in `v1.2`
-- [ ] Define the initial collection set Stark ships in `v1.2`
-- [ ] Add packaged-consumption tests for every new public stdlib module family
-- [ ] Add reference documentation for every new stdlib module family
+- [x] Decide the standard-library allocation direction.
+  - [x] Use target-typed `new()` for default construction.
+  - [x] Use target-typed `new(allocator)` for custom allocator construction.
+  - [x] Avoid Rust-style `Type.New()` factory calls as the public collection/handle pattern.
+  - [x] Keep raw allocation APIs out of ordinary user-facing collection, IO, filesystem, threading, and TCP surfaces.
+- [x] Add the dynamic memory allocation design document.
+  - [x] Document default global allocation.
+  - [x] Document optional custom allocator construction.
+  - [x] Document deterministic drop and no-GC ownership behavior.
+  - [x] Document the initial out-of-memory and fallible-growth policy.
+- [x] Define the planned public module layout for `System.IO`.
+  - [x] Keep `System.IO` as the shared IO error/result and owned file-handle family.
+  - [x] Defer a general `Stream` abstraction until Stark has a zero-cost trait/doctrine story for it.
+  - [x] Document that small IO enums should use appropriately small tags.
+- [x] Define the planned public module layout for `System.Memory`.
+  - [x] Define `MemoryError`, `MemoryStatus`, and `MemoryResult<T>`.
+  - [x] Define the public `Allocator` vocabulary.
+  - [x] Keep raw allocate/free details internal or runtime-adjacent.
+- [x] Define the planned public module layout for `System.FileSystem`.
+  - [x] Include `DeleteDirectory`.
+  - [x] Include owned directory handles and owned directory entries.
+  - [x] Keep recursive deletion out of the first surface.
+  - [x] Document compatibility options for `System.IO.Path` versus a future `System.FileSystem.Path`.
+- [x] Define the planned public module layout for `System.Collections`.
+  - [x] Include `List<T>`.
+  - [x] Include `Stack<T>`.
+  - [x] Include `Queue<T>`.
+  - [x] Include `LinkedList<T>`.
+  - [x] Include `Dictionary<K, V>`.
+  - [x] Require owned heap-backed storage instead of public raw-pointer APIs.
+- [x] Define the planned public module layout for `System.Threading`.
+  - [x] Put thread operations on the `Thread` struct.
+  - [x] Include create/join/detach semantics.
+  - [x] Exclude thread pools and synchronization primitives from the first slice.
+  - [x] Avoid force-kill thread APIs.
+- [x] Define the planned public module layout for `System.Net` and `System.Net.Tcp`.
+  - [x] Put TCP operations on `TcpClient` and `TcpListener`.
+  - [x] Choose blocking TCP for the first standard-library slice.
+  - [x] Use safe slices and owned values instead of public raw socket buffers.
+- [x] Remove `System.Net.Http` from the planned standard library.
+  - [x] Document HTTP as package-layer work built on `System.Net.Tcp`.
+  - [x] Avoid ASP.NET-style server framework scope in the standard library.
+- [x] Define member-function visibility inheritance for public stdlib handle and collection types.
+  - [x] Member functions inherit the visibility of their enclosing type by default.
+  - [x] Member functions may explicitly narrow inherited visibility.
+  - [x] Member functions may not be more visible than their enclosing type.
+  - [x] `export` is not inherited accidentally and must be explicit.
+  - [x] Field visibility remains a separate type-opacity and representation-stability design topic.
+- [x] Apply Stark function kinds to the planned standard-library API shapes.
+  - [x] Use `finite law` for pure state inspection such as `Count`, `Capacity`, `IsEmpty`, `IsOpen`, `IsJoinable`, and allocator identity helpers.
+  - [x] Use `law` for read-only accessors that are pure but can trap when source-level preconditions are not encoded in the signature.
+  - [x] Use `finite` for non-allocating in-memory mutations that always return, such as `TryPop`-style collection operations.
+  - [x] Keep IO, filesystem, allocation, threading, TCP, blocking, scheduler, and OS-dependent operations as ordinary `fn`.
+  - [x] Document the standard-library-wide function-kind policy.
+- [ ] Implement language and compiler support required by the allocation and stdlib API design.
+  - [x] Add target-typed `new()` resolution.
+  - [x] Add target-typed `new(args)` resolution.
+  - [x] Define and implement struct/record constructor declaration syntax if it is not already complete.
+  - [x] Define and implement static type-member functions such as `Thread.Yield()` and `Allocator.Default()` if they are not already complete.
+  - [x] Parse and validate `finite`, `law`, and `finite law` on member functions and static type-member functions.
+  - [x] Preserve function-kind contracts through member-function lowering, monomorphization, and package images.
+  - [x] Add diagnostics that reject `law` bodies with visible side effects, allocation, freeing, synchronization, or mutable external-state observation.
+  - [x] Add diagnostics that reject `finite` bodies with `infinite` or `non-deterministic` loops or other unproven non-returning control flow.
+  - [x] Parse explicit visibility modifiers on member functions.
+  - [x] Resolve omitted member-function visibility from the enclosing type.
+  - [x] Reject member functions that are more visible than their enclosing type.
+  - [x] Require explicit `export` on ABI-visible member functions.
+  - [x] Preserve member-function visibility in package images and imported source surfaces.
+  - [x] Add diagnostics and tests for inherited, narrowed, and invalid member-function visibility.
+  - [x] Add constructor overload resolution for allocator-taking constructors.
+  - [x] Ensure constructor lowering initializes ownership and drop state correctly.
+  - [x] Ensure destructor lowering handles heap-backed fields and collection elements correctly.
+  - [x] Diagnose public safe APIs that expose raw allocation where a safe owner type should be used.
+- [x] Implement the runtime allocator contract.
+  - [x] Add the `System.Memory` source module.
+  - [x] Implement the default global allocator.
+  - [x] Implement internal allocate, reallocate, and free operations.
+  - [x] Track allocator provenance so values are freed by the allocator that created them.
+  - [x] Add target-aware alignment support.
+  - [x] Add Linux allocator backing without libc.
+  - [x] Add Windows allocator backing without CRT dependency.
+  - [x] Add allocator lowering facts for LLVM where sound.
+- [ ] Add a production-performance default allocator layer over the OS-backed primitives.
+  - [x] Choose a small initial general-purpose allocator strategy that stays simple enough to audit.
+  - [x] Keep very large allocations on the current OS virtual-memory path.
+  - [x] Add reusable small and medium allocation buckets so collection growth and heap locals do not syscall on every allocation.
+  - [x] Preserve target-aware alignment and allocator provenance through bucket allocation and free-list reuse.
+  - [x] Add a `Reallocate` fast path that can grow or shrink in place when the bucket/layout makes that sound.
+  - [x] Keep the allocate-copy-free fallback for cases the fast path cannot prove safe.
+  - [x] Defer per-thread caches until `System.Threading` allocator interaction is deliberately designed.
+  - [x] Preserve LLVM facts only where the higher-performance allocator still proves them.
+  - [ ] Add allocator microbenchmarks and regression tests for `List<T>` growth, `Queue<T>` growth, owned text/path buffers, and heap locals.
+    - [x] Add LLVM IR regression coverage for heap locals and `System.Memory` allocate/reallocate/free lowering.
+    - [x] Add a minimal allocator benchmark harness once Stark executable benchmark conventions are in place.
+    - [ ] Add `List<T>` growth benchmarks and regressions after `System.Collections.List<T>` is implemented.
+    - [ ] Add `Queue<T>` growth benchmarks and regressions after `System.Collections.Queue<T>` is implemented.
+    - [ ] Add owned text/path buffer benchmarks after those APIs allocate through `System.Memory`.
+  - [x] Add symbol audits proving the faster allocator still does not introduce explicit `malloc`, `realloc`, `free`, libc, or CRT allocator dependencies.
+    - [x] Audit packaged standard-library archives for allocator C-runtime symbols.
+    - [x] Audit source-imported allocator executables for allocator C-runtime symbols.
+    - [x] Audit packaged-stdlib allocator executables for allocator C-runtime symbols.
+- [ ] Implement the common stdlib error/result model.
+  - [ ] Keep no-exception result/status enums for recoverable failures.
+  - [ ] Ensure small enums use the smallest sound internal tag width by default.
+  - [ ] Preserve larger payload storage only for cases such as `Unknown(i32)`.
+  - [ ] Add package-image coverage for generic result/status types.
+- [ ] Implement `System.FileSystem`.
+  - [ ] Add `CreateDirectory`.
+  - [ ] Add non-recursive `DeleteDirectory`.
+  - [ ] Add `OpenDirectory`.
+  - [ ] Add owned `Directory` handles with best-effort drop cleanup.
+  - [ ] Add `Directory.ReadNext`.
+  - [ ] Add owned `FileSystemEntry` names.
+  - [ ] Add `Exists`, `IsFile`, and `IsDirectory`.
+  - [ ] Add packaged-consumption tests.
+- [ ] Implement `System.Collections`.
+  - [x] Add the `System.Collections` source module and root `System` re-export.
+  - [ ] Implement shared owned-buffer/growth infrastructure without exposing implementation helpers publicly.
+  - [x] Implement `List<T>` first with default/custom allocator constructors, reserve, push, clear, metadata inspection, and destructor cleanup.
+  - [x] Implement `Stack<T>` on top of the shared contiguous backing strategy for construction, push, metadata inspection, and cleanup.
+  - [x] Implement `Queue<T>` with owned ring-buffer storage for construction, reserve, enqueue, metadata inspection, and cleanup.
+  - [x] Implement `LinkedList<T>` with owned nodes and no public raw node pointers for construction, front/back insertion, metadata inspection, and cleanup.
+  - [x] Implement source-level `out T` bodies for `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast`.
+  - [x] Complete safe retborrow and slice-view lowering for `Get`, `GetMut`, `Peek`, `AsSlice`, and `AsMutableSlice`.
+  - [x] Collapse `LinkedList<T>` to a single allocation per node once generic aggregate layout/drop lowering makes that sound and simple.
+  - [ ] Implement dictionary hash/equality constraints before exposing generic `Dictionary<K, V>`.
+    - [x] Add source-level `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` contracts.
+    - [ ] Enforce generic key constraints in type checking before `Dictionary<K, V>` can be used.
+    - [ ] Preserve dictionary key constraints through monomorphization and package images.
+    - [ ] Add diagnostics that reject dictionary use when `K` has no proven hash/equality contract.
+  - [ ] Implement `Dictionary<K, V>` once constraints are available.
+  - [ ] Add move/drop/growth/package-consumption tests for every collection.
+- [ ] Implement `System.Threading`.
+  - [ ] Define the safe thread-entry callable model.
+  - [ ] Implement `Thread` construction.
+  - [ ] Implement `Thread.Join`.
+  - [ ] Implement `Thread.Detach`.
+  - [ ] Implement `Thread.Yield`.
+  - [ ] Implement `Thread.SleepMilliseconds`.
+  - [ ] Add Linux platform backing.
+  - [ ] Add Windows platform backing.
+  - [ ] Add packaged-consumption tests.
+- [ ] Implement `System.Net` and `System.Net.Tcp`.
+  - [ ] Add shared networking result/status/error types.
+  - [ ] Add `IPv4Address` and `IPv4Endpoint`.
+  - [ ] Implement `TcpClient` construction.
+  - [ ] Implement `TcpClient.Read`.
+  - [ ] Implement `TcpClient.Write`.
+  - [ ] Implement `TcpClient.Shutdown`.
+  - [ ] Implement `TcpClient.Close`.
+  - [ ] Implement `TcpListener` construction.
+  - [ ] Implement `TcpListener.Accept`.
+  - [ ] Add Linux syscall-backed socket support.
+  - [ ] Add Windows Winsock support.
+  - [ ] Add packaged-consumption tests.
+- [ ] Update public documentation as implementation lands.
+  - [ ] Keep `docs/StandardLibrary/StandardLibrary.md` in sync with the actual package graph.
+  - [ ] Update `docs/StandardLibrary/StandardLibraryBaseline.md` when the release baseline expands.
+  - [ ] Add examples that use `new()` and `new(allocator)` rather than `Type.New()`.
+  - [ ] Document any APIs that intentionally remain concrete instead of stream-based.
+
+### Reduce C-Runtime Dependencies
+
+- [ ] Define the supported runtime dependency profiles.
+  - [ ] Distinguish explicit Stark-emitted C runtime calls from Clang/LLVM toolchain-inherited dependencies.
+  - [ ] Define the default hosted profile and the explicit-C-runtime-free profile.
+  - [ ] Document that user-written `ffi` may still explicitly call C libraries.
+  - [ ] Document allowed OS boundaries such as Linux syscalls, Windows `kernel32`, Winsock, and selected Windows allocation APIs.
+- [ ] Audit current explicit Stark-emitted C runtime symbol dependencies.
+  - [x] Make the existing Linux and Windows explicit-C-runtime symbol archive tests active if they are not currently discovered by the test runner.
+  - [x] Expand archive/object deny lists to include `malloc`, `realloc`, `free`, and any other explicit C runtime symbols emitted by Stark-owned runtime lowering.
+  - [x] Add final executable symbol audits for both source-imported stdlib builds and packaged stdlib builds.
+  - [ ] Add regression coverage that simple `import System` console programs do not pull unused allocator C symbols from `System.Memory`.
+- [ ] Replace the C-backed heap-local helper and `System.Memory` allocator lowering.
+  - [x] Route heap-local allocation through Stark-owned runtime helpers instead of `malloc`.
+  - [x] Route heap-local deallocation through Stark-owned runtime helpers instead of direct `free`.
+  - [x] Route `System.Memory.Allocate`, `Reallocate`, and `Free` through the same allocator contract.
+  - [ ] Preserve allocator provenance through allocation, reallocation, move, drop, and collection growth.
+  - [x] Implement true target-aware over-alignment instead of merely passing an alignment argument to `malloc`.
+  - [x] Keep LLVM allocation facts such as `noalias`, `nonnull`, `allocsize`, `allocalign`, and `dereferenceable` only where the new runtime contract proves them.
+- [x] Add Linux allocator backing without libc.
+  - [x] Choose the initial Linux virtual-memory strategy.
+  - [x] Implement syscall-backed allocate, deallocate, and reallocate-or-copy behavior.
+  - [x] Implement metadata needed for sized free, alignment recovery, and allocation provenance.
+  - [x] Add Linux tests proving no `malloc`, `realloc`, `free`, or allocator-related libc symbols remain.
+- [x] Add Windows allocator backing without CRT dependency.
+  - [x] Choose the initial Windows `Heap*` or `VirtualAlloc` strategy.
+  - [x] Implement allocate, deallocate, and reallocate-or-copy behavior using Windows OS APIs.
+  - [x] Implement metadata needed for sized free, alignment recovery, and allocation provenance.
+  - [x] Add Windows tests proving no CRT allocation symbols remain.
+- [ ] Improve package and source-module linkage so unused modules do not drag runtime dependencies into final binaries.
+  - [ ] Avoid linking source-imported dependency objects that provide no referenced symbols.
+  - [ ] Make packaged static-library consumption cooperate with section garbage collection or finer object granularity.
+  - [ ] Ensure re-exporting `System.Memory` does not by itself force allocator symbols into unrelated programs.
+  - [ ] Preserve package-image metadata needed for precise dependency selection.
+
 
 ### Linux Standard Libary Implementation with SysCall (not libc)
 

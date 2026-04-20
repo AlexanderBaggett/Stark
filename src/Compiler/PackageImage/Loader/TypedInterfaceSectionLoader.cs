@@ -61,13 +61,18 @@ internal static partial class PackageImageLoader
                     return false;
                 }
 
+                if (!TryParseVisibility(method.Visibility ?? type.Visibility, out var methodVisibility))
+                {
+                    return false;
+                }
+
                 var qualifiedMethodName = $"{type.Name}.{method.Name}";
                 var publishedOverloadKey = method.PublishedOverloadKey
                     ?? TryGetPublishedOverloadKey(publishedOverloadKeysBySymbol, method.SymbolName);
                 declarations.Add(new TopLevelDeclarationModel(
                     qualifiedMethodName,
                     DeclarationKind.Function,
-                    visibility,
+                    methodVisibility,
                     CreateFunctionDeclarationModel(
                         qualifiedMethodName,
                         functionKind,
@@ -94,6 +99,7 @@ internal static partial class PackageImageLoader
                             $"{module.Module.ModuleName}.{qualifiedMethodName}",
                             method.SymbolName,
                             method.Parameters),
+                        isStatic: method.IsStatic,
                         publishedOverloadKey: publishedOverloadKey)));
             }
         }

@@ -41,6 +41,31 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void ExplicitConstructorsSuppressImplicitDefaultConstructor()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+
+                Box(i32[-2147483648 2147483647] value) {
+                    self.Value = value;
+                }
+            }
+
+            fn void Run() {
+                stack Box box = new();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3009", "does not declare a constructor that accepts 0 arguments", "Available constructor arities: 1");
+    }
+
+    [Fact]
     public void TupleLikeEnumConstructorsRejectArityMismatchDuringTypeChecking()
     {
         var result = Compile(

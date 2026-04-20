@@ -13,7 +13,7 @@ public enum FileMode {
 }
 
 public struct File {
-    fn bool IsOpen(File self);
+    finite law bool IsOpen(File self);
     fn i32 Close(mut borrow File self);
     fn i32 Flush(mut borrow File self);
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
@@ -26,6 +26,10 @@ public struct File {
 ```
 
 The owned `File` handle has a `mut drop` that closes the handle on scope exit.
+
+`IsOpen` is `finite law` because it only reads local handle state and always
+returns. The other file methods are ordinary `fn` because they mutate handle or
+buffer state, perform IO, or depend on filesystem state.
 
 ## Top-Level Helpers
 

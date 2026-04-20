@@ -63,6 +63,73 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void PublicSafeRawAllocationApisAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4118");
+    }
+
+    [Fact]
+    public void PublicSafeRawFreeApisAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public fn void FreeBytes(rawmutptr<i8[-128 127]> pointer);
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4118");
+    }
+
+    [Fact]
+    public void InternalRawAllocationApisRemainAvailableForLowLevelImplementation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            internal fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            """);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void FfiRawAllocationBoundariesRemainAvailable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            """);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void PublicSafeNonAllocationRawPointerViewsRemainAvailable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public finite law rawptr<i8[-128 127]> Data(ascii source);
+            """);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
     public void ConstGlobalsRejectReachableRawPointers()
     {
         var result = Compile(
@@ -258,6 +325,26 @@ public sealed class SemanticValidationTests
             finite void Loop() {
                 while infinite (true) {
                     break;
+                }
+
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4103");
+    }
+
+    [Fact]
+    public void FiniteFunctionsRejectNonDeterministicForLoops()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite void Loop(bool flag) {
+                for non-deterministic (; flag; ) {
+                    ;
                 }
 
                 return;

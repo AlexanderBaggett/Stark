@@ -128,7 +128,9 @@ internal sealed record StarkPackageMethodManifest(
     bool IsHot = false,
     bool IsCold = false,
     string InlinePreference = "inlinehint",
-    bool HasExplicitInlinePreference = false);
+    bool HasExplicitInlinePreference = false,
+    bool IsStatic = false,
+    string? Visibility = null);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -153,7 +155,8 @@ internal sealed record StarkPackageEnumVariantManifest(
 
 internal sealed record StarkPackageFieldManifest(
     string Name,
-    string Type);
+    string Type,
+    string? Visibility = null);
 
 internal sealed record StarkPackageGlobalManifest(
     string Name,
@@ -201,7 +204,8 @@ internal sealed record StarkPackageTypedConstructorManifest(
 
 internal sealed record StarkPackageTypedFieldManifest(
     string Name,
-    StarkPackageTypeReference Type);
+    StarkPackageTypeReference Type,
+    string? Visibility = null);
 
 internal sealed record StarkPackageTypedFunctionManifest(
     string Name,
@@ -241,7 +245,9 @@ internal sealed record StarkPackageTypedMethodManifest(
     bool IsHot = false,
     bool IsCold = false,
     string InlinePreference = "inlinehint",
-    bool HasExplicitInlinePreference = false);
+    bool HasExplicitInlinePreference = false,
+    bool IsStatic = false,
+    string? Visibility = null);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,

@@ -34,6 +34,14 @@ public sealed class ParserConformanceTests
                     return 2;
                 }
 
+                internal fn i32[-2147483648 2147483647] HiddenWidth() {
+                    return 2;
+                }
+
+                static finite law Pair<T> Empty(T value) {
+                    return new Pair<T>(value, value);
+                }
+
                 drop {
                     ;
                 }
@@ -145,6 +153,27 @@ public sealed class ParserConformanceTests
 
             fn i32[-2147483648 2147483647] Read() {
                 return GetNode(1, 2,).Leaves[0].Value;
+            }
+            """
+        },
+        {
+            "target typed object creation parses",
+            """
+            module AllocationSyntax
+
+            struct Box {
+                i32[min max] Value;
+
+                Box(i32[min max] value) {
+                    ;
+                }
+            }
+
+            fn Box Make(i32[min max] value) {
+                stack Box empty = new();
+                stack Box constructed = new(value);
+                stack Box initialized = new() { Value = value };
+                return new(value);
             }
             """
         },

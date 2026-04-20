@@ -2125,7 +2125,8 @@ internal sealed class SsaCleanupOptimizer
                 call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
                 call.Type,
                 call.Text,
-                call.IndirectArgumentLocalNames),
+                call.IndirectArgumentLocalNames,
+                call.SourceReturnType),
             SsaConvertRValue convert => new SsaConvertRValue(
                 RewriteValue(convert.Operand, replacements),
                 convert.TargetType,
@@ -3153,7 +3154,8 @@ internal sealed class SsaConstantPropagator
                 call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
                 call.Type,
                 call.Text,
-                call.IndirectArgumentLocalNames),
+                call.IndirectArgumentLocalNames,
+                call.SourceReturnType),
             SsaConvertRValue convert => new SsaConvertRValue(
                 RewriteValue(convert.Operand, replacements),
                 convert.TargetType,

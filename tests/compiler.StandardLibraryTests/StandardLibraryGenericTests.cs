@@ -24,4 +24,12 @@ public sealed class StandardLibraryGenericTests
 
     [Fact]
     public Task PackagedStdLibWindowsArchiveHasNoCrtSymbolReferences() => _suite.PackagedStdLibWindowsArchiveHasNoCrtSymbolReferences();
+
+    [Fact]
+    public Task SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences() =>
+        _suite.SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences();
+
+    [Fact]
+    public Task PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences() =>
+        _suite.PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences();
 }

@@ -125,6 +125,13 @@ internal static partial class PackageImageLoader
                 foreach (var field in type.Fields.Where(field => primaryConstructorParameterNames?.Contains(field.Name) != true))
                 {
                     builder.Append("    ");
+                    if (!string.IsNullOrWhiteSpace(field.Visibility)
+                        && !string.Equals(field.Visibility, "public", StringComparison.Ordinal))
+                    {
+                        builder.Append(field.Visibility);
+                        builder.Append(' ');
+                    }
+
                     builder.Append(field.Type);
                     builder.Append(' ');
                     builder.Append(field.Name);
@@ -147,6 +154,8 @@ internal static partial class PackageImageLoader
 
                 foreach (var method in (type.Methods ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))
                 {
+                    var supportsMemberVisibility = string.Equals(type.Kind, "struct", StringComparison.Ordinal)
+                        || string.Equals(type.Kind, "record", StringComparison.Ordinal);
                     TryGetGenericTemplateBody(
                         genericTemplateBodies,
                         publishedOverloadKeysBySymbol,
@@ -155,6 +164,17 @@ internal static partial class PackageImageLoader
                         method.Parameters,
                         out var methodBodyText);
                     builder.Append("    ");
+                    if (supportsMemberVisibility && !string.IsNullOrWhiteSpace(method.Visibility))
+                    {
+                        builder.Append(method.Visibility);
+                        builder.Append(' ');
+                    }
+
+                    if (method.IsStatic)
+                    {
+                        builder.Append("static ");
+                    }
+
                     if (method.IsStrictFp)
                     {
                         builder.Append("strictfp ");
@@ -533,6 +553,7 @@ internal static partial class PackageImageLoader
         StarkPackageAsmManifest? asm,
         IReadOnlyList<string>? genericParameters,
         bool hasBody = false,
+        bool isStatic = false,
         string? publishedOverloadKey = null)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
@@ -553,7 +574,8 @@ internal static partial class PackageImageLoader
             HasBody: hasBody,
             Asm: CreateAsmModel(asm),
             GenericParameterNames: genericParameters ?? [],
-            PublishedOverloadKey: publishedOverloadKey);
+            PublishedOverloadKey: publishedOverloadKey,
+            IsStatic: isStatic);
     }
 
     private static InlinePreference ParseInlinePreferenceOrDefault(string inlinePreference)
@@ -1264,6 +1286,9 @@ internal static partial class PackageImageLoader
             ImportedTemplateTypedBodyExpressionKind.Conditional => expression.Args.Count == 3
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} ? {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} : {RenderImportedTypedTemplateExpression(expression.Args[2], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.TypeLayout => expression.Type is not null && expression.Name is not null
+                ? $"{expression.Name}({expression.Type.DisplayName})"
+                : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.ObjectCreation => expression.Ordinal is { } objectCreationOrdinal && objectCreationsByOrdinal.TryGetValue(objectCreationOrdinal, out var objectCreation)
                 ? RenderObjectCreation(objectCreation, expression, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)
                 : string.Empty,
@@ -1827,7 +1852,7 @@ internal static partial class PackageImageLoader
             type.Visibility,
             type.Kind,
             type.Fields
-                .Select(field => new StarkPackageFieldManifest(field.Name, RenderTypeReference(field.Type)))
+                .Select(field => new StarkPackageFieldManifest(field.Name, RenderTypeReference(field.Type), field.Visibility))
                 .ToArray(),
             type.GenericParameters,
             type.PrimaryConstructorParameters?.Select(parameter => new StarkPackageParameterManifest(
@@ -1857,7 +1882,9 @@ internal static partial class PackageImageLoader
                 method.IsHot,
                 method.IsCold,
                 method.InlinePreference,
-                method.HasExplicitInlinePreference))
+                method.HasExplicitInlinePreference,
+                method.IsStatic,
+                method.Visibility))
                 .ToArray(),
             type.Destructor);
     }

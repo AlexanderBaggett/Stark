@@ -1,0 +1,43 @@
+module System.Memory
+
+public enum MemoryError {
+    OutOfMemory,
+    InvalidLayout,
+    UnsupportedAlignment,
+    TooLarge,
+}
+
+public enum MemoryStatus {
+    Ok,
+    Err(MemoryError),
+}
+
+public enum MemoryResult<T> {
+    Ok(T),
+    Err(MemoryError),
+}
+
+public struct Allocator {
+    u8[0 127] Kind;
+
+    static finite law Allocator Default() {
+        return new Allocator() {
+            Kind = 0
+        };
+    }
+
+    finite law bool IsDefault(borrow Allocator self) {
+        return self.Kind == 0;
+    }
+}
+
+internal struct Allocation {
+    rawmutptr<i8[-128 127]> Pointer;
+    i64[0 max] ByteLength;
+    i64[1 max] Alignment;
+    Allocator Allocator;
+}
+
+internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+internal fn void Free(Allocation allocation);

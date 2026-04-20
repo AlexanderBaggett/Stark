@@ -77,7 +77,14 @@ public finite law f32 ReciprocalSqrtEstimate(f32 value);
 - `SinCos` returns a small aggregate with `Sin` and `Cos` fields so the surface stays explicit and cheap.
 - The x86/x64 rounding family currently assumes SSE4.1 support; `Sqrt`, `ReciprocalEstimate`, and `ReciprocalSqrtEstimate` use SSE scalar instructions.
 - `FusedMultiplyAdd` on x86/x64 currently uses `vfmadd213ss`/`vfmadd213sd` and therefore assumes FMA3 support at runtime.
-- On non-Windows native links, only the LLVM-intrinsic-backed math functions require `-lm`.
+- On non-Windows native links, the LLVM-intrinsic-backed transcendental math
+  functions can require `-lm` after LLVM/toolchain lowering.
+
+The `-lm` dependency is inherited through LLVM and the native toolchain. Under
+the current dependency criteria, this is not treated as a C-backed
+`System.Math` implementation and is not a standard-library replacement target.
+Stark still emits optimizer-visible LLVM math intrinsics so LLVM can choose the
+best target lowering.
 
 ## Example
 
@@ -96,4 +103,6 @@ export ffi fn i32 main() {
 
 - The LLVM-intrinsic mappings listed in Milestone 7.5 are implemented.
 - The current hardware/compiler-intrinsic batch is implemented for `Sqrt`, `FusedMultiplyAdd`, `ReciprocalEstimate`, `ReciprocalSqrtEstimate`, `Ceiling`, `Floor`, `Truncate`, `Round`, `Min`, and `Max`.
+- The transcendental math slice can inherit a libm dependency from LLVM/native
+  toolchain lowering on non-Windows targets.
 - The remaining integer bit-operations half of the milestone now lives in `System.BitOperations`.

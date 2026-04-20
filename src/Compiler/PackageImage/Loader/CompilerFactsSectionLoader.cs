@@ -51,7 +51,8 @@ internal static partial class PackageImageLoader
                         BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
                     .ToArray(),
                     SourceName: method.QualifiedName,
-                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
+                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                    IsStatic: method.IsStatic);
             }
         }
 
@@ -126,9 +127,16 @@ internal static partial class PackageImageLoader
                 var orderedFields = new List<FieldSymbol>(type.Fields.Count);
                 foreach (var field in type.Fields)
                 {
+                    if (!TryParseVisibility(field.Visibility ?? "public", out var fieldVisibility))
+                    {
+                        return false;
+                    }
+
                     var fieldSymbol = new FieldSymbol(
                         field.Name,
-                        BuildTypeSymbol(field.Type, module.Module.ModuleName, localNamedTypes));
+                        BuildTypeSymbol(field.Type, module.Module.ModuleName, localNamedTypes),
+                        fieldVisibility,
+                        module.Module.ModuleName);
                     fields[field.Name] = fieldSymbol;
                     orderedFields.Add(fieldSymbol);
                 }

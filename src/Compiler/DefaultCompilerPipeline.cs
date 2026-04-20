@@ -3034,7 +3034,8 @@ public static class DefaultCompilerPipeline
                         resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
                         parameters,
                         SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
-                        GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray());
+                        GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                        IsStatic: declaration.IsStatic);
                 }
             }
 

@@ -325,7 +325,7 @@ internal sealed class LlvmIrEmitter
                         operation: "EmitFunctionDefinition");
                 }
             }
-            else if (function.HasBody)
+            else if (function.HasBody && !IsOpenGenericTemplate(signature))
             {
                 builder.AppendLine($"; LLVM body emission pending for {resolvedName}");
                 LogLlvmFallback(
@@ -400,6 +400,9 @@ internal sealed class LlvmIrEmitter
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd());
     }
+
+    private static bool IsOpenGenericTemplate(TypedFunctionSignature signature) =>
+        signature.IsGeneric && !signature.IsGenericInstantiation;
 
     private static IReadOnlySet<string> CollectReferencedImportedFunctions(
         SsaIrModule ssa,

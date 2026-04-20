@@ -59,6 +59,109 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ImportedModulePublicMembersResolveByFinalName()
+    {
+        var result = Compile(
+            """
+            import Lib.Foundation
+            module Demo
+
+            fn i32[0 max] Use() {
+                stack Box box = new() { Value = Identity(Answer) };
+                stack Status status = Status.Ok;
+                switch (status) {
+                    case Status.Ok:
+                        return box.Value;
+                    case Status.Err:
+                        return Worker.Value();
+                }
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib.Foundation", "Lib/Foundation.stark"),
+                        """
+                        module Lib.Foundation
+
+                        public const i32[0 max] Answer = 41;
+
+                        public struct Box {
+                            i32[0 max] Value;
+                        }
+
+                        public enum Status {
+                            Ok,
+                            Err
+                        }
+
+                        public struct Worker {
+                            static finite law i32[0 max] Value() {
+                                return 7;
+                            }
+                        }
+
+                        public fn i32[0 max] Identity(i32[0 max] value) {
+                            return value;
+                        }
+                        """,
+                        "Lib/Foundation.stark")
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void AmbiguousImportedTypeFinalNamesRequireQualification()
+    {
+        var result = Compile(
+            """
+            import Left
+            import Right
+            module Demo
+
+            fn i32[0 max] Use() {
+                stack Value value = new() { X = 1 };
+                return value.X;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Left", "Left.stark"),
+                        """
+                        module Left
+
+                        public struct Value {
+                            i32[0 max] X;
+                        }
+                        """,
+                        "Left.stark"),
+                    (
+                        new ResolvedModuleReference("Right", "Right.stark"),
+                        """
+                        module Right
+
+                        public struct Value {
+                            i32[0 max] X;
+                        }
+                        """,
+                        "Right.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3004"
+                && diagnostic.Message.Contains("Imported type name 'Value'", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Left.Value", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Right.Value", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ConstantArithmeticIntegerRangeEndpointsResolveAtCompileTime()
     {
         var result = Compile(
@@ -1305,6 +1408,126 @@ public sealed class TypeCheckingTests
         Assert.Equal(
             2,
             typeCheckModel.Functions.Keys.Count(static name => name.StartsWith("Counter.Scale#(", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void TargetTypedObjectCreationResolvesFromDestinationType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+
+                Box() {
+                    self.Value = 0;
+                }
+
+                Box(i32[min max] value) {
+                    self.Value = value;
+                }
+            }
+
+            fn Box Make(i32[min max] value) {
+                return new(value);
+            }
+
+            fn i32[min max] Run(i32[min max] value) {
+                stack Box empty = new();
+                stack Box initialized = new() { Value = value };
+                stack mut Box assigned = new(value);
+                assigned = new(value);
+                return assigned.Value + empty.Value + initialized.Value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var objectCreations = typeCheckModel.ObjectCreations.ToArray();
+        Assert.Equal(5, objectCreations.Length);
+        Assert.All(objectCreations, static objectCreation => Assert.Equal("Box", objectCreation.CreatedType.DisplayName));
+        Assert.Equal(5, objectCreations.Count(static objectCreation => objectCreation.Constructor is not null));
+        Assert.Single(objectCreations, static objectCreation => objectCreation.Members.Count == 1);
+    }
+
+    [Fact]
+    public void TargetTypedObjectCreationResolvesAllocatorTakingConstructorOverload()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Allocator {
+                i32[0 255] Tag;
+            }
+
+            struct List {
+                i32[0 max] Capacity;
+
+                List() {
+                    self.Capacity = 0;
+                }
+
+                List(Allocator allocator) {
+                    self.Capacity = allocator.Tag;
+                }
+            }
+
+            fn List MakeDefault() {
+                return new();
+            }
+
+            fn List MakeCustom(Allocator allocator) {
+                return new(allocator);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var constructors = typeCheckModel.ObjectCreations
+            .Where(static objectCreation => objectCreation.CreatedType.DisplayName == "List")
+            .Select(static objectCreation => objectCreation.Constructor)
+            .ToArray();
+
+        Assert.Contains(constructors, static constructor => constructor is { Parameters.Count: 0 });
+        Assert.Contains(constructors, static constructor => constructor is { Parameters.Count: 1 }
+            && constructor.Parameters[0].Type.DisplayName == "Allocator");
+    }
+
+    [Fact]
+    public void TargetTypedObjectCreationRequiresNamedDestinationType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void MissingTarget() {
+                new();
+            }
+
+            fn void NonNamedTarget() {
+                stack i32[min max] value = new();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("requires an expected named target type", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("requires a named target type", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal));
     }
 
     private static void AssertIntegerRange(StarkTypeSymbol type, int bitWidth, BigInteger min, BigInteger max)

@@ -136,6 +136,157 @@ public sealed class CompilerPipelineTypeCheckTests
 
 
     [Fact]
+    public void ManifestBackedStaticMemberFunctionsPreserveStaticAndFunctionKindContracts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-static-member-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Allocator {
+                    i32[0 255] Tag;
+
+                    static finite law Allocator Default() {
+                        return new() { Tag = 0 };
+                    }
+
+                    finite law bool IsDefault(borrow Allocator self) {
+                        return self.Tag == 0;
+                    }
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var allocator = Assert.Single(facadeModule.EffectiveTypedInterface!.Types, static type => type.QualifiedName == "Facade.Allocator");
+            var defaultMethod = Assert.Single(allocator.Methods!, static method => method.Name == "Default");
+            Assert.True(defaultMethod.IsStatic);
+            Assert.Equal("finitelaw", defaultMethod.Kind);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn Facade.Allocator Run() {
+                        return Facade.Allocator.Default();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "type-check",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+            Assert.NotNull(typeCheckModel);
+            Assert.True(typeCheckModel.Functions["Facade.Allocator.Default"].IsStatic);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void ManifestBackedMemberFunctionsPreserveVisibility()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-method-visibility-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32[min max] Value;
+
+                    public fn i32[min max] Visible(Box self) {
+                        return self.Value;
+                    }
+
+                    internal fn i32[min max] Hidden(Box self) {
+                        return self.Value;
+                    }
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var typedBox = Assert.Single(facadeModule.EffectiveTypedInterface!.Types, static type => type.QualifiedName == "Facade.Box");
+            Assert.Equal("public", Assert.Single(typedBox.Methods!, static method => method.Name == "Visible").Visibility);
+            Assert.Equal("internal", Assert.Single(typedBox.Methods!, static method => method.Name == "Hidden").Visibility);
+
+            var sourceBox = Assert.Single(facadeModule.EffectiveSourceSurface.Types!, static type => type.QualifiedName == "Facade.Box");
+            Assert.Equal("public", Assert.Single(sourceBox.Methods!, static method => method.Name == "Visible").Visibility);
+            Assert.Equal("internal", Assert.Single(sourceBox.Methods!, static method => method.Name == "Hidden").Visibility);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run() {
+                        stack Facade.Box box = new Facade.Box() { Value = 1 };
+                        return box.Hidden();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "type-check",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            var importedFacade = Assert.Single(loadedModules.Modules.Values, static module => module.SyntaxModel.ModuleName == "Facade");
+            Assert.Equal(StarkVisibility.Internal, Assert.Single(importedFacade.SyntaxModel.Declarations, static declaration => declaration.Name == "Box.Hidden").Visibility);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedGlobalsResolveFromPackageImageFactsWhenBridgeGlobalSourceIsCorrupted()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-global-facts-pipeline-");

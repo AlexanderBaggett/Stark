@@ -42,7 +42,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             record Pair<A, B>(A First, B Second) { }
 
             export ffi fn i32[-2147483648 2147483647] main() {
-                stack Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> p = new Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]>() { First = 3, Second = 7 };
+                stack Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> p = new Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]>(3, 7);
                 return p.First + p.Second;
             }
             """);

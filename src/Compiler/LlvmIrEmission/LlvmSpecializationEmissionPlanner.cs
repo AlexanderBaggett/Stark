@@ -622,6 +622,11 @@ internal static class LlvmSpecializationEmissionPlanner
 
     private static StarkTypeSymbol SyntheticLowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
     {
+        if (!isFfi && forReturnValue)
+        {
+            return StarkTypeSymbols.BorrowReturnRuntimeType(type);
+        }
+
         if (!isFfi)
         {
             return type;

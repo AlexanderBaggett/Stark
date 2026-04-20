@@ -414,6 +414,7 @@ internal sealed partial class MidLevelIrLowerer
                 target = new PlaceTarget(
                     name,
                     RootAddress: null,
+                    RootValue: null,
                     local.Type,
                     local.Type,
                     Path: [],
@@ -546,6 +547,7 @@ internal sealed partial class MidLevelIrLowerer
                 target = new PlaceTarget(
                     operand.Text,
                     RootAddress: null,
+                    RootValue: null,
                     operand.Type,
                     operand.Type,
                     Path: [],
@@ -572,6 +574,7 @@ internal sealed partial class MidLevelIrLowerer
                 target = new PlaceTarget(
                     RootName: null,
                     RootAddress: address,
+                    RootValue: null,
                     RootType: elementType,
                     Type: elementType,
                     Path: [],
@@ -1546,6 +1549,14 @@ internal sealed partial class MidLevelIrLowerer
                         : CoerceOperand(result, expectedType);
                 }
 
+                case ImportedTemplateTypedBodyExpressionKind.TypeLayout:
+                {
+                    var result = LowerImportedTypedTemplateTypeLayout(expression);
+                    return result is null || expectedType is null
+                        ? result
+                        : CoerceOperand(result, expectedType);
+                }
+
                 case ImportedTemplateTypedBodyExpressionKind.ObjectCreation:
                 {
                     var result = LowerImportedTypedTemplateObjectCreation(expression);
@@ -1651,6 +1662,35 @@ internal sealed partial class MidLevelIrLowerer
                 default:
                     return null;
             }
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateTypeLayout(
+            ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Type is null || expression.Name is null)
+            {
+                return null;
+            }
+
+            var targetType = ApplyGenericSubstitution(expression.Type);
+            var layout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+                targetType,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts);
+            if (layout is null)
+            {
+                return null;
+            }
+
+            var value = string.Equals(expression.Name, "alignof", StringComparison.Ordinal)
+                ? layout.AlignmentBytes
+                : layout.SizeBytes;
+            var resultType = string.Equals(expression.Name, "alignof", StringComparison.Ordinal)
+                ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
+                : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+            return new MidLevelIrIntegerConstantOperand(
+                new BigInteger(value),
+                resultType);
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateIndexAccess(
@@ -2651,6 +2691,9 @@ internal sealed partial class MidLevelIrLowerer
                 ImportedTemplateTypedBodyExpressionKind.Conditional => expression.Args.Count == 3
                     ? $"{RenderImportedTypedTemplateExpressionCore(expression.Args[0])} ? {RenderImportedTypedTemplateExpressionCore(expression.Args[1])} : {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}"
                     : "conditional",
+                ImportedTemplateTypedBodyExpressionKind.TypeLayout => expression.Type is not null && expression.Name is not null
+                    ? $"{expression.Name}({expression.Type.DisplayName})"
+                    : "type-layout",
                 ImportedTemplateTypedBodyExpressionKind.ObjectCreation => $"new #{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",
                 ImportedTemplateTypedBodyExpressionKind.EnumConstructor => $"enumctor#{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",
                 ImportedTemplateTypedBodyExpressionKind.EnumCall => $"enumcall#{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",

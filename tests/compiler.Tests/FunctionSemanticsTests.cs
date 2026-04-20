@@ -210,6 +210,42 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorState()
+    {
+        var result = Compile(
+            """
+            module System.Memory
+
+            public struct Allocator {
+                u8[0 127] Kind;
+            }
+
+            internal struct Allocation {
+                rawmutptr<i8[-128 127]> Pointer;
+                i64[0 max] ByteLength;
+                i64[1 max] Alignment;
+                Allocator Allocator;
+            }
+
+            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn void Free(Allocation allocation);
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        foreach (var functionName in new[] { "Allocate", "Reallocate", "Free" })
+        {
+            var memoryEffects = validation.Functions[functionName].MemoryEffects;
+            Assert.NotNull(memoryEffects);
+            Assert.True(memoryEffects!.ReadsOtherMemory);
+            Assert.True(memoryEffects.WritesOtherMemory);
+        }
+    }
+
+    [Fact]
     public void LawsCanCallPlainFnsThatInferAsLaws()
     {
         var result = Compile(
@@ -268,6 +304,199 @@ public sealed class FunctionSemanticsTests
         Assert.False(result.Succeeded);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4104" && diagnostic.Message.Contains("Touch", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4104" && diagnostic.Message.Contains("through call 'Touch'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StaticMemberFunctionsTypeCheckAndPreserveFunctionKinds()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Allocator {
+                static finite law Allocator Default() {
+                    return new();
+                }
+
+                finite law bool IsDefault(borrow Allocator self) {
+                    return true;
+                }
+            }
+
+            fn Allocator UseDefault() {
+                return Allocator.Default();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheck));
+        Assert.NotNull(typeCheck);
+        Assert.True(typeCheck.Functions["Allocator.Default"].IsStatic);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+        var defaultMethod = validation.Functions["Allocator.Default"];
+        Assert.Equal(StarkFunctionKind.FiniteLaw, defaultMethod.DeclaredKind);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, defaultMethod.EffectiveKind);
+    }
+
+    [Fact]
+    public void InstanceMemberFunctionsCannotBeCalledThroughTypeName()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+
+                finite law i32[min max] Read(borrow Box self) {
+                    return self.Value;
+                }
+            }
+
+            fn i32[min max] Read(Box box) {
+                return Box.Read(box);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK3014" && diagnostic.Message.Contains("Box.Read", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StaticMemberFunctionsCannotBeCalledThroughInstance()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Utility {
+                static finite law i32[min max] Value() {
+                    return 1;
+                }
+            }
+
+            fn i32[min max] Read(Utility utility) {
+                return utility.Value();
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK3014" && diagnostic.Message.Contains("Utility.Value", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StaticModifierIsRejectedOutsideStructAndRecordMemberFunctions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static fn void Bad() {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4115");
+    }
+
+    [Fact]
+    public void LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            law i32[min max] ReadGlobal() {
+                return Counter;
+            }
+
+            law void Allocate() {
+                heap i32[min max] value = 0;
+                return;
+            }
+
+            law void WriteGlobal() {
+                Counter = 1;
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4105" && diagnostic.Message.Contains("ReadGlobal", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4102" && diagnostic.Message.Contains("Allocate", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4104" && diagnostic.Message.Contains("WriteGlobal", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExport()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            export struct Api {
+                fn void SourceVisible() {
+                    return;
+                }
+
+                internal fn void RuntimeOnly() {
+                    return;
+                }
+
+                export fn void AbiVisible() {
+                    return;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+
+        Assert.Equal(StarkVisibility.Public, Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Api.SourceVisible").Visibility);
+        Assert.Equal(StarkVisibility.Internal, Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Api.RuntimeOnly").Visibility);
+        Assert.Equal(StarkVisibility.Export, Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Api.AbiVisible").Visibility);
+    }
+
+    [Fact]
+    public void MemberFunctionVisibilityCannotExceedEnclosingTypeVisibility()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            internal struct Hidden {
+                public fn void Leak() {
+                    return;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4116" && diagnostic.Message.Contains("Hidden.Leak", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ExportMemberFunctionsRequireExportEnclosingTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public struct Api {
+                export fn void AbiVisible() {
+                    return;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4116" && diagnostic.Message.Contains("Api.AbiVisible", StringComparison.Ordinal));
     }
 
     private static CompilationResult Compile(string source)

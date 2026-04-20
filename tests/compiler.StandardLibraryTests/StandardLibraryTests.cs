@@ -20,11 +20,13 @@ internal sealed class StandardLibraryTestSuite
 
         Assert.True(moduleGraph.ContainsLoadedModule("System"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.BitOperations"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Collections"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Console"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.File"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.Path"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Math"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Memory"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Text"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Buffer"));
@@ -76,6 +78,7 @@ internal sealed class StandardLibraryTestSuite
             Assert.Contains(modules, module => module.ModuleName == "System.IO.File");
             Assert.Contains(modules, module => module.ModuleName == "System.IO.Path");
             Assert.Contains(modules, module => module.ModuleName == "System.Math");
+            Assert.Contains(modules, module => module.ModuleName == "System.Memory");
             Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
             Assert.Contains(modules, module => module.ModuleName == "System.Text");
             Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Buffer");
@@ -83,9 +86,11 @@ internal sealed class StandardLibraryTestSuite
             var rootModule = modules.Single(module => module.ModuleName == "System");
             var reExports = rootModule.EffectiveSourceSurface.ReExports?.Select(static item => item.ModuleName).ToArray() ?? [];
             Assert.Contains("System.BitOperations", reExports);
+            Assert.Contains("System.Collections", reExports);
             Assert.Contains("System.Console", reExports);
             Assert.Contains("System.IO", reExports);
             Assert.Contains("System.Math", reExports);
+            Assert.Contains("System.Memory", reExports);
             Assert.Contains("System.Text", reExports);
 
             var ioModule = modules.Single(module => module.ModuleName == "System.IO");
@@ -136,6 +141,23 @@ internal sealed class StandardLibraryTestSuite
             Assert.Contains("PopCount", bitOperationsFunctions);
             Assert.Contains("RotateLeft", bitOperationsFunctions);
             Assert.Contains("RotateRight", bitOperationsFunctions);
+
+            var memoryModule = modules.Single(module => module.ModuleName == "System.Memory");
+            var memoryTypes = memoryModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
+            Assert.Contains("MemoryError", memoryTypes);
+            Assert.Contains("MemoryStatus", memoryTypes);
+            Assert.Contains("MemoryResult", memoryTypes);
+            Assert.Contains("Allocator", memoryTypes);
+
+            var collectionsModule = modules.Single(module => module.ModuleName == "System.Collections");
+            var collectionsTypes = collectionsModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
+            Assert.Contains("List", collectionsTypes);
+            Assert.Contains("Stack", collectionsTypes);
+            Assert.Contains("Queue", collectionsTypes);
+            Assert.Contains("LinkedList", collectionsTypes);
+            Assert.Contains("Equatable", collectionsTypes);
+            Assert.Contains("Hashable", collectionsTypes);
+            Assert.Contains("DictionaryKey", collectionsTypes);
         }
         finally
         {
@@ -148,6 +170,113 @@ internal sealed class StandardLibraryTestSuite
                 // Best effort cleanup only.
             }
         }
+    }
+
+    public void StdLibSourceMemoryModuleSupportsDefaultAllocatorSurface()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibMemorySurface.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System
+                module Demo
+
+                fn bool UseDefaultAllocator() {
+                    stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+                    return allocator.IsDefault();
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    public void StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibCollectionsSurface.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System
+                module Demo
+
+                fn bool Ok(MemoryStatus status) {
+                    switch (status) {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool UseCollections() {
+                    stack mut List<i32[0 max]> values = new();
+                    if (!Ok(values.Push(10))) {
+                        return false;
+                    }
+                    values.GetMut(0) = 11;
+                    values.AsMutableSlice()[0] = 12;
+                    if (values.Get(0) != 12) {
+                        return false;
+                    }
+                    if (values.AsSlice()[0] != 12) {
+                        return false;
+                    }
+                    stack mut i32[0 max] popped = 0;
+                    if (!values.TryPop(popped) || popped != 12 || values.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut Stack<i32[0 max]> numbers = new();
+                    if (!Ok(numbers.Push(20))) {
+                        return false;
+                    }
+                    if (numbers.Peek() != 20) {
+                        return false;
+                    }
+                    if (!numbers.TryPop(popped) || popped != 20 || numbers.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut Queue<i32[0 max]> queue = new();
+                    if (!Ok(queue.Enqueue(30))) {
+                        return false;
+                    }
+                    if (queue.Peek() != 30) {
+                        return false;
+                    }
+                    if (!queue.TryDequeue(popped) || popped != 30 || queue.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut LinkedList<i32[0 max]> linked = new();
+                    if (!Ok(linked.AddFirst(40))) {
+                        return false;
+                    }
+                    if (!Ok(linked.AddLast(50))) {
+                        return false;
+                    }
+                    if (!linked.TryRemoveFirst(popped) || popped != 40 || linked.Count() != 1) {
+                        return false;
+                    }
+                    if (!linked.TryRemoveLast(popped) || popped != 50 || linked.Count() != 0) {
+                        return false;
+                    }
+
+                    return values.Capacity() >= 1;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
     public void StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads()
     {
@@ -2862,9 +2991,10 @@ internal sealed class StandardLibraryTestSuite
             Assert.DoesNotContain(" U remove", nmStdout, StringComparison.Ordinal);
             Assert.DoesNotContain(" U rename", nmStdout, StringComparison.Ordinal);
             Assert.DoesNotContain(" U strlen", nmStdout, StringComparison.Ordinal);
-            Assert.DoesNotContain(" U memcpy", nmStdout, StringComparison.Ordinal);
-            Assert.DoesNotContain(" U memmove", nmStdout, StringComparison.Ordinal);
-            Assert.DoesNotContain(" U memset", nmStdout, StringComparison.Ordinal);
+            Assert.DoesNotContain(" U malloc", nmStdout, StringComparison.Ordinal);
+            Assert.DoesNotContain(" U realloc", nmStdout, StringComparison.Ordinal);
+            Assert.DoesNotContain(" U free", nmStdout, StringComparison.Ordinal);
+            AssertNoExplicitCAllocatorSymbols(ExtractUndefinedSymbols(nmStdout));
         }
         finally
         {
@@ -2956,6 +3086,125 @@ internal sealed class StandardLibraryTestSuite
             Assert.DoesNotContain("_wremove", undefinedSymbols);
             Assert.DoesNotContain("_wgetcwd", undefinedSymbols);
             Assert.DoesNotContain("_getcwd", undefinedSymbols);
+            AssertNoExplicitCAllocatorSymbols(undefinedSymbols);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+    public async Task SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var nmPath = FindFirstAvailableTool(OperatingSystem.IsWindows() ? "llvm-nm" : "nm", OperatingSystem.IsWindows() ? "nm" : "llvm-nm");
+        if (nmPath is null)
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-source-alloc-symbols-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            await WriteAllocatorAuditAppAsync(appPath);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            await AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(nmPath, outputPath);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+    public async Task PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var nmPath = FindFirstAvailableTool(OperatingSystem.IsWindows() ? "llvm-nm" : "nm", OperatingSystem.IsWindows() ? "nm" : "llvm-nm");
+        if (nmPath is null)
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-package-alloc-symbols-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            Assert.Contains("Emitted static library:", buildStdout.ToString());
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await WriteAllocatorAuditAppAsync(appPath);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            await AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(nmPath, outputPath);
         }
         finally
         {
@@ -3191,6 +3440,83 @@ internal sealed class StandardLibraryTestSuite
         }
     }
 
+    private static async Task WriteAllocatorAuditAppAsync(string appPath)
+    {
+        await File.WriteAllTextAsync(
+            appPath,
+            """
+            import System
+            module App
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            export ffi fn i32[min max] main() {
+                stack mut i32[min max] checksum = 0;
+
+                for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                    heap Box box = new Box() {
+                        Value = (i32[min max])i
+                    };
+                    checksum = checksum + box.Value;
+                }
+
+                if (checksum != 8128) {
+                    return 1;
+                }
+
+                return 0;
+            }
+            """);
+    }
+
+    private static async Task AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(string nmPath, string binaryPath)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = nmPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("-u");
+        startInfo.ArgumentList.Add(binaryPath);
+
+        using var process = System.Diagnostics.Process.Start(startInfo);
+        Assert.NotNull(process);
+
+        var stdout = await process!.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        Assert.Equal(0, process.ExitCode);
+        Assert.Equal(string.Empty, stderr);
+        AssertNoExplicitCAllocatorSymbols(ExtractUndefinedSymbols(stdout));
+    }
+
+    private static void AssertNoExplicitCAllocatorSymbols(IReadOnlySet<string> undefinedSymbols)
+    {
+        foreach (var symbol in new[]
+                 {
+                     "malloc",
+                     "_malloc",
+                     "realloc",
+                     "_realloc",
+                     "free",
+                     "_free",
+                     "calloc",
+                     "_calloc",
+                     "aligned_alloc",
+                     "_aligned_malloc",
+                     "posix_memalign"
+                 })
+        {
+            Assert.DoesNotContain(symbol, undefinedSymbols);
+        }
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -3282,6 +3608,12 @@ internal sealed class StandardLibraryTestSuite
             if (symbol.StartsWith("__imp_", StringComparison.Ordinal))
             {
                 symbol = symbol["__imp_".Length..];
+            }
+
+            var versionMarker = symbol.IndexOf('@', StringComparison.Ordinal);
+            if (versionMarker > 0)
+            {
+                symbol = symbol[..versionMarker];
             }
 
             if (!string.IsNullOrWhiteSpace(symbol))

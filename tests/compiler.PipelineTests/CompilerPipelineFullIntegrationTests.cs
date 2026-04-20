@@ -1027,8 +1027,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 export ffi fn i32[-2147483648 2147483647] main() {
-                    stack Many lessLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                    stack Many lessRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
+                    stack Many lessLeft = new Many(1, 2, 3, 4, 5);
+                    stack Many lessRight = new Many(1, 2, 3, 4, 6);
 
                     stack i32[-2147483648 2147483647][3] sameLeft = { 1, 2, 3 };
                     stack i32[-2147483648 2147483647][3] sameRight = { 1, 2, 3 };
@@ -1047,8 +1047,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                         && "cab!"[1, 2] < "cac?"[1, 2]
                         && ((unicode)"caf\u00E9!")[0, 4] != ((unicode)"cafe?")[0, 4]
                         && leftView != rightView
-                        && new Label() { Tag = "cab!"[1, 2], Word = ((unicode)"caf\u00E9!")[0, 4] }
-                            == new Label() { Tag = "zab?"[1, 2], Word = ((unicode)"caf\u00E9?")[0, 4] }
+                        && new Label("cab!"[1, 2], ((unicode)"caf\u00E9!")[0, 4])
+                            == new Label("zab?"[1, 2], ((unicode)"caf\u00E9?")[0, 4])
                         && Token.Pair(1, 2) > Token.Pair(1, 1)) {
                         return 7;
                     }
@@ -1191,7 +1191,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(llvmModule);
         Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment)", llvmModule.Text);
         Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_heap_alloc(i64 noundef", llvmModule.Text);
-        Assert.Contains("call void @free(ptr %slot_box)", llvmModule.Text);
+        Assert.Contains("call void @__stark_heap_free(ptr %slot_box)", llvmModule.Text);
     }
 
 
@@ -6345,6 +6345,56 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.Equal("Value", parameter.Name);
             Assert.Equal("named", parameter.Type.Kind);
             Assert.Equal("T", parameter.Type.Name);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void PackageManifestIncludesTargetTypedDefaultObjectCreationFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-template-target-typed-object-creations-pipeline-");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box<T> {
+                    T Value;
+                }
+
+                public fn Box<T> MakeDefault<T>() {
+                    return new();
+                }
+                """,
+                Path.Combine(tempDirectory.FullName, "Facade.stark")));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static item => item.QualifiedResolvedName == "Facade.MakeDefault");
+            var objectCreation = Assert.Single(template.ObjectCreations!);
+
+            Assert.Equal("named", objectCreation.CreatedType.Kind);
+            Assert.Equal("Facade.Box", objectCreation.CreatedType.Name);
+            Assert.Null(objectCreation.Constructor);
+            Assert.Null(objectCreation.InitializerMembers);
         }
         finally
         {

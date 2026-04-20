@@ -231,10 +231,10 @@ public sealed class MidLevelIrRuntimeTests
             }
 
             export ffi fn i32[-2147483648 2147483647] main() {
-                stack Pair sameLeft = new Pair() { Left = 1, Right = 2 };
-                stack Pair sameRight = new Pair() { Left = 1, Right = 2 };
-                stack Pair differentLeft = new Pair() { Left = 1, Right = 2 };
-                stack Pair differentRight = new Pair() { Left = 2, Right = 1 };
+                stack Pair sameLeft = new Pair(1, 2);
+                stack Pair sameRight = new Pair(1, 2);
+                stack Pair differentLeft = new Pair(1, 2);
+                stack Pair differentRight = new Pair(2, 1);
 
                 if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight)) {
                     return 7;
@@ -278,16 +278,16 @@ public sealed class MidLevelIrRuntimeTests
             }
 
             export ffi fn i32[-2147483648 2147483647] main() {
-                stack Many lessLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many lessRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
-                stack Many lessOrEqualLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many lessOrEqualRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many greaterLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
-                stack Many greaterRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many greaterOrEqualLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many greaterOrEqualRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many topLeft = new Many() { A = 2, B = 0, C = 0, D = 0, E = 0 };
-                stack Many topRight = new Many() { A = 1, B = 9, C = 9, D = 9, E = 9 };
+                stack Many lessLeft = new Many(1, 2, 3, 4, 5);
+                stack Many lessRight = new Many(1, 2, 3, 4, 6);
+                stack Many lessOrEqualLeft = new Many(1, 2, 3, 4, 5);
+                stack Many lessOrEqualRight = new Many(1, 2, 3, 4, 5);
+                stack Many greaterLeft = new Many(1, 2, 3, 4, 6);
+                stack Many greaterRight = new Many(1, 2, 3, 4, 5);
+                stack Many greaterOrEqualLeft = new Many(1, 2, 3, 4, 5);
+                stack Many greaterOrEqualRight = new Many(1, 2, 3, 4, 5);
+                stack Many topLeft = new Many(2, 0, 0, 0, 0);
+                stack Many topRight = new Many(1, 9, 9, 9, 9);
 
                 if (Less(lessLeft, lessRight)
                     && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
@@ -527,10 +527,10 @@ public sealed class MidLevelIrRuntimeTests
             }
 
             export ffi fn i32[-2147483648 2147483647] main() {
-                stack Many sameRecordLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many sameRecordRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many differentRecordLeft = new Many() { A = 1, B = 2, C = 3, D = 4, E = 5 };
-                stack Many differentRecordRight = new Many() { A = 1, B = 2, C = 3, D = 4, E = 6 };
+                stack Many sameRecordLeft = new Many(1, 2, 3, 4, 5);
+                stack Many sameRecordRight = new Many(1, 2, 3, 4, 5);
+                stack Many differentRecordLeft = new Many(1, 2, 3, 4, 5);
+                stack Many differentRecordRight = new Many(1, 2, 3, 4, 6);
 
                 stack i32[-2147483648 2147483647][5] sameArrayLeft = { 1, 2, 3, 4, 5 };
                 stack i32[-2147483648 2147483647][5] sameArrayRight = { 1, 2, 3, 4, 5 };
@@ -592,11 +592,11 @@ public sealed class MidLevelIrRuntimeTests
                 if (SameAscii("cab!"[1, 2], "zab?"[1, 2])
                     && DifferentUnicode(((unicode)"caf\u00E9!")[0, 4], ((unicode)"cafe?")[0, 4])
                     && SameLabel(
-                        new Label() { Tag = "cab!"[1, 2], Word = ((unicode)"caf\u00E9!")[0, 4] },
-                        new Label() { Tag = "zab?"[1, 2], Word = ((unicode)"caf\u00E9?")[0, 4] })
+                        new Label("cab!"[1, 2], ((unicode)"caf\u00E9!")[0, 4]),
+                        new Label("zab?"[1, 2], ((unicode)"caf\u00E9?")[0, 4]))
                     && DifferentLabel(
-                        new Label() { Tag = "cab!"[1, 2], Word = ((unicode)"caf\u00E9!")[0, 4] },
-                        new Label() { Tag = "zbx?"[1, 2], Word = ((unicode)"cafe?")[0, 4] })) {
+                        new Label("cab!"[1, 2], ((unicode)"caf\u00E9!")[0, 4]),
+                        new Label("zbx?"[1, 2], ((unicode)"cafe?")[0, 4]))) {
                     return 7;
                 }
 
@@ -652,10 +652,10 @@ public sealed class MidLevelIrRuntimeTests
 
                 if (SameSliceSelf(selfView)
                     && DifferentSlice(leftView, rightView)
-                    && SameWindowSelf(new Window() { Items = selfWindowValues, Count = 3 })
+                    && SameWindowSelf(new Window(selfWindowValues, 3))
                     && DifferentWindow(
-                        new Window() { Items = leftWindowValues, Count = 3 },
-                        new Window() { Items = rightWindowValues, Count = 3 })) {
+                        new Window(leftWindowValues, 3),
+                        new Window(rightWindowValues, 3))) {
                     return 7;
                 }
 
@@ -878,9 +878,9 @@ public sealed class MidLevelIrRuntimeTests
             }
 
             export ffi fn i32[-2147483648 2147483647] main() {
-                if (MatchLabel(new Label() { Tag = "ab", Word = (unicode)"cat" })
+                if (MatchLabel(new Label("ab", (unicode)"cat"))
                     && MatchToken(Token.Text { Tag: "ab", Word: (unicode)"cat" })
-                    && !MatchLabel(new Label() { Tag = "zz", Word = (unicode)"cat" })
+                    && !MatchLabel(new Label("zz", (unicode)"cat"))
                     && !MatchToken(Token.Text { Tag: "zz", Word: (unicode)"cat" })) {
                     return 7;
                 }

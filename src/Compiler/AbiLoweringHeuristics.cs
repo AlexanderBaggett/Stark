@@ -19,6 +19,11 @@ internal static class AbiLoweringHeuristics
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
     {
+        if (type.BorrowKind != StarkBorrowKind.None)
+        {
+            return false;
+        }
+
         return IsLargeByValueAggregate(type, namedTypes, enumLayouts);
     }
 

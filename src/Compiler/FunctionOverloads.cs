@@ -398,7 +398,7 @@ internal static class FunctionOverloadFacts
         {
             var parameterType = resolvedCandidate.Parameters[index + receiverOffset].Type;
             var argumentType = argumentTypes[index];
-            if (!canAssign(parameterType, argumentType))
+            if (!CanBindParameter(parameterType, argumentType, canAssign))
             {
                 return false;
             }
@@ -466,6 +466,30 @@ internal static class FunctionOverloadFacts
             TypeArguments = candidate.GenericParams.Select(parameter => substitution[parameter]).ToArray()
         };
         return true;
+    }
+
+    private static bool CanBindParameter(
+        StarkTypeSymbol parameterType,
+        StarkTypeSymbol argumentType,
+        Func<StarkTypeSymbol, StarkTypeSymbol, bool> canAssign)
+    {
+        if (canAssign(parameterType, argumentType))
+        {
+            return true;
+        }
+
+        if (parameterType.InitializationKind == StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        var parameterStorageType = StarkTypeSymbols.WithQualifiers(
+            parameterType,
+            initializationKind: StarkInitializationKind.None);
+        var argumentStorageType = argumentType.InitializationKind == StarkInitializationKind.None
+            ? argumentType
+            : StarkTypeSymbols.WithQualifiers(argumentType, initializationKind: StarkInitializationKind.None);
+        return canAssign(parameterStorageType, argumentStorageType);
     }
 
     private static bool TryInferTypeArguments(

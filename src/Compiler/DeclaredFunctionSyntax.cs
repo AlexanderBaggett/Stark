@@ -15,7 +15,10 @@ internal sealed record DeclaredFunctionSyntax(
     StarkParser.TypeParameterListContext? TypeParameters,
     IReadOnlyList<StarkParser.FunctionModifierContext> Modifiers,
     StarkParser.FunctionBodyContext Body,
-    string? SourceName = null)
+    string? SourceName = null,
+    bool IsStatic = false,
+    StarkVisibility? EnclosingTypeVisibility = null,
+    bool HasExplicitVisibility = false)
 {
     public bool HasBody => Body.block() is not null;
 
@@ -192,16 +195,19 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.typeParameterList(),
             declaration.functionModifier(),
             declaration.functionBody(),
-            SourceName: sourceName);
+            SourceName: sourceName,
+            IsStatic: HasStaticModifier(declaration.functionModifier()));
     }
 
     private static DeclaredFunctionSyntax CreateMethod(
         string containingTypeName,
         StarkParser.MethodDeclarationContext declaration,
-        StarkVisibility visibility,
+        StarkVisibility enclosingVisibility,
         SyntaxModel? syntaxModel)
     {
         var sourceName = $"{containingTypeName}.{declaration.Identifier().GetText()}";
+        var hasExplicitVisibility = declaration.visibilityModifier() is not null;
+        var visibility = ResolveMemberVisibility(enclosingVisibility, declaration.visibilityModifier());
         return new DeclaredFunctionSyntax(
             ResolveFunctionName(syntaxModel, sourceName, declaration.parameterList()),
             containingTypeName,
@@ -214,7 +220,10 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.typeParameterList(),
             declaration.functionModifier(),
             declaration.functionBody(),
-            SourceName: sourceName);
+            SourceName: sourceName,
+            IsStatic: HasStaticModifier(declaration.functionModifier()),
+            EnclosingTypeVisibility: enclosingVisibility,
+            HasExplicitVisibility: hasExplicitVisibility);
     }
 
     private static DeclaredFunctionSyntax CreateTraitMethod(
@@ -236,7 +245,8 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.typeParameterList(),
             declaration.functionModifier(),
             declaration.functionBody(),
-            SourceName: sourceName);
+            SourceName: sourceName,
+            IsStatic: HasStaticModifier(declaration.functionModifier()));
     }
 
     private static DeclaredFunctionSyntax CreateDoctrineMethod(
@@ -258,7 +268,27 @@ internal static class DeclaredFunctionSyntaxCollector
             declaration.typeParameterList(),
             declaration.functionModifier(),
             declaration.functionBody(),
-            SourceName: sourceName);
+            SourceName: sourceName,
+            IsStatic: HasStaticModifier(declaration.functionModifier()));
+    }
+
+    private static bool HasStaticModifier(IEnumerable<StarkParser.FunctionModifierContext> modifiers)
+    {
+        return modifiers.Any(static modifier => string.Equals(modifier.GetText(), "static", StringComparison.Ordinal));
+    }
+
+    private static StarkVisibility ResolveMemberVisibility(
+        StarkVisibility enclosingVisibility,
+        StarkParser.VisibilityModifierContext? explicitVisibility)
+    {
+        if (explicitVisibility is not null)
+        {
+            return ParseVisibility(explicitVisibility);
+        }
+
+        return enclosingVisibility == StarkVisibility.Export
+            ? StarkVisibility.Public
+            : enclosingVisibility;
     }
 
     private static string ResolveFunctionName(

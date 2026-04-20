@@ -12,10 +12,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
+    private const string HeapFreeHelperName = "__stark_heap_free";
+    private const string RuntimeAllocateHelperName = "__stark_runtime_alloc";
+    private const string RuntimeReallocateHelperName = "__stark_runtime_realloc";
+    private const string RuntimeFreeHelperName = "__stark_runtime_free";
+    private const string OsAllocateHelperName = "__stark_os_allocate";
+    private const string OsFreeHelperName = "__stark_os_free";
+    private const string RuntimeAllocatorLockName = "__stark_alloc_lock";
+    private const string RuntimeAllocatorLockAcquireHelperName = "__stark_alloc_lock_acquire";
+    private const string RuntimeAllocatorLockReleaseHelperName = "__stark_alloc_lock_release";
     private const string OutOfMemoryTrapHelperName = "__stark_oom_trap";
     private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
+    private const int RuntimeAllocatorBucketAlignmentBytes = 16;
+    private static readonly int[] RuntimeAllocatorBucketSizes = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
     private readonly LlvmEmissionContext _context;
     private readonly Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> _buildDefinitionSignature;
@@ -80,6 +91,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     public void EmitIntrinsicDeclarations(StringBuilder builder, IEnumerable<TypedFunctionSignature> signatures)
     {
         var declarations = new SortedSet<string>(StringComparer.Ordinal);
+        var systemMemoryBuiltins = CollectSystemMemoryAllocatorBuiltins(signatures);
+        var usesSystemMemoryAllocate = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Allocate);
+        var usesSystemMemoryReallocate = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate);
+        var usesSystemMemoryFree = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
+        var usesSystemMemoryTrap = usesSystemMemoryAllocate || usesSystemMemoryReallocate;
+        var usesRuntimeAllocator = _usesHeapAllocator()
+            || string.Equals(CurrentModuleName, "System.Memory", StringComparison.Ordinal)
+            || usesSystemMemoryAllocate
+            || usesSystemMemoryReallocate
+            || usesSystemMemoryFree;
 
         foreach (var binary in _enumerateBinaryOperations()
                      .Where(static binary => binary.Operator == SsaBinaryOperator.Exponent && binary.Type.Kind == StarkTypeKind.Float))
@@ -126,15 +147,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add("declare void @llvm.assume(i1 noundef)");
         }
 
-        if (_usesHeapAllocator() || _usesUnreachableTrapHelper())
+        if (usesRuntimeAllocator || _usesUnreachableTrapHelper() || usesSystemMemoryTrap)
         {
             declarations.Add("declare void @llvm.trap() cold noreturn nounwind");
         }
 
-        if (_usesHeapAllocator())
+        if (usesRuntimeAllocator && IsWindowsTarget())
         {
-            declarations.Add($"declare noalias noundef ptr @malloc({AllocatorSizeType} noundef) allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"malloc\" nounwind");
-            declarations.Add("declare void @free(ptr allocptr) allockind(\"free\") \"alloc-family\"=\"malloc\" nounwind");
+            declarations.Add("declare ptr @GetProcessHeap() nounwind");
+            declarations.Add($"declare ptr @HeapAlloc(ptr, i32, {AllocatorSizeType}) nounwind");
+            declarations.Add("declare i32 @HeapFree(ptr, i32, ptr) nounwind");
+        }
+
+        if (usesRuntimeAllocator)
+        {
+            declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
         }
 
         if (_usesMemcpyInlineIntrinsic())
@@ -212,7 +239,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
             builder.AppendLine();
+            EmitRuntimeAllocatorHelperDefinitions(builder);
+            builder.AppendLine();
             EmitHeapAllocateHelperDefinition(builder);
+            builder.AppendLine();
+            EmitHeapFreeHelperDefinition(builder);
+            builder.AppendLine();
+        }
+        else if (CurrentModuleName == "System.Memory")
+        {
+            EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
+            builder.AppendLine();
+            EmitRuntimeAllocatorHelperDefinitions(builder);
             builder.AppendLine();
         }
     }
@@ -230,11 +268,176 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitHeapAllocateHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"malloc\" nounwind {{");
+            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind {{");
         builder.AppendLine("entry:");
-        builder.AppendLine($"  %raw = call noalias noundef ptr @malloc({AllocatorSizeType} noundef %size)");
-        builder.AppendLine("  %is_null = icmp eq ptr %raw, null");
+        builder.AppendLine($"  %raw = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  ret ptr %raw");
+        builder.AppendLine("}");
+    }
+
+    private void EmitHeapFreeHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine($"define internal dso_local void @{HeapFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %ptr)");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private void EmitRuntimeAllocatorHelperDefinitions(StringBuilder builder)
+    {
+        EmitRuntimeAllocatorGlobalDefinitions(builder);
+        builder.AppendLine();
+        EmitRuntimeAllocatorLockHelperDefinitions(builder);
+        builder.AppendLine();
+        EmitRuntimeAllocateHelperDefinition(builder);
+        builder.AppendLine();
+        EmitRuntimeReallocateHelperDefinition(builder);
+        builder.AppendLine();
+        EmitRuntimeFreeHelperDefinition(builder);
+        builder.AppendLine();
+        EmitOsAllocateHelperDefinition(builder);
+        builder.AppendLine();
+        EmitOsFreeHelperDefinition(builder);
+    }
+
+    private void EmitRuntimeAllocatorGlobalDefinitions(StringBuilder builder)
+    {
+        var pointerSizeBytes = GetTargetPointerSizeBytes();
+        builder.AppendLine($"@{RuntimeAllocatorLockName} = internal global i32 0, align 4");
+        foreach (var bucketSize in RuntimeAllocatorBucketSizes)
+        {
+            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = internal global ptr null, align {pointerSizeBytes}");
+        }
+    }
+
+    private static void EmitRuntimeAllocatorLockHelperDefinitions(StringBuilder builder)
+    {
+        builder.AppendLine($"define internal dso_local void @{RuntimeAllocatorLockAcquireHelperName}() unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  br label %try_lock");
+        builder.AppendLine();
+        builder.AppendLine("try_lock:");
+        builder.AppendLine($"  %previous = atomicrmw xchg ptr @{RuntimeAllocatorLockName}, i32 1 acquire, align 4");
+        builder.AppendLine("  %acquired = icmp eq i32 %previous, 0");
+        builder.AppendLine("  br i1 %acquired, label %done, label %try_lock");
+        builder.AppendLine();
+        builder.AppendLine("done:");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+        builder.AppendLine();
+        builder.AppendLine($"define internal dso_local void @{RuntimeAllocatorLockReleaseHelperName}() unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  store atomic i32 0, ptr @{RuntimeAllocatorLockName} release, align 4");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private static string BuildRuntimeAllocatorBucketSizePhiIncoming(string largeValue)
+    {
+        var incoming = RuntimeAllocatorBucketSizes
+            .Select(static bucketSize => $"{bucketSize}, %bucket_{bucketSize}_allocate")
+            .Concat([$"{largeValue}, %large_allocate"]);
+        return string.Join(", ", incoming.Select(static item => $"[{item}]"));
+    }
+
+    private static string BuildRuntimeAllocatorBucketConstantPhiIncoming(string largeValue, int bucketValue)
+    {
+        var incoming = RuntimeAllocatorBucketSizes
+            .Select(bucketSize => $"{bucketValue}, %bucket_{bucketSize}_allocate")
+            .Concat([$"{largeValue}, %large_allocate"]);
+        return string.Join(", ", incoming.Select(static item => $"[{item}]"));
+    }
+
+    private void EmitRuntimeAllocateHelperDefinition(StringBuilder builder)
+    {
+        var pointerSizeBytes = GetTargetPointerSizeBytes();
+        var bucketAlignmentBytes = GetRuntimeAllocatorBucketAlignmentBytes(pointerSizeBytes);
+        var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
+        var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
+        var largestBucketSize = RuntimeAllocatorBucketSizes[^1];
         var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
+
+        builder.AppendLine(
+            $"define internal dso_local noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %size_is_zero = icmp eq {AllocatorSizeType} %size, 0");
+        builder.AppendLine($"  %requested_size = select i1 %size_is_zero, {AllocatorSizeType} 1, {AllocatorSizeType} %size");
+        builder.AppendLine($"  %alignment_too_small = icmp ult {AllocatorSizeType} %alignment, {pointerSizeBytes}");
+        builder.AppendLine($"  %effective_alignment = select i1 %alignment_too_small, {AllocatorSizeType} {pointerSizeBytes}, {AllocatorSizeType} %alignment");
+        builder.AppendLine($"  %alignment_minus_one = sub {AllocatorSizeType} %effective_alignment, 1");
+        builder.AppendLine($"  %alignment_power_check = and {AllocatorSizeType} %effective_alignment, %alignment_minus_one");
+        builder.AppendLine($"  %alignment_not_power_of_two = icmp ne {AllocatorSizeType} %alignment_power_check, 0");
+        builder.AppendLine("  br i1 %alignment_not_power_of_two, label %oom, label %classify");
+        builder.AppendLine();
+        builder.AppendLine("classify:");
+        builder.AppendLine($"  %bucket_alignment_ok = icmp ule {AllocatorSizeType} %effective_alignment, {bucketAlignmentBytes}");
+        builder.AppendLine($"  %bucket_size_ok = icmp ule {AllocatorSizeType} %requested_size, {largestBucketSize}");
+        builder.AppendLine("  %can_bucket = and i1 %bucket_alignment_ok, %bucket_size_ok");
+        builder.AppendLine("  br i1 %can_bucket, label %bucket_select_16, label %large_allocate");
+        builder.AppendLine();
+
+        for (var index = 0; index < RuntimeAllocatorBucketSizes.Length; index++)
+        {
+            var bucketSize = RuntimeAllocatorBucketSizes[index];
+            var nextLabel = index + 1 < RuntimeAllocatorBucketSizes.Length
+                ? $"bucket_select_{RuntimeAllocatorBucketSizes[index + 1]}"
+                : $"bucket_{bucketSize}";
+            builder.AppendLine($"bucket_select_{bucketSize}:");
+            if (index + 1 < RuntimeAllocatorBucketSizes.Length)
+            {
+                builder.AppendLine($"  %fits_bucket_{bucketSize} = icmp ule {AllocatorSizeType} %requested_size, {bucketSize}");
+                builder.AppendLine($"  br i1 %fits_bucket_{bucketSize}, label %bucket_{bucketSize}, label %{nextLabel}");
+            }
+            else
+            {
+                builder.AppendLine($"  br label %bucket_{bucketSize}");
+            }
+
+            builder.AppendLine();
+        }
+
+        foreach (var bucketSize in RuntimeAllocatorBucketSizes)
+        {
+            var bucketGlobalName = GetRuntimeAllocatorBucketGlobalName(bucketSize);
+            builder.AppendLine($"bucket_{bucketSize}:");
+            builder.AppendLine($"  call void @{RuntimeAllocatorLockAcquireHelperName}()");
+            builder.AppendLine($"  %bucket_head_{bucketSize} = load ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
+            builder.AppendLine($"  %bucket_has_node_{bucketSize} = icmp ne ptr %bucket_head_{bucketSize}, null");
+            builder.AppendLine($"  br i1 %bucket_has_node_{bucketSize}, label %bucket_{bucketSize}_pop, label %bucket_{bucketSize}_empty");
+            builder.AppendLine();
+            builder.AppendLine($"bucket_{bucketSize}_pop:");
+            builder.AppendLine($"  %bucket_next_{bucketSize} = load ptr, ptr %bucket_head_{bucketSize}, align {bucketAlignmentBytes}");
+            builder.AppendLine($"  store ptr %bucket_next_{bucketSize}, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
+            builder.AppendLine($"  call void @{RuntimeAllocatorLockReleaseHelperName}()");
+            builder.AppendLine($"  ret ptr %bucket_head_{bucketSize}");
+            builder.AppendLine();
+            builder.AppendLine($"bucket_{bucketSize}_empty:");
+            builder.AppendLine($"  call void @{RuntimeAllocatorLockReleaseHelperName}()");
+            builder.AppendLine($"  br label %bucket_{bucketSize}_allocate");
+            builder.AppendLine();
+            builder.AppendLine($"bucket_{bucketSize}_allocate:");
+            builder.AppendLine("  br label %os_allocate");
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("large_allocate:");
+        builder.AppendLine("  br label %os_allocate");
+        builder.AppendLine();
+        builder.AppendLine("os_allocate:");
+        builder.AppendLine($"  %payload_size = phi {AllocatorSizeType} {BuildRuntimeAllocatorBucketSizePhiIncoming("%requested_size")}");
+        builder.AppendLine($"  %block_alignment = phi {AllocatorSizeType} {BuildRuntimeAllocatorBucketConstantPhiIncoming("%effective_alignment", bucketAlignmentBytes)}");
+        builder.AppendLine($"  %bucket_size = phi {AllocatorSizeType} {BuildRuntimeAllocatorBucketSizePhiIncoming("0")}");
+        builder.AppendLine($"  %with_header = add {AllocatorSizeType} %payload_size, {headerBytes}");
+        builder.AppendLine($"  %overflow_header = icmp ult {AllocatorSizeType} %with_header, %payload_size");
+        builder.AppendLine($"  %total = add {AllocatorSizeType} %with_header, %block_alignment");
+        builder.AppendLine($"  %overflow_alignment = icmp ult {AllocatorSizeType} %total, %with_header");
+        builder.AppendLine("  %size_overflow = or i1 %overflow_header, %overflow_alignment");
+        builder.AppendLine("  br i1 %size_overflow, label %oom, label %allocate_os");
+        builder.AppendLine();
+        builder.AppendLine("allocate_os:");
+        builder.AppendLine($"  %base = call ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %total)");
+        builder.AppendLine("  %is_null = icmp eq ptr %base, null");
         builder.AppendLine($"  br i1 %is_null, label %oom, label %ok, !prof {allocationFailureProfile}");
         builder.AppendLine();
         builder.AppendLine("oom:");
@@ -242,8 +445,468 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  unreachable");
         builder.AppendLine();
         builder.AppendLine("ok:");
-        builder.AppendLine("  ret ptr %raw");
+        builder.AppendLine($"  %base_int = ptrtoint ptr %base to {AllocatorSizeType}");
+        builder.AppendLine($"  %data_start = add {AllocatorSizeType} %base_int, {headerBytes}");
+        builder.AppendLine($"  %block_alignment_minus_one = sub {AllocatorSizeType} %block_alignment, 1");
+        builder.AppendLine($"  %data_with_mask = add {AllocatorSizeType} %data_start, %block_alignment_minus_one");
+        builder.AppendLine($"  %negative_alignment = sub {AllocatorSizeType} 0, %block_alignment");
+        builder.AppendLine($"  %aligned_int = and {AllocatorSizeType} %data_with_mask, %negative_alignment");
+        builder.AppendLine($"  %header_int = sub {AllocatorSizeType} %aligned_int, {headerBytes}");
+        builder.AppendLine("  %result = inttoptr " + AllocatorSizeType + " %aligned_int to ptr");
+        builder.AppendLine("  %header = inttoptr " + AllocatorSizeType + " %header_int to ptr");
+        builder.AppendLine($"  store ptr %base, ptr %header, align {pointerSizeBytes}");
+        builder.AppendLine($"  %length_slot = getelementptr i8, ptr %header, i64 {pointerSizeBytes}");
+        builder.AppendLine($"  store {AllocatorSizeType} %total, ptr %length_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %bucket_size_slot = getelementptr i8, ptr %header, i64 {bucketSizeSlotOffset}");
+        builder.AppendLine($"  store {AllocatorSizeType} %bucket_size, ptr %bucket_size_slot, align {pointerSizeBytes}");
+        builder.AppendLine("  ret ptr %result");
         builder.AppendLine("}");
+    }
+
+    private void EmitRuntimeReallocateHelperDefinition(StringBuilder builder)
+    {
+        var pointerSizeBytes = GetTargetPointerSizeBytes();
+        var bucketAlignmentBytes = GetRuntimeAllocatorBucketAlignmentBytes(pointerSizeBytes);
+        var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
+        var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
+        var copyLength = $"%copy_length";
+        var copyLengthI64 = AllocatorSizeType == "i64"
+            ? copyLength
+            : "%copy_length_i64";
+
+        builder.AppendLine(
+            $"define internal dso_local nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
+        builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
+        builder.AppendLine();
+        builder.AppendLine("allocate_only:");
+        builder.AppendLine($"  %allocated = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  ret ptr %allocated");
+        builder.AppendLine();
+        builder.AppendLine("check_alignment:");
+        builder.AppendLine($"  %realloc_alignment_too_small = icmp ult {AllocatorSizeType} %alignment, {pointerSizeBytes}");
+        builder.AppendLine($"  %realloc_effective_alignment = select i1 %realloc_alignment_too_small, {AllocatorSizeType} {pointerSizeBytes}, {AllocatorSizeType} %alignment");
+        builder.AppendLine($"  %realloc_alignment_minus_one = sub {AllocatorSizeType} %realloc_effective_alignment, 1");
+        builder.AppendLine($"  %realloc_alignment_power_check = and {AllocatorSizeType} %realloc_effective_alignment, %realloc_alignment_minus_one");
+        builder.AppendLine($"  %realloc_alignment_not_power_of_two = icmp ne {AllocatorSizeType} %realloc_alignment_power_check, 0");
+        builder.AppendLine("  br i1 %realloc_alignment_not_power_of_two, label %oom, label %classify_old");
+        builder.AppendLine();
+        builder.AppendLine("classify_old:");
+        builder.AppendLine($"  %realloc_header = getelementptr i8, ptr %old_ptr, i64 -{headerBytes}");
+        builder.AppendLine($"  %realloc_bucket_size_slot = getelementptr i8, ptr %realloc_header, i64 {bucketSizeSlotOffset}");
+        builder.AppendLine($"  %realloc_bucket_size = load {AllocatorSizeType}, ptr %realloc_bucket_size_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %realloc_old_is_bucket = icmp ne {AllocatorSizeType} %realloc_bucket_size, 0");
+        builder.AppendLine("  br i1 %realloc_old_is_bucket, label %try_bucket_reuse, label %fallback");
+        builder.AppendLine();
+        builder.AppendLine("try_bucket_reuse:");
+        builder.AppendLine($"  %realloc_bucket_size_fits = icmp ule {AllocatorSizeType} %new_size, %realloc_bucket_size");
+        builder.AppendLine($"  %realloc_bucket_alignment_fits = icmp ule {AllocatorSizeType} %realloc_effective_alignment, {bucketAlignmentBytes}");
+        builder.AppendLine("  %realloc_bucket_can_reuse = and i1 %realloc_bucket_size_fits, %realloc_bucket_alignment_fits");
+        builder.AppendLine("  br i1 %realloc_bucket_can_reuse, label %reuse_old, label %fallback");
+        builder.AppendLine();
+        builder.AppendLine("reuse_old:");
+        builder.AppendLine("  ret ptr %old_ptr");
+        builder.AppendLine();
+        builder.AppendLine("fallback:");
+        builder.AppendLine($"  %new_ptr = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef %realloc_effective_alignment)");
+        builder.AppendLine($"  %copy_uses_old = icmp ult {AllocatorSizeType} %old_size, %new_size");
+        builder.AppendLine($"  {copyLength} = select i1 %copy_uses_old, {AllocatorSizeType} %old_size, {AllocatorSizeType} %new_size");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {copyLengthI64} = zext {AllocatorSizeType} {copyLength} to i64");
+        }
+
+        builder.AppendLine($"  call void @llvm.memcpy.p0.p0.i64(ptr align {pointerSizeBytes} %new_ptr, ptr align {pointerSizeBytes} %old_ptr, i64 {copyLengthI64}, i1 false)");
+        builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %old_ptr)");
+        builder.AppendLine("  ret ptr %new_ptr");
+        builder.AppendLine();
+        builder.AppendLine("oom:");
+        builder.AppendLine($"  call coldcc void @{OutOfMemoryTrapHelperName}()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine("}");
+    }
+
+    private void EmitRuntimeFreeHelperDefinition(StringBuilder builder)
+    {
+        var pointerSizeBytes = GetTargetPointerSizeBytes();
+        var bucketAlignmentBytes = GetRuntimeAllocatorBucketAlignmentBytes(pointerSizeBytes);
+        var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
+        var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
+
+        builder.AppendLine($"define internal dso_local void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %is_null = icmp eq ptr %ptr, null");
+        builder.AppendLine("  br i1 %is_null, label %done, label %free");
+        builder.AppendLine();
+        builder.AppendLine("free:");
+        builder.AppendLine($"  %header = getelementptr i8, ptr %ptr, i64 -{headerBytes}");
+        builder.AppendLine($"  %bucket_size_slot = getelementptr i8, ptr %header, i64 {bucketSizeSlotOffset}");
+        builder.AppendLine($"  %bucket_size = load {AllocatorSizeType}, ptr %bucket_size_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %is_bucket = icmp ne {AllocatorSizeType} %bucket_size, 0");
+        builder.AppendLine("  br i1 %is_bucket, label %bucket_free_select_16, label %free_os");
+        builder.AppendLine();
+
+        for (var index = 0; index < RuntimeAllocatorBucketSizes.Length; index++)
+        {
+            var bucketSize = RuntimeAllocatorBucketSizes[index];
+            var nextLabel = index + 1 < RuntimeAllocatorBucketSizes.Length
+                ? $"bucket_free_select_{RuntimeAllocatorBucketSizes[index + 1]}"
+                : "free_os";
+            builder.AppendLine($"bucket_free_select_{bucketSize}:");
+            builder.AppendLine($"  %bucket_is_{bucketSize} = icmp eq {AllocatorSizeType} %bucket_size, {bucketSize}");
+            builder.AppendLine($"  br i1 %bucket_is_{bucketSize}, label %bucket_{bucketSize}_push, label %{nextLabel}");
+            builder.AppendLine();
+        }
+
+        foreach (var bucketSize in RuntimeAllocatorBucketSizes)
+        {
+            var bucketGlobalName = GetRuntimeAllocatorBucketGlobalName(bucketSize);
+            builder.AppendLine($"bucket_{bucketSize}_push:");
+            builder.AppendLine($"  call void @{RuntimeAllocatorLockAcquireHelperName}()");
+            builder.AppendLine($"  %bucket_head_{bucketSize} = load ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
+            builder.AppendLine($"  store ptr %bucket_head_{bucketSize}, ptr %ptr, align {bucketAlignmentBytes}");
+            builder.AppendLine($"  store ptr %ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
+            builder.AppendLine($"  call void @{RuntimeAllocatorLockReleaseHelperName}()");
+            builder.AppendLine("  br label %done");
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("free_os:");
+        builder.AppendLine($"  %base = load ptr, ptr %header, align {pointerSizeBytes}");
+        builder.AppendLine($"  %length_slot = getelementptr i8, ptr %header, i64 {pointerSizeBytes}");
+        builder.AppendLine($"  %total = load {AllocatorSizeType}, ptr %length_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  call void @{OsFreeHelperName}(ptr %base, {AllocatorSizeType} noundef %total)");
+        builder.AppendLine("  br label %done");
+        builder.AppendLine();
+        builder.AppendLine("done:");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private void EmitOsAllocateHelperDefinition(StringBuilder builder)
+    {
+        if (IsWindowsTarget())
+        {
+            builder.AppendLine($"define internal dso_local ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+            builder.AppendLine("entry:");
+            builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
+            builder.AppendLine($"  %ptr = call ptr @HeapAlloc(ptr %heap, i32 0, {AllocatorSizeType} %size)");
+            builder.AppendLine("  ret ptr %ptr");
+            builder.AppendLine("}");
+            return;
+        }
+
+        if (IsLinuxTarget())
+        {
+            EmitLinuxOsAllocateHelperDefinition(builder);
+            return;
+        }
+
+        EmitUnsupportedOsAllocateHelperDefinition(builder);
+    }
+
+    private void EmitOsFreeHelperDefinition(StringBuilder builder)
+    {
+        if (IsWindowsTarget())
+        {
+            builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+            builder.AppendLine("entry:");
+            builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
+            builder.AppendLine("  %ignored = call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)");
+            builder.AppendLine("  ret void");
+            builder.AppendLine("}");
+            return;
+        }
+
+        if (IsLinuxTarget())
+        {
+            EmitLinuxOsFreeHelperDefinition(builder);
+            return;
+        }
+
+        EmitUnsupportedOsFreeHelperDefinition(builder);
+    }
+
+    private void EmitLinuxOsAllocateHelperDefinition(StringBuilder builder)
+    {
+        if (!TryGetLinuxAllocatorSyscallSpec(out var syscallSpec))
+        {
+            EmitUnsupportedOsAllocateHelperDefinition(builder);
+            return;
+        }
+
+        builder.AppendLine($"define internal dso_local ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        var sizeValue = syscallSpec.ValueBitWidth == 64
+            ? MaterializeAllocatorSizeAsI64(builder, "%size", "size64")
+            : MaterializeAllocatorSizeAsI32WithBounds(builder, "%size", "size32", "too_large", "syscall", returnVoidOnTooLarge: false);
+        EmitLinuxSyscall6(
+            builder,
+            "%mmap_result",
+            syscallSpec,
+            syscallSpec.MmapNumber,
+            "0",
+            sizeValue,
+            "3",
+            "34",
+            "-1",
+            "0");
+        builder.AppendLine($"  %is_error = icmp uge {syscallSpec.ValueType} %mmap_result, -4095");
+        builder.AppendLine($"  %base = inttoptr {syscallSpec.ValueType} %mmap_result to ptr");
+        builder.AppendLine("  %result = select i1 %is_error, ptr null, ptr %base");
+        builder.AppendLine("  ret ptr %result");
+        builder.AppendLine("}");
+    }
+
+    private void EmitLinuxOsFreeHelperDefinition(StringBuilder builder)
+    {
+        if (!TryGetLinuxAllocatorSyscallSpec(out var syscallSpec))
+        {
+            EmitUnsupportedOsFreeHelperDefinition(builder);
+            return;
+        }
+
+        builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %ptr_int = ptrtoint ptr %ptr to {syscallSpec.ValueType}");
+        var sizeValue = syscallSpec.ValueBitWidth == 64
+            ? MaterializeAllocatorSizeAsI64(builder, "%size", "size64")
+            : MaterializeAllocatorSizeAsI32WithBounds(builder, "%size", "size32", "too_large", "syscall", returnVoidOnTooLarge: true);
+        EmitLinuxSyscall2(
+            builder,
+            "%munmap_result",
+            syscallSpec,
+            syscallSpec.MunmapNumber,
+            "%ptr_int",
+            sizeValue);
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private void EmitUnsupportedOsAllocateHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine($"define internal dso_local ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  ret ptr null");
+        builder.AppendLine("}");
+    }
+
+    private void EmitUnsupportedOsFreeHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private string MaterializeAllocatorSizeAsI64(StringBuilder builder, string value, string localName)
+    {
+        if (AllocatorSizeType == "i64")
+        {
+            return value;
+        }
+
+        var converted = $"%{localName}";
+        builder.AppendLine($"  {converted} = zext {AllocatorSizeType} {value} to i64");
+        return converted;
+    }
+
+    private string MaterializeAllocatorSizeAsI32WithBounds(
+        StringBuilder builder,
+        string value,
+        string localName,
+        string tooLargeLabel,
+        string okLabel,
+        bool returnVoidOnTooLarge)
+    {
+        if (AllocatorSizeType == "i32")
+        {
+            return value;
+        }
+
+        builder.AppendLine($"  %allocator_size_too_large = icmp ugt {AllocatorSizeType} {value}, 4294967295");
+        builder.AppendLine($"  br i1 %allocator_size_too_large, label %{tooLargeLabel}, label %{okLabel}");
+        builder.AppendLine();
+        builder.AppendLine($"{tooLargeLabel}:");
+        builder.AppendLine(returnVoidOnTooLarge ? "  ret void" : "  ret ptr null");
+        builder.AppendLine();
+        builder.AppendLine($"{okLabel}:");
+        var converted = $"%{localName}";
+        builder.AppendLine($"  {converted} = trunc {AllocatorSizeType} {value} to i32");
+        return converted;
+    }
+
+    private static void EmitLinuxSyscall2(
+        StringBuilder builder,
+        string resultName,
+        LinuxAllocatorSyscallSpec syscallSpec,
+        long syscallNumber,
+        string arg1,
+        string arg2)
+    {
+        EmitLinuxSyscall6(builder, resultName, syscallSpec, syscallNumber, arg1, arg2, "0", "0", "0", "0");
+    }
+
+    private static void EmitLinuxSyscall6(
+        StringBuilder builder,
+        string resultName,
+        LinuxAllocatorSyscallSpec syscallSpec,
+        long syscallNumber,
+        string arg1,
+        string arg2,
+        string arg3,
+        string arg4,
+        string arg5,
+        string arg6)
+    {
+        var valueType = syscallSpec.ValueType;
+        builder.AppendLine(
+            $"  {resultName} = call {valueType} asm sideeffect \"{syscallSpec.Template}\", \"{syscallSpec.Constraints}\"({valueType} {syscallNumber}, {valueType} {arg1}, {valueType} {arg2}, {valueType} {arg3}, {valueType} {arg4}, {valueType} {arg5}, {valueType} {arg6})");
+    }
+
+    private bool TryGetLinuxAllocatorSyscallSpec(out LinuxAllocatorSyscallSpec syscallSpec)
+    {
+        var architecture = StarkAsmArchitectureFacts.ResolveActiveArchitecture(TargetInfo);
+        syscallSpec = architecture switch
+        {
+            StarkAsmArchitecture.X86_64 => new LinuxAllocatorSyscallSpec(
+                MmapNumber: 9,
+                MunmapNumber: 11,
+                ValueBitWidth: 64,
+                Template: "syscall",
+                Constraints: "={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"),
+            StarkAsmArchitecture.AArch64 => new LinuxAllocatorSyscallSpec(
+                MmapNumber: 222,
+                MunmapNumber: 215,
+                ValueBitWidth: 64,
+                Template: "svc #0",
+                Constraints: "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}"),
+            StarkAsmArchitecture.RiscV64 => new LinuxAllocatorSyscallSpec(
+                MmapNumber: 222,
+                MunmapNumber: 215,
+                ValueBitWidth: 64,
+                Template: "ecall",
+                Constraints: "={a0},{a7},0,{a1},{a2},{a3},{a4},{a5},~{memory}"),
+            StarkAsmArchitecture.X86 => new LinuxAllocatorSyscallSpec(
+                MmapNumber: 192,
+                MunmapNumber: 91,
+                ValueBitWidth: 32,
+                Template: "int $$0x80",
+                Constraints: "={eax},0,{ebx},{ecx},{edx},{esi},{edi},{ebp},~{memory},~{dirflag},~{fpsr},~{flags}"),
+            StarkAsmArchitecture.Arm32 => new LinuxAllocatorSyscallSpec(
+                MmapNumber: 192,
+                MunmapNumber: 91,
+                ValueBitWidth: 32,
+                Template: "svc #0",
+                Constraints: "={r0},{r7},0,{r1},{r2},{r3},{r4},{r5},~{memory}"),
+            _ => default
+        };
+
+        return syscallSpec.Template is not null;
+    }
+
+    private int GetTargetPointerSizeBytes()
+    {
+        if (TryGetConcreteTypeLayout(StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false)) is { SizeBytes: > 0 } layout)
+        {
+            return layout.SizeBytes;
+        }
+
+        if (TryGetPointerSizeBytesFromDataLayout(TargetInfo, out var pointerSizeBytes))
+        {
+            return pointerSizeBytes;
+        }
+
+        return StarkAsmArchitectureFacts.ResolveActiveArchitecture(TargetInfo) switch
+        {
+            StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.AArch64 or StarkAsmArchitecture.RiscV64 => 8,
+            StarkAsmArchitecture.X86 or StarkAsmArchitecture.Arm32 => 4,
+            _ => IntPtr.Size
+        };
+    }
+
+    private int GetRuntimeAllocationHeaderBytes(int pointerSizeBytes)
+    {
+        return checked(pointerSizeBytes + (GetAllocatorSizeBytes() * 2));
+    }
+
+    private static int GetRuntimeAllocatorBucketAlignmentBytes(int pointerSizeBytes)
+    {
+        return Math.Max(pointerSizeBytes, RuntimeAllocatorBucketAlignmentBytes);
+    }
+
+    private static string GetRuntimeAllocatorBucketGlobalName(int bucketSize)
+    {
+        return $"__stark_alloc_bucket_{bucketSize}";
+    }
+
+    private int GetAllocatorSizeBytes()
+    {
+        if (AllocatorSizeType.Length > 1
+            && AllocatorSizeType[0] == 'i'
+            && int.TryParse(AllocatorSizeType[1..], out var bitWidth)
+            && bitWidth > 0)
+        {
+            return (bitWidth + 7) / 8;
+        }
+
+        throw new InvalidOperationException($"Unsupported allocator size type '{AllocatorSizeType}'.");
+    }
+
+    private static bool TryGetPointerSizeBytesFromDataLayout(LlvmTargetInfo? targetInfo, out int pointerSizeBytes)
+    {
+        pointerSizeBytes = 0;
+        var dataLayout = targetInfo?.DataLayout;
+        if (string.IsNullOrWhiteSpace(dataLayout))
+        {
+            return false;
+        }
+
+        foreach (var token in dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!token.StartsWith("p:", StringComparison.Ordinal)
+                && !token.StartsWith("p0:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parts = token.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 2 || !int.TryParse(parts[1], out var sizeBits))
+            {
+                continue;
+            }
+
+            pointerSizeBytes = (sizeBits + 7) / 8;
+            return pointerSizeBytes > 0;
+        }
+
+        return false;
+    }
+
+    private bool IsLinuxTarget()
+    {
+        var triple = TargetInfo?.Triple;
+        if (!string.IsNullOrWhiteSpace(triple))
+        {
+            return triple.Contains("linux", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return OperatingSystem.IsLinux();
+    }
+
+    private bool IsWindowsTarget()
+    {
+        var triple = TargetInfo?.Triple;
+        if (!string.IsNullOrWhiteSpace(triple))
+        {
+            return triple.Contains("windows", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("win32", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("mingw", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("msvc", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return OperatingSystem.IsWindows();
     }
 
     private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes()
@@ -1296,6 +1959,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         };
     }
 
+    private IReadOnlySet<SystemMemoryBuiltinKind> CollectSystemMemoryAllocatorBuiltins(IEnumerable<TypedFunctionSignature> signatures)
+    {
+        var builtins = new HashSet<SystemMemoryBuiltinKind>();
+
+        foreach (var signature in signatures)
+        {
+            if (TryResolveSystemMemoryBuiltin(CurrentModuleName, signature, out var builtinKind))
+            {
+                builtins.Add(builtinKind);
+            }
+        }
+
+        return builtins;
+    }
+
     public bool TryEmitBuiltinFunctionDefinition(
         StringBuilder builder,
         bool internalize,
@@ -1318,6 +1996,23 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             builder.AppendLine(_buildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
             EmitSystemBitOperationsBuiltin(builder, function, abiFunction, systemBitOperationsBuiltinKind);
+            builder.AppendLine("}");
+            return true;
+        }
+
+        if (TryResolveSystemMemoryBuiltin(moduleName, function, out var systemMemoryBuiltinKind))
+        {
+            var effectiveMemoryEffects = GetSystemMemoryBuiltinMemoryEffects(systemMemoryBuiltinKind);
+            builder.AppendLine(_buildDefinitionSignature(internalize, function, abiFunction, effects, effectiveMemoryEffects, parameterEffects) + " {");
+            EmitSystemMemoryBuiltin(builder, function, abiFunction, systemMemoryBuiltinKind);
+            builder.AppendLine("}");
+            return true;
+        }
+
+        if (TryResolveSystemCollectionsBuiltin(moduleName, function, out var systemCollectionsBuiltinKind))
+        {
+            builder.AppendLine(_buildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
+            EmitSystemCollectionsBuiltin(builder, function, abiFunction, systemCollectionsBuiltinKind);
             builder.AppendLine("}");
             return true;
         }
@@ -1448,6 +2143,386 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         builder.AppendLine($"  ret {llvmType} %bit_result");
+    }
+
+    private void EmitSystemMemoryBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemMemoryBuiltinKind builtinKind)
+    {
+        ValidateSystemMemoryBuiltinSignature(function, builtinKind);
+
+        switch (builtinKind)
+        {
+            case SystemMemoryBuiltinKind.Allocate:
+                EmitSystemMemoryAllocateBuiltin(builder, abiFunction);
+                break;
+            case SystemMemoryBuiltinKind.Reallocate:
+                EmitSystemMemoryReallocateBuiltin(builder, abiFunction);
+                break;
+            case SystemMemoryBuiltinKind.Free:
+                EmitSystemMemoryFreeBuiltin(builder, abiFunction);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported System.Memory builtin '{builtinKind}'.");
+        }
+    }
+
+    private void EmitSystemCollectionsBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemCollectionsBuiltinKind builtinKind)
+    {
+        var listShape = ValidateSystemCollectionsListSliceSignature(function, builtinKind);
+        switch (builtinKind)
+        {
+            case SystemCollectionsBuiltinKind.ListAsSlice:
+            case SystemCollectionsBuiltinKind.ListAsMutableSlice:
+                EmitListSliceViewBuiltin(builder, function, abiFunction, listShape);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported System.Collections builtin '{builtinKind}'.");
+        }
+    }
+
+    private void EmitListSliceViewBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemCollectionsListShape listShape)
+    {
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly one receiver parameter.");
+        }
+
+        var receiver = abiFunction.UserParameters[0];
+        var listType = MapType(receiver.SourceType);
+        var resultType = MapType(function.ReturnType);
+        var receiverPointer = $"%{EscapeIdentifier(receiver.LlvmName)}";
+
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {listShape.DataFieldIndex}");
+        builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {listShape.LengthFieldIndex}");
+        builder.AppendLine("  %list_data = load ptr, ptr %list_data_addr");
+        builder.AppendLine("  %list_length = load i64, ptr %list_length_addr");
+        builder.AppendLine($"  %slice_with_ptr = insertvalue {resultType} zeroinitializer, ptr %list_data, 0");
+        builder.AppendLine($"  %slice_result = insertvalue {resultType} %slice_with_ptr, i64 %list_length, 1");
+        builder.AppendLine($"  ret {resultType} %slice_result");
+    }
+
+    private void EmitSystemMemoryAllocateBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 3)
+        {
+            throw new InvalidOperationException($"System.Memory builtin '{abiFunction.Name}' expects exactly three user parameters.");
+        }
+
+        var allocatorParameter = abiFunction.UserParameters[0];
+        var byteLengthParameter = abiFunction.UserParameters[1];
+        var alignmentParameter = abiFunction.UserParameters[2];
+        var allocationShape = GetSystemMemoryAllocationShape(abiFunction.SourceReturnType);
+        var byteLengthValue = GetBuiltinParameterValue(byteLengthParameter);
+        var alignmentValue = GetBuiltinParameterValue(alignmentParameter);
+
+        builder.AppendLine("entry:");
+        var allocatorValue = MaterializeAggregateBuiltinParameterValue(builder, allocatorParameter, "memory_allocator");
+        builder.AppendLine($"  %memory_is_zero = icmp eq {allocationShape.ByteLengthLlvmType} {byteLengthValue}, 0");
+        builder.AppendLine("  br i1 %memory_is_zero, label %memory_zero, label %memory_allocate");
+        builder.AppendLine();
+        builder.AppendLine("memory_zero:");
+        var zeroResult = EmitSystemMemoryAllocationValue(
+            builder,
+            allocationShape,
+            "null",
+            byteLengthValue,
+            alignmentValue,
+            allocatorValue,
+            "memory_zero");
+        EmitAggregateBuiltinReturn(builder, abiFunction, allocationShape.LlvmType, zeroResult);
+        builder.AppendLine();
+        builder.AppendLine("memory_allocate:");
+        var needsRuntimeSizeConversion = NeedsSystemMemoryRuntimeSizeConversion(allocationShape);
+        if (needsRuntimeSizeConversion)
+        {
+            EmitSystemMemoryRuntimeSizeBoundsCheck(
+                builder,
+                [
+                    (allocationShape.ByteLengthLlvmType, byteLengthValue, "memory_byte_length"),
+                    (allocationShape.AlignmentLlvmType, alignmentValue, "memory_alignment")
+                ],
+                "memory_runtime_size_ok",
+                "memory_oom");
+        }
+
+        var runtimeByteLengthValue = EmitSystemMemoryRuntimeSizeConversion(
+            builder,
+            allocationShape.ByteLengthLlvmType,
+            byteLengthValue,
+            "memory_byte_length_runtime");
+        var runtimeAlignmentValue = EmitSystemMemoryRuntimeSizeConversion(
+            builder,
+            allocationShape.AlignmentLlvmType,
+            alignmentValue,
+            "memory_alignment_runtime");
+        builder.AppendLine($"  %memory_ptr = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef {runtimeByteLengthValue}, {AllocatorSizeType} noundef {runtimeAlignmentValue})");
+        var result = EmitSystemMemoryAllocationValue(
+            builder,
+            allocationShape,
+            "%memory_ptr",
+            byteLengthValue,
+            alignmentValue,
+            allocatorValue,
+            "memory");
+        EmitAggregateBuiltinReturn(builder, abiFunction, allocationShape.LlvmType, result);
+        if (needsRuntimeSizeConversion)
+        {
+            builder.AppendLine();
+            EmitSystemMemoryTrapBlock(builder, "memory_oom");
+        }
+    }
+
+    private void EmitSystemMemoryReallocateBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 3)
+        {
+            throw new InvalidOperationException($"System.Memory builtin '{abiFunction.Name}' expects exactly three user parameters.");
+        }
+
+        var allocationParameter = abiFunction.UserParameters[0];
+        var byteLengthParameter = abiFunction.UserParameters[1];
+        var alignmentParameter = abiFunction.UserParameters[2];
+        var allocationShape = GetSystemMemoryAllocationShape(abiFunction.SourceReturnType);
+        var byteLengthValue = GetBuiltinParameterValue(byteLengthParameter);
+        var alignmentValue = GetBuiltinParameterValue(alignmentParameter);
+
+        builder.AppendLine("entry:");
+        var allocationValue = MaterializeAggregateBuiltinParameterValue(builder, allocationParameter, "memory_allocation");
+        builder.AppendLine($"  %memory_old_ptr = extractvalue {allocationShape.LlvmType} {allocationValue}, 0");
+        builder.AppendLine($"  %memory_old_byte_length = extractvalue {allocationShape.LlvmType} {allocationValue}, 1");
+        builder.AppendLine($"  %memory_allocator = extractvalue {allocationShape.LlvmType} {allocationValue}, 3");
+        builder.AppendLine($"  %memory_is_zero = icmp eq {allocationShape.ByteLengthLlvmType} {byteLengthValue}, 0");
+        builder.AppendLine("  br i1 %memory_is_zero, label %memory_free_zero, label %memory_reallocate");
+        builder.AppendLine();
+        builder.AppendLine("memory_free_zero:");
+        builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %memory_old_ptr)");
+        var zeroResult = EmitSystemMemoryAllocationValue(
+            builder,
+            allocationShape,
+            "null",
+            byteLengthValue,
+            alignmentValue,
+            "%memory_allocator",
+            "memory_zero");
+        EmitAggregateBuiltinReturn(builder, abiFunction, allocationShape.LlvmType, zeroResult);
+        builder.AppendLine();
+        builder.AppendLine("memory_reallocate:");
+        var needsRuntimeSizeConversion = NeedsSystemMemoryRuntimeSizeConversion(allocationShape);
+        if (needsRuntimeSizeConversion)
+        {
+            EmitSystemMemoryRuntimeSizeBoundsCheck(
+                builder,
+                [
+                    (allocationShape.ByteLengthLlvmType, "%memory_old_byte_length", "memory_old_byte_length"),
+                    (allocationShape.ByteLengthLlvmType, byteLengthValue, "memory_byte_length"),
+                    (allocationShape.AlignmentLlvmType, alignmentValue, "memory_alignment")
+                ],
+                "memory_runtime_size_ok",
+                "memory_oom");
+        }
+
+        var runtimeOldByteLengthValue = EmitSystemMemoryRuntimeSizeConversion(
+            builder,
+            allocationShape.ByteLengthLlvmType,
+            "%memory_old_byte_length",
+            "memory_old_byte_length_runtime");
+        var runtimeByteLengthValue = EmitSystemMemoryRuntimeSizeConversion(
+            builder,
+            allocationShape.ByteLengthLlvmType,
+            byteLengthValue,
+            "memory_byte_length_runtime");
+        var runtimeAlignmentValue = EmitSystemMemoryRuntimeSizeConversion(
+            builder,
+            allocationShape.AlignmentLlvmType,
+            alignmentValue,
+            "memory_alignment_runtime");
+        builder.AppendLine($"  %memory_ptr = call nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %memory_old_ptr, {AllocatorSizeType} noundef {runtimeOldByteLengthValue}, {AllocatorSizeType} noundef {runtimeByteLengthValue}, {AllocatorSizeType} noundef {runtimeAlignmentValue})");
+        var result = EmitSystemMemoryAllocationValue(
+            builder,
+            allocationShape,
+            "%memory_ptr",
+            byteLengthValue,
+            alignmentValue,
+            "%memory_allocator",
+            "memory");
+        EmitAggregateBuiltinReturn(builder, abiFunction, allocationShape.LlvmType, result);
+        if (needsRuntimeSizeConversion)
+        {
+            builder.AppendLine();
+            EmitSystemMemoryTrapBlock(builder, "memory_oom");
+        }
+    }
+
+    private void EmitSystemMemoryFreeBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Memory builtin '{abiFunction.Name}' expects exactly one user parameter.");
+        }
+
+        var allocationParameter = abiFunction.UserParameters[0];
+        var allocationShape = GetSystemMemoryAllocationShape(allocationParameter.SourceType);
+
+        builder.AppendLine("entry:");
+        var allocationValue = MaterializeAggregateBuiltinParameterValue(builder, allocationParameter, "memory_allocation");
+        builder.AppendLine($"  %memory_ptr = extractvalue {allocationShape.LlvmType} {allocationValue}, 0");
+        builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %memory_ptr)");
+        builder.AppendLine("  ret void");
+    }
+
+    private static string GetBuiltinParameterValue(AbiParameterSymbol parameter)
+    {
+        if (parameter.Kind != AbiParameterKind.Direct)
+        {
+            throw new InvalidOperationException($"System.Memory scalar parameter '{parameter.SourceName}' must lower directly.");
+        }
+
+        return $"%{EscapeIdentifier(parameter.LlvmName)}";
+    }
+
+    private bool NeedsSystemMemoryRuntimeSizeConversion(SystemMemoryAllocationShape allocationShape)
+    {
+        return allocationShape.ByteLengthLlvmType != AllocatorSizeType
+            || allocationShape.AlignmentLlvmType != AllocatorSizeType;
+    }
+
+    private void EmitSystemMemoryRuntimeSizeBoundsCheck(
+        StringBuilder builder,
+        IReadOnlyList<(string LlvmType, string Value, string LocalName)> values,
+        string okLabel,
+        string trapLabel)
+    {
+        if (AllocatorSizeType != "i32")
+        {
+            throw new InvalidOperationException(
+                $"System.Memory runtime size conversion from i64 to '{AllocatorSizeType}' is not supported.");
+        }
+
+        string? combined = null;
+        foreach (var (llvmType, value, localName) in values)
+        {
+            if (llvmType == AllocatorSizeType)
+            {
+                continue;
+            }
+
+            if (llvmType != "i64")
+            {
+                throw new InvalidOperationException(
+                    $"System.Memory runtime size conversion from '{llvmType}' to '{AllocatorSizeType}' is not supported.");
+            }
+
+            var tooLarge = $"%{localName}_too_large";
+            builder.AppendLine($"  {tooLarge} = icmp ugt {llvmType} {value}, 4294967295");
+            if (combined is null)
+            {
+                combined = tooLarge;
+            }
+            else
+            {
+                var nextCombined = $"%{localName}_or_previous_too_large";
+                builder.AppendLine($"  {nextCombined} = or i1 {combined}, {tooLarge}");
+                combined = nextCombined;
+            }
+        }
+
+        if (combined is null)
+        {
+            return;
+        }
+
+        builder.AppendLine($"  br i1 {combined}, label %{trapLabel}, label %{okLabel}");
+        builder.AppendLine();
+        builder.AppendLine($"{okLabel}:");
+    }
+
+    private string EmitSystemMemoryRuntimeSizeConversion(
+        StringBuilder builder,
+        string sourceLlvmType,
+        string sourceValue,
+        string localName)
+    {
+        if (sourceLlvmType == AllocatorSizeType)
+        {
+            return sourceValue;
+        }
+
+        if (sourceLlvmType == "i64" && AllocatorSizeType == "i32")
+        {
+            var converted = $"%{localName}";
+            builder.AppendLine($"  {converted} = trunc i64 {sourceValue} to i32");
+            return converted;
+        }
+
+        throw new InvalidOperationException(
+            $"System.Memory runtime size conversion from '{sourceLlvmType}' to '{AllocatorSizeType}' is not supported.");
+    }
+
+    private string EmitSystemMemoryAllocationValue(
+        StringBuilder builder,
+        SystemMemoryAllocationShape allocationShape,
+        string pointerValue,
+        string byteLengthValue,
+        string alignmentValue,
+        string allocatorValue,
+        string localPrefix)
+    {
+        var withPointer = $"%{EscapeIdentifier($"{localPrefix}_with_ptr")}";
+        var withByteLength = $"%{EscapeIdentifier($"{localPrefix}_with_len")}";
+        var withAlignment = $"%{EscapeIdentifier($"{localPrefix}_with_align")}";
+        var result = $"%{EscapeIdentifier($"{localPrefix}_result")}";
+
+        builder.AppendLine($"  {withPointer} = insertvalue {allocationShape.LlvmType} zeroinitializer, ptr {pointerValue}, 0");
+        builder.AppendLine($"  {withByteLength} = insertvalue {allocationShape.LlvmType} {withPointer}, {allocationShape.ByteLengthLlvmType} {byteLengthValue}, 1");
+        builder.AppendLine($"  {withAlignment} = insertvalue {allocationShape.LlvmType} {withByteLength}, {allocationShape.AlignmentLlvmType} {alignmentValue}, 2");
+        builder.AppendLine($"  {result} = insertvalue {allocationShape.LlvmType} {withAlignment}, {allocationShape.AllocatorLlvmType} {allocatorValue}, 3");
+        return result;
+    }
+
+    private void EmitAggregateBuiltinReturn(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction,
+        string valueType,
+        string value)
+    {
+        if (abiFunction.ReturnsIndirect)
+        {
+            if (abiFunction.ReturnBufferParameter is null)
+            {
+                throw new InvalidOperationException($"System.Memory aggregate builtin '{abiFunction.Name}' is missing its sret parameter.");
+            }
+
+            builder.AppendLine($"  store {valueType} {value}, ptr %{EscapeIdentifier(abiFunction.ReturnBufferParameter.LlvmName)}");
+            builder.AppendLine("  ret void");
+            return;
+        }
+
+        builder.AppendLine($"  ret {valueType} {value}");
+    }
+
+    private static void EmitSystemMemoryTrapBlock(StringBuilder builder, string label)
+    {
+        builder.AppendLine($"{label}:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
     }
 
     private void EmitSystemMathHardwareBuiltin(
@@ -1823,6 +2898,32 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         string functionName,
         TypedFunctionSignature function)
     {
+        if (TryGetSystemCollectionsBuiltin(moduleName, function.TemplateName ?? function.DisplaySourceName, out var collectionsBuiltinKind)
+            || TryGetSystemCollectionsBuiltin(moduleName, functionName, out collectionsBuiltinKind))
+        {
+            return collectionsBuiltinKind switch
+            {
+                SystemCollectionsBuiltinKind.ListAsSlice or SystemCollectionsBuiltinKind.ListAsMutableSlice
+                    => function.Parameters.ToDictionary(
+                        static parameter => parameter.Name,
+                        static parameter => new ParameterMemoryEffectSummary(
+                            parameter.Name,
+                            parameter.Type.DisplayName,
+                            IsMemoryBacked: true,
+                            GuaranteedNonNull: true,
+                            GuaranteedReadOnly: !parameter.Type.IsMutableView,
+                            GuaranteedWriteOnly: false,
+                            GuaranteedNoAlias: parameter.Type.IsMutableView,
+                            DereferenceableBytes: null,
+                            AlignmentBytes: null,
+                            Reads: true,
+                            Writes: false,
+                            CaptureKind: ParameterCaptureKind.Return),
+                        StringComparer.Ordinal),
+                _ => null
+            };
+        }
+
         if (!TryGetSystemTextBuiltin(moduleName, functionName, out var builtinKind))
         {
             return null;
@@ -2130,6 +3231,101 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             || TryGetSystemBitOperationsBuiltin(moduleName: string.Empty, function.Name, out builtinKind);
     }
 
+    private static bool TryGetSystemMemoryBuiltin(
+        string moduleName,
+        string functionName,
+        out SystemMemoryBuiltinKind builtinKind)
+    {
+        builtinKind = default;
+
+        string sourceName;
+        if (functionName.Contains('.', StringComparison.Ordinal))
+        {
+            const string prefix = "System.Memory.";
+            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName[prefix.Length..];
+        }
+        else
+        {
+            if (!string.Equals(moduleName, "System.Memory", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName;
+        }
+
+        builtinKind = sourceName switch
+        {
+            "Allocate" => SystemMemoryBuiltinKind.Allocate,
+            "Reallocate" => SystemMemoryBuiltinKind.Reallocate,
+            "Free" => SystemMemoryBuiltinKind.Free,
+            _ => default
+        };
+
+        return sourceName is "Allocate" or "Reallocate" or "Free";
+    }
+
+    private static bool TryResolveSystemMemoryBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemMemoryBuiltinKind builtinKind)
+    {
+        return TryGetSystemMemoryBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
+            || TryGetSystemMemoryBuiltin(moduleName: string.Empty, function.Name, out builtinKind);
+    }
+
+    private static bool TryGetSystemCollectionsBuiltin(
+        string moduleName,
+        string functionName,
+        out SystemCollectionsBuiltinKind builtinKind)
+    {
+        builtinKind = default;
+
+        string sourceName;
+        if (functionName.Contains('.', StringComparison.Ordinal))
+        {
+            const string prefix = "System.Collections.";
+            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName[prefix.Length..];
+        }
+        else
+        {
+            if (!string.Equals(moduleName, "System.Collections", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName;
+        }
+
+        builtinKind = sourceName switch
+        {
+            "List.AsSlice" => SystemCollectionsBuiltinKind.ListAsSlice,
+            "List.AsMutableSlice" => SystemCollectionsBuiltinKind.ListAsMutableSlice,
+            _ => default
+        };
+
+        return sourceName is "List.AsSlice" or "List.AsMutableSlice";
+    }
+
+    private static bool TryResolveSystemCollectionsBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemCollectionsBuiltinKind builtinKind)
+    {
+        return TryGetSystemCollectionsBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
+            || TryGetSystemCollectionsBuiltin(moduleName: string.Empty, function.TemplateName ?? function.Name, out builtinKind);
+    }
+
     private static int GetSystemBitOperationsSurfaceArity(SystemBitOperationsBuiltinKind builtinKind)
     {
         return builtinKind switch
@@ -2239,6 +3435,147 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         return function.ReturnType;
     }
 
+    private void ValidateSystemMemoryBuiltinSignature(
+        TypedFunctionSignature function,
+        SystemMemoryBuiltinKind builtinKind)
+    {
+        switch (builtinKind)
+        {
+            case SystemMemoryBuiltinKind.Allocate:
+                if (!IsSystemMemoryNamedType(function.ReturnType, "Allocation")
+                    || function.Parameters.Count != 3
+                    || !IsSystemMemoryNamedType(function.Parameters[0].Type, "Allocator")
+                    || !IsAllocatorSizeInteger(function.Parameters[1].Type)
+                    || !IsAllocatorSizeInteger(function.Parameters[2].Type))
+                {
+                    throw new InvalidOperationException(
+                        $"System.Memory builtin '{function.Name}' must have signature 'Allocation Allocate(Allocator allocator, i64 byteLength, i64 alignment)'.");
+                }
+
+                break;
+            case SystemMemoryBuiltinKind.Reallocate:
+                if (!IsSystemMemoryNamedType(function.ReturnType, "Allocation")
+                    || function.Parameters.Count != 3
+                    || !IsSystemMemoryNamedType(function.Parameters[0].Type, "Allocation")
+                    || !IsAllocatorSizeInteger(function.Parameters[1].Type)
+                    || !IsAllocatorSizeInteger(function.Parameters[2].Type))
+                {
+                    throw new InvalidOperationException(
+                        $"System.Memory builtin '{function.Name}' must have signature 'Allocation Reallocate(Allocation allocation, i64 byteLength, i64 alignment)'.");
+                }
+
+                break;
+            case SystemMemoryBuiltinKind.Free:
+                if (function.ReturnType.Kind != StarkTypeKind.Void
+                    || function.Parameters.Count != 1
+                    || !IsSystemMemoryNamedType(function.Parameters[0].Type, "Allocation"))
+                {
+                    throw new InvalidOperationException(
+                        $"System.Memory builtin '{function.Name}' must have signature 'void Free(Allocation allocation)'.");
+                }
+
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported System.Memory builtin '{builtinKind}'.");
+        }
+    }
+
+    private SystemCollectionsListShape ValidateSystemCollectionsListSliceSignature(
+        TypedFunctionSignature function,
+        SystemCollectionsBuiltinKind builtinKind)
+    {
+        if (function.Parameters.Count != 1
+            || function.Parameters[0].Type.Kind != StarkTypeKind.Named
+            || function.Parameters[0].Type.BorrowKind != StarkBorrowKind.Borrow
+            || ResolveNamedTypeSymbol(function.Parameters[0].Type) is not { } listType
+            || !string.Equals(
+                StarkTypeSymbols.GetGenericBaseName(function.Parameters[0].Type.NamedType ?? string.Empty),
+                "System.Collections.List",
+                StringComparison.Ordinal)
+            || function.ReturnType.Kind != StarkTypeKind.Slice
+            || function.ReturnType.BorrowKind != StarkBorrowKind.RetBorrow)
+        {
+            throw new InvalidOperationException(
+                $"System.Collections builtin '{function.Name}' must have signature 'retborrow T[] List.AsSlice(borrow List<T> self)' or 'retborrow mut T[] List.AsMutableSlice(mut borrow List<T> self)'.");
+        }
+
+        if (builtinKind == SystemCollectionsBuiltinKind.ListAsMutableSlice
+            && (!function.Parameters[0].Type.IsMutableView || !function.ReturnType.IsMutableView))
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' must use mutable receiver and return a mutable retborrow slice.");
+        }
+
+        if (!listType.TryGetField("Data", out var dataField, out var dataFieldIndex)
+            || dataField.Type.Kind != StarkTypeKind.RawPointer
+            || !listType.TryGetField("Length", out var lengthField, out var lengthFieldIndex)
+            || lengthField.Type.Kind != StarkTypeKind.Integer)
+        {
+            throw new InvalidOperationException("System.Collections List<T> must contain Data and Length fields for slice-view builtins.");
+        }
+
+        return new SystemCollectionsListShape(dataFieldIndex, lengthFieldIndex);
+    }
+
+    private static FunctionMemoryEffectSummary GetSystemMemoryBuiltinMemoryEffects(SystemMemoryBuiltinKind builtinKind)
+    {
+        return builtinKind switch
+        {
+            SystemMemoryBuiltinKind.Allocate => new FunctionMemoryEffectSummary(
+                ReadsArgumentMemory: false,
+                WritesArgumentMemory: false,
+                CapturesArgumentMemory: false,
+                ReadsOtherMemory: true,
+                WritesOtherMemory: true),
+            SystemMemoryBuiltinKind.Reallocate or SystemMemoryBuiltinKind.Free => new FunctionMemoryEffectSummary(
+                ReadsArgumentMemory: true,
+                WritesArgumentMemory: false,
+                CapturesArgumentMemory: false,
+                ReadsOtherMemory: true,
+                WritesOtherMemory: true),
+            _ => throw new InvalidOperationException($"Unsupported System.Memory builtin '{builtinKind}'.")
+        };
+    }
+
+    private SystemMemoryAllocationShape GetSystemMemoryAllocationShape(StarkTypeSymbol allocationType)
+    {
+        var namedType = ResolveNamedTypeSymbol(allocationType);
+        if (namedType is null
+            || !IsSystemMemoryNamedType(allocationType, "Allocation")
+            || namedType.OrderedFields.Count < 4
+            || !string.Equals(namedType.OrderedFields[0].Name, "Pointer", StringComparison.Ordinal)
+            || !string.Equals(namedType.OrderedFields[1].Name, "ByteLength", StringComparison.Ordinal)
+            || !string.Equals(namedType.OrderedFields[2].Name, "Alignment", StringComparison.Ordinal)
+            || !string.Equals(namedType.OrderedFields[3].Name, "Allocator", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("System.Memory Allocation must contain Pointer, ByteLength, Alignment, and Allocator fields in that order.");
+        }
+
+        return new SystemMemoryAllocationShape(
+            LlvmType: MapType(allocationType),
+            ByteLengthLlvmType: MapType(namedType.OrderedFields[1].Type),
+            AlignmentLlvmType: MapType(namedType.OrderedFields[2].Type),
+            AllocatorLlvmType: MapType(namedType.OrderedFields[3].Type));
+    }
+
+    private static bool IsSystemMemoryNamedType(StarkTypeSymbol type, string localName)
+    {
+        if (type.Kind != StarkTypeKind.Named)
+        {
+            return false;
+        }
+
+        var name = type.NamedType ?? type.DisplayName;
+        return string.Equals(name, localName, StringComparison.Ordinal)
+            || name.EndsWith($".{localName}", StringComparison.Ordinal)
+            || string.Equals(type.DisplayName, localName, StringComparison.Ordinal)
+            || type.DisplayName.EndsWith($".{localName}", StringComparison.Ordinal);
+    }
+
+    private static bool IsAllocatorSizeInteger(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Integer && type.BitWidth == 64;
+    }
+
     private SystemMathSinCosSignature ValidateSystemMathSinCosBuiltinSignature(TypedFunctionSignature function)
     {
         if (function.Parameters.Count != 1)
@@ -2322,10 +3659,43 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         RotateRight
     }
 
+    private enum SystemMemoryBuiltinKind
+    {
+        Allocate,
+        Reallocate,
+        Free
+    }
+
+    private enum SystemCollectionsBuiltinKind
+    {
+        ListAsSlice,
+        ListAsMutableSlice
+    }
+
+    private readonly record struct SystemCollectionsListShape(
+        int DataFieldIndex,
+        int LengthFieldIndex);
+
     private readonly record struct SystemMathSinCosSignature(
         StarkTypeSymbol ScalarType,
         int SinFieldIndex,
         int CosFieldIndex);
+
+    private readonly record struct SystemMemoryAllocationShape(
+        string LlvmType,
+        string ByteLengthLlvmType,
+        string AlignmentLlvmType,
+        string AllocatorLlvmType);
+
+    private readonly record struct LinuxAllocatorSyscallSpec(
+        long MmapNumber,
+        long MunmapNumber,
+        int ValueBitWidth,
+        string? Template,
+        string? Constraints)
+    {
+        public string ValueType => ValueBitWidth == 32 ? "i32" : "i64";
+    }
 
     private static string GetFloatIntrinsicSuffix(StarkTypeSymbol type)
     {

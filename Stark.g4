@@ -51,6 +51,7 @@ functionModifier
     | COLD
     | FFI
     | STRICTFP
+    | STATIC
     ;
 
 returnType
@@ -198,11 +199,11 @@ doctrineMember
     ;
 
 fieldDeclaration
-    : MUT? type_ variableDeclarators SEMI
+    : visibilityModifier? MUT? type_ variableDeclarators SEMI
     ;
 
 methodDeclaration
-    : functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* functionBody
+    : visibilityModifier? functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* functionBody
     ;
 
 traitMethodDeclaration
@@ -587,6 +588,8 @@ postfixPart
 
 primaryExpression
     : literal
+    | SIZEOF LPAREN type_ RPAREN
+    | ALIGNOF LPAREN type_ RPAREN
     | Identifier
     | enumConstructorExpression
     | genericEnumCaseReference
@@ -601,6 +604,7 @@ enumConstructorExpression
 
 objectCreationExpression
     : NEW type_ argumentList? objectInitializer?
+    | NEW argumentList objectInitializer?
     ;
 
 enumConstructorInitializer
@@ -700,6 +704,8 @@ HEAP        : 'heap';
 REGISTER    : 'register';
 STATIC      : 'static';
 ARENA       : 'arena';
+SIZEOF      : 'sizeof';
+ALIGNOF     : 'alignof';
 
 BORROW      : 'borrow';
 RETBORROW   : 'retborrow';

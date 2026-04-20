@@ -1,6 +1,6 @@
 # Standard Library
 
-Remember this languge aims to be faster than idiomatic C or Rust on most projects, we must chose the best posible optimization strategy and explore optimization opportunities.
+Remember this language aims to be faster than idiomatic C or Rust on most projects, we must choose the best possible optimization strategy and explore optimization opportunities.
 
 
 This document describes the planned standard library design for Stark.
@@ -30,38 +30,57 @@ The standard library provides:
 - a stable module layout organized around `System`
 - basic console output and input
 - file and path operations
+- filesystem operations such as directory listing and directory deletion
+- owned heap-backed collections
+- minimal thread management
+- minimal blocking TCP
 - text encoding support
+- a small dynamic-memory contract for owned standard-library containers
 - a platform abstraction layer that talks directly to the OS without libc
 
 User code calls `System.Console` or `System.IO.*` and never touches platform syscalls or Win32 APIs directly. The platform boundary is an internal implementation detail hidden behind the library surface.
 
+HTTP is intentionally not part of the standard library. HTTP clients and servers should be built as packages on top of `System.Net.Tcp` once the package-management story is ready.
+
 ## Reference Docs
 
-The current public module references live here:
+The current and planned public module references live here:
 
 - [System](./System.md)
 - [System.BitOperations](./System.BitOperations.md)
 - [System.Console](./System.Console.md)
+- [System.Collections](./System.Collections.md)
+- [System.FileSystem](./System.FileSystem.md)
 - [System.IO](./System.IO.md)
 - [System.IO.File](./System.IO.File.md)
 - [System.IO.Path](./System.IO.Path.md)
 - [System.Math](./System.Math.md)
+- [System.Memory](./System.Memory.md)
+- [System.Net](./System.Net.md)
+- [System.Net.Tcp](./System.Net.Tcp.md)
+- [System.Threading](./System.Threading.md)
 - [System.Text](./System.Text.md)
 
 ## Module Layout
 
 The package root is `System`.
 
-Repository source layout:
+Current and planned repository source layout:
 
 - `stdlib/src/System.stark`
 - `stdlib/src/System/BitOperations.stark`
 - `stdlib/src/System/Console.stark`
+- `stdlib/src/System/Collections.stark`
+- `stdlib/src/System/FileSystem.stark`
 - `stdlib/src/System/IO.stark`
 - `stdlib/src/System/IO/File.stark`
 - `stdlib/src/System/IO/Path.stark`
 - `stdlib/src/System/Text.stark`
 - `stdlib/src/System/Math.stark`
+- `stdlib/src/System/Memory.stark`
+- `stdlib/src/System/Net.stark`
+- `stdlib/src/System/Net/Tcp.stark`
+- `stdlib/src/System/Threading.stark`
 - `stdlib/src/System/Runtime.stark`
 - `stdlib/src/System/Runtime/Buffer.stark`
 - `stdlib/src/System/Runtime/ConsoleInput.stark`
@@ -70,16 +89,22 @@ Repository source layout:
 - `stdlib/src/System/Runtime/Platform/Windows.stark`
 - `stdlib/src/System/Syscall.stark`
 
-Public module surface:
+Current and planned public module surface:
 
 - `System`
 - `System.BitOperations`
 - `System.Console`
+- `System.Collections`
+- `System.FileSystem`
 - `System.IO`
 - `System.IO.File`
 - `System.IO.Path`
+- `System.Memory`
+- `System.Net`
+- `System.Net.Tcp`
 - `System.Text`
 - `System.Math`
+- `System.Threading`
 
 Internal modules:
 
@@ -102,12 +127,23 @@ syscall support needed during package build:
 import System.Runtime
 import System.Syscall
 export import System.BitOperations
+export import System.Collections
 export import System.Console
+export import System.FileSystem
 export import System.IO
 export import System.Math
+export import System.Memory
+export import System.Net
 export import System.Text
+export import System.Threading
 module System
 ```
+
+Most additional `v1.2` re-exports above are still planned. `System.Memory` is
+the first allocation-focused `v1.2` module with an initial source
+implementation and is now re-exported by the repository `System` root. The
+versioned `v1.0` baseline remains the narrower module list in
+[StandardLibraryBaseline.md](./StandardLibraryBaseline.md).
 
 `System.IO` re-exports the IO submodules and declares shared IO types:
 
@@ -170,6 +206,25 @@ public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, un
 ## Encoding Model
 
 `System.Text` defines the `Encoding` enum used by both `System.IO.File` and explicit text conversion APIs. The owned text container types themselves are now core language types, so `System.Text` focuses on the shared encoding enum plus helper functions that operate on those core containers.
+
+## Function Kind Policy
+
+Standard-library APIs should use Stark's function kinds wherever the contract is
+strong enough:
+
+- use `finite law` for value-only helpers, metadata reads, constants, and
+  projections that are pure and always return
+- use `law` for read-only helpers that are pure but whose return is conditional
+  on source-level preconditions not fully encoded in the signature
+- use `finite` only for effectful APIs that still guarantee progress and return
+  without needing purity
+- use ordinary `fn` for IO, allocation, deallocation, mutation, synchronization,
+  blocking, scheduler interaction, networking, and operations that depend on
+  external platform state
+
+The standard library should prefer stronger function kinds when they are true,
+but it must not overstate purity or guaranteed return just to make an API look
+more optimized.
 
 The semantics are:
 
@@ -244,7 +299,7 @@ import System.IO
 module System.IO.File
 
 public struct File {
-    fn bool IsOpen(borrow File self);
+    finite law bool IsOpen(borrow File self);
     fn i32 Close(mut borrow File self);
     fn i32 Flush(mut borrow File self);
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
@@ -277,7 +332,13 @@ public fn i32 Move(ascii oldPath, ascii newPath);
 public fn bool Exists(ascii path);
 ```
 
-Methods on a `public struct` are accessible wherever the struct is visible. Visibility modifiers do not apply to individual methods or fields inside a type body per the Stark module system rules.
+Methods on a `public struct` inherit the struct's visibility unless explicitly
+narrowed. Field visibility remains a separate type-opacity and representation
+stability topic.
+
+`IsOpen` is `finite law` because it only reads local handle state and always
+returns. The remaining file methods are ordinary `fn` because they perform IO,
+mutate handle or buffer state, or depend on filesystem state.
 
 ### File Modes
 
@@ -502,12 +563,34 @@ The platform layer translates OS error codes into `IOError` values at the bounda
 
 ## Runtime Strategy
 
-The target design is zero dependency on libc, glibc, musl, or the Windows CRT for stdlib IO paths.
+The target design is zero explicit dependency on libc, glibc, musl, or the
+Windows CRT from Stark-owned runtime and standard-library code, except where
+user code explicitly opts into a foreign library or a target truly requires a
+platform boundary. Clang and LLVM may still be used as the native toolchain.
+
+If LLVM or the native toolchain lowers Stark-emitted LLVM IR to helper symbols
+such as libm functions, `memset`, `memcpy`, `memmove`, or hosted startup code,
+that is treated as a toolchain/backend dependency rather than a C-backed
+standard-library implementation.
 
 - On Linux, the current Milestone 7 slice uses syscall-backed boundaries for `getcwd`, console output, and file-descriptor-based file operations.
 - Owned-file unicode buffering and broader text-conversion APIs are still part of the remaining shared text-IO work, but the Linux platform layer itself no longer depends on libc/glibc for the implemented paths.
 - On Windows, the target remains Win32 API calls from `kernel32.dll`.
 - `System.Runtime.Buffer` now provides the internal fixed-size linear and ring buffer primitives used by stdlib IO. `File` uses those foundations for `None` / `Line` / `Full` write-buffering policy, and the default Linux path now switches between `Full` and `Line` based on `ioctl` terminal detection. `Console` still writes directly to the OS today.
+
+Current explicit runtime dependency caveats:
+
+- The `System.Memory` allocator and compiler-emitted heap-local helper now
+  lower through Stark-owned runtime helpers instead of explicit
+  `malloc`, `realloc`, or `free` calls.
+- Small and medium allocator buckets may satisfy `Reallocate` in place when the
+  new size and alignment still fit the bucket; otherwise the runtime uses the
+  conservative allocate-copy-free fallback.
+- The allocator benchmark harness lives under `benchmarks/allocator` and should
+  remain quick enough for ordinary development smoke runs.
+- Source-module and package linkage can pull in object files for re-exported
+  modules that were not directly called, so explicit C-runtime validation must
+  inspect produced objects, archives, and final executables.
 
 ## Building the Package
 
@@ -560,13 +643,34 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 - The library depends on compiler-emitted or toolchain-provided runtime symbols internally, but user code does not.
 - Startup and shutdown behavior is coordinated between the compiler toolchain and `System.Runtime`.
 - Any API that needs process termination or host interaction is routed through a library wrapper.
+- A hosted C-style executable link is allowed to use platform C startup code.
+  That startup code is classified as a toolchain/entrypoint dependency, not as
+  a C-backed standard-library implementation.
 
 ### Allocator boundary
 
 - Console output avoids allocation.
 - File buffering uses a fixed-size internal buffer.
 - Owned text-returning APIs depend on the allocator contract used by the runtime and stdlib.
+- Collections, allocation-backed filesystem helpers, text builders, and TCP convenience buffers use the shared `System.Memory` allocator contract.
+- Ordinary user code constructs heap-backed containers with target-typed `new()` or `new(allocator)`, not `Type.New()` factory calls.
 - Prefer a single allocator contract for stdlib internals rather than ad hoc allocation in each module.
+- See [DynamicMemoryAllocation.md](../Internals/DynamicMemoryAllocation.md) for the allocation model.
+- The current allocator backend uses Stark-owned runtime helpers with small and
+  medium size-class reuse, Linux syscall-backed and Windows OS heap-backed
+  fallback paths, and target-aware over-alignment.
+
+### Math and helper boundary
+
+- Hardware-lowerable math such as `Sqrt`, `FusedMultiplyAdd`, rounding, and the
+  reciprocal estimates should keep using the selected instruction surface.
+- Transcendental math such as `Sin`, `Cos`, `Pow`, and `Log` currently uses
+  LLVM math intrinsics that may lower to libm. Under the current dependency
+  criteria, that is a toolchain/backend choice inherited through LLVM, not a
+  C-backed `System.Math` implementation that Stark needs to replace.
+- Compiler-generated memory helpers such as backend-emitted `memset`,
+  `memcpy`, and `memmove` are also classified as toolchain/backend dependencies
+  when they arise from LLVM lowering rather than explicit Stark runtime calls.
 
 ### IO boundary
 
@@ -592,8 +696,14 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 
 ### Platform-specific tests
 
-- Linux integration tests that verify the stdlib works without any libc linkage
-- Windows integration tests that verify the stdlib works without CRT linkage
+- Linux integration tests that verify the stdlib works without explicit
+  Stark-emitted libc runtime symbols
+- Windows integration tests that verify the stdlib works without explicit
+  Stark-emitted CRT runtime symbols
+- archive and object-file symbol audits for explicit Stark-emitted C runtime
+  dependencies such as `malloc`, `realloc`, and `free`
+- informational reports for toolchain-inherited symbols such as libm,
+  `memset`, `memcpy`, `memmove`, and hosted startup code
 - cross-platform tests that verify the public API surface matches except where platform differences are documented
 
 ### Packaging checks

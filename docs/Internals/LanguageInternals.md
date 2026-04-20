@@ -43,7 +43,51 @@ By contrast, `ffi` boundaries preserve foreign ABI expectations and should be tr
 This is an implementation detail.
 It matters for code generation and interop, but it is not meant to change how ordinary Stark code is written.
 
-## 4. Generic Instantiation and Specialization
+## 4. Runtime and C-Runtime Boundaries
+
+Stark should distinguish explicit Stark runtime dependencies from
+toolchain-inherited dependencies.
+
+Using Clang or LLVM to compile, optimize, assemble, or link Stark output is a
+toolchain decision. That does not by itself mean Stark programs should depend
+directly on libc, glibc, musl, libm, or the Windows CRT at runtime.
+
+If a C-family runtime symbol appears only because LLVM or the native toolchain
+selected it while lowering otherwise Stark-owned LLVM IR, it is classified as a
+toolchain/backend dependency. That includes cases such as LLVM math intrinsics
+lowering to libm, LLVM memory intrinsics lowering to `memset`/`memcpy`/`memmove`,
+or a hosted link using conventional platform startup code.
+
+The `Reduce C-Runtime Dependencies` roadmap section is for C runtime surfaces
+that Stark itself explicitly emits or exposes, not for replacing LLVM's chosen
+backend support-library strategy.
+
+The intended runtime direction is:
+
+- Linux runtime and standard-library platform code should use Linux syscalls or
+  Stark-owned runtime helpers rather than libc wrappers.
+- Windows runtime and standard-library platform code should use OS APIs such as
+  `kernel32`, Winsock, or the selected Windows heap/virtual-memory API rather
+  than the C runtime.
+- `ffi` remains available for user-requested foreign calls, including calls into
+  C libraries, but those calls should be explicit source-level choices.
+
+Current explicit Stark runtime-dependency caveats:
+
+- Heap locals and `System.Memory` allocation now lower through Stark-owned
+  runtime helpers rather than explicit `malloc`, `realloc`, or `free` calls.
+  Linux allocator helpers use direct syscalls on supported Linux targets;
+  Windows allocator helpers use OS heap APIs rather than the CRT allocator.
+- Source-module and package linkage can pull in object files for re-exported
+  modules that user code did not directly call, so unused `System.Memory` code
+  must still be audited at the object, archive, and final executable levels.
+
+Those caveats are implementation debt, not desired language semantics.
+Explicit C-runtime dependency reduction should be validated at the object,
+archive, and final executable levels by inspecting unresolved and linked runtime
+symbols.
+
+## 5. Generic Instantiation and Specialization
 
 The current compiler monomorphizes generics by default.
 In practice, that means a generic function such as `Identity<i32>` is usually realized as a concrete specialized body for that exact use when a body is available.
@@ -64,7 +108,7 @@ It does not affect type checking, semantic correctness, or the meaning of a Star
 In the current implementation, this score is mainly used to decide how aggressive specialization should be beyond the normal owned concrete body path.
 It is not primarily used to decide whether ordinary specialization happens at all.
 
-## 5. Closed-World Compilation Bias
+## 6. Closed-World Compilation Bias
 
 Stark is designed with a closed-world bias, and the compiler takes advantage of that.
 
@@ -78,7 +122,7 @@ The implementation generally assumes:
 
 Dynamic dispatch and open-world behavior are still possible where the language provides them, but they are treated as explicit concessions rather than the default compilation model.
 
-## 6. Doctrines and Static Realization
+## 7. Doctrines and Static Realization
 
 `doctrine` declarations are compile-time-only and do not have a runtime representation.
 That makes them a natural fit for Stark's static dispatch and closed-world specialization model.

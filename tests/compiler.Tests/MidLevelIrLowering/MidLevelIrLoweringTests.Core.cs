@@ -706,6 +706,43 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void TargetTypedObjectCreationLowersWithDestinationType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn Box Make(i32[min max] value) {
+                return new() { Value = value };
+            }
+
+            fn i32[min max] Run(i32[min max] value) {
+                stack mut Box box = new() { Value = value };
+                box = new() { Value = value + 1 };
+                return box.Value + Make(value).Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var functions = GetMir(result).Functions.ToArray();
+        var make = Assert.Single(functions, static function => function.Name == "Make");
+        var run = Assert.Single(functions, static function => function.Name == "Run");
+
+        Assert.True(make.SupportsDirectCodeGeneration);
+        Assert.True(run.SupportsDirectCodeGeneration);
+        Assert.Contains(
+            make.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "Value" });
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "Value" });
+    }
+
+    [Fact]
     public void RegisterObjectCreationKeepsValueStyleLocalLowering()
     {
         var result = Compile(
