@@ -4,6 +4,106 @@ namespace compiler.StandardLibraryTests;
 
 internal sealed class StandardLibraryTestSuite
 {
+    private const string CollectionsGrowthMoveDropProgram = """
+        import System
+        module App
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool ConsumeList(List<i32[0 max]> values, i64[0 max] expected) {
+            return values.Count() == expected && values.Capacity() >= expected;
+        }
+
+        fn bool ConsumeStack(Stack<i32[0 max]> values, i64[0 max] expected) {
+            return values.Count() == expected && values.Peek() == 79;
+        }
+
+        fn bool ConsumeQueue(Queue<i32[0 max]> values, i64[0 max] expected) {
+            return values.Count() == expected && values.Peek() == 0;
+        }
+
+        fn bool ConsumeLinkedList(LinkedList<i32[0 max]> values, i64[0 max] expected) {
+            return values.Count() == expected;
+        }
+
+        fn bool ConsumeDictionary(Dictionary<i32[0 max], i32[0 max]> values, i64[0 max] expected) {
+            stack i32[0 max] key = 17;
+            stack mut i32[0 max] found = 0;
+            return values.Count() == expected
+                && values.ContainsKey(key)
+                && values.TryGet(key, found)
+                && found == 34;
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut List<i32[0 max]> list = new();
+            for willexit (stack mut i32[0 96] i = 0; i < 96; i += 1) {
+                if (!Ok(list.Push(i))) {
+                    return 1;
+                }
+            }
+
+            if (!ConsumeList(list, 96)) {
+                return 2;
+            }
+
+            stack mut Stack<i32[0 max]> stackValues = new();
+            for willexit (stack mut i32[0 80] i = 0; i < 80; i += 1) {
+                if (!Ok(stackValues.Push(i))) {
+                    return 3;
+                }
+            }
+
+            if (!ConsumeStack(stackValues, 80)) {
+                return 4;
+            }
+
+            stack mut Queue<i32[0 max]> queue = new();
+            for willexit (stack mut i32[0 96] i = 0; i < 96; i += 1) {
+                if (!Ok(queue.Enqueue(i))) {
+                    return 5;
+                }
+            }
+
+            if (!ConsumeQueue(queue, 96)) {
+                return 6;
+            }
+
+            stack mut LinkedList<i32[0 max]> linked = new();
+            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
+                if (!Ok(linked.AddLast(i))) {
+                    return 7;
+                }
+            }
+
+            if (!ConsumeLinkedList(linked, 48)) {
+                return 8;
+            }
+
+            stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
+                stack i32[0 max] key = i;
+                stack i32[0 max] value = (i32[0 max])(i * 2);
+                if (!Ok(dictionary.Set(key, value))) {
+                    return 9;
+                }
+            }
+
+            if (!ConsumeDictionary(dictionary, 64)) {
+                return 10;
+            }
+
+            return 0;
+        }
+        """;
+
     public void StdLibSourceGraphIncludesMilestone7ModuleLayout()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -155,6 +255,7 @@ internal sealed class StandardLibraryTestSuite
             Assert.Contains("Stack", collectionsTypes);
             Assert.Contains("Queue", collectionsTypes);
             Assert.Contains("LinkedList", collectionsTypes);
+            Assert.Contains("Dictionary", collectionsTypes);
             Assert.Contains("Equatable", collectionsTypes);
             Assert.Contains("Hashable", collectionsTypes);
             Assert.Contains("DictionaryKey", collectionsTypes);
@@ -269,6 +370,22 @@ internal sealed class StandardLibraryTestSuite
                         return false;
                     }
 
+                    stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+                    stack i32[0 max] dictionaryKey = 3;
+                    if (!Ok(dictionary.Set(dictionaryKey, 33))) {
+                        return false;
+                    }
+                    if (!dictionary.ContainsKey(dictionaryKey)) {
+                        return false;
+                    }
+                    stack mut i32[0 max] found = 0;
+                    if (!dictionary.TryGet(dictionaryKey, found) || found != 33) {
+                        return false;
+                    }
+                    if (!dictionary.Remove(dictionaryKey) || dictionary.ContainsKey(dictionaryKey) || dictionary.Count() != 0) {
+                        return false;
+                    }
+
                     return values.Capacity() >= 1;
                 }
                 """,
@@ -278,6 +395,125 @@ internal sealed class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
+
+    public async Task SourceStdLibCollectionsGrowMoveDropExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-collections-source-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, CollectionsGrowthMoveDropProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    public async Task PackagedStdLibCollectionsGrowMoveDropExecutableRunsWithoutSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-collections-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.True(
+                buildExitCode == 0,
+                buildStdout + Environment.NewLine + buildStderr);
+            AssertCompilerLogsEmitted(buildStderr.ToString());
+
+            await File.WriteAllTextAsync(appPath, CollectionsGrowthMoveDropProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     public void StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();

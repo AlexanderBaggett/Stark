@@ -6,4 +6,10 @@ public sealed class SystemCollectionsStandardLibraryTests
 
     [Fact]
     public void StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface() => _suite.StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface();
+
+    [Fact]
+    public Task SourceStdLibCollectionsGrowMoveDropExecutableRuns() => _suite.SourceStdLibCollectionsGrowMoveDropExecutableRuns();
+
+    [Fact]
+    public Task PackagedStdLibCollectionsGrowMoveDropExecutableRunsWithoutSource() => _suite.PackagedStdLibCollectionsGrowMoveDropExecutableRunsWithoutSource();
 }

@@ -32,7 +32,7 @@ internal static partial class PackageImageBuilder
         var sourceTypeAliases = new List<StarkPackageTypeAliasManifest>();
 
         foreach (var declaration in module.SyntaxModel.Declarations
-                     .Where(static declaration => declaration.Visibility is StarkVisibility.Public or StarkVisibility.Export)
+                     .Where(static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility))
                      .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
         {
             switch (declaration.Kind)
@@ -135,6 +135,14 @@ internal static partial class PackageImageBuilder
                 return manifest with
                 {
                     Fields = BuildSourceSurfaceFields(module, structDeclaration.structBody().structMember().Select(static member => member.fieldDeclaration())),
+                    Constructors = BuildSourceSurfaceConstructorManifests(
+                        module,
+                        structDeclaration.Identifier().GetText(),
+                        structDeclaration.structBody().structMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!
+                            .Cast<StarkParser.ConstructorDeclarationContext>()
+                            .ToArray()),
                     Methods = BuildSourceSurfaceMethodManifests(
                         module,
                         manifest.Methods,
@@ -157,6 +165,14 @@ internal static partial class PackageImageBuilder
                             parameter.Identifier().GetText(),
                             GetContextSourceText(module.ParseResult, parameter.type_())))
                         .ToArray(),
+                    Constructors = BuildSourceSurfaceConstructorManifests(
+                        module,
+                        recordDeclaration.Identifier().GetText(),
+                        recordDeclaration.recordBody().recordMember()
+                            .Select(static member => member.constructorDeclaration())
+                            .Where(static constructor => constructor is not null)!
+                            .Cast<StarkParser.ConstructorDeclarationContext>()
+                            .ToArray()),
                     Methods = BuildSourceSurfaceMethodManifests(
                         module,
                         manifest.Methods,
@@ -229,6 +245,25 @@ internal static partial class PackageImageBuilder
                         GetContextSourceText(module.ParseResult, fieldDeclaration.type_()),
                         fieldDeclaration.visibilityModifier()?.GetText())))
             .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageConstructorManifest>? BuildSourceSurfaceConstructorManifests(
+        LoadedModuleDocument module,
+        string typeName,
+        IReadOnlyList<StarkParser.ConstructorDeclarationContext> constructors)
+    {
+        var manifests = constructors
+            .Where(constructor => string.Equals(constructor.Identifier().GetText(), typeName, StringComparison.Ordinal))
+            .Select(constructor => new StarkPackageConstructorManifest(
+                constructor.parameterList().parameter()
+                    .Select(parameter => new StarkPackageParameterManifest(
+                        parameter.Identifier().GetText(),
+                        GetContextSourceText(module.ParseResult, parameter.type_())))
+                    .ToArray(),
+                GetContextSourceText(module.ParseResult, constructor.block())))
+            .ToArray();
+
+        return manifests.Length == 0 ? null : manifests;
     }
 
     private static IReadOnlyList<StarkPackageMethodManifest>? BuildSourceSurfaceMethodManifests(

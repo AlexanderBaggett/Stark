@@ -22,6 +22,11 @@ Each benchmark is a standalone `.stark` program with an `export ffi main`.
 Benchmarks should keep their own internal iteration counts modest so the full
 harness stays fast enough to run during normal development.
 
+Benchmarks marked with `// stark-bench: compile-only` are compiler/codegen
+regression sources rather than executable timing benchmarks. The executable
+runner skips them, while `BenchmarkSourceTests` still verifies that they lower
+successfully.
+
 ## Current Coverage
 
 - `allocator/HeapLocalBucketReuse.stark` exercises heap-local allocation and
@@ -30,6 +35,10 @@ harness stays fast enough to run during normal development.
   `System.Memory.Reallocate` in-place reuse.
 - `allocator/SystemMemoryFallbackReallocate.stark` exercises the conservative
   allocate-copy-free fallback when a reallocation no longer fits the old bucket.
+- `collections/ListGrowth.stark` and `collections/QueueGrowth.stark` are
+  executable growth benchmarks for the first owned collections.
+- `text/TextPathCallerBuffer.stark` is a compile-only benchmark for the current
+  caller-owned text/path buffer helpers.
 
-Future collection and owned-buffer benchmarks should live here once those APIs
+Future owned text/path allocation benchmarks should live here once those APIs
 allocate through `System.Memory`.

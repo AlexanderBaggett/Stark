@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 bench_root="${repo_root}/benchmarks"
+stdlib_root="${repo_root}/stdlib/src"
 
 runs="${STARK_BENCH_RUNS:-3}"
 filter="${STARK_BENCH_FILTER:-}"
@@ -51,6 +52,11 @@ printf 'benchmark,runs,compile_ms,min_ms,avg_ms,max_ms\n'
 
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
+  if grep -q '^// stark-bench: compile-only' "${source_path}"; then
+    echo "Skipping compile-only benchmark ${rel_path}; compiler tests still validate it lowers successfully." >&2
+    continue
+  fi
+
   safe_name="${rel_path//\//_}"
   safe_name="${safe_name%.stark}"
   output_path="${tmp_dir}/${safe_name}"
@@ -62,6 +68,7 @@ for source_path in "${benchmarks[@]}"; do
   dotnet run --project "${repo_root}/src" -- \
     "${source_path}" \
     --emit-exe \
+    -I "${stdlib_root}" \
     -o "${output_path}" \
     "${compiler_args[@]}" >/dev/null
   compile_end="$(date +%s%N)"

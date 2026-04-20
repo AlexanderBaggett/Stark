@@ -1261,9 +1261,17 @@ Everything before this point is frozen
   - [ ] Add allocator microbenchmarks and regression tests for `List<T>` growth, `Queue<T>` growth, owned text/path buffers, and heap locals.
     - [x] Add LLVM IR regression coverage for heap locals and `System.Memory` allocate/reallocate/free lowering.
     - [x] Add a minimal allocator benchmark harness once Stark executable benchmark conventions are in place.
-    - [ ] Add `List<T>` growth benchmarks and regressions after `System.Collections.List<T>` is implemented.
-    - [ ] Add `Queue<T>` growth benchmarks and regressions after `System.Collections.Queue<T>` is implemented.
+    - [x] Add `List<T>` growth benchmarks and regressions after `System.Collections.List<T>` is implemented.
+      - [x] Add compile-only `List<T>` growth benchmark source coverage.
+      - [x] Add source-imported LLVM lowering regression coverage for `List<T>` growth and move/drop paths.
+      - [x] Promote `List<T>` growth to executable timing once imported collection helper linkage is complete.
+    - [x] Add `Queue<T>` growth benchmarks and regressions after `System.Collections.Queue<T>` is implemented.
+      - [x] Add compile-only `Queue<T>` growth benchmark source coverage.
+      - [x] Add source-imported LLVM lowering regression coverage for `Queue<T>` growth and move/drop paths.
+      - [x] Promote `Queue<T>` growth to executable timing once imported collection helper linkage is complete.
     - [ ] Add owned text/path buffer benchmarks after those APIs allocate through `System.Memory`.
+      - [x] Add compile-only caller-owned text/path buffer benchmark coverage for the current APIs.
+      - [ ] Replace the caller-owned benchmark with an owned text/path allocation benchmark once those APIs allocate through `System.Memory`.
   - [x] Add symbol audits proving the faster allocator still does not introduce explicit `malloc`, `realloc`, `free`, libc, or CRT allocator dependencies.
     - [x] Audit packaged standard-library archives for allocator C-runtime symbols.
     - [x] Audit source-imported allocator executables for allocator C-runtime symbols.
@@ -1292,13 +1300,17 @@ Everything before this point is frozen
   - [x] Implement source-level `out T` bodies for `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast`.
   - [x] Complete safe retborrow and slice-view lowering for `Get`, `GetMut`, `Peek`, `AsSlice`, and `AsMutableSlice`.
   - [x] Collapse `LinkedList<T>` to a single allocation per node once generic aggregate layout/drop lowering makes that sound and simple.
-  - [ ] Implement dictionary hash/equality constraints before exposing generic `Dictionary<K, V>`.
+  - [x] Implement dictionary hash/equality constraints before exposing generic `Dictionary<K, V>`.
     - [x] Add source-level `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` contracts.
-    - [ ] Enforce generic key constraints in type checking before `Dictionary<K, V>` can be used.
-    - [ ] Preserve dictionary key constraints through monomorphization and package images.
-    - [ ] Add diagnostics that reject dictionary use when `K` has no proven hash/equality contract.
-  - [ ] Implement `Dictionary<K, V>` once constraints are available.
-  - [ ] Add move/drop/growth/package-consumption tests for every collection.
+    - [x] Enforce generic key constraints in type checking before `Dictionary<K, V>` can be used.
+    - [x] Preserve dictionary key constraints through monomorphization and package images.
+    - [x] Add diagnostics that reject dictionary use when `K` has no proven hash/equality contract.
+  - [x] Implement `Dictionary<K, V>` once constraints are available.
+  - [x] Add move/drop/growth/package-consumption tests for every collection.
+    - [x] Add source-imported LLVM lowering coverage for `List<T>`, `Stack<T>`, `Queue<T>`, `LinkedList<T>`, and `Dictionary<K, V>` growth plus move/drop consumption.
+    - [x] Add package-image-backed executable coverage for the same collection consumption surface.
+    - [x] Enable executable collection timing/tests once source-imported destructors link monomorphized `Clear` helpers and compiler-owned `DictionaryKey` builtins.
+    - [x] Enable packaged collection executable consumption once imported constructor bodies and internal helper types lower from package images.
 - [ ] Implement `System.Threading`.
   - [ ] Define the safe thread-entry callable model.
   - [ ] Implement `Thread` construction.

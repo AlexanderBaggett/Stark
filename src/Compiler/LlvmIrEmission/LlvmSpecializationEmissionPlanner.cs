@@ -162,6 +162,12 @@ internal static class LlvmSpecializationEmissionPlanner
             handledFunctionNames.Add(strategy.SymbolName);
             ssaByName.TryGetValue(strategy.SymbolName, out var ssaFunction);
             var hasBody = ssaFunction is { HasBody: true };
+            if (!hasBody && strategy.StrategyKind == FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly)
+            {
+                handledFunctionNames.Remove(strategy.SymbolName);
+                continue;
+            }
+
             var parameterEffects = getParameterEffects(strategy.SymbolName, hasBody && !effects.IsFfi);
             var memoryEffects = getFunctionMemoryEffects(strategy.SymbolName, hasBody && !effects.IsFfi);
             var definitionInternalize = strategy.Linkage == MonomorphizationLinkageKind.InternalSingleOwner;

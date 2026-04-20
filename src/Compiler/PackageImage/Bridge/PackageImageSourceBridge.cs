@@ -138,6 +138,25 @@ internal static partial class PackageImageLoader
                     builder.AppendLine(";");
                 }
 
+                if (type.Constructors is { Count: > 0 })
+                {
+                    if (type.Fields.Count > 0)
+                    {
+                        builder.AppendLine();
+                    }
+
+                    foreach (var constructor in type.Constructors)
+                    {
+                        builder.Append("    ");
+                        builder.Append(type.Name);
+                        builder.Append('(');
+                        builder.Append(string.Join(", ", constructor.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}")));
+                        builder.Append(") ");
+                        builder.AppendLine(constructor.BodyText);
+                        builder.AppendLine();
+                    }
+                }
+
                 if (type.Destructor is not null)
                 {
                     builder.Append("    ");
@@ -371,10 +390,36 @@ internal static partial class PackageImageLoader
         var typedInterface = module.EffectiveTypedInterface;
         if (typedInterface is not null)
         {
-            return typedInterface.Types.Select(ConvertTypeManifest).ToArray();
+            var sourceTypesByName = (module.EffectiveSourceSurface.Types ?? [])
+                .ToDictionary(static type => type.Name, StringComparer.Ordinal);
+            return typedInterface.Types
+                .Select(type =>
+                {
+                    var converted = ConvertTypeManifest(type);
+                    return sourceTypesByName.TryGetValue(converted.Name, out var sourceType)
+                        ? MergeSourceSurfaceTypeDetails(converted, sourceType)
+                        : converted;
+                })
+                .ToArray();
         }
 
         return module.EffectiveSourceSurface.Types ?? [];
+    }
+
+    private static StarkPackageTypeManifest MergeSourceSurfaceTypeDetails(
+        StarkPackageTypeManifest typedType,
+        StarkPackageTypeManifest sourceType)
+    {
+        return typedType with
+        {
+            PrimaryConstructorParameters = sourceType.PrimaryConstructorParameters ?? typedType.PrimaryConstructorParameters,
+            Constructors = sourceType.Constructors ?? typedType.Constructors,
+            Destructor = sourceType.Destructor ?? typedType.Destructor,
+            Fields = sourceType.Fields.Count == typedType.Fields.Count
+                ? sourceType.Fields
+                : typedType.Fields,
+            Variants = sourceType.Variants ?? typedType.Variants
+        };
     }
 
     private static IReadOnlyList<StarkPackageGlobalManifest> GetGlobals(StarkPackageModuleManifest module)
@@ -606,11 +651,6 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
-            if (template.TypedBody is not null && CanOmitBridgeBodyText(template.TypedBody))
-            {
-                continue;
-            }
-
             if (!string.IsNullOrEmpty(template.BodyText))
             {
                 templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;

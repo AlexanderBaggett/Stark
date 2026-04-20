@@ -1442,13 +1442,17 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            var operand = LowerImportedTypedTemplateExpressionCore(statement.Expression, _function.Signature.ReturnType);
+            var operand = LowerImportedTypedTemplateReturnExpression(statement.Expression, _function.Signature.ReturnType);
             if (operand is null)
             {
                 return false;
             }
 
-            RecordMoveFromOperand(operand, _function.Signature.ReturnType);
+            if (_function.Signature.ReturnType.BorrowKind == StarkBorrowKind.None)
+            {
+                RecordMoveFromOperand(operand, _function.Signature.ReturnType);
+            }
+
             EmitStorageDeadBeyondDepth(0);
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Return,
@@ -1456,6 +1460,29 @@ internal sealed partial class MidLevelIrLowerer
                 ValueText: operand.Text,
                 Value: operand);
             return true;
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateReturnExpression(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            StarkTypeSymbol returnType)
+        {
+            if (returnType.BorrowKind != StarkBorrowKind.None
+                && StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType)
+                && TryResolveImportedTypedTemplateAssignmentTarget(expression, out var target)
+                && target.Type.BorrowKind == StarkBorrowKind.None)
+            {
+                return BuildAddress(target);
+            }
+
+            if (returnType.BorrowKind != StarkBorrowKind.None
+                && !StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType))
+            {
+                return LowerImportedTypedTemplateExpressionCore(
+                    expression,
+                    StarkTypeSymbols.BorrowReturnValueType(returnType));
+            }
+
+            return LowerImportedTypedTemplateExpressionCore(expression, returnType);
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateExpressionCore(
@@ -1602,9 +1629,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var result = EmitTemporary(call, "call");
-                    return result is null || expectedType is null
-                        ? result
-                        : CoerceOperand(result, expectedType);
+                    return result is null ? null : CoerceImportedTypedTemplateCallResult(call, result, expectedType);
                 }
 
                 case ImportedTemplateTypedBodyExpressionKind.IndexAccess:
@@ -1654,14 +1679,33 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var result = EmitTemporary(memberCall, "call");
-                    return result is null || expectedType is null
-                        ? result
-                        : CoerceOperand(result, expectedType);
+                    return result is null ? null : CoerceImportedTypedTemplateCallResult(memberCall, result, expectedType);
                 }
 
                 default:
                     return null;
             }
+        }
+
+        private MidLevelIrOperand? CoerceImportedTypedTemplateCallResult(
+            MidLevelIrCallRValue call,
+            MidLevelIrOperand result,
+            StarkTypeSymbol? expectedType)
+        {
+            if (expectedType is null)
+            {
+                return result;
+            }
+
+            if (call.SourceReturnType is { } sourceReturnType
+                && StarkTypeSymbols.IsPointerBackedBorrowReturn(sourceReturnType)
+                && expectedType.BorrowKind != StarkBorrowKind.None
+                && TypeCompatibilityFacts.CanAssign(expectedType, sourceReturnType))
+            {
+                return result;
+            }
+
+            return CoerceOperand(result, expectedType);
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateTypeLayout(
@@ -1953,13 +1997,13 @@ internal sealed partial class MidLevelIrLowerer
                 return null;
             }
 
-            var operand = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType: null);
+            var targetType = ApplyGenericSubstitution(publishedType);
+            var operand = LowerImportedTypedTemplateExpressionCore(expression.Args[0], targetType);
             if (operand is null)
             {
                 return null;
             }
 
-            var targetType = ApplyGenericSubstitution(publishedType);
             var converted = CoerceOperand(operand, targetType);
             return expectedType is null ? converted : CoerceOperand(converted, expectedType);
         }
@@ -2059,8 +2103,11 @@ internal sealed partial class MidLevelIrLowerer
                 return LowerImportedTypedTemplateShortCircuitBinary(expression, operatorText, expectedType);
             }
 
-            var left = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType: null);
-            var right = LowerImportedTypedTemplateExpressionCore(expression.Args[1], expectedType: null);
+            var numericExpectedType = IsExpectedIntegerBinaryResult(operatorText, expectedType)
+                ? expectedType
+                : null;
+            var left = LowerImportedTypedTemplateExpressionCore(expression.Args[0], numericExpectedType);
+            var right = LowerImportedTypedTemplateExpressionCore(expression.Args[1], numericExpectedType);
             if (left is null || right is null)
             {
                 return null;
@@ -2106,6 +2153,28 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return expectedType is null ? result : CoerceOperand(result, expectedType);
+        }
+
+        private static bool IsExpectedIntegerBinaryResult(string operatorText, StarkTypeSymbol? expectedType)
+        {
+            return expectedType?.Kind == StarkTypeKind.Integer
+                && operatorText is "+"
+                    or "-"
+                    or "*"
+                    or "**"
+                    or "+%"
+                    or "-%"
+                    or "*%"
+                    or "+|"
+                    or "-|"
+                    or "*|"
+                    or "/"
+                    or "%"
+                    or "&"
+                    or "^"
+                    or "|"
+                    or "<<"
+                    or ">>";
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateComparisonChain(
@@ -2346,6 +2415,7 @@ internal sealed partial class MidLevelIrLowerer
                 signature.Name,
                 signature,
                 receiver: null,
+                receiverPlace: null,
                 text: RenderImportedTypedTemplateExpressionCore(expression),
                 out call,
                 loweredExplicitArguments: loweredArguments);
@@ -2364,7 +2434,18 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            var receiver = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType: null);
+            PlaceTarget? receiverPlace = null;
+            MidLevelIrOperand? receiver;
+            if (TryResolveImportedTypedTemplateAssignmentTarget(expression.Args[0], out var resolvedReceiverPlace))
+            {
+                receiverPlace = resolvedReceiverPlace;
+                receiver = ReadPlace(resolvedReceiverPlace);
+            }
+            else
+            {
+                receiver = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType: null);
+            }
+
             if (receiver is null)
             {
                 return false;
@@ -2390,6 +2471,7 @@ internal sealed partial class MidLevelIrLowerer
                 signature.Name,
                 signature,
                 receiver,
+                receiverPlace,
                 text: RenderImportedTypedTemplateExpressionCore(expression),
                 out call,
                 loweredExplicitArguments: loweredArguments);

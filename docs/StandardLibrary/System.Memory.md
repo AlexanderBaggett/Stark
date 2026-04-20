@@ -145,6 +145,12 @@ through the allocation policy.
 - `benchmarks/allocator` contains the first quick allocator benchmark harness
   and covers heap-local bucket reuse plus bucket-reuse and fallback
   `System.Memory.Reallocate` paths.
+- Compile-only collection growth benchmark sources now exercise the allocator
+  through `List<T>` and `Queue<T>` lowering. Executable timing for those
+  benchmarks is deferred until imported collection helper linkage is complete.
+- `benchmarks/text/TextPathCallerBuffer.stark` covers the current caller-owned
+  text/path buffer helpers. It is not the final owned text/path allocation
+  benchmark because those APIs do not yet allocate through `System.Memory`.
 - Linux syscall-backed and Windows OS heap-backed allocator paths are present
   for the current hosted runtime profile.
 - Custom allocator dispatch remains future runtime work.

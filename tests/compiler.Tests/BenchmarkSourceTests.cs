@@ -5,11 +5,15 @@ namespace compiler.Tests;
 public sealed class BenchmarkSourceTests
 {
     [Fact]
-    public void AllocatorBenchmarkSourcesCompile()
+    public void BenchmarkSourcesCompile()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var benchmarkRoot = Path.Combine(repositoryRoot, "benchmarks", "allocator");
-        var benchmarkSources = Directory.GetFiles(benchmarkRoot, "*.stark").Order(StringComparer.Ordinal).ToArray();
+        var benchmarkRoot = Path.Combine(repositoryRoot, "benchmarks");
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var benchmarkSources = Directory.GetFiles(benchmarkRoot, "*.stark", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
         Assert.NotEmpty(benchmarkSources);
 
@@ -19,7 +23,11 @@ public sealed class BenchmarkSourceTests
                 new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+                    TargetInfo: targetInfo,
+                    ModuleResolver: new TargetAwareStdLibModuleResolver(
+                        new FileSystemModuleResolver(sourceRoot),
+                        [sourceRoot],
+                        targetInfo)));
 
             Assert.True(
                 result.Succeeded,

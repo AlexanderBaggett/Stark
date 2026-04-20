@@ -19,6 +19,7 @@ Initial public declarations:
 - `System.Collections.Stack<T>`
 - `System.Collections.Queue<T>`
 - `System.Collections.LinkedList<T>`
+- `System.Collections.Dictionary<K, V>`
 - `System.Collections.Equatable<T>`
 - `System.Collections.Hashable<T>`
 - `System.Collections.DictionaryKey<T>`
@@ -27,9 +28,11 @@ The implementation may split these into source files such as
 `System/Collections/List.stark`, but the public package should make the common
 types available from `System.Collections`.
 
-`Dictionary<K, V>` remains planned. The first hash/equality vocabulary is in
-place, but the dictionary type itself should wait until Stark enforces those
-constraints at generic use sites and preserves them through package images.
+`Dictionary<K, V>` is exposed only for key types with a compiler-proven
+`DictionaryKey<K>` contract. The first implementation proves that contract for
+`bool` and Stark integer key types. Struct, record, text, pointer, and other key
+types remain rejected until Stark has full user-defined hash/equality
+constraint solving.
 
 ## Allocation Pattern
 
@@ -131,7 +134,7 @@ Dictionary pre-work lives in the source module as compile-time contracts:
 
 ```stark
 public trait Equatable<T> {
-    law bool Equals(borrow T left, borrow T right);
+    finite law bool Equals(borrow T left, borrow T right);
 }
 
 public trait Hashable<T> {
@@ -139,41 +142,42 @@ public trait Hashable<T> {
 }
 
 public doctrine DictionaryKey<T> {
-    law bool Equals(borrow T left, borrow T right);
+    finite law bool Equals(borrow T left, borrow T right);
     finite law u64[0 max] Hash(borrow T value);
 }
 ```
 
-`Equals` is a `law` because dictionary lookup needs equality to be pure and
-read-only. `Hash` is `finite law` because hashing should be pure and guaranteed
-to return for valid keys.
+`Equals` and `Hash` are `finite law` because dictionary lookup needs both
+operations to be pure, read-only, and guaranteed to return for valid keys.
 
-The compiler still needs full trait/doctrine constraint solving before the
-standard library exposes a generic `Dictionary<K, V>` type.
+The compiler enforces a conservative first phase for dictionary keys: `bool`
+and Stark integer types are accepted, while key types without a proven
+hash/equality contract are rejected at generic use sites. Package-image-backed
+imports preserve that same check because the compiler recognizes
+`System.Collections.Dictionary<K, V>` after manifest loading.
 
-## Planned `Dictionary<K, V>`
+## `Dictionary<K, V>`
 
 `Dictionary<K, V>` is an owned hash table.
 
 ```stark
 public struct Dictionary<K, V> {
-    finite law i64[0 max] Count(self);
-    finite law bool IsEmpty(self);
-    fn System.Memory.MemoryStatus Add(mut self, K key, V value);
-    fn System.Memory.MemoryStatus Set(mut self, K key, V value);
-    law bool ContainsKey(self, borrow K key);
-    fn bool TryGet(self, borrow K key, out V value);
-    fn bool Remove(mut self, borrow K key);
-    fn void Clear(mut self);
+    finite law i64[0 max] Count(borrow Dictionary<K, V> self);
+    finite law i64[0 max] Capacity(borrow Dictionary<K, V> self);
+    finite law bool IsEmpty(borrow Dictionary<K, V> self);
+    fn System.Memory.MemoryStatus Reserve(mut borrow Dictionary<K, V> self, i64[0 max] additional);
+    fn System.Memory.MemoryStatus Set(mut borrow Dictionary<K, V> self, K key, V value);
+    finite law bool ContainsKey(borrow Dictionary<K, V> self, borrow K key);
+    fn bool TryGet(borrow Dictionary<K, V> self, borrow K key, out V value);
+    fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key);
+    fn void Clear(mut borrow Dictionary<K, V> self);
 }
 ```
 
-The generic dictionary requires a hash/equality constraint design. `ContainsKey`
-is only valid as a `law` method if those hash/equality operations are themselves
-pure enough for dictionary lookup to remain read-only and side-effect-free. If
-the compiler does not have that constraint machinery when `System.Collections`
-starts, the implementation should pause on generic `Dictionary<K, V>` rather
-than exposing raw-pointer or untyped workarounds.
+`ContainsKey` is valid as a `law` method only because the accepted
+`DictionaryKey<K>` operations are compiler-owned pure operations in this first
+phase. User-defined key contracts need a later design pass before structs,
+records, text, or other richer values can become dictionary keys.
 
 ## Design Rules
 
@@ -219,8 +223,18 @@ than exposing raw-pointer or untyped workarounds.
 - `LinkedList<T>` now uses one allocation per internal node. Each node stores
   next/previous links and the element value together.
 - `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` are present as the
-  first dictionary key contract vocabulary. Generic dictionary exposure is
-  still blocked on compiler-enforced constraints.
+  first dictionary key contract vocabulary.
+- `Dictionary<K, V>` is implemented as an owned open-addressed hash table for
+  compiler-proven `bool` and Stark integer key types.
+- Dictionary key diagnostics reject unsupported key types before the dictionary
+  is used, including through package-image-backed `System.Collections` imports.
+- Collection growth, move/drop, and package-consumption coverage now exists as
+  compiler regressions: source imports lower the full collection growth program
+  through LLVM IR, and package-image imports validate the same surface through
+  `--check`.
+- `benchmarks/collections` contains compile-only `List<T>` and `Queue<T>`
+  growth benchmark sources. They are intentionally skipped by the executable
+  benchmark runner until imported collection executable linking is complete.
 - The first `List<T>` and `Queue<T>` implementations intentionally duplicate a
   small growth loop because same-module helper lookup from generic member
   functions is not yet reliable enough to share that policy without exposing an

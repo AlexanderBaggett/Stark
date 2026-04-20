@@ -303,6 +303,73 @@ public sealed class GenericUseSiteInstantiationRegressionTests
         }
     }
 
+    [Fact]
+    public void ManifestBackedDictionaryKeyConstraintRejectsUnprovenKeyTypes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-dictionary-key-constraint-");
+        var systemDirectory = Path.Combine(tempDirectory.FullName, "System");
+        var collectionsPath = Path.Combine(systemDirectory, "Collections.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libSystemCollections.starkpkg.json");
+
+        try
+        {
+            Directory.CreateDirectory(systemDirectory);
+
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module System.Collections
+
+                public struct Dictionary<K, V> {
+                    K Key;
+                    V Value;
+                }
+                """,
+                collectionsPath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "SystemCollections.lib" : "libSystemCollections.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(collectionsPath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import System.Collections
+                    module Demo
+
+                    struct Box {
+                        i32[0 max] Value;
+                    }
+
+                    fn void Use(Dictionary<Box, i32[0 max]> boxes) {
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "type-check",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.False(consumerResult.Succeeded);
+            Assert.Contains(consumerResult.Diagnostics, static diagnostic => diagnostic.Code == "STK3023");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     private static StarkPackageManifest BuildTypedOnlyFacadeManifest(
         StarkPackageManifest manifest,
         Func<StarkPackageFunctionTemplateManifest, StarkPackageFunctionTemplateManifest> rewriteTemplate)

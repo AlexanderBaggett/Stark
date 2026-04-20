@@ -306,21 +306,22 @@ internal static class FunctionOverloadFacts
         TypedFunctionSignature template,
         IReadOnlyList<StarkTypeSymbol> typeArguments)
     {
-        if (!template.IsGeneric)
+        var genericParameters = GetEffectiveGenericParameters(template, typeArguments.Count);
+        if (genericParameters.Count == 0)
         {
             return new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         }
 
-        if (template.GenericParams.Count != typeArguments.Count)
+        if (genericParameters.Count != typeArguments.Count)
         {
             throw new InvalidOperationException(
-                $"Generic function '{template.Name}' expects {template.GenericParams.Count} type argument(s) but {typeArguments.Count} were provided.");
+                $"Generic function '{template.Name}' expects {genericParameters.Count} type argument(s) but {typeArguments.Count} were provided.");
         }
 
         var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
-        for (var index = 0; index < template.GenericParams.Count; index++)
+        for (var index = 0; index < genericParameters.Count; index++)
         {
-            substitution[template.GenericParams[index]] = typeArguments[index];
+            substitution[genericParameters[index]] = typeArguments[index];
         }
 
         return substitution;
@@ -343,6 +344,52 @@ internal static class FunctionOverloadFacts
             TemplateName = template.TemplateName ?? template.Name,
             TypeArguments = typeArguments.ToArray()
         };
+    }
+
+    private static IReadOnlyList<string> GetEffectiveGenericParameters(
+        TypedFunctionSignature template,
+        int typeArgumentCount)
+    {
+        if (template.GenericParams.Count > 0 || typeArgumentCount == 0)
+        {
+            return template.GenericParams;
+        }
+
+        var inferred = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        Visit(template.ReturnType);
+        foreach (var parameter in template.Parameters)
+        {
+            Visit(parameter.Type);
+        }
+
+        return inferred.Count == typeArgumentCount ? inferred : [];
+
+        void Visit(StarkTypeSymbol type)
+        {
+            var coreType = StripQualifiers(type);
+            if (coreType.Kind == StarkTypeKind.Named
+                && coreType.NamedType is { } name
+                && !name.Contains('.', StringComparison.Ordinal)
+                && coreType.TypeArguments is not { Count: > 0 }
+                && seen.Add(name))
+            {
+                inferred.Add(name);
+            }
+
+            if (coreType.TypeArguments is { Count: > 0 })
+            {
+                foreach (var argument in coreType.TypeArguments)
+                {
+                    Visit(argument);
+                }
+            }
+
+            if (coreType.ElementType is not null)
+            {
+                Visit(coreType.ElementType);
+            }
+        }
     }
 
     private static bool TryResolveCandidate(
@@ -478,6 +525,16 @@ internal static class FunctionOverloadFacts
             return true;
         }
 
+        if (parameterType.BorrowKind != StarkBorrowKind.None)
+        {
+            var strippedParameterType = StripQualifiers(parameterType);
+            var strippedArgumentType = StripQualifiers(argumentType);
+            if (canAssign(strippedParameterType, strippedArgumentType))
+            {
+                return !parameterType.IsMutableView || argumentType.AccessKind != StarkAccessKind.Frozen;
+            }
+        }
+
         if (parameterType.InitializationKind == StarkInitializationKind.None)
         {
             return false;
@@ -498,11 +555,6 @@ internal static class FunctionOverloadFacts
         ISet<string> genericParameters,
         IDictionary<string, StarkTypeSymbol> substitution)
     {
-        if (TryGetDirectGenericParameterName(parameterType, genericParameters, out var directGenericParameter))
-        {
-            return TryBindGenericParameter(directGenericParameter, argumentType, substitution);
-        }
-
         var strippedParameterType = StripQualifiers(parameterType);
         var strippedArgumentType = StripQualifiers(argumentType);
         if (TryGetDirectGenericParameterName(strippedParameterType, genericParameters, out var qualifiedGenericParameter))
@@ -713,14 +765,27 @@ internal static class FunctionOverloadFacts
 
     private static StarkTypeSymbol StripQualifiers(StarkTypeSymbol type)
     {
-        return type with
+        var strippedCore = type.Kind switch
         {
-            BorrowKind = StarkBorrowKind.None,
-            AccessKind = StarkAccessKind.None,
-            InitializationKind = StarkInitializationKind.None,
-            IsMutableView = false,
-            ElementType = type.ElementType is null ? null : StripQualifiers(type.ElementType)
+            StarkTypeKind.RawPointer when type.ElementType is not null
+                => StarkTypeSymbols.RawPointer(StripQualifiers(type.ElementType), type.IsMutablePointer),
+            StarkTypeKind.FixedArray when type.ElementType is not null
+                => StarkTypeSymbols.FixedArray(StripQualifiers(type.ElementType), type.FixedLength),
+            StarkTypeKind.Slice when type.ElementType is not null
+                => StarkTypeSymbols.Slice(StripQualifiers(type.ElementType)),
+            StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
+                => StarkTypeSymbols.GenericInstantiation(
+                    StarkTypeSymbols.GetGenericBaseName(type.NamedType),
+                    type.TypeArguments.Select(StripQualifiers).ToArray()),
+            _ => type
         };
+
+        return StarkTypeSymbols.WithQualifiers(
+            strippedCore,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
     }
 
     private static int CountFunctionsWithSourceName(SyntaxModel syntaxModel, string sourceName)

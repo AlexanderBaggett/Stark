@@ -315,6 +315,7 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
             var postfixParts = postfixExpression.postfixPart();
             for (var index = 0; index < postfixParts.Length; index++)
             {
@@ -345,6 +346,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     currentValue = LowerIndexAccess(currentValue, expressionList);
+                    currentPlace = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -363,8 +365,8 @@ internal sealed partial class MidLevelIrLowerer
                     && index + 1 < postfixParts.Length
                     && postfixParts[index + 1].argumentList() is { } memberArguments)
                 {
-                    if (!(TryBuildPublishedMemberCall(currentValue, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out call)
-                          || TryBuildMemberCall(currentValue, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out call)))
+                    if (!(TryBuildPublishedMemberCall(currentValue, currentPlace, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out call)
+                          || TryBuildMemberCall(currentValue, currentPlace, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out call)))
                     {
                         return false;
                     }
@@ -381,6 +383,9 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (currentValue is not null)
                 {
+                    currentPlace = currentPlace is not null && TryAppendFieldPlaceTarget(currentPlace, memberName, out var fieldPlace)
+                        ? fieldPlace
+                        : null;
                     currentValue = TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
                         ? publishedFieldAccess
                         : LowerFieldAccess(currentValue, memberName);

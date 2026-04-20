@@ -127,7 +127,7 @@ internal sealed class LlvmIrEmitter
         _globalSymbols = BuildGlobalSymbolMap();
         _globalsEligibleForLocalUnnamedAddr = BuildGlobalsEligibleForLocalUnnamedAddr();
         _allFunctionEffects = BuildAllFunctionEffects(effectModel, specializationCodegenStrategy);
-        _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa);
+        _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa, specializationCodegenStrategy);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
@@ -525,7 +525,8 @@ internal sealed class LlvmIrEmitter
 
     private static IReadOnlyDictionary<string, TypedFunctionSignature> BuildAllFunctionSignatures(
         TypeCheckModel typeModel,
-        SsaIrModule ssa)
+        SsaIrModule ssa,
+        SpecializationCodegenStrategyModel? specializationCodegenStrategy)
     {
         var functions = typeModel.Functions.ToDictionary(
             static pair => pair.Key,
@@ -541,6 +542,19 @@ internal sealed class LlvmIrEmitter
                     function.ReturnType,
                     function.Parameters,
                     SourceName: function.Name));
+        }
+
+        foreach (var strategy in specializationCodegenStrategy?.Functions ?? [])
+        {
+            if (!typeModel.Functions.TryGetValue(strategy.TemplateName, out var templateSignature))
+            {
+                continue;
+            }
+
+            functions[strategy.SymbolName] = FunctionOverloadFacts.InstantiateSignature(
+                templateSignature,
+                strategy.TypeArguments,
+                strategy.SymbolName);
         }
 
         return functions;
@@ -818,7 +832,9 @@ internal sealed class LlvmIrEmitter
             SsaUseRValue use => [use.Value],
             SsaUnaryRValue unary => [unary.Operand],
             SsaBinaryRValue binary => [binary.Left, binary.Right],
-            SsaCallRValue call => call.Arguments,
+            SsaCallRValue call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments,
             SsaConvertRValue convert => [convert.Operand],
             SsaExtractFieldRValue extractField => [extractField.Target],
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
@@ -1001,7 +1017,7 @@ internal sealed class LlvmIrEmitter
 
     private void EmitInternalHelperDefinitions(StringBuilder builder)
     {
-        _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder);
+        _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder, _allFunctionSignatures.Values);
     }
 
     private bool UsesLifetimeMarkers()
@@ -1705,6 +1721,11 @@ internal sealed class LlvmIrEmitter
                 foreach (var argument in call.Arguments)
                 {
                     AddStringConstant(argument, constants, ref index);
+                }
+
+                foreach (var address in call.IndirectArgumentAddresses ?? [])
+                {
+                    AddStringConstant(address, constants, ref index);
                 }
 
                 return;

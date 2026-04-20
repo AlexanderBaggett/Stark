@@ -50,7 +50,7 @@ internal static partial class PackageImageBuilder
             var genericTemplates = new List<StarkPackageFunctionTemplateManifest>();
 
             foreach (var declaration in module.SyntaxModel.Declarations
-                         .Where(static declaration => declaration.Visibility is StarkVisibility.Public or StarkVisibility.Export)
+                         .Where(static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility))
                          .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
             {
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);
@@ -253,5 +253,10 @@ internal static partial class PackageImageBuilder
         return module.SyntaxModel.Imports.Any(static import => import.IsReExport)
             || module.SyntaxModel.Declarations.Any(
                 static declaration => declaration.Visibility is StarkVisibility.Public or StarkVisibility.Export);
+    }
+
+    private static bool ShouldIncludeInPackageImageSurface(StarkVisibility visibility)
+    {
+        return visibility is StarkVisibility.Internal or StarkVisibility.Public or StarkVisibility.Export;
     }
 }

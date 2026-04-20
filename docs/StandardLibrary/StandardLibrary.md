@@ -587,7 +587,10 @@ Current explicit runtime dependency caveats:
   new size and alignment still fit the bucket; otherwise the runtime uses the
   conservative allocate-copy-free fallback.
 - The allocator benchmark harness lives under `benchmarks/allocator` and should
-  remain quick enough for ordinary development smoke runs.
+  remain quick enough for ordinary development smoke runs. Compile-only
+  benchmark sources under `benchmarks/collections` and `benchmarks/text` are
+  validated by compiler tests until those APIs can run as executable timing
+  benchmarks.
 - Source-module and package linkage can pull in object files for re-exported
   modules that were not directly called, so explicit C-runtime validation must
   inspect produced objects, archives, and final executables.

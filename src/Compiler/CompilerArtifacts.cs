@@ -2191,7 +2191,8 @@ public sealed record MidLevelIrCallRValue(
     StarkTypeSymbol Type,
     string Text,
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
-    StarkTypeSymbol? SourceReturnType = null)
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrConvertRValue(
@@ -2440,7 +2441,8 @@ public sealed record SsaCallRValue(
     StarkTypeSymbol Type,
     string Text,
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
-    StarkTypeSymbol? SourceReturnType = null)
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaConvertRValue(

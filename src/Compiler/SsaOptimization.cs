@@ -1569,7 +1569,9 @@ internal sealed class SsaCleanupOptimizer
             SsaUseRValue use => [use.Value],
             SsaUnaryRValue unary => [unary.Operand],
             SsaBinaryRValue binary => [binary.Left, binary.Right],
-            SsaCallRValue call => call.Arguments,
+            SsaCallRValue call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments,
             SsaConvertRValue convert => [convert.Operand],
             SsaExtractFieldRValue extractField => [extractField.Target],
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
@@ -2126,7 +2128,10 @@ internal sealed class SsaCleanupOptimizer
                 call.Type,
                 call.Text,
                 call.IndirectArgumentLocalNames,
-                call.SourceReturnType),
+                call.SourceReturnType,
+                call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()),
             SsaConvertRValue convert => new SsaConvertRValue(
                 RewriteValue(convert.Operand, replacements),
                 convert.TargetType,
@@ -3155,7 +3160,10 @@ internal sealed class SsaConstantPropagator
                 call.Type,
                 call.Text,
                 call.IndirectArgumentLocalNames,
-                call.SourceReturnType),
+                call.SourceReturnType,
+                call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()),
             SsaConvertRValue convert => new SsaConvertRValue(
                 RewriteValue(convert.Operand, replacements),
                 convert.TargetType,

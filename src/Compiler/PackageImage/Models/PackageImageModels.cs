@@ -136,6 +136,10 @@ internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
     string BodyText);
 
+internal sealed record StarkPackageConstructorManifest(
+    IReadOnlyList<StarkPackageParameterManifest> Parameters,
+    string BodyText);
+
 internal sealed record StarkPackageTypeManifest(
     string Name,
     string QualifiedName,
@@ -146,7 +150,8 @@ internal sealed record StarkPackageTypeManifest(
     IReadOnlyList<StarkPackageParameterManifest>? PrimaryConstructorParameters = null,
     IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null,
     IReadOnlyList<StarkPackageMethodManifest>? Methods = null,
-    StarkPackageDestructorManifest? Destructor = null);
+    StarkPackageDestructorManifest? Destructor = null,
+    IReadOnlyList<StarkPackageConstructorManifest>? Constructors = null);
 
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,

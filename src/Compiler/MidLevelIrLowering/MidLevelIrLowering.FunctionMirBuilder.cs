@@ -261,7 +261,8 @@ internal sealed partial class MidLevelIrLowerer
             IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> objectCreationConstructors,
             ImportedFunctionTemplateSummary? importedTemplateSummary,
             IReadOnlyDictionary<string, string> materializedSpecializationSymbols,
-            IReadOnlyDictionary<string, StarkTypeSymbol>? genericTypeSubstitution)
+            IReadOnlyDictionary<string, StarkTypeSymbol>? genericTypeSubstitution,
+            bool useImportedTemplateLocalDeclarationFacts)
         {
             _function = function;
             _currentModuleName = currentModuleName;
@@ -300,11 +301,13 @@ internal sealed partial class MidLevelIrLowerer
                 static aggregatePattern => aggregatePattern.Ordinal,
                 static aggregatePattern => aggregatePattern)
                 ?? new Dictionary<int, ImportedTemplateAggregatePatternSummary>();
-            _importedTemplateLocalDeclarations = importedTemplateSummary?.LocalDeclarations.ToDictionary(
-                static local => TemplateLocalDeclarationFacts.BuildLookupKey(local.Kind, local.Line, local.Column),
-                static local => local.Type,
-                StringComparer.Ordinal)
-                ?? new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            _importedTemplateLocalDeclarations = useImportedTemplateLocalDeclarationFacts
+                ? importedTemplateSummary?.LocalDeclarations.ToDictionary(
+                    static local => TemplateLocalDeclarationFacts.BuildLookupKey(local.Kind, local.Line, local.Column),
+                    static local => local.Type,
+                    StringComparer.Ordinal)
+                    ?? new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
+                : new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
             _importedTemplateConversions = importedTemplateSummary?.Conversions.ToDictionary(
                 static conversion => conversion.Ordinal,
                 static conversion => conversion.TargetType)
@@ -1626,6 +1629,13 @@ internal sealed partial class MidLevelIrLowerer
                 if (call.SourceReturnType is { } sourceReturnType
                     && StarkTypeSymbols.IsPointerBackedBorrowReturn(sourceReturnType))
                 {
+                    if (expectedType is not null
+                        && expectedType.BorrowKind != StarkBorrowKind.None
+                        && TypeCompatibilityFacts.CanAssign(expectedType, sourceReturnType))
+                    {
+                        return callResult;
+                    }
+
                     var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
                     var loaded = EmitTemporary(
                         new MidLevelIrLoadIndirectRValue(
@@ -1662,6 +1672,7 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
             for (var index = 0; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
@@ -1710,6 +1721,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     currentValue = EmitTemporary(directCall, "call");
                     currentName = null;
+                    currentPlace = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -1744,6 +1756,7 @@ internal sealed partial class MidLevelIrLowerer
                     if (postfixPart.expressionList() is { } expressionList)
                     {
                         currentValue = LowerIndexAccess(currentValue, expressionList);
+                        currentPlace = null;
                         if (currentValue is null)
                         {
                             return false;
@@ -1768,8 +1781,8 @@ internal sealed partial class MidLevelIrLowerer
                     && index + 1 < expression.postfixPart().Length
                     && expression.postfixPart()[index + 1].argumentList() is { } memberArguments)
                 {
-                    if (!(TryBuildPublishedMemberCall(currentValue, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out var memberCall)
-                          || TryBuildMemberCall(currentValue, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out memberCall)))
+                    if (!(TryBuildPublishedMemberCall(currentValue, currentPlace, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out var memberCall)
+                          || TryBuildMemberCall(currentValue, currentPlace, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out memberCall)))
                     {
                         return false;
                     }
@@ -1782,6 +1795,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     currentValue = EmitTemporary(memberCall, "call");
                     currentName = null;
+                    currentPlace = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -1799,6 +1813,9 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (currentValue is not null)
                 {
+                    currentPlace = currentPlace is not null && TryAppendFieldPlaceTarget(currentPlace, memberName, out var fieldPlace)
+                        ? fieldPlace
+                        : null;
                     currentValue = TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
                         ? publishedFieldAccess
                         : LowerFieldAccess(currentValue, memberName);
@@ -2981,6 +2998,7 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
             for (var index = 0; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
@@ -3022,6 +3040,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     currentValue = LowerIndexAccess(currentValue, expressionList);
+                    currentPlace = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -3040,7 +3059,7 @@ internal sealed partial class MidLevelIrLowerer
                     && index + 1 < expression.postfixPart().Length
                     && expression.postfixPart()[index + 1].argumentList() is { } memberArguments)
                 {
-                    if (!TryBuildMemberCall(currentValue, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out var memberCall))
+                    if (!TryBuildMemberCall(currentValue, currentPlace, memberName, memberArguments, $"{currentValue.Text}.{memberName}{memberArguments.GetText()}", out var memberCall))
                     {
                         return false;
                     }
@@ -3058,6 +3077,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     currentValue = EmitTemporary(memberCall, "call");
                     currentName = null;
+                    currentPlace = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -3069,6 +3089,9 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (currentValue is not null)
                 {
+                    currentPlace = currentPlace is not null && TryAppendFieldPlaceTarget(currentPlace, memberName, out var fieldPlace)
+                        ? fieldPlace
+                        : null;
                     currentValue = LowerFieldAccess(currentValue, memberName);
                     if (currentValue is null)
                     {
@@ -3097,6 +3120,12 @@ internal sealed partial class MidLevelIrLowerer
         {
             call = default!;
 
+            if (TryResolvePublishedDirectCallSignature(functionName, arguments, out var publishedSignature)
+                && TryBuildCall(publishedSignature.Name, publishedSignature, receiver: null, receiverPlace: null, arguments, text, out call))
+            {
+                return true;
+            }
+
             if (TryGetFunctionOverloads(functionName, out var overloads))
             {
                 overloads = FilterDirectCallableTypeMemberFunctions(functionName, overloads);
@@ -3105,12 +3134,12 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
-                return TryBuildOverloadedCall(overloads, receiver: null, arguments, text, out call);
+                return TryBuildOverloadedCall(overloads, receiver: null, receiverPlace: null, arguments, text, out call);
             }
 
             if (!TryResolveFunctionSignature(functionName, out var signature))
             {
-                if (!TryResolvePublishedDirectCallSignature(arguments, out signature))
+                if (!TryResolvePublishedDirectCallSignature(functionName, arguments, out signature))
                 {
                     return false;
                 }
@@ -3120,11 +3149,12 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            return TryBuildCall(signature.Name, signature, receiver: null, arguments, text, out call);
+            return TryBuildCall(signature.Name, signature, receiver: null, receiverPlace: null, arguments, text, out call);
         }
 
         private bool TryBuildMemberCall(
             MidLevelIrOperand receiver,
+            PlaceTarget? receiverPlace,
             string memberName,
             StarkParser.ArgumentListContext arguments,
             string text,
@@ -3146,7 +3176,7 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
-                return TryBuildOverloadedCall(overloads, receiver, arguments, text, out call);
+                return TryBuildOverloadedCall(overloads, receiver, receiverPlace, arguments, text, out call);
             }
 
             if (!TryResolveFunctionSignature(sourceName, out var signature)
@@ -3156,11 +3186,12 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            return TryBuildCall(signature.Name, signature, receiver, arguments, text, out call);
+            return TryBuildCall(signature.Name, signature, receiver, receiverPlace, arguments, text, out call);
         }
 
         private bool TryBuildPublishedMemberCall(
             MidLevelIrOperand receiver,
+            PlaceTarget? receiverPlace,
             StarkParser.ArgumentListContext arguments,
             string text,
             out MidLevelIrCallRValue call)
@@ -3175,12 +3206,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var signature = ApplyGenericSubstitution(publishedSignature);
-            return TryBuildCall(signature.Name, signature, receiver, arguments, text, out call);
+            return TryBuildCall(signature.Name, signature, receiver, receiverPlace, arguments, text, out call);
         }
 
         private bool TryBuildOverloadedCall(
             IReadOnlyList<TypedFunctionSignature> overloads,
             MidLevelIrOperand? receiver,
+            PlaceTarget? receiverPlace,
             StarkParser.ArgumentListContext arguments,
             string text,
             out MidLevelIrCallRValue call)
@@ -3213,6 +3245,7 @@ internal sealed partial class MidLevelIrLowerer
                 resolution.Match!.Name,
                 resolution.Match,
                 receiver,
+                receiverPlace,
                 arguments,
                 text,
                 out call,
@@ -3223,6 +3256,7 @@ internal sealed partial class MidLevelIrLowerer
             string functionName,
             TypedFunctionSignature signature,
             MidLevelIrOperand? receiver,
+            PlaceTarget? receiverPlace,
             StarkParser.ArgumentListContext arguments,
             string text,
             out MidLevelIrCallRValue call,
@@ -3250,48 +3284,74 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
-            return TryBuildCall(functionName, signature, receiver, text, out call, explicitArguments);
+            return TryBuildCall(functionName, signature, receiver, receiverPlace, text, out call, explicitArguments);
         }
 
         private bool TryBuildCall(
             string functionName,
             TypedFunctionSignature signature,
             MidLevelIrOperand? receiver,
+            PlaceTarget? receiverPlace,
             string text,
             out MidLevelIrCallRValue call,
             IReadOnlyList<MidLevelIrOperand> loweredExplicitArguments)
         {
             call = default!;
 
+            if (signature.IsGeneric && !signature.IsGenericInstantiation)
+            {
+                var resolution = FunctionOverloadFacts.Resolve(
+                    [signature],
+                    receiver?.Type,
+                    loweredExplicitArguments.Select(static argument => argument.Type).ToArray(),
+                    TypeCompatibilityFacts.CanAssign);
+                if (!resolution.Succeeded)
+                {
+                    return false;
+                }
+
+                signature = resolution.Match!;
+                functionName = signature.Name;
+            }
+
             var loweredArguments = new List<MidLevelIrOperand>();
             var indirectArgumentLocals = new List<string?>();
+            var indirectArgumentAddresses = new List<MidLevelIrOperand?>();
             var receiverOffset = receiver is null ? 0 : 1;
             var explicitParameterCount = Math.Max(0, signature.Parameters.Count - receiverOffset);
 
             if (receiver is not null)
             {
-                var receiverOperand = CoerceOperand(receiver, signature.Parameters[0].Type);
+                var receiverParameterType = signature.Parameters[0].Type;
+                var receiverOperand = CoerceCallArgument(receiver, receiverParameterType);
                 if (receiverOperand is null)
                 {
                     return false;
                 }
 
                 loweredArguments.Add(receiverOperand);
-                indirectArgumentLocals.Add(ResolveIndirectArgumentLocal(signature.Parameters[0].Type, receiverOperand));
-                RecordMoveFromOperand(receiverOperand, signature.Parameters[0].Type);
+                indirectArgumentLocals.Add(
+                    ResolveIndirectArgumentLocal(receiverParameterType, receiver)
+                    ?? ResolveIndirectArgumentLocal(receiverParameterType, receiverOperand));
+                indirectArgumentAddresses.Add(ResolveIndirectArgumentAddress(receiverParameterType, receiverPlace));
+                RecordMoveFromOperand(receiverOperand, receiverParameterType);
             }
 
             for (var index = 0; index < Math.Min(loweredExplicitArguments.Count, explicitParameterCount); index++)
             {
                 var parameterType = signature.Parameters[index + receiverOffset].Type;
-                var argument = CoerceOperand(loweredExplicitArguments[index], parameterType);
+                var sourceArgument = loweredExplicitArguments[index];
+                var argument = CoerceCallArgument(sourceArgument, parameterType);
                 if (argument is null)
                 {
                     return false;
                 }
 
                 loweredArguments.Add(argument);
-                indirectArgumentLocals.Add(ResolveIndirectArgumentLocal(parameterType, argument));
+                indirectArgumentLocals.Add(
+                    ResolveIndirectArgumentLocal(parameterType, sourceArgument)
+                    ?? ResolveIndirectArgumentLocal(parameterType, argument));
+                indirectArgumentAddresses.Add(null);
                 RecordMoveFromOperand(argument, parameterType);
             }
 
@@ -3301,14 +3361,137 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var loweredFunctionName = ResolveCallTargetName(functionName, signature);
+            if (string.Equals(loweredFunctionName, functionName, StringComparison.Ordinal)
+                && TryResolveDictionaryKeyBuiltinCallTarget(functionName, signature, loweredArguments, out var dictionaryKeySpecialization))
+            {
+                loweredFunctionName = dictionaryKeySpecialization;
+            }
+
             call = new MidLevelIrCallRValue(
                 loweredFunctionName,
                 loweredArguments,
                 StarkTypeSymbols.BorrowReturnRuntimeType(signature.ReturnType),
                 text,
                 indirectArgumentLocals,
-                signature.ReturnType);
+                signature.ReturnType,
+                indirectArgumentAddresses);
             return true;
+        }
+
+        private PlaceTarget? CreateRootPlaceTarget(MidLevelIrOperand root)
+        {
+            if (!SupportsAddressModel(root))
+            {
+                return null;
+            }
+
+            var rootType = ProjectRootType(root);
+            return new PlaceTarget(
+                root.Text,
+                RootAddress: null,
+                RootValue: null,
+                rootType,
+                rootType,
+                Path: [],
+                UsesAddressModel: IsBorrowParameterRoot(root),
+                IsAddressMutable: GetAddressMutability(root));
+        }
+
+        private bool TryAppendFieldPlaceTarget(PlaceTarget target, string memberName, out PlaceTarget updated)
+        {
+            updated = target;
+            if (!TryResolveField(target.Type, memberName, out var field, out var fieldIndex))
+            {
+                return false;
+            }
+
+            var fieldType = ProjectAddressProjectionType(target.Type, field.Type);
+            var path = target.Path.ToList();
+            path.Add(new PlacePathSegment(
+                PlacePathKind.Field,
+                field.Name,
+                fieldIndex,
+                IndexOperand: null,
+                ParentType: target.Type,
+                SegmentType: fieldType));
+            updated = target with
+            {
+                Type = fieldType,
+                Path = path
+            };
+            return true;
+        }
+
+        private MidLevelIrOperand? CoerceCallArgument(MidLevelIrOperand sourceArgument, StarkTypeSymbol parameterType)
+        {
+            var direct = CoerceOperand(sourceArgument, parameterType);
+            if (direct is not null)
+            {
+                return direct;
+            }
+
+            if (parameterType.BorrowKind == StarkBorrowKind.None
+                && parameterType.InitializationKind == StarkInitializationKind.None)
+            {
+                return null;
+            }
+
+            var storageType = StarkTypeSymbols.WithQualifiers(
+                parameterType,
+                borrowKind: StarkBorrowKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            return CoerceOperand(sourceArgument, storageType);
+        }
+
+        private bool TryResolveDictionaryKeyBuiltinCallTarget(
+            string functionName,
+            TypedFunctionSignature signature,
+            IReadOnlyList<MidLevelIrOperand> loweredArguments,
+            out string symbolName)
+        {
+            symbolName = string.Empty;
+
+            var templateName = ResolveDictionaryKeyBuiltinTemplateName(functionName, signature);
+            if (templateName is null || loweredArguments.Count == 0)
+            {
+                return false;
+            }
+
+            var keyType = StarkTypeSymbols.WithQualifiers(
+                loweredArguments[0].Type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            var specializationKey = MidLevelIrLowerer.BuildMaterializedSpecializationKey(templateName, [keyType]);
+            return _materializedSpecializationSymbols.TryGetValue(specializationKey, out symbolName!);
+        }
+
+        private static string? ResolveDictionaryKeyBuiltinTemplateName(
+            string functionName,
+            TypedFunctionSignature signature)
+        {
+            foreach (var candidate in new[]
+                     {
+                         signature.TemplateName,
+                         signature.DisplaySourceName,
+                         signature.Name,
+                         functionName
+                     })
+            {
+                if (candidate is "System.Collections.DictionaryKey.Hash" or "DictionaryKey.Hash")
+                {
+                    return "System.Collections.DictionaryKey.Hash";
+                }
+
+                if (candidate is "System.Collections.DictionaryKey.Equals" or "DictionaryKey.Equals")
+                {
+                    return "System.Collections.DictionaryKey.Equals";
+                }
+            }
+
+            return null;
         }
 
         private MidLevelIrOperand? LoadPointerBackedBorrowReturnIfNeeded(MidLevelIrCallRValue call, MidLevelIrOperand callResult)
@@ -3696,6 +3879,7 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private bool TryResolvePublishedDirectCallSignature(
+            string functionName,
             StarkParser.ArgumentListContext arguments,
             out TypedFunctionSignature signature)
         {
@@ -3707,7 +3891,53 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (_importedTemplateDirectCalls.Count > 0)
+            {
+                var argumentCount = arguments.argument().Length;
+                var matches = _importedTemplateDirectCalls.Values
+                    .Select(ApplyGenericSubstitution)
+                    .Where(candidate =>
+                        candidate.Parameters.Count == argumentCount
+                        && PublishedDirectCallNameMatches(functionName, candidate))
+                    .ToArray();
+                if (matches.Length == 1)
+                {
+                    signature = matches[0];
+                    return true;
+                }
+            }
+
             signature = null!;
+            return false;
+        }
+
+        private bool PublishedDirectCallNameMatches(string functionName, TypedFunctionSignature signature)
+        {
+            var possibleNames = new List<string> { functionName };
+            if (!functionName.Contains('.', StringComparison.Ordinal))
+            {
+                possibleNames.Add($"{CurrentModuleName}.{functionName}");
+            }
+
+            if (TryResolveTypeQualifiedMemberSourceName(functionName, out var resolvedMemberSourceName))
+            {
+                possibleNames.Add(resolvedMemberSourceName);
+            }
+
+            foreach (var candidate in new[]
+                     {
+                         signature.SourceName,
+                         signature.TemplateName,
+                         signature.Name
+                     })
+            {
+                if (candidate is not null
+                    && possibleNames.Any(possibleName => string.Equals(candidate, possibleName, StringComparison.Ordinal)))
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
 
@@ -4875,6 +5105,16 @@ internal sealed partial class MidLevelIrLowerer
                 default:
                     return null;
             }
+        }
+
+        private MidLevelIrOperand? ResolveIndirectArgumentAddress(StarkTypeSymbol parameterType, PlaceTarget? target)
+        {
+            if (!RequiresIndirectArgument(parameterType) || target is null)
+            {
+                return null;
+            }
+
+            return BuildAddress(target);
         }
 
         private static bool RequiresIndirectArgument(StarkTypeSymbol type)

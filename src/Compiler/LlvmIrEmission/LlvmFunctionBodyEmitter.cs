@@ -657,7 +657,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
         {
-            _valueAliases[resultName] = FormatValue(convert.Operand);
+            AppendLine($"  {result} = getelementptr i8, ptr {FormatValue(convert.Operand)}, i64 0");
             return;
         }
 
@@ -2012,6 +2012,15 @@ internal sealed class LlvmFunctionBodyEmitter
                 continue;
             }
 
+            var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && index < call.IndirectArgumentAddresses.Count
+                ? call.IndirectArgumentAddresses[index]
+                : null;
+            if (indirectArgumentAddress is not null)
+            {
+                arguments.Add(RenderIndirectArgumentPointer(parameter, FormatValue(indirectArgumentAddress)));
+                continue;
+            }
+
             var promotedLocal = call.IndirectArgumentLocalNames is not null && index < call.IndirectArgumentLocalNames.Count
                 ? call.IndirectArgumentLocalNames[index]
                 : null;
@@ -3107,7 +3116,8 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaUseRValue use => IsNamedReference(use.Value, valueName),
             SsaUnaryRValue unary => IsNamedReference(unary.Operand, valueName),
             SsaBinaryRValue binary => IsNamedReference(binary.Left, valueName) || IsNamedReference(binary.Right, valueName),
-            SsaCallRValue call => call.Arguments.Any(argument => IsNamedReference(argument, valueName)),
+            SsaCallRValue call => call.Arguments.Any(argument => IsNamedReference(argument, valueName))
+                || (call.IndirectArgumentAddresses?.OfType<SsaValue>().Any(address => IsNamedReference(address, valueName)) ?? false),
             SsaConvertRValue convert => IsNamedReference(convert.Operand, valueName),
             SsaExtractFieldRValue extractField => IsNamedReference(extractField.Target, valueName),
             SsaInsertFieldRValue insertField => IsNamedReference(insertField.Target, valueName) || IsNamedReference(insertField.Value, valueName),
@@ -5209,6 +5219,11 @@ internal sealed class LlvmFunctionBodyEmitter
                         VisitValue(argument);
                     }
 
+                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        VisitValue(address);
+                    }
+
                     break;
                 case SsaConvertRValue convert:
                     VisitValue(convert.Operand);
@@ -5688,6 +5703,11 @@ internal sealed class LlvmFunctionBodyEmitter
                         VisitEscapingValue(argument);
                     }
 
+                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        VisitEscapingValue(address);
+                    }
+
                     break;
                 case SsaValueInstruction { Value: SsaConvertRValue convert }
                     when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
@@ -5880,6 +5900,11 @@ internal sealed class LlvmFunctionBodyEmitter
                     VisitEscapingValue(argument);
                 }
 
+                foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    VisitEscapingValue(address);
+                }
+
                 return;
             }
 
@@ -6057,6 +6082,14 @@ internal sealed class LlvmFunctionBodyEmitter
                         foreach (var argument in call.Arguments)
                         {
                             if (TryResolveLocalAddressRoot(argument, out var escapedLocal))
+                            {
+                                blocked.Add(escapedLocal);
+                            }
+                        }
+
+                        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                        {
+                            if (TryResolveLocalAddressRoot(address, out var escapedLocal))
                             {
                                 blocked.Add(escapedLocal);
                             }

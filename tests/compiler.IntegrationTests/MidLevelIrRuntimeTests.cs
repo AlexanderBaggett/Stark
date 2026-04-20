@@ -802,6 +802,54 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task NestedMutableBorrowReceiverCallsMutateStoredFieldAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Counter {
+                i32[0 max] Value;
+
+                fn void Increment(mut borrow Counter self) {
+                    self.Value += 1;
+                }
+            }
+
+            struct Holder {
+                Counter Inner;
+
+                fn void Bump(mut borrow Holder self) {
+                    self.Inner.Increment();
+                }
+
+                finite law i32[0 max] Get(borrow Holder self) {
+                    return self.Inner.Value;
+                }
+            }
+
+            export ffi fn i32[min max] main() {
+                stack mut Holder holder = new Holder() {
+                    Inner = new Counter() {
+                        Value = 0
+                    }
+                };
+
+                holder.Bump();
+                holder.Bump();
+                return holder.Get();
+            }
+            """);
+
+        Assert.Equal(2, exitCode);
+    }
+
+    [Fact]
     public async Task SwitchExpressionCallOnEnumIsEvaluatedOnceAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

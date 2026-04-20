@@ -191,8 +191,13 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
     }
 
-    public void EmitInternalHelperDefinitions(StringBuilder builder)
+    public void EmitInternalHelperDefinitions(StringBuilder builder, IEnumerable<TypedFunctionSignature> signatures)
     {
+        var systemMemoryBuiltins = CollectSystemMemoryAllocatorBuiltins(signatures);
+        var usesSystemMemoryAllocator = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Allocate)
+            || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate)
+            || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
+
         foreach (var textType in CollectTextEqualityTypes())
         {
             EmitTextEqualityHelperDefinition(
@@ -246,7 +251,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             EmitHeapFreeHelperDefinition(builder);
             builder.AppendLine();
         }
-        else if (CurrentModuleName == "System.Memory")
+        else if (CurrentModuleName == "System.Memory" || usesSystemMemoryAllocator)
         {
             EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
             builder.AppendLine();
@@ -2175,12 +2180,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         AbiFunctionSignature abiFunction,
         SystemCollectionsBuiltinKind builtinKind)
     {
-        var listShape = ValidateSystemCollectionsListSliceSignature(function, builtinKind);
         switch (builtinKind)
         {
             case SystemCollectionsBuiltinKind.ListAsSlice:
             case SystemCollectionsBuiltinKind.ListAsMutableSlice:
+                var listShape = ValidateSystemCollectionsListSliceSignature(function, builtinKind);
                 EmitListSliceViewBuiltin(builder, function, abiFunction, listShape);
+                break;
+            case SystemCollectionsBuiltinKind.DictionaryKeyEquals:
+                EmitDictionaryKeyEqualsBuiltin(builder, function, abiFunction);
+                break;
+            case SystemCollectionsBuiltinKind.DictionaryKeyHash:
+                EmitDictionaryKeyHashBuiltin(builder, function, abiFunction);
                 break;
             default:
                 throw new InvalidOperationException($"Unsupported System.Collections builtin '{builtinKind}'.");
@@ -2211,6 +2222,89 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"  %slice_with_ptr = insertvalue {resultType} zeroinitializer, ptr %list_data, 0");
         builder.AppendLine($"  %slice_result = insertvalue {resultType} %slice_with_ptr, i64 %list_length, 1");
         builder.AppendLine($"  ret {resultType} %slice_result");
+    }
+
+    private void EmitDictionaryKeyEqualsBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction)
+    {
+        var keyType = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 2);
+        if (abiFunction.UserParameters.Count != 2)
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly two key parameters.");
+        }
+
+        var llvmType = MapType(keyType);
+        builder.AppendLine("entry:");
+        var left = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[0], keyType, "dict_key_left");
+        var right = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[1], keyType, "dict_key_right");
+        builder.AppendLine($"  %dict_key_equal = icmp eq {llvmType} {left}, {right}");
+        builder.AppendLine("  ret i1 %dict_key_equal");
+    }
+
+    private void EmitDictionaryKeyHashBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction)
+    {
+        var keyType = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 1);
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly one key parameter.");
+        }
+
+        var llvmType = MapType(keyType);
+        builder.AppendLine("entry:");
+        var value = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[0], keyType, "dict_key_value");
+        var hashValue = keyType.Kind switch
+        {
+            StarkTypeKind.Bool => EmitIntegerHashConversion(builder, "i1", value, "dict_key_hash"),
+            StarkTypeKind.Integer when keyType.BitWidth is int bitWidth => EmitIntegerHashConversion(builder, llvmType, value, "dict_key_hash", bitWidth),
+            _ => throw new InvalidOperationException($"System.Collections DictionaryKey.Hash does not support key type '{keyType.DisplayName}'.")
+        };
+        builder.AppendLine($"  ret i64 {hashValue}");
+    }
+
+    private string EmitDictionaryKeyParameterLoad(
+        StringBuilder builder,
+        AbiParameterSymbol parameter,
+        StarkTypeSymbol keyType,
+        string localName)
+    {
+        var llvmType = MapType(keyType);
+        var parameterValue = $"%{EscapeIdentifier(parameter.LlvmName)}";
+        if (parameter.Kind == AbiParameterKind.Direct)
+        {
+            return parameterValue;
+        }
+
+        if (parameter.Kind != AbiParameterKind.IndirectIn)
+        {
+            throw new InvalidOperationException($"System.Collections dictionary key parameter '{parameter.SourceName}' must lower directly or as an indirect input.");
+        }
+
+        var loaded = $"%{localName}";
+        builder.AppendLine($"  {loaded} = load {llvmType}, ptr {parameterValue}");
+        return loaded;
+    }
+
+    private static string EmitIntegerHashConversion(
+        StringBuilder builder,
+        string llvmType,
+        string value,
+        string localName,
+        int bitWidth = 1)
+    {
+        if (bitWidth == 64)
+        {
+            return value;
+        }
+
+        var converted = $"%{localName}";
+        var opcode = bitWidth < 64 ? "zext" : "trunc";
+        builder.AppendLine($"  {converted} = {opcode} {llvmType} {value} to i64");
+        return converted;
     }
 
     private void EmitSystemMemoryAllocateBuiltin(
@@ -2920,6 +3014,23 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                             Writes: false,
                             CaptureKind: ParameterCaptureKind.Return),
                         StringComparer.Ordinal),
+                SystemCollectionsBuiltinKind.DictionaryKeyEquals or SystemCollectionsBuiltinKind.DictionaryKeyHash
+                    => function.Parameters.ToDictionary(
+                        static parameter => parameter.Name,
+                        static parameter => new ParameterMemoryEffectSummary(
+                            parameter.Name,
+                            parameter.Type.DisplayName,
+                            IsMemoryBacked: true,
+                            GuaranteedNonNull: true,
+                            GuaranteedReadOnly: true,
+                            GuaranteedWriteOnly: false,
+                            GuaranteedNoAlias: false,
+                            DereferenceableBytes: null,
+                            AlignmentBytes: null,
+                            Reads: true,
+                            Writes: false,
+                            CaptureKind: ParameterCaptureKind.None),
+                        StringComparer.Ordinal),
                 _ => null
             };
         }
@@ -3311,10 +3422,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             "List.AsSlice" => SystemCollectionsBuiltinKind.ListAsSlice,
             "List.AsMutableSlice" => SystemCollectionsBuiltinKind.ListAsMutableSlice,
+            "DictionaryKey.Equals" => SystemCollectionsBuiltinKind.DictionaryKeyEquals,
+            "DictionaryKey.Hash" => SystemCollectionsBuiltinKind.DictionaryKeyHash,
             _ => default
         };
 
-        return sourceName is "List.AsSlice" or "List.AsMutableSlice";
+        return sourceName is "List.AsSlice" or "List.AsMutableSlice" or "DictionaryKey.Equals" or "DictionaryKey.Hash";
     }
 
     private static bool TryResolveSystemCollectionsBuiltin(
@@ -3322,8 +3435,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         TypedFunctionSignature function,
         out SystemCollectionsBuiltinKind builtinKind)
     {
-        return TryGetSystemCollectionsBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
-            || TryGetSystemCollectionsBuiltin(moduleName: string.Empty, function.TemplateName ?? function.Name, out builtinKind);
+        if (TryGetSystemCollectionsBuiltin(moduleName, function.TemplateName ?? function.DisplaySourceName, out builtinKind)
+            || TryGetSystemCollectionsBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
+            || TryGetSystemCollectionsBuiltin(moduleName: string.Empty, function.TemplateName ?? function.Name, out builtinKind))
+        {
+            return builtinKind is not (SystemCollectionsBuiltinKind.DictionaryKeyEquals or SystemCollectionsBuiltinKind.DictionaryKeyHash)
+                || !function.IsGeneric
+                || function.IsGenericInstantiation;
+        }
+
+        return false;
     }
 
     private static int GetSystemBitOperationsSurfaceArity(SystemBitOperationsBuiltinKind builtinKind)
@@ -3516,6 +3637,61 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         return new SystemCollectionsListShape(dataFieldIndex, lengthFieldIndex);
     }
 
+    private static StarkTypeSymbol ValidateSystemCollectionsDictionaryKeySignature(
+        TypedFunctionSignature function,
+        int expectedParameterCount)
+    {
+        if (function.Parameters.Count != expectedParameterCount)
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects {expectedParameterCount} key parameter(s).");
+        }
+
+        if (expectedParameterCount == 1)
+        {
+            if (function.ReturnType.Kind != StarkTypeKind.Integer || function.ReturnType.BitWidth != 64)
+            {
+                throw new InvalidOperationException($"System.Collections builtin '{function.Name}' must return 'u64[0 max]'.");
+            }
+        }
+        else if (function.ReturnType.Kind != StarkTypeKind.Bool)
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' must return 'bool'.");
+        }
+
+        var keyType = StarkTypeSymbols.WithQualifiers(
+            function.Parameters[0].Type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (function.Parameters[0].Type.BorrowKind == StarkBorrowKind.None)
+        {
+            throw new InvalidOperationException($"System.Collections builtin '{function.Name}' key parameters must use 'borrow'.");
+        }
+
+        for (var index = 1; index < function.Parameters.Count; index++)
+        {
+            var parameterType = StarkTypeSymbols.WithQualifiers(
+                function.Parameters[index].Type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (function.Parameters[index].Type.BorrowKind == StarkBorrowKind.None
+                || parameterType != keyType)
+            {
+                throw new InvalidOperationException($"System.Collections builtin '{function.Name}' key parameters must all borrow the same key type.");
+            }
+        }
+
+        if (keyType.Kind is not (StarkTypeKind.Bool or StarkTypeKind.Integer))
+        {
+            throw new InvalidOperationException($"System.Collections DictionaryKey builtin '{function.Name}' does not support key type '{keyType.DisplayName}'.");
+        }
+
+        return keyType;
+    }
+
     private static FunctionMemoryEffectSummary GetSystemMemoryBuiltinMemoryEffects(SystemMemoryBuiltinKind builtinKind)
     {
         return builtinKind switch
@@ -3669,7 +3845,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private enum SystemCollectionsBuiltinKind
     {
         ListAsSlice,
-        ListAsMutableSlice
+        ListAsMutableSlice,
+        DictionaryKeyEquals,
+        DictionaryKeyHash
     }
 
     private readonly record struct SystemCollectionsListShape(

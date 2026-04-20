@@ -85,6 +85,7 @@ internal sealed class TypeChecker
     private readonly HashSet<string> _deferredFunctionInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deferredTypeInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _typeInstantiationKeys = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _dictionaryKeyConstraintFailures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IReadOnlyList<StarkTypeSymbol>> _genericInstantiationArguments = new(StringComparer.Ordinal);
     private readonly HashSet<string> _refreshingConcreteTypes = new(StringComparer.Ordinal);
     private StarkTypeResolver? _typeResolver;
@@ -637,43 +638,56 @@ internal sealed class TypeChecker
 
                 var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, functionSyntax);
                 var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
-                var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
-                ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
-                var isAbiBoundary = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal))
-                    || declarationModel.Visibility == StarkVisibility.Export;
-                if (isAbiBoundary)
-                {
-                    ValidateAbiTypeDoesNotDependOnEnum(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
-                }
+                var previousGenericParameters = _currentFunctionGenericParameters;
+                var previousFunctionModuleName = _currentFunctionModuleName;
+                _currentFunctionGenericParameters = genericParameters;
+                _currentFunctionModuleName = module.SyntaxModel.ModuleName;
 
-                var parameters = new List<TypedParameterSymbol>();
-                foreach (var parameter in functionSyntax.ParameterList.parameter())
+                try
                 {
-                    var parameterType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
-                    ValidateRuntimeValueType(parameterType, parameter.type_(), $"parameter '{parameter.Identifier().GetText()}'");
+                    var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
+                    ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
+                    var isAbiBoundary = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal))
+                        || declarationModel.Visibility == StarkVisibility.Export;
                     if (isAbiBoundary)
                     {
-                        ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
+                        ValidateAbiTypeDoesNotDependOnEnum(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
                     }
 
-                    parameters.Add(new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType));
-                }
+                    var parameters = new List<TypedParameterSymbol>();
+                    foreach (var parameter in functionSyntax.ParameterList.parameter())
+                    {
+                        var parameterType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
+                        ValidateRuntimeValueType(parameterType, parameter.type_(), $"parameter '{parameter.Identifier().GetText()}'");
+                        if (isAbiBoundary)
+                        {
+                            ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
+                        }
 
-                if (declarationModel.Function?.Asm is not null)
+                        parameters.Add(new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType));
+                    }
+
+                    if (declarationModel.Function?.Asm is not null)
+                    {
+                        ValidateAsmSignatureSurface(localName, returnType, functionSyntax.ReturnType, parameters, functionSyntax.ParameterList.parameter(), declarationModel.Function.Asm);
+                    }
+
+                    var sourceQualifiedName = QualifyName(module, localName);
+                    var qualifiedName = QualifyName(module, functionSyntax.Name);
+                    var signature = new TypedFunctionSignature(
+                        qualifiedName,
+                        returnType,
+                        parameters,
+                        SourceName: sourceQualifiedName,
+                        GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                        IsStatic: functionSyntax.IsStatic);
+                    RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
+                }
+                finally
                 {
-                    ValidateAsmSignatureSurface(localName, returnType, functionSyntax.ReturnType, parameters, functionSyntax.ParameterList.parameter(), declarationModel.Function.Asm);
+                    _currentFunctionGenericParameters = previousGenericParameters;
+                    _currentFunctionModuleName = previousFunctionModuleName;
                 }
-
-                var sourceQualifiedName = QualifyName(module, localName);
-                var qualifiedName = QualifyName(module, functionSyntax.Name);
-                var signature = new TypedFunctionSignature(
-                    qualifiedName,
-                    returnType,
-                    parameters,
-                    SourceName: sourceQualifiedName,
-                    GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
-                    IsStatic: functionSyntax.IsStatic);
-                RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
             }
         }
     }
@@ -721,6 +735,7 @@ internal sealed class TypeChecker
             if (!module.Reference.IsRoot
                 && module.PackageImageFacts is { Constructors.Count: > 0 } packageImageFacts)
             {
+                var constructorBodyKeys = BuildImportedConstructorBodyKeyLookup(module);
                 foreach (var declaration in module.SyntaxModel.Declarations)
                 {
                     if (declaration.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
@@ -737,11 +752,16 @@ internal sealed class TypeChecker
                     if (packageImageFacts.Constructors.TryGetValue(qualifiedName, out var constructors))
                     {
                         _constructors[qualifiedName] = constructors
-                            .Select(static constructor => new ConstructorShape(
+                            .Select(constructor => new ConstructorShape(
                                 constructor.TypeName,
                                 constructor.Parameters.ToArray(),
                                 constructor.IsPrimaryShape,
-                                constructor.BodyKey))
+                                constructor.BodyKey
+                                ?? (constructorBodyKeys.TryGetValue(
+                                    BuildConstructorSignatureKey(qualifiedName, constructor.Parameters),
+                                    out var bodyKey)
+                                    ? bodyKey
+                                    : null)))
                             .ToList();
                     }
                 }
@@ -799,6 +819,85 @@ internal sealed class TypeChecker
         }
 
         PopulateConcreteConstructorShapesForKnownGenericInstantiations();
+    }
+
+    private Dictionary<string, string> BuildImportedConstructorBodyKeyLookup(LoadedModuleDocument module)
+    {
+        var constructorBodyKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.structDeclaration() is { } structDeclaration)
+            {
+                var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
+                    candidate => candidate.Kind == DeclarationKind.Struct && string.Equals(candidate.Name, structDeclaration.Identifier().GetText(), StringComparison.Ordinal));
+                if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
+                {
+                    continue;
+                }
+
+                AddImportedConstructorBodyKeys(
+                    constructorBodyKeys,
+                    module,
+                    QualifyName(module, structDeclaration.Identifier().GetText()),
+                    structDeclaration.Identifier().GetText(),
+                    GetGenericParameterNames(structDeclaration.typeParameterList()),
+                    structDeclaration.structBody().structMember()
+                        .Select(static member => member.constructorDeclaration())
+                        .Where(static constructor => constructor is not null)!);
+                continue;
+            }
+
+            if (declaration.recordDeclaration() is { } recordDeclaration)
+            {
+                var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
+                    candidate => candidate.Kind == DeclarationKind.Record && string.Equals(candidate.Name, recordDeclaration.Identifier().GetText(), StringComparison.Ordinal));
+                if (declarationModel is null || !IsDeclarationVisible(module, declarationModel))
+                {
+                    continue;
+                }
+
+                AddImportedConstructorBodyKeys(
+                    constructorBodyKeys,
+                    module,
+                    QualifyName(module, recordDeclaration.Identifier().GetText()),
+                    recordDeclaration.Identifier().GetText(),
+                    GetGenericParameterNames(recordDeclaration.typeParameterList()),
+                    recordDeclaration.recordBody().recordMember()
+                        .Select(static member => member.constructorDeclaration())
+                        .Where(static constructor => constructor is not null)!);
+            }
+        }
+
+        return constructorBodyKeys;
+    }
+
+    private void AddImportedConstructorBodyKeys(
+        Dictionary<string, string> constructorBodyKeys,
+        LoadedModuleDocument module,
+        string qualifiedTypeName,
+        string localTypeName,
+        ISet<string>? genericParameters,
+        IEnumerable<StarkParser.ConstructorDeclarationContext> constructors)
+    {
+        foreach (var constructor in constructors)
+        {
+            if (!string.Equals(constructor.Identifier().GetText(), localTypeName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parameters = BuildTypedParameters(constructor.parameterList().parameter(), genericParameters, module.SyntaxModel.ModuleName);
+            constructorBodyKeys[BuildConstructorSignatureKey(qualifiedTypeName, parameters)] =
+                BuildConstructorBodyKey(qualifiedTypeName, constructor);
+        }
+    }
+
+    private static string BuildConstructorSignatureKey(
+        string qualifiedTypeName,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return $"{qualifiedTypeName}{FunctionOverloadFacts.BuildOverloadKey(parameters.Select(static parameter => parameter.Type.DisplayName))}";
     }
 
     private void RegisterConstructors(
@@ -1214,12 +1313,11 @@ internal sealed class TypeChecker
                     || importedTemplateSummary is { AggregatePatterns.Count: > 0 }
                     ? CollectTemplateEnumPatternOrdinals(block)
                     : null;
-                _currentImportedTemplateLocalDeclarations = hasImportedTemplateSummary
-                    ? importedTemplateSummary!.LocalDeclarations.ToDictionary(
-                        static local => TemplateLocalDeclarationFacts.BuildLookupKey(local.Kind, local.Line, local.Column),
-                        static local => local.Type,
-                        StringComparer.Ordinal)
-                    : null;
+                // Local declaration facts are keyed to the source coordinates that were
+                // present when the package image was produced. Rendered package bodies
+                // are parsed from the package image surface, so those coordinates can
+                // point at unrelated declarations. Explicit source types are safer here.
+                _currentImportedTemplateLocalDeclarations = null;
                 _currentImportedTemplateConversions = hasImportedTemplateSummary
                     ? importedTemplateSummary!.Conversions.ToDictionary(
                         static conversion => conversion.Ordinal,
@@ -5547,6 +5645,7 @@ internal sealed class TypeChecker
         var key = monomorphizedType.NamedType!;
         if (monomorphizedType.TypeArguments is { Count: > 0 } typeArguments)
         {
+            ValidateDictionaryKeyConstraint(monomorphizedType, triggerLocation);
             _genericInstantiationArguments.TryAdd(key, typeArguments.ToArray());
         }
 
@@ -5619,6 +5718,66 @@ internal sealed class TypeChecker
         }
 
         return monomorphizedType;
+    }
+
+    private void ValidateDictionaryKeyConstraint(StarkTypeSymbol dictionaryType, SourceLocation? triggerLocation)
+    {
+        if (!TryGetDictionaryKeyType(dictionaryType, out var keyType)
+            || TypeContainsOpenCurrentFunctionGenericParameter(keyType)
+            || IsCompilerProvenDictionaryKey(keyType))
+        {
+            return;
+        }
+
+        var diagnosticKey = $"{dictionaryType.NamedType}|{keyType.DisplayName}|{triggerLocation?.Line ?? 0}|{triggerLocation?.Column ?? 0}";
+        if (!_dictionaryKeyConstraintFailures.Add(diagnosticKey))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3023",
+            $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. The current compiler can prove that contract for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+            triggerLocation ?? SourceLocation.Synthetic());
+    }
+
+    private static bool TryGetDictionaryKeyType(StarkTypeSymbol type, out StarkTypeSymbol keyType)
+    {
+        keyType = StarkTypeSymbols.Error;
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
+            || coreType.NamedType is null
+            || coreType.TypeArguments is not { Count: 2 }
+            || !string.Equals(StarkTypeSymbols.GetGenericBaseName(coreType.NamedType), "System.Collections.Dictionary", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        keyType = StarkTypeSymbols.WithQualifiers(
+            coreType.TypeArguments[0],
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        return true;
+    }
+
+    private static bool IsCompilerProvenDictionaryKey(StarkTypeSymbol keyType)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            keyType,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        return coreType.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
     }
 
     private void RefreshConcreteInstantiationsForTemplate(NamedTypeSymbol template)
@@ -6451,6 +6610,38 @@ internal sealed class TypeChecker
         if (CanAssign(parameterType, argumentType))
         {
             return;
+        }
+
+        if (parameterType.BorrowKind != StarkBorrowKind.None)
+        {
+            if (!argument.IsAddressable)
+            {
+                ReportError(
+                    "STK3002",
+                    $"Argument {position} for '{functionName}' must be an addressable storage location because parameter type '{parameterType.DisplayName}' borrows from it.",
+                    context);
+                return;
+            }
+
+            if (parameterType.IsMutableView && !argument.IsAddressMutable)
+            {
+                ReportError(
+                    "STK3002",
+                    $"Argument {position} for '{functionName}' must be mutable because parameter type '{parameterType.DisplayName}' borrows it mutably.",
+                    context);
+                return;
+            }
+
+            var parameterStorageType = StarkTypeSymbols.WithQualifiers(
+                parameterType,
+                borrowKind: StarkBorrowKind.None);
+            var argumentStorageType = StarkTypeSymbols.WithQualifiers(
+                argumentType,
+                borrowKind: StarkBorrowKind.None);
+            if (CanAssign(parameterStorageType, argumentStorageType))
+            {
+                return;
+            }
         }
 
         ReportError(

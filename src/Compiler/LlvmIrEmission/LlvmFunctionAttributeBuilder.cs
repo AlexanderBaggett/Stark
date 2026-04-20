@@ -237,11 +237,17 @@ internal sealed class LlvmFunctionAttributeBuilder
         AbiParameterSymbol parameter,
         ParameterMemoryEffectSummary? parameterEffects)
     {
+        var contractReads = ParameterContractReadsArgumentMemory(parameter);
+        var contractWrites = ParameterContractWritesArgumentMemory(parameter);
+
         if (parameterEffects is not null)
         {
-            if (parameterEffects.Writes)
+            var reads = parameterEffects.Reads || contractReads;
+            var writes = parameterEffects.Writes || contractWrites;
+
+            if (writes)
             {
-                if (!parameterEffects.Reads)
+                if (!reads)
                 {
                     attributes.Add("writeonly");
                 }
@@ -254,15 +260,17 @@ internal sealed class LlvmFunctionAttributeBuilder
             return;
         }
 
-        if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+        if (contractWrites)
         {
-            attributes.Add("writeonly");
+            if (!contractReads)
+            {
+                attributes.Add("writeonly");
+            }
+
             return;
         }
 
-        if (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
-            || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && !parameter.SourceType.IsMutablePointer)
-            || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && !parameter.SourceType.IsMutableView))
+        if (contractReads)
         {
             attributes.Add("readonly");
         }
@@ -298,12 +306,10 @@ internal sealed class LlvmFunctionAttributeBuilder
         FunctionEffectProfile effects,
         FunctionMemoryEffectSummary? memoryEffects)
     {
-        var readsArgumentMemory = memoryEffects?.ReadsArgumentMemory ?? effects.ReadsArgumentMemory;
-        var writesArgumentMemory = memoryEffects?.WritesArgumentMemory ?? false;
-        if (abiFunction.ReturnsIndirect)
-        {
-            writesArgumentMemory = true;
-        }
+        var readsArgumentMemory = (memoryEffects?.ReadsArgumentMemory ?? effects.ReadsArgumentMemory)
+            || FunctionContractReadsArgumentMemory(abiFunction);
+        var writesArgumentMemory = (memoryEffects?.WritesArgumentMemory ?? false)
+            || FunctionContractWritesArgumentMemory(abiFunction);
 
         var readsOtherMemory = memoryEffects?.ReadsOtherMemory ?? false;
         var writesOtherMemory = memoryEffects?.WritesOtherMemory ?? false;
@@ -361,6 +367,47 @@ internal sealed class LlvmFunctionAttributeBuilder
             (false, true) => "write",
             _ => "readwrite"
         };
+    }
+
+    private static bool FunctionContractReadsArgumentMemory(AbiFunctionSignature abiFunction)
+    {
+        return abiFunction.UserParameters.Any(ParameterContractReadsArgumentMemory);
+    }
+
+    private static bool FunctionContractWritesArgumentMemory(AbiFunctionSignature abiFunction)
+    {
+        return abiFunction.ReturnsIndirect
+            || abiFunction.UserParameters.Any(ParameterContractWritesArgumentMemory);
+    }
+
+    private static bool ParameterContractReadsArgumentMemory(AbiParameterSymbol parameter)
+    {
+        if (parameter.Kind == AbiParameterKind.SRet)
+        {
+            return false;
+        }
+
+        if (parameter.Kind == AbiParameterKind.IndirectIn)
+        {
+            return true;
+        }
+
+        return parameter.SourceType.InitializationKind == StarkInitializationKind.None
+            && (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                || parameter.SourceType.Kind == StarkTypeKind.Slice
+                || parameter.SourceType.BorrowKind != StarkBorrowKind.None
+                || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && !parameter.SourceType.IsMutablePointer));
+    }
+
+    private static bool ParameterContractWritesArgumentMemory(AbiParameterSymbol parameter)
+    {
+        if (parameter.Kind == AbiParameterKind.SRet)
+        {
+            return true;
+        }
+
+        return parameter.SourceType.InitializationKind != StarkInitializationKind.None
+            || (parameter.SourceType.BorrowKind != StarkBorrowKind.None && parameter.SourceType.IsMutableView);
     }
 
     private static string EscapeIdentifier(string identifier)

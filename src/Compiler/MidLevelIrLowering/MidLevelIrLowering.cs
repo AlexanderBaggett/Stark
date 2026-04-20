@@ -139,7 +139,8 @@ internal sealed partial class MidLevelIrLowerer(
             _objectCreationConstructors,
             importedTemplateSummary,
             _materializedSpecializationSymbols,
-            function.GenericTypeSubstitution);
+            function.GenericTypeSubstitution,
+            useImportedTemplateLocalDeclarationFacts: body is null);
 
         _logs.Info(
             "lowering",
@@ -156,7 +157,8 @@ internal sealed partial class MidLevelIrLowerer(
             outcome: CompilerLogOutcome.Continued,
             verbosity: CompilerLogVerbosity.Verbose);
 
-        var loweredTypedTemplateBody = importedTemplateSummary?.TypedBody is { } typedBody
+        var loweredTypedTemplateBody = body is null
+            && importedTemplateSummary?.TypedBody is { } typedBody
             && builder.TryLowerImportedTypedTemplateBody(typedBody);
         if (!loweredTypedTemplateBody)
         {
@@ -244,8 +246,7 @@ internal sealed partial class MidLevelIrLowerer(
 
         foreach (var function in hir.Functions)
         {
-            if (!function.HasBody
-                || function.Signature.TemplateName is not { } templateName
+            if (function.Signature.TemplateName is not { } templateName
                 || function.Signature.TypeArguments is not { Count: > 0 } typeArguments)
             {
                 continue;
@@ -486,23 +487,20 @@ internal sealed partial class MidLevelIrLowerer(
 
         foreach (var module in loadedModules.Modules.Values)
         {
-            if (!module.HasPublishedTypedTemplateBodies)
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
             {
-                foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
-                {
-                    var qualifiedName = module.Reference.IsRoot
-                        ? declaration.Name
-                        : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
-                    functions[qualifiedName] = new FunctionLoweringContext(
-                        module.SyntaxModel.ModuleName,
+                var qualifiedName = module.Reference.IsRoot
+                    ? declaration.Name
+                    : $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
+                functions[qualifiedName] = new FunctionLoweringContext(
+                    module.SyntaxModel.ModuleName,
+                    module.Reference.FilePath,
+                    declaration,
+                    new SourceLocation(
                         module.Reference.FilePath,
-                        declaration,
-                        new SourceLocation(
-                            module.Reference.FilePath,
-                            declaration.NameToken.Line,
-                            declaration.NameToken.Column + 1),
-                        declaration.Body.block());
-                }
+                        declaration.NameToken.Line,
+                        declaration.NameToken.Column + 1),
+                    declaration.Body.block());
             }
 
             if (module.Reference.IsRoot
@@ -541,11 +539,6 @@ internal sealed partial class MidLevelIrLowerer(
 
         foreach (var module in loadedModules.Modules.Values)
         {
-            if (module.IsPackageImageImport)
-            {
-                continue;
-            }
-
             foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
             {
                 if (declaration.structDeclaration() is { } structDeclaration)

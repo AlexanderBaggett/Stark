@@ -2372,6 +2372,11 @@ internal sealed class SemanticValidator
                         continue;
                     }
 
+                    if (!propagated.Writes && propagated.CaptureKind == ParameterCaptureKind.Return)
+                    {
+                        continue;
+                    }
+
                     summary.DisqualifyLaw();
 
                     if (!declaredLaw)

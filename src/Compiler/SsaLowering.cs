@@ -464,7 +464,10 @@ internal sealed class SsaLowerer
                 call.Type,
                 call.Text,
                 call.IndirectArgumentLocalNames,
-                call.SourceReturnType));
+                call.SourceReturnType,
+                call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                    .ToArray()));
 
             InvalidateMovedAggregateCallArguments(blockId, block, call);
             return loweredCall;
@@ -1382,7 +1385,10 @@ internal sealed class SsaLowerer
                         call.Type,
                         call.Text,
                         call.IndirectArgumentLocalNames,
-                        call.SourceReturnType),
+                        call.SourceReturnType,
+                        call.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : RewriteValue(address, replacements))
+                            .ToArray()),
                 SsaConvertRValue convert => new SsaConvertRValue(
                     RewriteValue(convert.Operand, replacements),
                     convert.TargetType,

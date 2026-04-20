@@ -292,6 +292,34 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void LawsCanForwardRetborrowThroughLawWrappers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[0 max] Value;
+
+                law retborrow i32[0 max] Get(borrow Box self) {
+                    return self.Value;
+                }
+            }
+
+            struct Holder {
+                Box Inner;
+
+                law retborrow i32[0 max] Get(borrow Holder self) {
+                    return self.Inner.Get();
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void LawsCannotWriteThroughBorrowedMemory()
     {
         var result = Compile(

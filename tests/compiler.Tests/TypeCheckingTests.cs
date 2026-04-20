@@ -113,6 +113,123 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void DictionaryAllowsCompilerProvenKeyTypes()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            fn void Use(Dictionary<i32[0 max], bool> integers, Dictionary<bool, i32[0 max]> flags) {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V> {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3023");
+    }
+
+    [Fact]
+    public void DictionaryRejectsUnprovenKeyTypes()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Box {
+                i32[0 max] Value;
+            }
+
+            fn void Use(Dictionary<Box, i32[0 max]> boxes) {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V> {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("Dictionary key type 'Box'", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("System.Collections.DictionaryKey<Box>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DictionaryRejectsUnprovenKeyTypesAfterGenericMonomorphization()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Box {
+                i32[0 max] Value;
+            }
+
+            fn void Use<K>(K key) {
+                stack Dictionary<K, i32[0 max]> values = new();
+                return;
+            }
+
+            fn void Bad(Box key) {
+                Use(key);
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "monomorphization-plan",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V> {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3023");
+    }
+
+    [Fact]
     public void AmbiguousImportedTypeFinalNamesRequireQualification()
     {
         var result = Compile(
@@ -1123,6 +1240,39 @@ public sealed class TypeCheckingTests
         Assert.Equal(2, trigger.Signature.Parameters.Count);
         Assert.Equal("borrow Box<i32>", trigger.Signature.Parameters[0].Type.DisplayName);
         Assert.Equal("i32", trigger.Signature.Parameters[1].Type.DisplayName);
+    }
+
+    [Fact]
+    public void GenericNestedMemberOutCallsInferStorageType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Cell<T> {
+                T Value;
+
+                fn bool TryTake(mut borrow Cell<T> self, out T value) {
+                    value = self.Value;
+                    return true;
+                }
+            }
+
+            struct Owner<T> {
+                Cell<T> Inner;
+
+                fn bool TryTake(mut borrow Owner<T> self, out T value) {
+                    return self.Inner.TryTake(value);
+                }
+            }
+
+            fn bool Run(mut borrow Owner<i32[0 max]> owner, out i32[0 max] value) {
+                return owner.TryTake(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
     }
 
     [Fact]

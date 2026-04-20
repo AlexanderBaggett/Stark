@@ -562,10 +562,44 @@ public static class DefaultCompilerPipeline
         {
             var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var ownership = BuildInstantiationOwnershipModel(loadedModules, typeModel);
+
+            ValidateDictionaryKeyConstraints(context, ownership.Types);
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.InstantiationOwnership,
-                BuildInstantiationOwnershipModel(loadedModules, typeModel));
+                ownership);
+        }
+
+        private static void ValidateDictionaryKeyConstraints(
+            CompilerPassContext context,
+            IEnumerable<TypeInstantiationOwnership> types)
+        {
+            foreach (var type in types)
+            {
+                if (!string.Equals(type.TemplateName, "System.Collections.Dictionary", StringComparison.Ordinal)
+                    || type.TypeArguments.Count != 2)
+                {
+                    continue;
+                }
+
+                var keyType = StarkTypeSymbols.WithQualifiers(
+                    type.TypeArguments[0],
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false);
+                if (keyType.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer)
+                {
+                    continue;
+                }
+
+                context.Diagnostics.Error(
+                    "STK3023",
+                    $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. The current compiler can prove that contract for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+                    "instantiation-ownership",
+                    type.FirstUseLocation);
+            }
         }
 
         private static InstantiationOwnershipModel BuildInstantiationOwnershipModel(
@@ -579,6 +613,13 @@ public static class DefaultCompilerPipeline
             var functionOwnership = new Dictionary<string, FunctionInstantiationOwnership>(StringComparer.Ordinal);
             var typeOwnership = new Dictionary<string, TypeInstantiationOwnership>(StringComparer.Ordinal);
             var expandedFunctionTriggers = ExpandFunctionInstantiationTriggers(typeModel, loadedModules);
+            var expandedTypeTriggers = ExpandTypeInstantiationTriggers(typeModel, loadedModules, expandedFunctionTriggers);
+            var destructorFunctionTriggers = BuildDestructorFunctionInstantiationTriggers(typeModel, loadedModules, expandedTypeTriggers);
+            if (destructorFunctionTriggers.Count > 0)
+            {
+                expandedFunctionTriggers = ExpandFunctionInstantiationTriggers(typeModel, loadedModules, destructorFunctionTriggers);
+                expandedTypeTriggers = ExpandTypeInstantiationTriggers(typeModel, loadedModules, expandedFunctionTriggers);
+            }
 
             foreach (var trigger in expandedFunctionTriggers)
             {
@@ -601,7 +642,7 @@ public static class DefaultCompilerPipeline
                     trigger.Location);
             }
 
-            foreach (var trigger in ExpandTypeInstantiationTriggers(typeModel, loadedModules, expandedFunctionTriggers))
+            foreach (var trigger in expandedTypeTriggers)
             {
                 var templateName = StarkTypeSymbols.GetGenericBaseName(trigger.TypeName);
                 var declaringModuleName = ResolveDeclaringModuleName(templateName, loadedModules.RootModuleName, moduleNames);
@@ -638,7 +679,8 @@ public static class DefaultCompilerPipeline
 
         private static IReadOnlyList<FunctionInstantiationTriggerRecord> ExpandFunctionInstantiationTriggers(
             TypeCheckModel typeModel,
-            LoadedModuleSet loadedModules)
+            LoadedModuleSet loadedModules,
+            IReadOnlyList<FunctionInstantiationTriggerRecord>? additionalSeeds = null)
         {
             var expanded = new List<FunctionInstantiationTriggerRecord>();
             var pending = new Queue<FunctionInstantiationTriggerRecord>();
@@ -658,6 +700,14 @@ public static class DefaultCompilerPipeline
                     StringComparer.Ordinal);
 
             foreach (var trigger in typeModel.InstantiationTriggers)
+            {
+                if (TryAddExpandedTrigger(trigger, seen, expanded))
+                {
+                    pending.Enqueue(trigger);
+                }
+            }
+
+            foreach (var trigger in additionalSeeds ?? [])
             {
                 if (TryAddExpandedTrigger(trigger, seen, expanded))
                 {
@@ -747,6 +797,131 @@ public static class DefaultCompilerPipeline
                 .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
                 .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
                 .ToArray();
+        }
+
+        private static IReadOnlyList<FunctionInstantiationTriggerRecord> BuildDestructorFunctionInstantiationTriggers(
+            TypeCheckModel typeModel,
+            LoadedModuleSet loadedModules,
+            IReadOnlyList<TypeInstantiationTriggerRecord> expandedTypeTriggers)
+        {
+            var destructorCallsByType = CollectZeroArgumentSelfMemberDestructorCalls(loadedModules);
+            if (destructorCallsByType.Count == 0)
+            {
+                return [];
+            }
+
+            var triggers = new List<FunctionInstantiationTriggerRecord>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var typeTrigger in expandedTypeTriggers)
+            {
+                var baseTypeName = StarkTypeSymbols.GetGenericBaseName(typeTrigger.TypeName);
+                if (!destructorCallsByType.TryGetValue(baseTypeName, out var memberNames)
+                    || typeTrigger.TypeArguments.Count == 0)
+                {
+                    continue;
+                }
+
+                var receiverType = StarkTypeSymbols.GenericInstantiation(baseTypeName, typeTrigger.TypeArguments);
+                foreach (var memberName in memberNames)
+                {
+                    var sourceName = $"{baseTypeName}.{memberName}";
+                    if (!typeModel.Overloads.TryGetValue(sourceName, out var overloads))
+                    {
+                        continue;
+                    }
+
+                    var instanceOverloads = overloads
+                        .Where(static overload => !overload.IsStatic)
+                        .ToArray();
+                    var resolution = FunctionOverloadFacts.Resolve(
+                        instanceOverloads,
+                        receiverType,
+                        [],
+                        TypeCompatibilityFacts.CanAssign);
+                    if (!resolution.Succeeded
+                        || resolution.Match is not { IsGenericInstantiation: true } signature
+                        || signature.TypeArguments is not { Count: > 0 } typeArguments
+                        || signature.TemplateName is null
+                        || !typeModel.Functions.TryGetValue(signature.TemplateName, out var templateSignature))
+                    {
+                        continue;
+                    }
+
+                    var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                        templateSignature,
+                        typeArguments,
+                        templateSignature.Name);
+                    var key = $"{instantiatedSignature.TemplateName ?? instantiatedSignature.Name}|{FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments)}";
+                    if (!seen.Add(key))
+                    {
+                        continue;
+                    }
+
+                    triggers.Add(new FunctionInstantiationTriggerRecord(
+                        templateSignature.DisplaySourceName,
+                        typeArguments.ToArray(),
+                        instantiatedSignature,
+                        typeTrigger.Location));
+                }
+            }
+
+            return triggers
+                .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private static Dictionary<string, IReadOnlySet<string>> CollectZeroArgumentSelfMemberDestructorCalls(
+            LoadedModuleSet loadedModules)
+        {
+            var callsByType = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+            foreach (var module in loadedModules.Modules.Values)
+            {
+                foreach (var destructor in DeclaredDestructorSyntaxCollector.Collect(module))
+                {
+                    var calls = CollectZeroArgumentSelfMemberCalls(destructor.Body);
+                    if (calls.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    callsByType[destructor.QualifiedTypeName] = calls;
+                }
+            }
+
+            return callsByType;
+        }
+
+        private static IReadOnlySet<string> CollectZeroArgumentSelfMemberCalls(Antlr4.Runtime.Tree.IParseTree root)
+        {
+            var calls = new HashSet<string>(StringComparer.Ordinal);
+            Visit(root);
+            return calls;
+
+            void Visit(Antlr4.Runtime.Tree.IParseTree node)
+            {
+                if (node is StarkParser.PostfixExpressionContext postfix
+                    && string.Equals(postfix.primaryExpression()?.GetText(), "self", StringComparison.Ordinal))
+                {
+                    var parts = postfix.postfixPart();
+                    for (var index = 0; index + 1 < parts.Length; index++)
+                    {
+                        var memberName = parts[index].Identifier()?.GetText();
+                        var arguments = parts[index + 1].argumentList();
+                        if (memberName is not null && arguments is not null && arguments.argument().Length == 0)
+                        {
+                            calls.Add(memberName);
+                        }
+                    }
+                }
+
+                for (var index = 0; index < node.ChildCount; index++)
+                {
+                    Visit(node.GetChild(index));
+                }
+            }
         }
 
         private static IReadOnlyList<TypeInstantiationTriggerRecord> ExpandTypeInstantiationTriggers(
@@ -2944,11 +3119,15 @@ public static class DefaultCompilerPipeline
 
             foreach (var strategy in specializationStrategy.Functions)
             {
-                if (strategy.StrategyKind == FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly
-                    || !declarationsByQualifiedName.TryGetValue(strategy.TemplateName, out var declaration)
+                if (!declarationsByQualifiedName.TryGetValue(strategy.TemplateName, out var declaration)
                     || !declaration.HasBody)
                 {
-                    continue;
+                    if (strategy.StrategyKind != FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly
+                        || !ShouldMaterializeCompilerBuiltinAbiSpecialization(strategy.TemplateName)
+                        || !declarationsByQualifiedName.TryGetValue(strategy.TemplateName, out declaration))
+                    {
+                        continue;
+                    }
                 }
 
                 if (!signatures.TryGetValue(strategy.TemplateName, out var templateSignature)
@@ -2977,6 +3156,14 @@ public static class DefaultCompilerPipeline
             return functions
                 .OrderBy(static function => function.Name, StringComparer.Ordinal)
                 .ToArray();
+        }
+
+        private static bool ShouldMaterializeCompilerBuiltinAbiSpecialization(string templateName)
+        {
+            return templateName is "System.Collections.List.AsSlice"
+                or "System.Collections.List.AsMutableSlice"
+                or "System.Collections.DictionaryKey.Equals"
+                or "System.Collections.DictionaryKey.Hash";
         }
 
         private static FunctionBodyLoweringKind DetermineBodyLoweringKind(FunctionDeclarationModel function)

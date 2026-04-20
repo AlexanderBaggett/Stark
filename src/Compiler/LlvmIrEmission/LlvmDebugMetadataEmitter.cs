@@ -27,6 +27,7 @@ internal sealed class DebugMetadataEmitter
     private string? _tbaaRootRef;
     private string? _tbaaAnyRef;
     private bool _hasFunctions;
+    private bool _hasNonDebugMetadata;
     private int _nextMetadataId;
 
     public DebugMetadataEmitter(
@@ -48,7 +49,14 @@ internal sealed class DebugMetadataEmitter
 
     public bool Enabled => true;
 
-    public string EmptyTupleRef => _emptyTupleRef;
+    public string EmptyTupleRef
+    {
+        get
+        {
+            _hasNonDebugMetadata = true;
+            return _emptyTupleRef;
+        }
+    }
 
     public string? GetValueRangeMetadataRef(StarkTypeSymbol type)
     {
@@ -62,6 +70,7 @@ internal sealed class DebugMetadataEmitter
             return existing;
         }
 
+        _hasNonDebugMetadata = true;
         var rangeRef = CreateMetadata(metadataBody);
         _rangeRefs[metadataBody] = rangeRef;
         return rangeRef;
@@ -74,6 +83,7 @@ internal sealed class DebugMetadataEmitter
             return existing;
         }
 
+        _hasNonDebugMetadata = true;
         var typeRef = CreateMetadata($"!{{!\"{EscapeMetadataString(displayName)}\", {GetTbaaAnyRef()}, i64 0}}");
         _tbaaTypeDescriptorRefs[key] = typeRef;
         return typeRef;
@@ -97,6 +107,7 @@ internal sealed class DebugMetadataEmitter
         var fieldFragments = string.Join(
             ", ",
             fields.Select(static field => $"{field.TypeDescriptorRef}, i64 {field.OffsetBytes}"));
+        _hasNonDebugMetadata = true;
         var typeRef = CreateMetadata($"!{{!\"{EscapeMetadataString(displayName)}\", {fieldFragments}}}");
         _tbaaStructTypeDescriptorRefs[key] = typeRef;
         return typeRef;
@@ -110,6 +121,7 @@ internal sealed class DebugMetadataEmitter
             return existing;
         }
 
+        _hasNonDebugMetadata = true;
         var accessTagRef = CreateMetadata($"!{{{baseTypeDescriptorRef}, {accessTypeDescriptorRef}, i64 {offsetBytes}}}");
         _tbaaAccessTagRefs[key] = accessTagRef;
         return accessTagRef;
@@ -122,6 +134,7 @@ internal sealed class DebugMetadataEmitter
             return existing;
         }
 
+        _hasNonDebugMetadata = true;
         var domainRef = CreateSelfReferentialMetadata(
             selfRef => $"distinct !{{{selfRef}, !\"{EscapeMetadataString(displayName)}\"}}");
         _aliasScopeDomainRefs[key] = domainRef;
@@ -136,13 +149,18 @@ internal sealed class DebugMetadataEmitter
             return existing;
         }
 
+        _hasNonDebugMetadata = true;
         var scopeRef = CreateSelfReferentialMetadata(
             selfRef => $"distinct !{{{selfRef}, {domainRef}, !\"{EscapeMetadataString(displayName)}\"}}");
         _aliasScopeRefs[cacheKey] = scopeRef;
         return scopeRef;
     }
 
-    public string GetMetadataTupleRef(IReadOnlyList<string> items) => GetTupleRef(items);
+    public string GetMetadataTupleRef(IReadOnlyList<string> items)
+    {
+        _hasNonDebugMetadata = true;
+        return GetTupleRef(items);
+    }
 
     public DebugFunctionContext CreateFunctionContext(
         string sourceName,
@@ -163,13 +181,17 @@ internal sealed class DebugMetadataEmitter
 
     public void EmitModuleMetadata(StringBuilder builder)
     {
-        if (!_hasFunctions)
+        if (!_hasFunctions && !_hasNonDebugMetadata)
         {
             return;
         }
 
-        builder.AppendLine($"!llvm.dbg.cu = !{{{_compileUnitRef}}}");
-        builder.AppendLine($"!llvm.module.flags = !{{{_debugInfoVersionRef}, {_dwarfVersionRef}}}");
+        if (_hasFunctions)
+        {
+            builder.AppendLine($"!llvm.dbg.cu = !{{{_compileUnitRef}}}");
+            builder.AppendLine($"!llvm.module.flags = !{{{_debugInfoVersionRef}, {_dwarfVersionRef}}}");
+        }
+
         foreach (var definition in _definitions)
         {
             builder.AppendLine(definition);
