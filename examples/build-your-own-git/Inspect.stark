@@ -1,0 +1,113 @@
+import System
+module BuildYourOwnGitInspect
+
+finite law bool BoolValue(System.IO.IOResult<bool> result) {
+    switch (result) {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+finite law i32[min max] MetadataNameCode(System.FileSystem.FileSystemEntryKind kind, Ascii name) {
+    if (name.Data == null) {
+        return 0;
+    }
+
+    stack rawptr<i8[min max]> data = name.Data;
+    if (kind == System.FileSystem.FileSystemEntryKind.File && name.Length == 4) {
+        if (*(&data[0]) == (i8[min max])72
+            && *(&data[1]) == (i8[min max])69
+            && *(&data[2]) == (i8[min max])65
+            && *(&data[3]) == (i8[min max])68) {
+            return 1;
+        }
+    }
+
+    if (kind == System.FileSystem.FileSystemEntryKind.Directory && name.Length == 7) {
+        if (*(&data[0]) == (i8[min max])111
+            && *(&data[1]) == (i8[min max])98
+            && *(&data[2]) == (i8[min max])106
+            && *(&data[3]) == (i8[min max])101
+            && *(&data[4]) == (i8[min max])99
+            && *(&data[5]) == (i8[min max])116
+            && *(&data[6]) == (i8[min max])115) {
+            return 2;
+        }
+    }
+
+    if (kind == System.FileSystem.FileSystemEntryKind.Directory && name.Length == 4) {
+        if (*(&data[0]) == (i8[min max])114
+            && *(&data[1]) == (i8[min max])101
+            && *(&data[2]) == (i8[min max])102
+            && *(&data[3]) == (i8[min max])115) {
+            return 3;
+        }
+    }
+
+    return 0;
+}
+
+finite law i32[min max] MetadataEntryCode(System.FileSystem.FileSystemEntry entry) {
+    stack System.FileSystem.FileSystemEntryKind kind = entry.Kind;
+    return MetadataNameCode(kind, entry.Name);
+}
+
+fn bool RepositoryMetadataLooksInitialized() {
+    if (!BoolValue(System.FileSystem.IsDirectory("starkgit-demo/.starkgit"))) {
+        return false;
+    }
+
+    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+        System.FileSystem.OpenDirectory("starkgit-demo/.starkgit");
+
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+            stack mut System.FileSystem.Directory directory = value;
+            stack mut bool foundHead = false;
+            stack mut bool foundObjects = false;
+            stack mut bool foundRefs = false;
+
+            while non-deterministic (true) {
+                stack System.FileSystem.DirectoryReadResult next = directory.ReadNext();
+                switch (next) {
+                    case System.FileSystem.DirectoryReadResult.End:
+                        directory.Close();
+                        return foundHead && foundObjects && foundRefs;
+                    case System.FileSystem.DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return false;
+                    case System.FileSystem.DirectoryReadResult.Entry(var entry):
+                        stack i32[min max] code = MetadataEntryCode(entry);
+                        if (code == 1) {
+                            foundHead = true;
+                        }
+                        else {
+                            if (code == 2) {
+                                foundObjects = true;
+                            }
+                            else {
+                                if (code == 3) {
+                                    foundRefs = true;
+                                }
+                            }
+                        }
+                }
+            }
+    }
+}
+
+export ffi fn i32[min max] main() {
+    if (!RepositoryMetadataLooksInitialized()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Repository metadata present") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

@@ -1,0 +1,35 @@
+module Book.AggregatesLayout
+
+struct Rectangle {
+    i32[min max] Width;
+    i32[min max] Height;
+
+    finite law i32[min max] Area(borrow Rectangle self) {
+        return self.Width * self.Height;
+    }
+}
+
+record Point(i32[min max] X, i32[min max] Y) { }
+
+finite law i32[min max] CoordinateScore(Point point) {
+    return point.X + point.Y;
+}
+
+export ffi fn i32[min max] main() {
+    stack Rectangle rectangle = new Rectangle() {
+        Width = 3,
+        Height = 4
+    };
+
+    stack Point point = new Point(1, 2);
+
+    if (rectangle.Area() != 12) {
+        return 1;
+    }
+
+    if (CoordinateScore(point) != 3) {
+        return 2;
+    }
+
+    return 0;
+}

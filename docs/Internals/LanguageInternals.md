@@ -62,6 +62,33 @@ The `Reduce C-Runtime Dependencies` roadmap section is for C runtime surfaces
 that Stark itself explicitly emits or exposes, not for replacing LLVM's chosen
 backend support-library strategy.
 
+The supported runtime dependency profiles are:
+
+- **Default hosted profile**: the normal compiler and standard-library mode.
+  Stark may use LLVM, Clang, platform startup objects, backend-selected helper
+  routines, and platform import libraries. C-family symbols that appear only
+  because the native toolchain selected them are tracked as toolchain/backend
+  dependencies, not as Stark-owned standard-library implementation choices.
+- **Explicit-C-runtime-free profile**: an audit profile for Stark-owned runtime
+  and standard-library code. In this profile, implemented Stark-owned platform
+  paths must not explicitly call libc, glibc, musl, libm wrappers, or Windows
+  CRT allocation/IO helpers. Linux code uses direct syscalls or Stark-owned
+  runtime helpers. Windows code uses OS APIs such as `kernel32`, Winsock, and
+  the selected OS heap or virtual-memory API.
+
+User-written `ffi` remains outside those standard-library guarantees. If user
+code imports `malloc`, `printf`, OpenSSL, SQLite, or any other C-family API,
+that is an explicit source-level dependency chosen by the program.
+
+Package-owned native dependency metadata should make those explicit choices
+portable across package boundaries. For example, a Raylib package may publish
+its native shim source and required native libraries so downstream programs can
+build with a normal Stark command instead of repeating package-specific linker
+flags. These package facts remain separate from Stark-owned runtime
+dependencies: importing an FFI package records that package's native obligations,
+but it does not make those obligations part of the standard-library runtime
+profile.
+
 The intended runtime direction is:
 
 - Linux runtime and standard-library platform code should use Linux syscalls or
@@ -122,7 +149,135 @@ The implementation generally assumes:
 
 Dynamic dispatch and open-world behavior are still possible where the language provides them, but they are treated as explicit concessions rather than the default compilation model.
 
-## 7. Doctrines and Static Realization
+### Unsigned Integer Types
+
+Unsigned integer widths (`u8` through `u1024`) are first-class integer type
+facts. They are not represented internally as signed integers that merely happen
+to have non-negative ranges. The parser and type resolver still apply the normal
+explicit range rule, but for `uN` the type-relative `min` endpoint is `0` and
+`max` is `2**N - 1`.
+
+The unsigned fact is preserved through type checking, lowering, LLVM emission,
+and package images so operations with signedness-sensitive meaning can choose
+the correct backend behavior.
+
+## 7. Const Numeric Storage
+
+Scalar numeric `const` declarations should be treated as compile-time values,
+not user-selected runtime storage commitments.
+
+For integer constants, the type checker records the exact single-value range on
+the smallest supported integer width that can represent the value. It does not
+preserve a user-written integer range for scalar const storage, because the exact
+value is already known and can be propagated as an LLVM constant. For example,
+`const BoardWidth = 80;` is stored as `i8[80 80]`, while
+`const BigCount = 2**16;` is stored as `i24[65536 65536]`.
+
+For floating-point constants, the type checker follows the literal spelling.
+An unsuffixed decimal such as `80.0` is `f64`; an `f`-suffixed decimal such as
+`80.0f` is `f32`.
+
+Explicit const types remain useful for non-scalar or ambiguous constants such as
+raw-pointer nulls, fixed arrays, and aggregate initializers. They should not be
+used to force scalar numeric const storage. A scalar integer const may name a
+bare width such as `i32`, but it must not use a ranged integer source type such
+as `i32[min max]`.
+
+## 8. Callable Values, Capture Modes, and Unsafe Boundaries
+
+Function items are the intended zero-cost foundation for first-class callable
+values.
+
+A named Stark function in value position should first resolve to a function
+item: a compiler-known, zero-sized callable identity. A function item does not
+capture state and does not by itself make the function address-taken. Calls
+through a function item should stay eligible for direct-call lowering,
+monomorphization, inlining, closed-world law-path specialization, and ordinary
+function-effect reasoning.
+
+When a function item is converted to a function-pointer type, the compiler
+records that the function is address-taken. The runtime representation is a
+thin code pointer. Calls through the pointer are indirect unless the compiler
+can recover a singleton target set. Where the target set remains known, the
+LLVM emitter may use indirect-call target metadata such as `!callees`.
+
+Function-pointer types carry the source function kind as part of the type. A
+`fnptr<law ...>` target has stronger source obligations than a general
+`fnptr<fn ...>` target, and the compiler may preserve those obligations in
+call-effect summaries and package-image facts.
+
+Non-capturing lambdas should lower like anonymous internal function items. They
+may promote to thin function pointers when required by the target type.
+
+Capturing lambdas lower to a closure environment plus a callable entry. Stark
+does not require a heap environment by default. The implementation should choose
+stack, inline aggregate, or owned heap-backed storage according to ordinary
+ownership and escape rules. The capture list is the source of truth for the
+environment layout and optimizer facts.
+
+Safe capture modes have the following intended lowering meaning:
+
+- `copy`
+  Store a copied value in the environment. The current safe subset is cheap
+  copy values such as scalars, raw pointers, function pointers, and read-only
+  borrows. Owned structs and owned text must use `move` or `read` until Stark
+  has an explicit aggregate-copy contract.
+- `move`
+  Move ownership into the environment. The closure owns the captured value and
+  is responsible for its eventual drop. A uniquely owned environment can support
+  stronger noalias-style reasoning.
+- `read`
+  Store read-only access to existing storage. Safe borrowed captures remain
+  non-null and may justify `readonly`, `nonnull`, `noundef`,
+  `dereferenceable`, and capture facts that expose read provenance without
+  writable provenance.
+- `mut`
+  Store exclusive mutable access. The source borrow rules must prevent other
+  live access for the closure lifetime, allowing noalias-style facts where the
+  implementation can prove non-overlap.
+- `out`
+  Store a write-only destination. The closure may initialize or overwrite the
+  destination but may not read the old contents. This can justify `writeonly`
+  and dead-store-oriented reasoning.
+- `init`
+  Store an uninitialized destination that must be initialized before successful
+  return. This is the strongest destination contract and can feed
+  `initializes(...)`-style backend facts when the implementation can prove the
+  initialized byte range.
+
+The `mut`, `out`, and `init` modes require a writable binding at the capture
+site. This lets the type checker reject impossible closure environments before
+closure lowering exists, and preserves the intended read/write facts for later
+MIR and backend work.
+
+Trusted capture modes deliberately weaken ordinary closed-world assumptions:
+
+- `unsafe addr`
+  Captures address or identity information without granting ordinary dereference
+  authority. This maps to address/provenance capture behavior rather than
+  read/write memory access and should block facts that require the address to
+  remain unobserved.
+- `unsafe shared`
+  Publishes a value or capability into the shared/concurrent domain. This should
+  suppress ordinary non-shared assumptions such as `nosync` where the body or
+  call path can synchronize, and it should avoid noalias claims that are not
+  justified by the shared-state capability.
+
+Unsafe is intended as a narrow proof-boundary marker. It should not disable the
+borrow checker, ownership validation, initialization validation, range typing,
+or effect checking. Instead, it permits only explicitly gated operations whose
+invariants must be upheld by the programmer or by a trusted standard-library
+wrapper.
+
+FFI imports with raw platform obligations should be modeled as unsafe unless
+they are wrapped by a safe Stark API. Standard-library threading is one of the
+main motivating cases: the public thread-entry surface should use function
+items or closure values, while raw platform callback entry points and shared
+publication live behind a small unsafe runtime boundary. Backend callback facts
+such as LLVM `!callback` metadata may be useful for broker functions that relay
+a callable to platform thread creation.
+
+## 9. Doctrines and Static Realization
 
 `doctrine` declarations are compile-time-only and do not have a runtime representation.
 That makes them a natural fit for Stark's static dispatch and closed-world specialization model.

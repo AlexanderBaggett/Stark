@@ -50,6 +50,8 @@ functionModifier
     | HOT
     | COLD
     | FFI
+    | VARARGS
+    | UNSAFE
     | STRICTFP
     | STATIC
     ;
@@ -228,7 +230,9 @@ destructorDeclaration
     ;
 
 globalConstantDeclaration
-    : CONST type_ constantDeclarators SEMI
+    : CONST constantDeclarators SEMI
+    | CONST INTEGER_TYPE constantDeclarators SEMI
+    | CONST type_ constantDeclarators SEMI
     ;
 
 globalVariableDeclaration
@@ -248,7 +252,11 @@ variableDeclarators
     ;
 
 variableDeclarator
-    : Identifier (ASSIGN variableInitializer)?
+    : Identifier variableStorageCapacity? (ASSIGN variableInitializer)?
+    ;
+
+variableStorageCapacity
+    : LBRACK expression RBRACK
     ;
 
 variableInitializer
@@ -282,6 +290,7 @@ typeQualifier
 
 nonArrayType
     : rawPointerType
+    | functionPointerType
     | integerType
     | simpleType
     ;
@@ -289,6 +298,18 @@ nonArrayType
 rawPointerType
     : RAWPTR LT type_ GT
     | RAWMUTPTR LT type_ GT
+    ;
+
+functionPointerType
+    : FNPTR LT functionPointerSignature GT
+    ;
+
+functionPointerSignature
+    : functionKind returnType functionPointerParameterList
+    ;
+
+functionPointerParameterList
+    : LPAREN (type_ (COMMA type_)*)? COMMA? RPAREN
     ;
 
 simpleType
@@ -340,6 +361,7 @@ block
 
 statement
     : block
+    | unsafeStatement
     | localConstantDeclaration
     | localVariableDeclaration
     | ifStatement
@@ -353,8 +375,14 @@ statement
     | emptyStatement
     ;
 
+unsafeStatement
+    : UNSAFE block
+    ;
+
 localConstantDeclaration
-    : CONST type_ constantDeclarators SEMI
+    : CONST constantDeclarators SEMI
+    | CONST INTEGER_TYPE constantDeclarators SEMI
+    | CONST type_ constantDeclarators SEMI
     ;
 
 localVariableDeclaration
@@ -587,7 +615,8 @@ postfixPart
     ;
 
 primaryExpression
-    : literal
+    : lambdaExpression
+    | literal
     | SIZEOF LPAREN type_ RPAREN
     | ALIGNOF LPAREN type_ RPAREN
     | Identifier
@@ -596,6 +625,30 @@ primaryExpression
     | qualifiedName
     | objectCreationExpression
     | LPAREN expression RPAREN
+    ;
+
+lambdaExpression
+    : captureClause? lambdaParameterList ARROW (expression | block)
+    ;
+
+captureClause
+    : Identifier LPAREN (captureBinding (COMMA captureBinding)*)? COMMA? RPAREN
+    ;
+
+captureBinding
+    : UNSAFE? captureMode Identifier
+    ;
+
+captureMode
+    : Identifier
+    | MUT
+    | OUT
+    | INIT
+    | SHARED
+    ;
+
+lambdaParameterList
+    : LPAREN (parameter (COMMA parameter)*)? COMMA? RPAREN
     ;
 
 enumConstructorExpression
@@ -638,6 +691,7 @@ arrayInitializer
 literal
     : signedIntegerLiteral
     | FloatLiteral
+    | DOLLAR StringLiteral
     | StringLiteral
     | CharacterLiteral
     | TRUE
@@ -686,6 +740,8 @@ INLINEHINT  : 'inlinehint';
 HOT         : 'hot';
 COLD        : 'cold';
 FFI         : 'ffi';
+VARARGS     : 'varargs';
+UNSAFE      : 'unsafe';
 STRICTFP    : 'strictfp';
 ASM         : 'asm';
 CLOBBER     : 'clobber';
@@ -716,6 +772,7 @@ OUT         : 'out';
 INIT        : 'init';
 RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
+FNPTR       : 'fnptr';
 MUT         : 'mut';
 
 IF          : 'if';
@@ -733,7 +790,6 @@ NEW         : 'new';
 CONST       : 'const';
 WHERE       : 'where';
 VAR         : 'var';
-
 INFINITE         : 'infinite';
 NONDETERMINISTIC : 'non-deterministic';
 WILLEXIT         : 'willexit';
@@ -841,10 +897,12 @@ CARET       : '^';
 BANG        : '!';
 TILDE       : '~';
 QUESTION    : '?';
+ARROW       : '=>';
 COLON       : ':';
 SEMI        : ';';
 COMMA       : ',';
 DOT         : '.';
+DOLLAR      : '$';
 LPAREN      : '(';
 RPAREN      : ')';
 LBRACE      : '{';
@@ -862,8 +920,8 @@ IntegerLiteral
     ;
 
 FloatLiteral
-    : DIGIT+ DOT DIGIT+ ExponentPart?
-    | DIGIT+ ExponentPart
+    : DIGIT+ DOT DIGIT+ ExponentPart? FloatSuffix?
+    | DIGIT+ ExponentPart FloatSuffix?
     ;
 
 CharacterLiteral
@@ -876,6 +934,10 @@ StringLiteral
 
 fragment ExponentPart
     : [eE] [+\-]? DIGIT+
+    ;
+
+fragment FloatSuffix
+    : [fF]
     ;
 
 fragment LiteralEscapeSequence

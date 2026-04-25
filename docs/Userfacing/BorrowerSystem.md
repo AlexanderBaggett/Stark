@@ -1,7 +1,7 @@
 # Stark Borrower System
 
 For the user-facing language contract, see [LanguageReference.md](./LanguageReference.md).
-For backend-facing compiler details and emitted facts, see [LanguageInternals.md](../Internals/LanguageInternals.md).
+For optimizer rationale beyond the source contract, see [LanguageInternals.md](../Internals/LanguageInternals.md).
 
 ## General Strategy
 
@@ -20,9 +20,7 @@ The system is built around the following rules:
 - raw pointers exist only as an explicit low-level escape hatch
 
 Every restriction in this system exists to make aliasing, escape, mutability, lifetime, initialization, and effect behavior more explicit.
-The practical goal is better runtime performance from stronger optimization in ordinary safe code.
-
-The concrete backend-facing facts this enables are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
+The practical goal is predictable ownership and fast ordinary code without a garbage collector.
 
 The safe subset of Stark is the maximally optimizable subset. More flexible behavior is available, but it must be requested explicitly.
 
@@ -58,21 +56,69 @@ This gives Stark the same fundamental memory-management model that eliminates th
 - drop scopes ensure cleanup happens deterministically
 - borrows never own and therefore never free
 
-The compiler enforces this with an internal ownership and lifetime analysis.
+As a programmer, this means Stark tracks whether each owned binding is initialized, moved, borrowed, or available again after reinitialization. If the language cannot prove that a value is still live, initialized, and used through a valid borrow, the program is rejected.
 
-The internal model is:
-
-- lexical drop scopes for locals, temporaries, and parameters
-- move and initialization tracking over normalized control flow
-- explicit lifetime sources for borrows
-- validation that a stored or returned borrow outlives its destination
-- conservative rejection when a borrow source cannot be proven
-
-This analysis is intentionally closer to Rust's MIR borrow checking than to a tracing or reference-counted runtime model. The safe language requires static proof instead of runtime GC.
+This model is flow-sensitive and statically checked. The safe language requires proof instead of runtime GC.
 
 Arena storage follows the same no-GC rule. In the current model, `arena` storage is region-owned and reclaimed when its lexical region ends. Safe code cannot create immortal arena allocations by accident.
 
 Intentional leaks are permitted only through explicit raw or FFI escape hatches.
+
+Example: moving an owned value consumes the old binding.
+
+```stark
+module Demo
+
+struct Box {
+    i32[min max] Value;
+}
+
+fn void Consume(Box value) {
+    return;
+}
+
+fn i32[min max] InvalidUseAfterMove() {
+    stack Box box = new Box() { Value = 1 };
+    Consume(box);
+
+    // Rejected: `box` was moved into `Consume`.
+    return box.Value;
+}
+```
+
+Reinitialization makes the binding usable again:
+
+```stark
+module Demo
+
+struct Box {
+    i32[min max] Value;
+}
+
+fn void Consume(Box value) {
+    return;
+}
+
+fn i32[min max] MoveThenReinitialize() {
+    stack mut Box box = new Box() { Value = 1 };
+    Consume(box);
+
+    box = new Box() { Value = 2 };
+    return box.Value;
+}
+```
+
+Copyable scalar values remain usable after assignment:
+
+```stark
+module Demo
+
+finite law i32[min max] ScalarsCopy() {
+    stack i32[min max] left = 10;
+    stack i32[min max] right = left;
+    return left + right;
+}
+```
 
 ## 2. Non-Escaping Borrows By Default
 
@@ -95,8 +141,66 @@ These classes have the following meaning:
 
 `borrow T` is the default borrow form in safe code.
 
-This model gives the compiler stronger and more explicit escape information than a generic borrow model.
-The concrete emitted capture and return facts are documented in [LanguageInternals.md](../Internals/LanguageInternals.md).
+Use `borrow` for temporary access:
+
+```stark
+module Demo
+
+struct Counter {
+    i32[min max] Value;
+
+    finite law i32[min max] Current(borrow Counter self) {
+        return self.Value;
+    }
+
+    finite void Add(mut borrow Counter self, i32[min max] amount) {
+        self.Value += amount;
+        return;
+    }
+}
+
+fn i32[min max] Run() {
+    stack mut Counter counter = new Counter() { Value = 2 };
+    counter.Add(3);
+    return counter.Current();
+}
+```
+
+Use `retborrow` when a borrow is deliberately returned to the caller:
+
+```stark
+module Demo
+
+struct Counter {
+    i32[min max] Value;
+
+    finite retborrow mut i32[min max] Slot(mut borrow Counter self) {
+        return self.Value;
+    }
+}
+
+fn i32[min max] Run() {
+    stack mut Counter counter = new Counter() { Value = 1 };
+    counter.Slot() = 9;
+    return counter.Value;
+}
+```
+
+A plain `borrow` return is rejected because the type says the borrow must not
+escape:
+
+```stark
+module Demo
+
+struct Box {
+    i32[min max] Value;
+}
+
+fn borrow Box InvalidReturn(borrow Box box) {
+    // Rejected: use `retborrow Box` for a returned borrow.
+    return box;
+}
+```
 
 ## 3. Raw Pointers, FFI, and Null Handling
 
@@ -122,7 +226,7 @@ Raw pointers are allowed only in:
 
 - `ffi fn`
 - explicit raw or unsafe low-level regions
-- explicit runtime or backend-facing code
+- explicit low-level runtime code
 - explicit conversions at foreign boundaries
 
 The following rules apply:
@@ -147,6 +251,30 @@ This boundary preserves the safe-code guarantees that matter most for optimizati
 - safe borrows remain non-null
 - safe borrows remain well-defined values rather than nullable raw handles
 - safe borrows preserve stronger lifetime and alias reasoning than raw pointers
+
+Example: `null` is raw-only.
+
+```stark
+module Demo
+
+ffi fn rawptr<i8[-128 127]> getenv(rawptr<i8[-128 127]> name);
+
+fn bool RawNullIsExplicit() {
+    stack rawptr<i8[-128 127]> missing = null;
+    return missing == null;
+}
+```
+
+The same value cannot be assigned to a safe borrow:
+
+```stark
+module Demo
+
+fn void InvalidNullBorrow() {
+    // Rejected: safe borrows are never null.
+    stack borrow i8[-128 127] value = null;
+}
+```
 
 ## 4. Transitive Immutability
 
@@ -175,7 +303,26 @@ Under `frozen`, the language prohibits:
 This distinction exists so the compiler can rely on true read-only behavior rather than mere absence of writes through one syntactic path.
 
 That, in turn, allows more aggressive reasoning about immutable memory and more freedom to reuse or hoist reads safely.
-The concrete backend-facing consequences are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
+
+Example: frozen access permits reads but rejects mutation through the reachable
+object graph.
+
+```stark
+module Demo
+
+struct Box {
+    i32[min max] Value;
+}
+
+finite law i32[min max] ReadFrozen(frozen Box box) {
+    return box.Value;
+}
+
+fn void InvalidFrozenWrite(frozen Box box) {
+    // Rejected: `box` and everything reachable through it are readonly.
+    box.Value = 3;
+}
+```
 
 ## 5. First-Class `out` and `init` Parameters
 
@@ -195,12 +342,35 @@ The contract is:
 
 These forms are used for construction, filling, decoding, and other write-before-read APIs.
 
-They make initialization obligations explicit, improve dead-store elimination, and strengthen reasoning about constructors and fill-only routines.
-The precise emitted facts are documented in [LanguageInternals.md](../Internals/LanguageInternals.md).
+They make initialization obligations explicit and keep fill-only routines honest.
 
-## 6. Compiler-Derived Function Guarantees
+Example: an `out` parameter is a write destination.
 
-Stark exposes a small user-facing function model and derives stronger compiler guarantees from it.
+```stark
+module Demo
+
+fn bool TryWrite(out i32[0 max] value) {
+    value = 7;
+    return true;
+}
+
+fn i32[0 max] Run() {
+    stack mut i32[0 max] value = 0;
+    if (!TryWrite(value)) {
+        return 0;
+    }
+
+    return value;
+}
+```
+
+Inside an `out` function, the destination must be written before its new value is
+observed by the caller. The callee should not use the old contents as input.
+
+## 6. Function Guarantees
+
+Stark exposes a small function model with stronger guarantees than ordinary
+"everything can happen" functions.
 
 The source-level function forms are:
 
@@ -220,7 +390,7 @@ Additional user-facing modifiers include:
 
 These are the source-language constructs the programmer writes.
 
-The compiler then derives semantic guarantees from:
+The effective guarantee for a function comes from:
 
 - the function kind
 - the borrower rules
@@ -228,7 +398,8 @@ The compiler then derives semantic guarantees from:
 - the destructor restrictions
 - the actual function body
 
-These derived guarantees are not separate user-facing keywords. They are internal semantic facts that the compiler derives when valid.
+These guarantees are not separate keywords. Programmers write the small source
+model, and Stark accepts the stronger guarantee only when the body satisfies it.
 
 The most important derived guarantees are:
 
@@ -240,14 +411,13 @@ The most important derived guarantees are:
 - guaranteed return
 - guaranteed progress
 
-These derived guarantees feed optimizer-facing code generation and backend annotations.
-The concrete emitted forms are documented in [LanguageInternals.md](../Internals/LanguageInternals.md).
+These guarantees define what callers may rely on.
 
 The intended mapping is:
 
 - `fn`
   - general function form
-  - the compiler infers as many guarantees as possible from the body and surrounding rules
+  - may still satisfy stronger guarantees if its body is restricted enough
 - `finite`
   - implies guaranteed return and guaranteed progress
 - `law`
@@ -256,7 +426,33 @@ The intended mapping is:
 - `finite law`
   - combines both sets of guarantees
 
-This keeps Stark's surface syntax small while still allowing the implementation to derive strong optimization facts deliberately.
+This keeps Stark's surface syntax small while still making important behavior
+visible in the function type.
+
+Example: `law` functions may compose other pure/read-only work, while ordinary
+IO stays in `fn`.
+
+```stark
+module Demo
+
+finite law i32[min max] Clamp(i32[min max] value, i32[min max] low, i32[min max] high) {
+    if (value < low) {
+        return low;
+    }
+
+    if (value > high) {
+        return high;
+    }
+
+    return value;
+}
+
+fn void PrintScore(i32[min max] score) {
+    // Console and file operations belong in ordinary `fn` functions because
+    // they observe or modify the outside world.
+    return;
+}
+```
 
 ## 7. Restricted Destruction
 

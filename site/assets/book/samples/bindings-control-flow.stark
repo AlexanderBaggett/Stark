@@ -1,0 +1,46 @@
+module Book.BindingsControlFlow
+
+fn i32[min max] SumFromTwoUntil(i32[min max] count, i32[min max] stopAt) {
+    stack mut i32[min max] total = 0;
+
+    for willexit (stack mut i32[min max] index = 0; index < count; index += 1) {
+        if (index < 2) {
+            continue;
+        }
+
+        if (index == stopAt) {
+            break;
+        }
+
+        total += index;
+    }
+
+    return total;
+}
+
+finite law i32[min max] Classify(i32[min max] value) {
+    switch (value) {
+        case 0:
+            return 10;
+        case 1:
+            return 20;
+        default:
+            return -1;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    if (SumFromTwoUntil(6, 5) != 9) {
+        return 1;
+    }
+
+    if (Classify(0) != 10) {
+        return 2;
+    }
+
+    if (Classify(7) != -1) {
+        return 3;
+    }
+
+    return 0;
+}

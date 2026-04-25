@@ -1,0 +1,62 @@
+{{ define "main" }}
+<article class="page book-page">
+    <p class="book-kicker">
+        {{ with .Params.book_part }}{{ . }}{{ end }}
+        {{ with .Params.book_status }}<span>{{ . }}</span>{{ end }}
+        {{ with site.Params.bookVersion }}<span>{{ . }}</span>{{ end }}
+    </p>
+    {{ .Content }}
+    {{ $languageRefs := .Params.language_refs }}
+    {{ if not $languageRefs }}
+        {{ $languageRefs = slice (dict "title" "Language Reference" "href" "/reference/docs/Userfacing/LanguageReference.md") }}
+    {{ end }}
+    {{ $stdlibRefs := .Params.stdlib_refs }}
+    {{ if not $stdlibRefs }}
+        {{ $stdlibRefs = slice (dict "title" "Standard Library Overview" "href" "/reference/docs/StandardLibrary/StandardLibrary.md") }}
+    {{ end }}
+    {{ $exampleRefs := .Params.example_refs }}
+    {{ if not $exampleRefs }}
+        {{ $exampleRefs = slice (dict "title" "Canonical Examples" "href" "/reference/examples/README.md") }}
+    {{ end }}
+    <section class="book-reference-links" aria-label="Reference links">
+        <h2>Reference Links</h2>
+        <div>
+            <h3>Language</h3>
+            <ul>
+                {{ range $languageRefs }}
+                    <li><a href="{{ .href | relURL }}">{{ .title }}</a></li>
+                {{ end }}
+            </ul>
+        </div>
+        <div>
+            <h3>Standard Library</h3>
+            <ul>
+                {{ range $stdlibRefs }}
+                    <li><a href="{{ .href | relURL }}">{{ .title }}</a></li>
+                {{ end }}
+            </ul>
+        </div>
+        <div>
+            <h3>Examples</h3>
+            <ul>
+                {{ range $exampleRefs }}
+                    <li><a href="{{ .href | relURL }}">{{ .title }}</a></li>
+                {{ end }}
+            </ul>
+        </div>
+    </section>
+    <nav class="book-nav" aria-label="Book chapter navigation">
+        {{ with .Params.prev }}
+            <a href="{{ . | relURL }}">Previous</a>
+        {{ else }}
+            <span></span>
+        {{ end }}
+        <a href="{{ "/book/" | relURL }}">Contents</a>
+        {{ with .Params.next }}
+            <a href="{{ . | relURL }}">Next</a>
+        {{ else }}
+            <span></span>
+        {{ end }}
+    </nav>
+</article>
+{{ end }}

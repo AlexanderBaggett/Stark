@@ -69,6 +69,107 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void LawFunctionsRejectPlainFunctionPointerCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law i32[-2147483648 2147483647] Bad(fnptr<fn i32[-2147483648 2147483647]()> op) {
+                return op();
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4106"
+                && diagnostic.Message.Contains("law-compatible function pointers", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FunctionKindObligationsAllowMatchingFunctionPointerCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite i32[-2147483648 2147483647] UseFinite(fnptr<finite i32[-2147483648 2147483647]()> op) {
+                return op();
+            }
+
+            law i32[-2147483648 2147483647] UseLaw(fnptr<law i32[-2147483648 2147483647]()> op) {
+                return op();
+            }
+
+            finite law i32[-2147483648 2147483647] UseStrict(fnptr<finite law i32[-2147483648 2147483647]()> op) {
+                return op();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        Assert.Equal(StarkFunctionKind.Finite, validation.Functions["UseFinite"].DeclaredKind);
+        Assert.Equal(StarkFunctionKind.Law, validation.Functions["UseLaw"].DeclaredKind);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, validation.Functions["UseStrict"].DeclaredKind);
+    }
+
+    [Fact]
+    public void NonCapturingLawLambdasGetSeparateSemanticSummaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Pure() {
+                return 1;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack fnptr<law i32[-2147483648 2147483647]()> op = () => Pure();
+                return op();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var lambda = Assert.Single(validation.Functions.Values, static function => function.Name.StartsWith("Run.__lambda_", StringComparison.Ordinal));
+        Assert.Equal(StarkFunctionKind.Law, lambda.DeclaredKind);
+        Assert.True(lambda.EffectiveKind is StarkFunctionKind.Law or StarkFunctionKind.FiniteLaw);
+    }
+
+    [Fact]
+    public void NonCapturingLawLambdaBodiesRejectNonLawCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static i32[-2147483648 2147483647] Counter = 1;
+
+            fn i32[-2147483648 2147483647] Impure() {
+                return Counter;
+            }
+
+            fn void Run() {
+                stack fnptr<law i32[-2147483648 2147483647]()> op = () => Impure();
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4106"
+                && diagnostic.Message.Contains("Run.__lambda_", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("may only call other laws", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCaptures()
     {
         var result = Compile(
@@ -281,6 +382,59 @@ public sealed class FunctionSemanticsTests
             """);
 
         Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void RuntimeTextConcatenationPreservesFunctionKindObligations()
+    {
+        var result = Compile(
+            """
+            import System.Memory
+            import System.Text
+            module Demo
+
+            finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
+                return "Score: " + result;
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Memory", "/virtual/System.Memory.stark", IsExternal: false),
+                        """
+                        module System.Memory
+
+                        public enum MemoryError {
+                            OutOfMemory,
+                        }
+
+                        public enum MemoryResult<T> {
+                            Ok(T),
+                            Err(MemoryError),
+                        }
+                        """,
+                        "/virtual/System.Memory.stark"
+                    ),
+                    (
+                        new ResolvedModuleReference("System.Text", "/virtual/System.Text.stark", IsExternal: false),
+                        """
+                        import System.Memory
+                        module System.Text
+
+                        public struct OwnedAscii {
+                            ascii Text;
+                        }
+
+                        public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+                        """,
+                        "/virtual/System.Text.stark"
+                    )
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4106");
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4107");
     }
 
     [Fact]
@@ -499,8 +653,8 @@ public sealed class FunctionSemanticsTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4116" && diagnostic.Message.Contains("Api.AbiVisible", StringComparison.Ordinal));
     }
 
-    private static CompilationResult Compile(string source)
+    private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
-        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
+        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);
     }
 }

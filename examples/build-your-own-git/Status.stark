@@ -1,0 +1,36 @@
+import System
+module BuildYourOwnGitStatus
+
+finite law bool BoolValue(System.IO.IOResult<bool> result) {
+    switch (result) {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn bool RepositoryMetadataExists() {
+    return BoolValue(System.FileSystem.IsDirectory("starkgit-demo/.starkgit"))
+        && BoolValue(System.FileSystem.IsDirectory("starkgit-demo/.starkgit/objects"))
+        && BoolValue(System.FileSystem.IsDirectory("starkgit-demo/.starkgit/refs"))
+        && BoolValue(System.FileSystem.IsDirectory("starkgit-demo/.starkgit/refs/heads"))
+        && BoolValue(System.FileSystem.IsFile("starkgit-demo/.starkgit/HEAD"))
+        && BoolValue(System.FileSystem.IsFile("starkgit-demo/.starkgit/refs/heads/main"));
+}
+
+export ffi fn i32[min max] main() {
+    if (!RepositoryMetadataExists()) {
+        if (System.Console.WriteLine("Repository metadata missing") != System.IO.IOStatus.Ok) {
+            return 2;
+        }
+
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Repository status clean") != System.IO.IOStatus.Ok) {
+        return 3;
+    }
+
+    return 0;
+}

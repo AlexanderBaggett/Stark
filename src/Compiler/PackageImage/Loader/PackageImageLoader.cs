@@ -106,6 +106,43 @@ internal static partial class PackageImageLoader
             return diagnostics;
         }
 
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.Sources,
+            "native source",
+            "STK7110",
+            diagnostics,
+            manifestLocation);
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.IncludeDirectories,
+            "native include directory",
+            "STK7111",
+            diagnostics,
+            manifestLocation);
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.LibraryDirectories,
+            "native library directory",
+            "STK7112",
+            diagnostics,
+            manifestLocation);
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.Libraries,
+            "native library",
+            "STK7113",
+            diagnostics,
+            manifestLocation);
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.LinkArguments,
+            "native link argument",
+            "STK7114",
+            diagnostics,
+            manifestLocation);
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.PkgConfigPackages,
+            "native pkg-config package",
+            "STK7115",
+            diagnostics,
+            manifestLocation);
+
         var moduleNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var module in manifest.Modules)
         {
@@ -170,6 +207,34 @@ internal static partial class PackageImageLoader
         }
 
         return diagnostics;
+    }
+
+    private static void ValidateNativeDependencyList(
+        IReadOnlyList<string>? values,
+        string label,
+        string code,
+        List<CompilerDiagnostic> diagnostics,
+        SourceLocation location)
+    {
+        if (values is null)
+        {
+            return;
+        }
+
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            diagnostics.Add(new CompilerDiagnostic(
+                Code: code,
+                Severity: DiagnosticSeverity.Error,
+                Message: $"Package image {label} entries must not be empty.",
+                Stage: "package-image",
+                Location: location));
+        }
     }
 
     public static bool TryBuildModuleDocument(ResolvedPackageModule module, out LoadedModuleDocument document)

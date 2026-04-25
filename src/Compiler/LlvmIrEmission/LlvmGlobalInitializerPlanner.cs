@@ -136,7 +136,7 @@ internal sealed class LlvmGlobalInitializerPlanner
         }
         else if (literal.FloatLiteral() is { } floatLiteral)
         {
-            rendered = floatLiteral.GetText();
+            rendered = CompileTimeExpressionEvaluator.StripFloatSuffix(floatLiteral.GetText());
         }
         else if (literal.TRUE() is not null)
         {
@@ -328,7 +328,7 @@ internal sealed class LlvmGlobalInitializerPlanner
             StarkTypeKind.Integer => "0",
             StarkTypeKind.Float => "0.0",
             StarkTypeKind.Bool => "false",
-            StarkTypeKind.RawPointer => "null",
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer => "null",
             StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Named => "zeroinitializer",
             _ => "zeroinitializer"
         };

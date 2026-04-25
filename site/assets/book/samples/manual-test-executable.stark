@@ -1,0 +1,22 @@
+module Book.ManualTestExecutable
+
+finite law bool ArithmeticStillWorks() {
+    return 2 * 21 == 42;
+}
+
+finite law bool RangesStillMatch() {
+    stack i32[0 100] score = 75;
+    return score >= 0 && score <= 100;
+}
+
+export ffi fn i32[min max] main() {
+    if (!ArithmeticStillWorks()) {
+        return 1;
+    }
+
+    if (!RangesStillMatch()) {
+        return 2;
+    }
+
+    return 0;
+}

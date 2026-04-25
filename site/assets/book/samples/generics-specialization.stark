@@ -1,0 +1,24 @@
+module Book.GenericsSpecialization
+
+fn T Identity<T>(T value) {
+    return value;
+}
+
+fn T Forward<T>(T value) {
+    return Identity(value);
+}
+
+export ffi fn i32[min max] main() {
+    stack i32[min max] answer = Forward(42);
+    stack bool flag = Forward(true);
+
+    if (answer != 42) {
+        return 1;
+    }
+
+    if (!flag) {
+        return 2;
+    }
+
+    return 0;
+}

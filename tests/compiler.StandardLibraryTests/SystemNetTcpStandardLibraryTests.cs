@@ -1,0 +1,528 @@
+using Stark.Compiler;
+
+namespace compiler.StandardLibraryTests;
+
+public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
+{
+    [Fact]
+    public void StdLibSourceNetTcpClosedHandleLifecycleTypeChecks()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibNetTcpClosedLifecycle.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Net.Tcp
+                module Demo
+
+                fn bool StatusOk(System.Net.NetStatus status) {
+                    switch (status) {
+                        case System.Net.NetStatus.Ok:
+                            return true;
+                        case System.Net.NetStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i32[-2147483648 2147483647] Run() {
+                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
+                        Address = new System.Net.IPv4Address() {
+                            A = 127,
+                            B = 0,
+                            C = 0,
+                            D = 1
+                        },
+                        Port = 80
+                    };
+                    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+                        System.Net.Tcp.TcpClient.Connect(endpoint);
+                    switch (connected) {
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+                            if (!connectedClient.IsOpen()) {
+                                return 7;
+                            }
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+                    }
+
+                    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+                        System.Net.Tcp.TcpListener.Listen(endpoint);
+                    switch (listening) {
+                        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+                            if (!listeningSocket.IsOpen()) {
+                                return 9;
+                            }
+                        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+                    }
+
+                    stack mut System.Net.Tcp.TcpClient client = new();
+                    if (client.IsOpen()) {
+                        return 1;
+                    }
+
+                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both))) {
+                        return 8;
+                    }
+
+                    stack mut i8[-128 127][4] buffer = { 1, 2, 3, 4 };
+                    stack System.Net.NetResult<i64[0 max]> readResult = client.Read(buffer);
+                    switch (readResult) {
+                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                            return 10;
+                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                    }
+
+                    stack System.Net.NetResult<i64[0 max]> writeResult = client.Write(buffer);
+                    switch (writeResult) {
+                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                            return 11;
+                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                    }
+
+                    if (!StatusOk(client.Close())) {
+                        return 2;
+                    }
+
+                    stack mut System.Net.Tcp.TcpListener listener = new();
+                    if (listener.IsOpen()) {
+                        return 3;
+                    }
+
+                    stack System.Net.NetResult<System.Net.Tcp.TcpClient> closedAccept = listener.Accept();
+                    switch (closedAccept) {
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+                            return 13;
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+                    }
+
+                    if (!StatusOk(listener.Close())) {
+                        return 4;
+                    }
+
+                    stack System.Net.Tcp.TcpShutdown shutdown = System.Net.Tcp.TcpShutdown.Both;
+                    switch (shutdown) {
+                        case System.Net.Tcp.TcpShutdown.Receive:
+                            return 5;
+                        case System.Net.Tcp.TcpShutdown.Send:
+                            return 6;
+                        case System.Net.Tcp.TcpShutdown.Both:
+                            return 0;
+                    }
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "enum-layout"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.EnumLayoutModel, out EnumLayoutModel? enumLayoutModel));
+        Assert.NotNull(enumLayoutModel);
+
+        var shutdown = enumLayoutModel.Layouts["System.Net.Tcp.TcpShutdown"];
+        AssertCompactTag(shutdown, bitWidth: 8, maxTagValue: 2);
+        Assert.Equal(["$tag"], shutdown.OrderedFields.Select(static field => field.Name).ToArray());
+    }
+
+    [Fact]
+    public async Task PackagedStdLibNetTcpClosedHandleLifecycleWorksWithoutSource()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-net-tcp-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+
+        try
+        {
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.Contains("Emitted package image:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(manifestPath));
+
+            var appSource =
+                """
+                import System
+                module App
+
+                fn bool StatusOk(System.Net.NetStatus status) {
+                    switch (status) {
+                        case System.Net.NetStatus.Ok:
+                            return true;
+                        case System.Net.NetStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i32[-2147483648 2147483647] Run() {
+                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
+                        Address = new System.Net.IPv4Address() {
+                            A = 127,
+                            B = 0,
+                            C = 0,
+                            D = 1
+                        },
+                        Port = 80
+                    };
+                    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+                        System.Net.Tcp.TcpClient.Connect(endpoint);
+                    switch (connected) {
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+                            if (!connectedClient.IsOpen()) {
+                                return 7;
+                            }
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+                    }
+
+                    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+                        System.Net.Tcp.TcpListener.Listen(endpoint);
+                    switch (listening) {
+                        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+                            if (!listeningSocket.IsOpen()) {
+                                return 9;
+                            }
+                        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+                    }
+
+                    stack mut System.Net.Tcp.TcpClient client = new();
+                    if (client.IsOpen()) {
+                        return 1;
+                    }
+
+                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both))) {
+                        return 8;
+                    }
+
+                    stack mut i8[-128 127][4] buffer = { 1, 2, 3, 4 };
+                    stack System.Net.NetResult<i64[0 max]> readResult = client.Read(buffer);
+                    switch (readResult) {
+                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                            return 10;
+                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                    }
+
+                    stack System.Net.NetResult<i64[0 max]> writeResult = client.Write(buffer);
+                    switch (writeResult) {
+                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                            return 11;
+                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                    }
+
+                    if (!StatusOk(client.Close())) {
+                        return 2;
+                    }
+
+                    stack mut System.Net.Tcp.TcpListener listener = new();
+                    if (listener.IsOpen()) {
+                        return 3;
+                    }
+
+                    stack System.Net.NetResult<System.Net.Tcp.TcpClient> closedAccept = listener.Accept();
+                    switch (closedAccept) {
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+                            return 13;
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+                    }
+
+                    if (!StatusOk(listener.Close())) {
+                        return 4;
+                    }
+
+                    return 0;
+                }
+                """;
+            await File.WriteAllTextAsync(appPath, appSource);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(appSource, appPath),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    StopAfterPassId: "enum-layout"));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.EnumLayoutModel, out EnumLayoutModel? enumLayoutModel));
+            Assert.NotNull(enumLayoutModel);
+
+            var shutdown = enumLayoutModel.Layouts["System.Net.Tcp.TcpShutdown"];
+            AssertCompactTag(shutdown, bitWidth: 8, maxTagValue: 2);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void StdLibSourceNetTcpCloseRoutesOpenHandlesThroughPlatformSocketClose()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tcpPath = Path.Combine(sourceRoot, "System", "Net", "Tcp.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(tcpPath),
+                tcpPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("@TcpClient_Read(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpClient_Write(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpClient_Shutdown(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpClient_Close(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpListener_Close(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpClient_Connect(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpListener_Listen(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpListener_Accept(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc ptr @System_Runtime_Platform_ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc ptr @System_Runtime_Platform_ListenTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc ptr @System_Runtime_Platform_AcceptSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i64 @System_Runtime_Platform_ReadSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i64 @System_Runtime_Platform_WriteSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("GetMutableByteSliceParts", llvm, StringComparison.Ordinal);
+        Assert.Contains("GetByteSliceParts", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @System_Runtime_Platform_ShutdownSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@ByteCountFromPlatformResult(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceLinuxSocketCloseUsesCloseSyscallPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @CloseFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall1Handle(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@closesocket(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceLinuxTcpConnectUsesSocketAndConnectSyscallPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef ptr @ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3Integers(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc void @WriteTcpIPv4Sockaddr(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceLinuxTcpShutdownUsesShutdownSyscallPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef i32 @ShutdownSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall2HandleInteger(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxShutdownSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@shutdown(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceLinuxTcpReadWriteUseReadAndWriteSyscallPaths()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef i64 @ReadSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @WriteSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@recv(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@send(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceLinuxTcpListenUsesSocketBindAndListenSyscallPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef ptr @ListenTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3Integers(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall2HandleInteger(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxBindSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxListenSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@bind(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@listen(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceLinuxTcpAcceptUsesAccept4SyscallPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef ptr @AcceptSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall4HandlePointersInteger(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxAccept4SyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxSocketCloseOnExecFlag", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@accept(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@accept4(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceWindowsTcpUsesWinsockPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var windowsPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Windows.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(windowsPath),
+                windowsPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("declare i32 @WSAStartup(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @WSAGetLastError(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @WSASocketW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @connect(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @bind(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @listen(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @accept(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @recv(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @send(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @shutdown(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @closesocket(", llvm, StringComparison.Ordinal);
+
+        Assert.Contains("define fastcc noundef ptr @ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @ListenTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @AcceptSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @ReadSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @WriteSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @ShutdownSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+
+        Assert.Contains("call i32 @WSAStartup(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @WSASocketW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @connect(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @bind(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @listen(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @accept(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @recv(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @send(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @shutdown(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @closesocket(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
+    }
+
+    private static void AssertCompactTag(EnumLayoutSymbol layout, int bitWidth, int maxTagValue)
+    {
+        Assert.Equal("$tag", layout.TagField.Name);
+        Assert.Equal(StarkTypeKind.Integer, layout.TagField.Type.Kind);
+        Assert.Equal(bitWidth, layout.TagField.Type.BitWidth);
+        Assert.Equal(System.Numerics.BigInteger.Zero, layout.TagField.Type.RangeMin);
+        Assert.Equal(new System.Numerics.BigInteger(maxTagValue), layout.TagField.Type.RangeMax);
+    }
+}

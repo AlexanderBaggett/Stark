@@ -28,6 +28,209 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task CompileTimeTextConcatenationMatchesSingleLiteralAtRuntime()
+    {
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                if ("Score: " + "100" == "Score: 100") {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task FixedCapacityTextConcatenationCopiesIntoStackStorageAtRuntime()
+    {
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+            public finite law unicode UnicodeView(Unicode source);
+            public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack mut i8[-128 127][2] leftStorage = { 65, 0 };
+                stack mut Ascii left = new Ascii() {
+                    Data = &leftStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack mut i8[-128 127][2] rightStorage = { 66, 0 };
+                stack mut Ascii right = new Ascii() {
+                    Data = &rightStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack Ascii combined[4] = left + right;
+
+                stack mut i32[-2147483648 2147483647][2] wideLeftStorage = { 65, 0 };
+                stack mut Unicode wideLeft = new Unicode() {
+                    Data = &wideLeftStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack mut i32[-2147483648 2147483647][2] wideRightStorage = { 66, 0 };
+                stack mut Unicode wideRight = new Unicode() {
+                    Data = &wideRightStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack Unicode wideCombined[4] = wideLeft + wideRight;
+
+                if (AsciiLength(AsciiView(combined)) == 2 && UnicodeLength(UnicodeView(wideCombined)) == 2) {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task TextConcatenationRejectsNegativeDestinationCapacityAtRuntime()
+    {
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module System.Text
+
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+            fn bool RejectsAsciiNegativeCapacity() {
+                stack mut i8[-128 127][4] storage = { 0, 0, 0, 0 };
+                stack mut Ascii destination = new Ascii() {
+                    Data = &storage[0],
+                    Length = 0,
+                    Capacity = -1
+                };
+
+                return !TryConcatAscii(&destination, "A", "B");
+            }
+
+            fn bool RejectsUnicodeNegativeCapacity() {
+                stack mut i32[-2147483648 2147483647][4] storage = { 0, 0, 0, 0 };
+                stack mut Unicode destination = new Unicode() {
+                    Data = &storage[0],
+                    Length = 0,
+                    Capacity = -1
+                };
+
+                return !TryConcatUnicode(&destination, (unicode)"A", (unicode)"B");
+            }
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                if (RejectsAsciiNegativeCapacity() && RejectsUnicodeNegativeCapacity()) {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task FixedCapacityInterpolatedTextFormatsIntoStackStorageAtRuntime()
+    {
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value) {
+                if (value == 42) {
+                    return TryConcatAscii(destination, "", "42");
+                }
+
+                return false;
+            }
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647] score = 42;
+                stack Ascii label[32] = $"Score: {score}";
+                if (AsciiLength(AsciiView(label)) == 9) {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task FixedCapacityUnicodeInterpolatedTextFormatsIntoStackStorageAtRuntime()
+    {
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module System.Text
+
+            public finite law unicode UnicodeView(Unicode source);
+            public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+            public fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value) {
+                if (value == 42) {
+                    return TryConcatUnicode(destination, (unicode)"", (unicode)"42");
+                }
+
+                return false;
+            }
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack i32[-2147483648 2147483647] score = 42;
+                stack Unicode label[32] = $"Score: {score}";
+                if (UnicodeLength(UnicodeView(label)) == 9) {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task CompileTimeInterpolatedTextMatchesSingleLiteralAtRuntime()
+    {
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                const score = 100;
+                if ($"Score: {score}" == "Score: 100") {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task StrictFpFunctionsCompileAndRunAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -98,6 +301,63 @@ public sealed class MidLevelIrRuntimeTests
             """);
 
         Assert.Equal(7, exitCode);
+    }
+
+    [Fact]
+    public async Task SystemMemoryReallocatePreservesAllocatorProvenanceAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module System.Memory
+
+            public struct Allocator {
+                u8[0 127] Kind;
+
+                static finite law Allocator Default() {
+                    return new Allocator() {
+                        Kind = 0
+                    };
+                }
+
+                finite law bool IsDefault(borrow Allocator self) {
+                    return self.Kind == 0;
+                }
+            }
+
+            internal struct Allocation {
+                rawmutptr<i8[-128 127]> Pointer;
+                i64[0 max] ByteLength;
+                i64[1 max] Alignment;
+                Allocator Allocator;
+            }
+
+            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn void Free(Allocation allocation);
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                stack Allocator allocator = new Allocator() {
+                    Kind = 42
+                };
+                stack Allocation allocation = Allocate(allocator, 16, 8);
+                stack Allocation grown = Reallocate(allocation, 32, 8);
+                stack u8[0 127] kind = grown.Allocator.Kind;
+                Free(grown);
+
+                if (kind == 42) {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
     }
 
     [Fact]
@@ -847,6 +1107,36 @@ public sealed class MidLevelIrRuntimeTests
             """);
 
         Assert.Equal(2, exitCode);
+    }
+
+    [Fact]
+    public async Task OutArgumentsWriteBackToCallerLocalsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            fn bool WriteValue(out i32[0 max] value) {
+                value = 7;
+                return true;
+            }
+
+            export ffi fn i32[min max] main() {
+                stack mut i32[0 max] value = 1;
+                if (!WriteValue(value)) {
+                    return 99;
+                }
+
+                return value;
+            }
+            """);
+
+        Assert.Equal(7, exitCode);
     }
 
     [Fact]

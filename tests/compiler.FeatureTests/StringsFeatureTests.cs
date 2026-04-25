@@ -159,6 +159,126 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void FixedCapacityAsciiConcatenationLowersToStackStorageAndConcatTrap()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+                stack mut i8[-128 127][2] leftStorage = { 65, 0 };
+                stack mut Ascii left = new Ascii() {
+                    Data = &leftStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack mut i8[-128 127][2] rightStorage = { 66, 0 };
+                stack mut Ascii right = new Ascii() {
+                    Data = &rightStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack Ascii combined[4] = left + right;
+                return AsciiLength(AsciiView(combined));
+            }
+            """);
+
+        Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
+        Assert.Contains("call fastcc %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
+        Assert.Contains("[4 x i8]", llvm);
+    }
+
+    [Fact]
+    public void FixedCapacityUnicodeConcatenationLowersToStackStorageAndConcatTrap()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module System.Text
+
+            public finite law unicode UnicodeView(Unicode source);
+            public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+                stack mut i32[-2147483648 2147483647][2] leftStorage = { 65, 0 };
+                stack mut Unicode left = new Unicode() {
+                    Data = &leftStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack mut i32[-2147483648 2147483647][2] rightStorage = { 66, 0 };
+                stack mut Unicode right = new Unicode() {
+                    Data = &rightStorage[0],
+                    Length = 1,
+                    Capacity = 2
+                };
+                stack Unicode combined[4] = left + right;
+                return UnicodeLength(UnicodeView(combined));
+            }
+            """);
+
+        Assert.Contains("call fastcc i1 @TryConcatUnicode(", llvm);
+        Assert.Contains("call fastcc %stark_unicode @UnicodeView(", llvm);
+        Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
+        Assert.Contains("[4 x i32]", llvm);
+    }
+
+    [Fact]
+    public void FixedCapacityAsciiInterpolationFormatsIntoStackStorage()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
+
+            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+                stack i32[-2147483648 2147483647] score = 42;
+                stack Ascii label[32] = $"Score: {score}";
+                return AsciiLength(AsciiView(label));
+            }
+            """);
+
+        Assert.Contains("call fastcc i1 @TryFormatI32Ascii(", llvm);
+        Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
+        Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
+        Assert.Contains("[32 x i8]", llvm);
+    }
+
+    [Fact]
+    public void FixedCapacityUnicodeInterpolationFormatsIntoStackStorage()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module System.Text
+
+            public finite law unicode UnicodeView(Unicode source);
+            public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value);
+
+            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+                stack i32[-2147483648 2147483647] score = 42;
+                stack Unicode label[32] = $"Score: {score}";
+                return UnicodeLength(UnicodeView(label));
+            }
+            """);
+
+        Assert.Contains("call fastcc i1 @TryFormatI32Unicode(", llvm);
+        Assert.Contains("call fastcc i1 @TryConcatUnicode(", llvm);
+        Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
+        Assert.Contains("[32 x i32]", llvm);
+    }
+
+    [Fact]
     public void TextViewPointerAndLengthBuiltinsEmitConcreteDefinitions()
     {
         var llvm = CompileToLlvm(

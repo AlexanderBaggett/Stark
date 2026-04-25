@@ -1,0 +1,112 @@
+import System.Runtime.Platform
+module System.Threading
+
+public alias ThreadEntry = fnptr<fn i32[-2147483648 2147483647]()>;
+
+public enum ThreadError {
+    StartFailed,
+    JoinFailed,
+    AlreadyJoined,
+    AlreadyDetached,
+    InvalidState,
+}
+
+public enum ThreadStatus {
+    Ok,
+    Err(ThreadError),
+}
+
+public enum ThreadJoinResult {
+    Ok(i32[-2147483648 2147483647]),
+    Err(ThreadError),
+}
+
+public struct Thread {
+    internal rawptr<i8[-128 127]> Handle;
+    internal bool Joined;
+    internal bool Detached;
+    internal bool StartFailed;
+
+    Thread(ThreadEntry entry) {
+        self.Handle = System.Runtime.Platform.StartThread(entry);
+        self.Joined = false;
+        self.Detached = false;
+        self.StartFailed = self.Handle == null;
+    }
+
+    finite law bool IsJoinable(borrow Thread self) {
+        return self.Handle != null && !self.Joined && !self.Detached && !self.StartFailed;
+    }
+
+    fn ThreadJoinResult Join(mut borrow Thread self) {
+        if (self.StartFailed) {
+            return ThreadJoinResult.Err(ThreadError.StartFailed);
+        }
+
+        if (self.Joined) {
+            return ThreadJoinResult.Err(ThreadError.AlreadyJoined);
+        }
+
+        if (self.Detached) {
+            return ThreadJoinResult.Err(ThreadError.AlreadyDetached);
+        }
+
+        if (self.Handle == null) {
+            return ThreadJoinResult.Err(ThreadError.InvalidState);
+        }
+
+        stack mut i32[-2147483648 2147483647] exitCode = 0;
+        stack i32[-2147483648 2147483647] status = System.Runtime.Platform.JoinThread(self.Handle, &exitCode);
+        if (status != 0) {
+            return ThreadJoinResult.Err(ThreadError.JoinFailed);
+        }
+
+        self.Handle = null;
+        self.Joined = true;
+        return ThreadJoinResult.Ok(exitCode);
+    }
+
+    fn ThreadStatus Detach(mut borrow Thread self) {
+        if (self.StartFailed) {
+            return ThreadStatus.Err(ThreadError.StartFailed);
+        }
+
+        if (self.Joined) {
+            return ThreadStatus.Err(ThreadError.AlreadyJoined);
+        }
+
+        if (self.Detached) {
+            return ThreadStatus.Err(ThreadError.AlreadyDetached);
+        }
+
+        if (self.Handle == null) {
+            self.Detached = true;
+            return ThreadStatus.Err(ThreadError.InvalidState);
+        }
+
+        stack i32[-2147483648 2147483647] status = System.Runtime.Platform.DetachThread(self.Handle);
+        if (status != 0) {
+            return ThreadStatus.Err(ThreadError.InvalidState);
+        }
+
+        self.Detached = true;
+        self.Handle = null;
+        return ThreadStatus.Ok;
+    }
+
+    static fn void Yield() {
+        System.Runtime.Platform.YieldThread();
+        return;
+    }
+
+    static fn void SleepMilliseconds(i64[0 max] milliseconds) {
+        System.Runtime.Platform.SleepThreadMilliseconds(milliseconds);
+        return;
+    }
+
+    mut drop {
+        if (self.IsJoinable()) {
+            self.Detach();
+        }
+    }
+}

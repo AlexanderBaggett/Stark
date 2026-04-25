@@ -1,0 +1,45 @@
+module Book.FunctionGuarantees
+
+finite law i32[min max] ClampToZero(i32[min max] value) {
+    if (value < 0) {
+        return 0;
+    }
+
+    return value;
+}
+
+finite i32[min max] SumTo(i32[0 max] limit) {
+    stack mut i32[min max] index = 0;
+    stack mut i32[min max] total = 0;
+
+    while willexit (index <= limit) {
+        total += index;
+        index += 1;
+    }
+
+    return total;
+}
+
+fn i32[min max] Choose(bool useClamp, i32[min max] value) {
+    if (useClamp) {
+        return ClampToZero(value);
+    }
+
+    return value;
+}
+
+export ffi fn i32[min max] main() {
+    if (ClampToZero(-2) != 0) {
+        return 1;
+    }
+
+    if (SumTo(4) != 10) {
+        return 2;
+    }
+
+    if (Choose(false, -3) != -3) {
+        return 3;
+    }
+
+    return 0;
+}

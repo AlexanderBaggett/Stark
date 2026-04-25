@@ -1,0 +1,3 @@
+{{- $path := .Get 0 -}}
+{{- $source := readFile $path -}}
+<pre><code class="language-stark">{{ $source | htmlEscape }}</code></pre>

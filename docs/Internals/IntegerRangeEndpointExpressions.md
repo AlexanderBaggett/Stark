@@ -32,7 +32,7 @@ i64[0 sizeof(Buffer) - 1]
 
 - [ ] Add named constants in range endpoints.
   - [ ] Allow constants declared with `const` to appear in endpoint expressions.
-  - [ ] Support expressions such as `PageSize - 1` after `const i32 PageSize = 4096;`.
+  - [ ] Support expressions such as `PageSize - 1` after `const PageSize = 2**12;`.
   - [ ] Resolve constants using the same module/import visibility rules as other Stark names.
   - [ ] Reject non-constant locals in compile-time-only endpoint contexts.
 

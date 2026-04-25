@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -13,15 +14,16 @@ internal sealed partial class MidLevelIrLowerer(
     TypeCheckModel typeModel,
     EnumLayoutModel enumLayoutModel)
 {
+    private static readonly int[] SupportedConstIntegerWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
     private readonly CompilerLogBag _logs = context.Logs;
     private readonly TypeCheckModel _typeModel = typeModel;
     private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
-    private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules);
+    private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules, typeModel);
     private readonly Dictionary<string, ConstructorLoweringContext> _constructorsByBodyKey = CollectConstructorsByBodyKey(loadedModules);
     private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
     private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases);
-    private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
-    private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
+    private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
+    private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
     private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes = typeModel.Literals
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Type);
@@ -43,7 +45,7 @@ internal sealed partial class MidLevelIrLowerer(
             .Select(LowerFunction)
             .ToArray();
 
-        return new MidLevelIrModule(hir.ModuleName, functions);
+        return new MidLevelIrModule(hir.ModuleName, functions, hir.AddressTakenFunctions);
     }
 
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
@@ -118,6 +120,7 @@ internal sealed partial class MidLevelIrLowerer(
         }
 
         var body = loweringContext.ParsedBody;
+        var lambdaExpression = loweringContext.LambdaExpression;
         var functionLocation = loweringContext.Location;
 
         using var builder = new FunctionMirBuilder(
@@ -158,11 +161,12 @@ internal sealed partial class MidLevelIrLowerer(
             verbosity: CompilerLogVerbosity.Verbose);
 
         var loweredTypedTemplateBody = body is null
+            && lambdaExpression is null
             && importedTemplateSummary?.TypedBody is { } typedBody
             && builder.TryLowerImportedTypedTemplateBody(typedBody);
         if (!loweredTypedTemplateBody)
         {
-            if (body is null)
+            if (body is null && lambdaExpression is null)
             {
                 if (function.HasBody && !keepOpenGenericTemplateDeclarationBodyless)
                 {
@@ -196,7 +200,14 @@ internal sealed partial class MidLevelIrLowerer(
                     BodyLoweringKind: function.BodyLoweringKind);
             }
 
-            builder.Lower(body);
+            if (lambdaExpression is not null)
+            {
+                builder.LowerLambda(lambdaExpression);
+            }
+            else
+            {
+                builder.Lower(body!);
+            }
         }
 
         _logs.Info(
@@ -481,9 +492,12 @@ internal sealed partial class MidLevelIrLowerer(
         }
     }
 
-    private static Dictionary<string, FunctionLoweringContext> CollectFunctionsByQualifiedName(LoadedModuleSet loadedModules)
+    private static Dictionary<string, FunctionLoweringContext> CollectFunctionsByQualifiedName(
+        LoadedModuleSet loadedModules,
+        TypeCheckModel typeModel)
     {
         var functions = new Dictionary<string, FunctionLoweringContext>(StringComparer.Ordinal);
+        var lambdaContexts = CollectLambdaExpressionsByFunctionName(loadedModules, typeModel);
 
         foreach (var module in loadedModules.Modules.Values)
         {
@@ -500,7 +514,8 @@ internal sealed partial class MidLevelIrLowerer(
                         module.Reference.FilePath,
                         declaration.NameToken.Line,
                         declaration.NameToken.Column + 1),
-                    declaration.Body.block());
+                    declaration.Body.block(),
+                    LambdaExpression: null);
             }
 
             if (module.Reference.IsRoot
@@ -525,12 +540,67 @@ internal sealed partial class MidLevelIrLowerer(
                     module.SyntaxModel.ModuleName,
                     module.Reference.FilePath,
                     ParsedDeclaration: null,
-                    SourceLocation.Synthetic(module.Reference.FilePath),
-                    ParsedBody: null);
+                    Location: SourceLocation.Synthetic(module.Reference.FilePath),
+                    ParsedBody: null,
+                    LambdaExpression: null);
             }
         }
 
+        foreach (var lambda in typeModel.Lambdas)
+        {
+            if (!lambdaContexts.TryGetValue(lambda.FunctionName, out var lambdaExpression))
+            {
+                continue;
+            }
+
+            functions[lambda.FunctionName] = new FunctionLoweringContext(
+                loadedModules.RootModuleName,
+                lambda.Location.FilePath,
+                ParsedDeclaration: null,
+                Location: lambda.Location,
+                ParsedBody: null,
+                LambdaExpression: lambdaExpression);
+        }
+
         return functions;
+    }
+
+    private static Dictionary<string, StarkParser.LambdaExpressionContext> CollectLambdaExpressionsByFunctionName(
+        LoadedModuleSet loadedModules,
+        TypeCheckModel typeModel)
+    {
+        var lambdasByLocation = typeModel.Lambdas
+            .GroupBy(static lambda => $"{lambda.Location.Line}:{lambda.Location.Column}")
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.ToArray(),
+                StringComparer.Ordinal);
+        var contexts = new Dictionary<string, StarkParser.LambdaExpressionContext>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            Collect(module.ParseResult.Root);
+        }
+
+        return contexts;
+
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
+        {
+            if (current is StarkParser.LambdaExpressionContext lambdaExpression)
+            {
+                var key = $"{lambdaExpression.Start.Line}:{lambdaExpression.Start.Column + 1}";
+                if (lambdasByLocation.TryGetValue(key, out var matchingLambdas)
+                    && matchingLambdas.Length == 1)
+                {
+                    contexts[matchingLambdas[0].FunctionName] = lambdaExpression;
+                }
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index));
+            }
+        }
     }
 
     private static Dictionary<string, ConstructorLoweringContext> CollectConstructorsByBodyKey(LoadedModuleSet loadedModules)
@@ -618,6 +688,7 @@ internal sealed partial class MidLevelIrLowerer(
         ModuleGraph moduleGraph,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, TypeAliasSymbol> typeAliases,
+        IReadOnlyDictionary<string, TypedGlobalSymbol> typedGlobals,
         LoadedModuleSet loadedModules)
     {
         var resolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, namedTypes, typeAliases);
@@ -658,7 +729,8 @@ internal sealed partial class MidLevelIrLowerer(
                     parameters,
                     SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
-                    IsStatic: declaration.IsStatic);
+                    IsStatic: declaration.IsStatic,
+                    IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)));
             }
         }
 
@@ -670,6 +742,7 @@ internal sealed partial class MidLevelIrLowerer(
         ModuleGraph moduleGraph,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, TypeAliasSymbol> typeAliases,
+        IReadOnlyDictionary<string, TypedGlobalSymbol> typedGlobals,
         LoadedModuleSet loadedModules)
     {
         var resolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, namedTypes, typeAliases);
@@ -681,10 +754,16 @@ internal sealed partial class MidLevelIrLowerer(
             {
                 if (declaration.globalConstantDeclaration() is { } constantDeclaration)
                 {
-                    var declaredType = resolver.ResolveType(constantDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName);
                     foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                     {
                         var qualifiedName = QualifyName(module, declarator.Identifier().GetText());
+                        var declaredType = typedGlobals.TryGetValue(qualifiedName, out var typedGlobal)
+                            ? typedGlobal.Type
+                            : constantDeclaration.INTEGER_TYPE() is { } integerType
+                                ? ResolveFallbackConstIntegerType(integerType.Symbol)
+                            : constantDeclaration.type_() is { } typeContext
+                                ? resolver.ResolveType(typeContext, currentModuleName: module.SyntaxModel.ModuleName)
+                                : InferFallbackConstType(declarator);
                         globals[qualifiedName] = new TypedGlobalSymbol(qualifiedName, declaredType, GlobalBindingKind.Const);
                     }
 
@@ -712,6 +791,56 @@ internal sealed partial class MidLevelIrLowerer(
         return globals;
     }
 
+    private static StarkTypeSymbol InferFallbackConstType(StarkParser.ConstantDeclaratorContext declarator)
+    {
+        if (declarator.variableInitializer().expression() is not { } expression
+            || !CompileTimeExpressionEvaluator.TryEvaluate(expression, out var constant))
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        return constant.Kind switch
+        {
+            CompileTimeConstantKind.Integer => InferFallbackConstIntegerType(constant.IntegerValue),
+            CompileTimeConstantKind.Float => constant.Type,
+            CompileTimeConstantKind.Bool => StarkTypeSymbols.Bool,
+            CompileTimeConstantKind.Text => constant.Type,
+            CompileTimeConstantKind.Null => StarkTypeSymbols.Null,
+            _ => StarkTypeSymbols.Error
+        };
+    }
+
+    private static StarkTypeSymbol InferFallbackConstIntegerType(BigInteger value)
+    {
+        foreach (var width in SupportedConstIntegerWidths)
+        {
+            var min = -(BigInteger.One << (width - 1));
+            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
+            if (value >= min && value <= max)
+            {
+                return StarkTypeSymbols.Integer(width, value, value);
+            }
+        }
+
+        return StarkTypeSymbols.Integer(SupportedConstIntegerWidths[^1], value, value);
+    }
+
+    private static StarkTypeSymbol ResolveFallbackConstIntegerType(IToken integerTypeToken)
+    {
+        var text = integerTypeToken.Text;
+        var isUnsigned = text[0] == 'u';
+        var width = int.Parse(text[1..], CultureInfo.InvariantCulture);
+        if (isUnsigned)
+        {
+            return StarkTypeSymbols.Integer(width, BigInteger.Zero, (BigInteger.One << width) - BigInteger.One, isUnsigned: true);
+        }
+
+        return StarkTypeSymbols.Integer(
+            width,
+            -(BigInteger.One << (width - 1)),
+            (BigInteger.One << (width - 1)) - BigInteger.One);
+    }
+
     private static string QualifyName(LoadedModuleDocument module, string localName)
     {
         return module.Reference.IsRoot
@@ -729,7 +858,8 @@ internal sealed partial class MidLevelIrLowerer(
         string? FilePath,
         DeclaredFunctionSyntax? ParsedDeclaration,
         SourceLocation Location,
-        StarkParser.BlockContext? ParsedBody);
+        StarkParser.BlockContext? ParsedBody,
+        StarkParser.LambdaExpressionContext? LambdaExpression);
     private sealed record ConstructorLoweringContext(
         string BodyKey,
         string QualifiedTypeName,

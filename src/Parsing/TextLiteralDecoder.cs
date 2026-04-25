@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Stark.Parsing;
@@ -189,6 +190,37 @@ internal static class TextLiteralDecoder
         }
     }
 
+    public static bool TryConcatenateAsStringLiteral(
+        string leftLiteralText,
+        TextLiteralKind leftKind,
+        string rightLiteralText,
+        TextLiteralKind rightKind,
+        out string literalText)
+    {
+        literalText = string.Empty;
+        if (!TryDecode(leftLiteralText, leftKind, out var left, out _)
+            || !TryDecode(rightLiteralText, rightKind, out var right, out _))
+        {
+            return false;
+        }
+
+        literalText = EncodeStringLiteral(left.Value + right.Value);
+        return true;
+    }
+
+    public static string EncodeStringLiteral(string value)
+    {
+        var builder = new StringBuilder(value.Length + 2);
+        builder.Append('"');
+        foreach (var ch in value)
+        {
+            AppendEscapedStringCharacter(builder, ch);
+        }
+
+        builder.Append('"');
+        return builder.ToString();
+    }
+
     public static byte[] DecodeUtf8BytesOrFallback(string literalText, TextLiteralKind kind)
     {
         if (TryDecode(literalText, kind, out var decoded, out _))
@@ -219,6 +251,46 @@ internal static class TextLiteralDecoder
     private static string Describe(TextLiteralKind kind)
     {
         return kind == TextLiteralKind.String ? "string literal" : "character literal";
+    }
+
+    private static void AppendEscapedStringCharacter(StringBuilder builder, char ch)
+    {
+        switch (ch)
+        {
+            case '\0':
+                builder.Append("\\0");
+                return;
+            case '\b':
+                builder.Append("\\b");
+                return;
+            case '\t':
+                builder.Append("\\t");
+                return;
+            case '\n':
+                builder.Append("\\n");
+                return;
+            case '\f':
+                builder.Append("\\f");
+                return;
+            case '\r':
+                builder.Append("\\r");
+                return;
+            case '\\':
+                builder.Append("\\\\");
+                return;
+            case '"':
+                builder.Append("\\\"");
+                return;
+        }
+
+        if (ch < ' ' || ch > '~')
+        {
+            builder.Append("\\u");
+            builder.Append(((int)ch).ToString("X4", CultureInfo.InvariantCulture));
+            return;
+        }
+
+        builder.Append(ch);
     }
 
     private static string GetContent(string literalText)

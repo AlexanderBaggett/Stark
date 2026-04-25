@@ -52,7 +52,8 @@ stack mut System.Collections.List<i32[0 max]> values = new();
 Custom allocation:
 
 ```stark
-stack mut System.Collections.List<i32[0 max]> values = new(myCustomAllocator);
+stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+stack mut System.Collections.List<i32[0 max]> values = new(allocator);
 ```
 
 The collection owns its backing storage. The allocator identity travels with
@@ -145,12 +146,15 @@ through the allocation policy.
 - `benchmarks/allocator` contains the first quick allocator benchmark harness
   and covers heap-local bucket reuse plus bucket-reuse and fallback
   `System.Memory.Reallocate` paths.
-- Compile-only collection growth benchmark sources now exercise the allocator
-  through `List<T>` and `Queue<T>` lowering. Executable timing for those
-  benchmarks is deferred until imported collection helper linkage is complete.
-- `benchmarks/text/TextPathCallerBuffer.stark` covers the current caller-owned
-  text/path buffer helpers. It is not the final owned text/path allocation
-  benchmark because those APIs do not yet allocate through `System.Memory`.
+- Collection growth benchmark sources exercise the allocator through executable
+  `List<T>` and `Queue<T>` growth programs.
+- `benchmarks/text/OwnedTextAllocation.stark` covers allocation-visible owned
+  `ToAscii`/`ToUnicode` conversion and literal-prefix concatenation through
+  `System.Memory`.
+- `benchmarks/text/OwnedPathAllocation.stark` covers allocation-visible owned
+  path joining through `System.Memory`.
+- `benchmarks/text/TextPathCallerBuffer.stark` still covers caller-owned path
+  buffers and low-level text conversion helpers.
 - Linux syscall-backed and Windows OS heap-backed allocator paths are present
   for the current hosted runtime profile.
 - Custom allocator dispatch remains future runtime work.

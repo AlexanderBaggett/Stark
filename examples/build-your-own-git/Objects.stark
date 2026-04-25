@@ -1,0 +1,66 @@
+import System
+module BuildYourOwnGitObjects
+
+finite law bool NameIsDemoCommit(Ascii name) {
+    if (name.Length != 11 || name.Data == null) {
+        return false;
+    }
+
+    stack rawptr<i8[min max]> data = name.Data;
+    return *(&data[0]) == (i8[min max])100
+        && *(&data[1]) == (i8[min max])101
+        && *(&data[2]) == (i8[min max])109
+        && *(&data[3]) == (i8[min max])111
+        && *(&data[4]) == (i8[min max])45
+        && *(&data[5]) == (i8[min max])99
+        && *(&data[6]) == (i8[min max])111
+        && *(&data[7]) == (i8[min max])109
+        && *(&data[8]) == (i8[min max])109
+        && *(&data[9]) == (i8[min max])105
+        && *(&data[10]) == (i8[min max])116;
+}
+
+finite law bool EntryIsDemoCommit(System.FileSystem.FileSystemEntry entry) {
+    return entry.Kind == System.FileSystem.FileSystemEntryKind.File && NameIsDemoCommit(entry.Name);
+}
+
+fn bool ObjectStoreContainsDemoCommit() {
+    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+        System.FileSystem.OpenDirectory("starkgit-demo/.starkgit/objects");
+
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+            stack mut System.FileSystem.Directory directory = value;
+
+            while non-deterministic (true) {
+                stack System.FileSystem.DirectoryReadResult next = directory.ReadNext();
+                switch (next) {
+                    case System.FileSystem.DirectoryReadResult.End:
+                        directory.Close();
+                        return false;
+                    case System.FileSystem.DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return false;
+                    case System.FileSystem.DirectoryReadResult.Entry(var entry):
+                        if (EntryIsDemoCommit(entry)) {
+                            directory.Close();
+                            return true;
+                        }
+                }
+            }
+    }
+}
+
+export ffi fn i32[min max] main() {
+    if (!ObjectStoreContainsDemoCommit()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Object demo-commit") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

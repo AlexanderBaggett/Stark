@@ -35,18 +35,18 @@ public enum IOStatus {
 internal tag width. A small enum must not default to a 32-bit tag unless an
 explicit ABI boundary requires that representation.
 
-## Planned `v1.2` Role
+## Role And Concrete API Policy
 
 `System.IO` remains the shared IO vocabulary and owned file-handle family.
 Filesystem-wide operations such as directory listing and directory deletion move
-to the planned `System.FileSystem` module.
+to `System.FileSystem`.
 
 The standard library should not add a general `Stream` abstraction in the first
-`v1.2` expansion. Concrete owned types such as `System.IO.File.File`,
-`System.Net.Tcp.TcpClient`, and future owned buffers should come first. A stream
-interface can be reconsidered later if Stark has a zero-cost trait/doctrine
-surface that does not force dynamic dispatch, hidden allocation, or weaker
-optimizer facts.
+post-`v1.0` expansion. Concrete owned types such as `System.IO.File.File`,
+`System.Net.Tcp.TcpClient`, `System.FileSystem.Directory`, and owned buffers
+come first. A stream interface can be reconsidered later if Stark has a
+zero-cost static interface surface that does not force dynamic dispatch, hidden
+allocation, or weaker optimizer facts.
 
 ## Function Kind Policy
 
@@ -77,4 +77,6 @@ finite law bool IsOk(System.IO.IOStatus status) {
 ## Current Status
 
 - These shared types are implemented and used by `System.Console`.
-- `System.IO.File` still exposes a compatibility-oriented mixed surface today: owned file handles plus raw-handle helpers.
+- `System.IO.File` still exposes a compatibility-oriented mixed surface today:
+  owned file handles plus raw-handle helpers.
+- Directory-wide operations live in `System.FileSystem`.

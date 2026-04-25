@@ -3,7 +3,7 @@
 This document describes the user-facing Stark language.
 It defines the source-level contract: how Stark code is written, what constructs exist, and what behavior programmers can rely on.
 
-Compiler strategy, specialization planning, backend behavior, and other implementation details are documented separately in [LanguageInternals.md](../Internals/LanguageInternals.md).
+Lower-level compiler strategy and optimizer rationale are documented separately in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
 [Roadmap.md](../Internals/Roadmap.md) tracks milestone ordering and work sequencing. This document defines the language itself.
 
@@ -96,6 +96,49 @@ more visible than its enclosing type. `export` is the one careful edge: an
 
 Visibility does not apply to locals, statements, expressions, or fields.
 
+### 4.1 Package-Owned Native Dependencies
+
+Interop packages should be able to describe the native source files and native
+libraries they require so downstream users can build with ordinary Stark
+commands.
+
+The implemented package-author surface is currently CLI metadata:
+
+```bash
+compiler Raylib.stark --emit-lib \
+  -o dist/libRaylibStark.a \
+  --native-source RaylibNative.c \
+  --native-pkg-config raylib
+```
+
+The package records those native dependency declarations. A downstream
+executable that imports the package gathers the package-owned native build
+metadata automatically.
+
+If the native dependency is not available through `pkg-config`, the package can
+use explicit metadata instead:
+
+```bash
+compiler Raylib.stark --emit-lib \
+  -o dist/libRaylibStark.a \
+  --native-source RaylibNative.c \
+  --native-include-dir /path/to/raylib/src \
+  --native-library-dir /path/to/raylib/src \
+  --native-library raylib
+```
+
+If a named native library cannot be found during the final native link, the
+build reports the missing library and suggests installing it or adding its
+directory with `-L` / `--native-library-dir`.
+
+If a package-owned `pkg-config` dependency cannot be resolved, the build names
+the package and suggests installing the native package, setting `PKG_CONFIG_PATH`,
+or using explicit native metadata.
+
+Native dependency declarations are for explicit FFI/package interop. They do
+not make those dependencies part of Stark's own standard-library runtime
+profile.
+
 ## 5. Functions
 
 ### 5.1 Function Kinds
@@ -181,6 +224,115 @@ Function parameters are written as `T name`.
 
 Default-argument syntax such as `fn i32 Add(i32 left = 1)` is not part of the Stark source surface.
 
+### 5.4 Function Items and Function Pointers
+
+Stark's first-class callable model starts with function items.
+
+A function item is the callable value represented by a named function.
+It is not a raw pointer by default, does not capture state, and can usually be
+specialized, inlined, or called directly.
+
+```stark
+fn i32[-2147483648 2147483647] Worker() {
+    return 0;
+}
+
+fn void Start() {
+    stack mut System.Threading.Thread worker = new(Worker);
+}
+```
+
+Function items may be promoted to explicit function-pointer values where a
+runtime pointer is required.
+
+```stark
+stack fnptr<fn i32[-2147483648 2147483647]()> entry = Worker;
+stack i32[-2147483648 2147483647] result = entry();
+```
+
+Promotion to a function pointer is the point where the function becomes
+address-taken. Ordinary function-item use remains direct Stark callable use;
+indirect callable behavior is requested explicitly through a `fnptr` value.
+
+Function-pointer types carry the function kind in their signature:
+
+```stark
+fnptr<fn i32[0 max](i32[0 max])>
+fnptr<finite i32[0 max](i32[0 max])>
+fnptr<law bool(borrow Item)>
+fnptr<finite law i32[0 max](i32[0 max])>
+```
+
+The current `fnptr` type is an ordinary safe callable pointer. Unsafe function
+items cannot be promoted to ordinary `fnptr` values because that would hide the
+unsafe requirement from later calls. Call unsafe functions directly inside an
+`unsafe` block, or expose a safe wrapper that checks the required invariants.
+
+### 5.5 Lambdas and Capture Modes
+
+Stark's lambda syntax follows the C#-style arrow form:
+
+```stark
+stack fnptr<fn i32[0 max](i32[0 max])> square =
+    (i32[0 max] value) => value * value;
+
+stack fnptr<fn i32[-2147483648 2147483647](rawmutptr<State>)> worker =
+    (rawmutptr<State> state) => {
+        return Worker(state);
+    };
+```
+
+A lambda with no capture list is non-capturing. It may be used where a matching
+function pointer is expected.
+
+Capturing lambdas use an explicit capture list. Capture is never implicit.
+
+```stark
+UseTransform(capture(copy scale, read table) (i32[0 max] index) => {
+    return table[index] * scale;
+});
+```
+
+The safe capture modes are:
+
+- `capture(copy x)`
+  Copies a cheap copy value, such as a bool, integer, float, raw pointer,
+  function pointer, or read-only borrow, into the closure environment. Owned
+  structs and owned text are not silently copied; use `move` or `read` instead.
+- `capture(move x)`
+  Moves ownership into the closure environment. The source binding is consumed.
+- `capture(read x)`
+  Captures read-only access to existing storage.
+- `capture(mut x)`
+  Captures exclusive mutable access to existing storage for the closure's lifetime.
+- `capture(out x)`
+  Captures a write-only destination. The closure may write the destination but
+  may not read the old value.
+- `capture(init x)`
+  Captures uninitialized destination storage that the closure must initialize
+  before returning successfully.
+
+`mut`, `out`, and `init` captures require `x` to be a writable binding, such
+as a `mut` local or mutable destination. Immutable values may still be captured
+with modes such as `copy` or `read`.
+
+Two capture modes are trusted operations and require an unsafe context:
+
+```stark
+capture(unsafe addr x)
+capture(unsafe shared x)
+```
+
+- `capture(unsafe addr x)`
+  Captures address or identity information without ordinary dereference
+  authority. This is a low-level provenance and interop escape hatch.
+- `capture(unsafe shared x)`
+  Publishes a value or capability into a shared/concurrent domain that ordinary
+  non-shared Stark code cannot model by itself.
+
+These modes are explicit because they weaken Stark's ordinary closed-world and
+non-shared-memory assumptions.
+
 ## 6. Types
 
 ### 6.1 Builtin Types
@@ -192,7 +344,7 @@ The builtin type families are:
 - `unicode`
 - `Ascii`
 - `Unicode`
-- integer widths:
+- signed integer widths:
   - `i8`
   - `i16`
   - `i24`
@@ -207,6 +359,21 @@ The builtin type families are:
   - `i512`
   - `i768`
   - `i1024`
+- unsigned integer widths:
+  - `u8`
+  - `u16`
+  - `u24`
+  - `u32`
+  - `u48`
+  - `u64`
+  - `u96`
+  - `u128`
+  - `u192`
+  - `u256`
+  - `u384`
+  - `u512`
+  - `u768`
+  - `u1024`
 - floating-point widths:
   - `f16`
   - `f32`
@@ -217,6 +384,7 @@ The builtin type families are:
 Examples:
 
 - `i32[0 255]`
+- `u8[0 255]`
 - `i64[-9223372036854775808 9223372036854775807]`
 - `i128[0 340282366920938463463374607431768211455]`
 - `f16`
@@ -238,11 +406,36 @@ i32[10**2 10**10]
 i64[1024 * 1024 1024 * 1024 * 1024]
 ```
 
-Within an integer range, `min` and `max` are type-relative endpoint names. For signed `iN` ranges they mean the signed minimum and maximum for that width. For unsigned-width `uN` range spellings they mean `0` and `2^N - 1`; this currently normalizes into Stark's existing integer range model.
+Within an integer range, `min` and `max` are type-relative endpoint names. For
+signed `iN` ranges they mean the signed minimum and maximum for that width. For
+unsigned `uN` ranges they mean `0` and `2**N - 1`.
+
+Unsigned integer widths are real integer types, not aliases for signed integers
+with non-negative ranges. For `uN`, `min` is `0` and `max` is `2**N - 1`.
+Negative endpoints and endpoints outside that width are rejected.
 
 Range endpoints also support compile-time integer arithmetic over literals and type-relative endpoint names. Supported endpoint operators are `+`, `-`, `*`, `/`, `%`, `**`, unary `-`, and parentheses. Endpoint arithmetic is checked during compile-time evaluation.
 
 Bare width names such as `i32` are convenient family labels in prose, but they are not the full Stark integer source form by themselves. The source-level type must carry an explicit range.
+
+Scalar integer constants are the exception to the "write a source range" habit:
+they should be declared without an explicit integer type. A `const` integer is
+compile-time-known and cannot change, so Stark derives both the exact
+single-value range and the smallest supported storage width that can hold it.
+If a scalar integer const does name a type, it uses only the bare width form,
+such as `i8` or `i32`; ranged forms such as `i32[min max]` are for runtime
+integer values, not scalar constants.
+
+```stark
+const PageSize = 2**12;      // i16 storage
+const BoardWidth = 80;      // i8 storage
+const BigCount = 2**16;     // i24 storage
+const i8 SmallCount = 80;   // accepted explicit width
+const i32 WideCount = 80;   // accepted, with a warning that storage is i8
+```
+
+For floating-point constants, an unsuffixed decimal such as `80.0` is `f64`.
+Use an `f` suffix for `f32`, as in `80.0f`.
 
 Floating-point source types use the bare width form directly. Stark supports `f16`, `f32`, `f64`, `f80`, and `f128`.
 
@@ -310,7 +503,7 @@ The declaration keyword is `alias`.
 Like other top-level declarations, aliases may be module-private, `internal`, `public`, or `export`.
 `public` and `export` aliases are published as part of the package-facing Stark surface.
 
-Compiler implementation details for generic instantiation and specialization are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
+Internal specialization details are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
 ## 7. Ownership, Borrowing, and Lifetime Rules
 
@@ -511,7 +704,7 @@ Top-level globals use dedicated global declaration forms. Globals are written as
 
 Stark has three classes of globals:
 
-- `const T name = ...;`
+- `const name = ...;` or `const T name = ...;`
   A fully frozen global object graph. `const` is stronger than an immutable binding: the value and everything transitively reachable through it are deeply immutable for the lifetime of the program.
 - `static mut T name = ...;`
   A mutable global rebinding. The global binding itself may be reassigned after initialization.
@@ -538,6 +731,13 @@ More concretely, `const` means:
 - safe code may not regain mutation through explicit raw-pointer or integer conversion chains
 
 Conceptually, reading from a `const` global behaves like reading through a deeply frozen view of the entire reachable hierarchy, not merely through a root binding that happens not to be assignable.
+
+Compile-time scalar numeric constants do not use an integer range. Integer consts
+use the smallest supported integer width that preserves the value; the source
+program does not spell that range. Floating-point consts
+follow the written number: `80.0` is `f64`, and `80.0f` is `f32`.
+Use an explicit `const T name = ...;` form for non-scalar or otherwise ambiguous
+constants, such as raw-pointer nulls, fixed arrays, or aggregate initializers.
 
 Local variables still require an explicit storage class.
 
@@ -801,11 +1001,12 @@ ill-typed.
 
 ### 11.4 Exponentiation
 
-Exponentiation is floating-point only.
+Exponentiation uses `**`.
 
 - `**` is legal for floating-point operands
-- integer exponentiation is not part of Stark
-- there is no implicit integer-power form
+- integer `**` is legal for integer operands and is folded in compile-time
+  constant contexts such as const numeric initializers and range endpoints
+- ordinary runtime integer exponentiation is supported for integer operands
 
 ### 11.5 Floating-Point Contract
 
@@ -859,6 +1060,161 @@ The text runtime contract is:
 - `text[start, length]` returns another zero-copy text view of the same text kind
 - explicit text conversion is required where widening, narrowing, or ownership changes are involved
 
+### 12.1 Interpolated Text
+
+Stark supports C#-style interpolated text literals. If every `{...}` hole can be
+folded at compile time, the whole interpolation behaves like one ordinary text
+constant:
+
+```stark
+finite law ascii ScoreLabel() {
+    const score = 100;
+    return $"Score: {score}";
+}
+```
+
+Each `{...}` hole is parsed and checked as an ordinary Stark expression.
+Compile-time holes may be integer values, floating-point values, `bool`, or text
+literals. Constant interpolation chooses `ascii` or `unicode` from the folded
+literal contents and can be target-typed where an ordinary text literal
+conversion is valid.
+
+Runtime holes need caller-selected storage:
+
+```stark
+fn Ascii ScoreLabel(i32[-2147483648 2147483647] score) {
+    stack Ascii label[64] = $"Score: {score}";
+    return label;
+}
+```
+
+The `[64]` is the buffer capacity. Runtime interpolation writes through
+the `System.Text` formatting and concatenation APIs into the selected `Ascii` or
+`Unicode` buffer. If the selected
+capacity is too small, the generated code traps instead of throwing an exception
+or silently cutting off text. Use the `System.Text` APIs directly when overflow
+should be handled as a returned value.
+
+The rules are:
+
+- `$"..."` uses the same literal decoding rules as ordinary string literals
+- constant interpolation chooses `ascii` or `unicode` from the folded literal contents and can be target-typed to either text view where an ordinary text literal conversion is valid
+- fixed-capacity runtime interpolation chooses `Ascii` or `Unicode` from the destination buffer type
+- each runtime hole must already be matching text, or must have a known fixed-buffer formatter such as `TryFormatI32Ascii` or `TryFormatBoolUnicode`
+- fully constant interpolations fold to ordinary text constants
+- runtime interpolation uses Stark's ordinary no-exception failure model internally and keeps the destination capacity visible in source
+
+### 12.2 Text Concatenation and Planned Conversion
+
+Stark supports `+` for compile-time text constants:
+
+```stark
+finite law ascii ScoreLabel() {
+    return "Score: " + "100";
+}
+```
+
+This is one ordinary text constant, so it does not allocate or copy at runtime.
+
+Stark also supports the common literal-prefix runtime form when the right side
+returns an explicit owned text result:
+
+```stark
+fn System.Memory.MemoryResult<System.Text.OwnedAscii> ScoreLabel(i64[min max] score) {
+    return "Score: " + score.ToAscii();
+}
+```
+
+This returns `System.Memory.MemoryResult<System.Text.OwnedAscii>`, so allocation
+failure remains visible to the caller.
+
+Text concatenation is intended for readable, ordinary code. When runtime text
+must be copied into caller-owned storage, put the capacity on the stack text
+buffer:
+
+```stark
+stack Ascii left = System.Console.ReadAsciiLine();
+stack Ascii right = System.Console.ReadAsciiLine();
+stack Ascii combined[4096] = left + right;
+```
+
+The `[4096]` is the destination storage. It must be a positive compile-time
+integer, and this narrow syntax is currently only for stack `Ascii` and
+`Unicode` locals. The declaration uses fixed local storage and the same
+`System.Text.TryConcatAscii` or `System.Text.TryConcatUnicode` copy behavior
+available through explicit library code. If the joined text does not fit, execution
+traps instead of silently truncating.
+
+Use the explicit `System.Text.TryConcatAscii` and
+`System.Text.TryConcatUnicode` APIs when overflow needs to be recoverable.
+
+The implemented conversion surface includes:
+
+- `ToAscii()` and `ToUnicode()` formatting for integer, floating-point, bool, and enum values
+- parse APIs from `ascii` and `unicode` to numeric, bool, and enum values
+- fixed-buffer formatting APIs for no-allocation paths
+- result/status-based failure reporting for conversions that can fail
+- locale-independent defaults for ordinary numeric formatting
+
+The first explicit owned conversion APIs live as ordinary `System.Text`
+functions and method-style convenience calls for bool, integer, floating-point,
+and the first concrete standard-library enum values:
+
+```stark
+stack System.Memory.MemoryResult<System.Text.OwnedAscii> label =
+    System.Text.ToAscii((i64)42);
+
+stack i64[-9223372036854775808 9223372036854775807] score = 42;
+stack System.Memory.MemoryResult<System.Text.OwnedAscii> methodLabel =
+    score.ToAscii();
+
+stack System.Memory.MemoryResult<System.Text.OwnedAscii> encodingLabel =
+    System.Text.Encoding.UTF8.ToAscii();
+```
+
+These return `System.Memory.MemoryResult<T>` so allocation failure and
+unsupported formatting are visible in ordinary code.
+
+The first implemented fixed-buffer formatting primitives are
+`System.Text.TryFormatBoolAscii`, fixed-width signed and unsigned integer
+`Ascii` helpers such as `TryFormatI24Ascii`, `TryFormatI32Ascii`,
+`TryFormatI48Ascii`, `TryFormatI128Ascii`, `TryFormatI1024Ascii`, and
+`TryFormatU1024Ascii`, and the matching `Unicode` forms for integer widths
+through 1024 bits. The integer forms write base-10 text into caller-owned
+`Ascii` or `Unicode` storage. These APIs return `false` when the destination is
+missing or too small.
+
+The first implemented no-allocation floating-point formatting primitives are
+`TryFormatF64Ascii`, `TryFormatF32Ascii`, `TryFormatF64Unicode`, and
+`TryFormatF32Unicode`. This initial slice writes fixed-six-fractional-digit
+decimal text such as `3.250000` into caller-owned storage for finite values in
+the supported range and returns `false` when the value is unsupported or the
+destination is too small.
+
+The default value-text rules are intentionally plain and locale-independent:
+
+- bool values use lowercase `true` or `false`
+- integers use base 10, no digit separators, no prefixes, and no leading `+`
+- negative signed integers use one leading `-`, including signed minimum values
+- zero uses `0`
+- the first implemented floating-point formatting slice uses fixed-six fractional digits for finite supported values
+- complete shortest-round-trip floating-point formatting remains future work; the current `f32` and `f64` formatting slice writes fixed-six-fractional-digit finite values
+- the first implemented enum formatting/parsing APIs cover `System.Text.Encoding` and `System.Text.TextError` using exact declared case names
+- general enum formatting remains future work; the current enum formatting/parsing APIs cover `System.Text.Encoding` and `System.Text.TextError`
+
+The first text-to-value parsing primitives are exact bool and integer parsers
+through 1024-bit widths. `System.Text.ParseBoolAscii` and
+`System.Text.ParseBoolUnicode` accept only exact lowercase `true` or `false`.
+The `ParseI*Ascii`/`ParseI*Unicode` and `ParseU*Ascii`/`ParseU*Unicode` integer
+forms through `i1024` and `u1024` accept only base-10 integer text. They return
+`System.Text.TextResult<T>` so invalid text and overflow are handled as ordinary
+data:
+
+```stark
+stack System.Text.TextResult<bool> parsed = System.Text.ParseBoolAscii("true");
+stack System.Text.TextResult<i64> count = System.Text.ParseI64Ascii("-42");
+```
+
 ## 13. FFI and Raw Boundaries
 
 `ffi` marks the foreign boundary.
@@ -878,6 +1234,77 @@ Outside that boundary:
 - safe values may not be assigned `null`
 - pointers-to-pointers are not part of ordinary safe Stark code
 - conversions from raw pointers into safe borrows must be explicit
+
+### 13.1 C-Style Varargs
+
+Foreign C APIs that use variadic arguments may be declared with `ffi varargs`:
+
+```stark
+public ffi varargs fn i32 printf(ascii format);
+```
+
+`varargs` is only valid on `ffi` declarations that end with `;`. Stark
+functions do not define C-style variadic bodies.
+
+The fixed parameters are checked normally. Extra call arguments are allowed
+after the fixed parameters, but they must already be safe to pass through the C
+varargs ABI as written:
+
+- `i32`/`u32` or wider integers
+- `f64`
+- raw pointers
+- `ascii` and `unicode` text views, which pass their data pointer
+
+Stark does not hide C's default argument promotions. If a C variadic function
+expects a floating-point value, pass `f64`; cast `f32` to `f64` yourself. If a
+value is smaller than 32 bits, cast it to an explicit `i32` or `u32` first.
+
+```stark
+public ffi varargs fn i32 printf(ascii format);
+
+fn i32 PrintScore(i32[min max] score) {
+    return printf("Score: %d\n", score);
+}
+```
+
+### 13.2 Unsafe Operations
+
+Stark's unsafe model marks proof boundaries rather than disabling the
+language's ordinary safety rules.
+
+Unsafe code may perform only operations that are explicitly gated as unsafe.
+Ownership, initialization, range, type, and ordinary borrow validation still
+apply inside unsafe code.
+
+The intended unsafe forms are:
+
+```stark
+unsafe fn rawmutptr<T> FromAddress<T>(i64[0 max] address);
+
+fn void UseAddress(i64[0 max] address) {
+    unsafe {
+        stack rawmutptr<State> state = FromAddress<State>(address);
+    }
+}
+```
+
+Unsafe operation markers may also appear at the operation that crosses the
+proof boundary:
+
+```stark
+RegisterCallback(capture(unsafe addr token) () => {
+    return 0;
+});
+```
+
+FFI imports that expose raw platform obligations should be declared as unsafe
+or wrapped behind a safe Stark API. The standard library should keep unsafe
+raw/FFI operations inside small implementation boundaries and expose ordinary
+result/status-based safe APIs where possible.
+
+Unsafe requirements are not erased by ordinary callable values. Until Stark has
+an explicit unsafe function-pointer type, an `unsafe fn` may be called only
+directly from an unsafe context and may not be stored in an ordinary `fnptr`.
 
 ## 14. Runtime Surface
 
@@ -904,4 +1331,4 @@ The programmer-facing consequences are:
 - most declarations are intended to stay inside module or package boundaries unless deliberately exposed
 - open-world and dynamic patterns are explicit choices, not the default style
 
-Compiler strategy details for how Stark uses this model are documented in [LanguageInternals.md](../Internals/LanguageInternals.md).
+Additional rationale for how Stark uses this model is documented in [LanguageInternals.md](../Internals/LanguageInternals.md).

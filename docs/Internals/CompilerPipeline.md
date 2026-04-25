@@ -77,15 +77,21 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
    The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, uses parameter memory summaries from semantic validation to emit stronger `readonly`/`writeonly`/`nocapture` facts for root Stark functions, consumes the closed-world optimization model for caller-sensitive law-path specialization decisions, can materialize internal root-side clones of eligible imported law bodies for closed-world law-call optimization with caller-sensitive law-path rewriting, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
 
-## Near-Term Missing Passes
+## Extension Points And Remaining Work
 
-The current pass skeleton still leaves room for the next substantial compiler work:
+The pass structure is no longer just a skeleton; the current compiler has real
+typing, semantic validation, ownership validation, MIR, SSA, ABI lowering,
+package-image loading, and LLVM emission. The pipeline still leaves clear
+extension points for future performance and tooling work:
 
-- deeper dead-code elimination beyond the current cleanup/constant-propagation passes
-- richer aggregate copy/move lowering
+- interprocedural MIR/SSA inlining before LLVM
+- cross-block value numbering and redundancy elimination
+- scalar replacement of aggregates before ABI lowering
+- destination propagation and copy-elision improvements
+- deeper proof/range propagation for bounds, enum tags, and non-null facts
+- loop optimization before LLVM
+- first-class value tracing and trace-file sinks for compiler observability
 - allocator-backed `arena` lowering
-- debug-info and source-span propagation through MIR, SSA, and LLVM
-- package-image-native typed-template lowering that consumes the existing monomorphization and specialization planning artifacts
 
 These should fit naturally as additional passes between `symbol-catalog` and `emit-llvm`.
 

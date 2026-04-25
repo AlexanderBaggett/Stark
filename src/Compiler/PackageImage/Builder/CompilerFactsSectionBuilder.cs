@@ -32,7 +32,8 @@ internal static partial class PackageImageBuilder
             IsHot: effects.IsHot,
             IsCold: effects.IsCold,
             InlinePreference: RenderInlinePreference(effects.InlinePreference),
-            IsStrictFp: effects.IsStrictFp);
+            IsStrictFp: effects.IsStrictFp,
+            IsVarargs: effects.IsVarargs);
         return true;
     }
 
@@ -70,7 +71,8 @@ internal static partial class PackageImageBuilder
                 .ToArray(),
             IsFfi: abiFunction.IsFfi,
             SourceName: abiFunction.SourceName,
-            UsesFastCallingConvention: abiFunction.UsesFastCallingConvention);
+            UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
+            IsVarargs: abiFunction.IsVarargs);
         return true;
     }
 

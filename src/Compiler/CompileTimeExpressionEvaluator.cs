@@ -68,6 +68,7 @@ internal readonly record struct CompileTimeEvaluationServices(
 
 internal static class CompileTimeExpressionEvaluator
 {
+    private const int MaximumCompileTimeIntegerPowerExponent = 1024;
     private static readonly int[] SupportedIntegerLiteralWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
 
     public static bool TryEvaluate(
@@ -153,6 +154,16 @@ internal static class CompileTimeExpressionEvaluator
     public static string FormatFloatLiteral(CompileTimeConstant constant)
     {
         return FormatFloat(constant.FloatValue);
+    }
+
+    public static bool HasFloat32Suffix(string text)
+    {
+        return text.Length > 0 && text[^1] is 'f' or 'F';
+    }
+
+    public static string StripFloatSuffix(string text)
+    {
+        return HasFloat32Suffix(text) ? text[..^1] : text;
     }
 
     private static bool TryEvaluateAssignmentExpression(
@@ -472,7 +483,7 @@ internal static class CompileTimeExpressionEvaluator
 
         if (expression.literal() is { } literal)
         {
-            return TryEvaluateLiteral(literal, out constant);
+            return TryEvaluateLiteral(literal, services, out constant);
         }
 
         if (expression.Identifier() is { } identifier)
@@ -497,6 +508,7 @@ internal static class CompileTimeExpressionEvaluator
 
     private static bool TryEvaluateLiteral(
         StarkParser.LiteralContext literal,
+        CompileTimeEvaluationServices services,
         out CompileTimeConstant constant)
     {
         constant = default;
@@ -510,12 +522,16 @@ internal static class CompileTimeExpressionEvaluator
 
         if (literal.FloatLiteral() is { } floatLiteral
             && double.TryParse(
-                floatLiteral.GetText(),
+                StripFloatSuffix(floatLiteral.GetText()),
                 NumberStyles.Float | NumberStyles.AllowThousands,
                 CultureInfo.InvariantCulture,
                 out var floatValue))
         {
-            constant = CompileTimeConstant.Float(floatValue, StarkTypeSymbols.Float(32));
+            constant = CompileTimeConstant.Float(
+                floatValue,
+                HasFloat32Suffix(floatLiteral.GetText())
+                    ? StarkTypeSymbols.Float(32)
+                    : StarkTypeSymbols.Float(64));
             return true;
         }
 
@@ -534,6 +550,25 @@ internal static class CompileTimeExpressionEvaluator
         if (literal.NULL() is not null)
         {
             constant = CompileTimeConstant.Null(StarkTypeSymbols.Null);
+            return true;
+        }
+
+        if (literal.DOLLAR() is not null && literal.StringLiteral() is { } interpolatedStringLiteral)
+        {
+            if (!InterpolatedText.TryFold(
+                    interpolatedStringLiteral.GetText(),
+                    services,
+                    out var literalText,
+                    out _))
+            {
+                return false;
+            }
+
+            constant = CompileTimeConstant.Text(
+                literalText,
+                TextLiteralDecoder.CanUseUtf8Storage(literalText, TextLiteralKind.String)
+                    ? StarkTypeSymbols.Ascii
+                    : StarkTypeSymbols.Unicode);
             return true;
         }
 
@@ -660,6 +695,13 @@ internal static class CompileTimeExpressionEvaluator
             return false;
         }
 
+        if (operatorText == "+"
+            && coercedLeft.Kind == CompileTimeConstantKind.Text
+            && coercedRight.Kind == CompileTimeConstantKind.Text)
+        {
+            return TryFoldTextConcatenation(coercedLeft, coercedRight, out constant);
+        }
+
         if (coercedLeft.Kind == CompileTimeConstantKind.Integer && coercedRight.Kind == CompileTimeConstantKind.Integer)
         {
             return TryFoldIntegerBinary(operatorText, coercedLeft, coercedRight, out constant);
@@ -722,6 +764,7 @@ internal static class CompileTimeExpressionEvaluator
             "+" => TryFoldSignedInteger(targetType, left.IntegerValue + right.IntegerValue, out constant),
             "-" => TryFoldSignedInteger(targetType, left.IntegerValue - right.IntegerValue, out constant),
             "*" => TryFoldSignedInteger(targetType, left.IntegerValue * right.IntegerValue, out constant),
+            "**" when TryGetValidPowerExponent(right.IntegerValue, out var exponent) => TryFoldIntegerPower(left.IntegerValue, exponent, out constant),
             "+%" => TryWrapSignedInteger(targetType, left.IntegerValue + right.IntegerValue, out constant),
             "-%" => TryWrapSignedInteger(targetType, left.IntegerValue - right.IntegerValue, out constant),
             "*%" => TryWrapSignedInteger(targetType, left.IntegerValue * right.IntegerValue, out constant),
@@ -743,6 +786,25 @@ internal static class CompileTimeExpressionEvaluator
             ">=" => TryBoolConstant(left.IntegerValue >= right.IntegerValue, out constant),
             _ => false
         };
+    }
+
+    private static bool TryFoldIntegerPower(BigInteger baseValue, int exponent, out CompileTimeConstant constant)
+    {
+        var value = BigInteger.Pow(baseValue, exponent);
+        constant = CompileTimeConstant.Integer(value, InferIntegerLiteralType(value));
+        return true;
+    }
+
+    private static bool TryGetValidPowerExponent(BigInteger value, out int exponent)
+    {
+        if (value < BigInteger.Zero || value > MaximumCompileTimeIntegerPowerExponent)
+        {
+            exponent = 0;
+            return false;
+        }
+
+        exponent = (int)value;
+        return true;
     }
 
     private static bool TryFoldFloatBinary(
@@ -767,6 +829,31 @@ internal static class CompileTimeExpressionEvaluator
             ">=" => TryBoolConstant(left.FloatValue >= right.FloatValue, out constant),
             _ => false
         };
+    }
+
+    private static bool TryFoldTextConcatenation(
+        CompileTimeConstant left,
+        CompileTimeConstant right,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (left.TextLiteral is null || right.TextLiteral is null)
+        {
+            return false;
+        }
+
+        if (!TextLiteralDecoder.TryConcatenateAsStringLiteral(
+                left.TextLiteral,
+                GetTextLiteralKind(left.TextLiteral),
+                right.TextLiteral,
+                GetTextLiteralKind(right.TextLiteral),
+                out var literalText))
+        {
+            return false;
+        }
+
+        constant = CompileTimeConstant.Text(literalText, left.Type);
+        return true;
     }
 
     private static bool TryCopyUnaryValue(CompileTimeConstant operand, out CompileTimeConstant constant)
@@ -808,8 +895,8 @@ internal static class CompileTimeExpressionEvaluator
         var mask = (BigInteger.One << bitWidth) - 1;
         var twosComplement = operand.IntegerValue & mask;
         var inverted = (~twosComplement) & mask;
-        var signed = FromTwosComplement(inverted, bitWidth);
-        constant = CompileTimeConstant.Integer(signed, operand.Type);
+        var folded = operand.Type.IsUnsigned ? inverted : FromTwosComplement(inverted, bitWidth);
+        constant = CompileTimeConstant.Integer(folded, operand.Type);
         return true;
     }
 
@@ -827,7 +914,7 @@ internal static class CompileTimeExpressionEvaluator
 
     private static bool TryFoldSignedInteger(StarkTypeSymbol type, BigInteger value, out CompileTimeConstant constant)
     {
-        if (TryFitSignedInteger(value, type.BitWidth ?? 0, out var fitted))
+        if (TryFitInteger(value, type, out var fitted))
         {
             constant = CompileTimeConstant.Integer(fitted, type);
             return true;
@@ -848,7 +935,7 @@ internal static class CompileTimeExpressionEvaluator
 
         var modulus = BigInteger.One << bitWidth;
         var normalized = ((value % modulus) + modulus) % modulus;
-        var wrapped = FromTwosComplement(normalized, bitWidth);
+        var wrapped = type.IsUnsigned ? normalized : FromTwosComplement(normalized, bitWidth);
         constant = CompileTimeConstant.Integer(wrapped, type);
         return true;
     }
@@ -857,7 +944,7 @@ internal static class CompileTimeExpressionEvaluator
     {
         constant = default;
 
-        if (!TryGetSignedIntegerBounds(type.BitWidth ?? 0, out var min, out var max))
+        if (!TryGetIntegerBounds(type, out var min, out var max))
         {
             return false;
         }
@@ -907,15 +994,34 @@ internal static class CompileTimeExpressionEvaluator
         return false;
     }
 
-    private static bool TryFitSignedInteger(BigInteger value, int bitWidth, out BigInteger fitted)
+    private static bool TryFitInteger(BigInteger value, StarkTypeSymbol type, out BigInteger fitted)
     {
         fitted = value;
-        if (!TryGetSignedIntegerBounds(bitWidth, out var min, out var max))
+        if (!TryGetIntegerBounds(type, out var min, out var max))
         {
             return false;
         }
 
         return value >= min && value <= max;
+    }
+
+    private static bool TryGetIntegerBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            min = BigInteger.Zero;
+            max = BigInteger.Zero;
+            return false;
+        }
+
+        if (type.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return true;
+        }
+
+        return TryGetSignedIntegerBounds(bitWidth, out min, out max);
     }
 
     private static bool TryGetSignedIntegerBounds(int bitWidth, out BigInteger min, out BigInteger max)
@@ -987,12 +1093,21 @@ internal static class CompileTimeExpressionEvaluator
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
         {
-            return StarkTypeSymbols.Integer(Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0));
+            return StarkTypeSymbols.Integer(
+                Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
+                isUnsigned: left.IsUnsigned && right.IsUnsigned);
         }
 
         if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Float)
         {
             return StarkTypeSymbols.Float(Math.Max(left.BitWidth ?? 32, right.BitWidth ?? 32));
+        }
+
+        if (IsTextType(left) && IsTextType(right))
+        {
+            return left.Kind == StarkTypeKind.Unicode || right.Kind == StarkTypeKind.Unicode
+                ? StarkTypeSymbols.Unicode
+                : StarkTypeSymbols.Ascii;
         }
 
         if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Integer)
@@ -1023,6 +1138,16 @@ internal static class CompileTimeExpressionEvaluator
         return left.DisplayName == right.DisplayName
             ? left
             : StarkTypeSymbols.Error;
+    }
+
+    private static bool IsTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    private static TextLiteralKind GetTextLiteralKind(string literalText)
+    {
+        return literalText.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String;
     }
 
     private static IReadOnlyList<string> ExtractOperators<TOperand>(ParserRuleContext context)

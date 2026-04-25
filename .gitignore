@@ -24,8 +24,12 @@ project.fragment.lock.json
 artifacts/
 .claude/
 .codex
+.stark/
 
 # Native/compiler-generated artifacts
+/stark
+/stark.cmd
+/examples/breakout/breakout-raylib
 *.ll
 *.bc
 *.o
@@ -39,6 +43,12 @@ artifacts/
 *.pdb
 *.deps.json
 *.runtimeconfig.json
+site/public/
+site/resources/
+site/.hugo_build.lock
+site/static/book/stark-book.md
+site/static/reference/
+tools/hugo/hugo
 
 # OS noise
 .DS_Store

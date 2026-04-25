@@ -37,8 +37,10 @@ successfully.
   allocate-copy-free fallback when a reallocation no longer fits the old bucket.
 - `collections/ListGrowth.stark` and `collections/QueueGrowth.stark` are
   executable growth benchmarks for the first owned collections.
+- `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-
+  visible owned `ToAscii`/`ToUnicode` conversion and literal-prefix
+  concatenation through `System.Memory`.
+- `text/OwnedPathAllocation.stark` is an executable benchmark for allocation-
+  visible owned path joining plus path-view inspection helpers.
 - `text/TextPathCallerBuffer.stark` is a compile-only benchmark for the current
-  caller-owned text/path buffer helpers.
-
-Future owned text/path allocation benchmarks should live here once those APIs
-allocate through `System.Memory`.
+  caller-owned path buffer helpers and low-level text conversion helpers.

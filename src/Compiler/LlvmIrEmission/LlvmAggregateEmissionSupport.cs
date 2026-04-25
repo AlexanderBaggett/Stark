@@ -118,7 +118,7 @@ internal static class LlvmAggregateEmissionSupport
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: false, targetInfo),
             StarkTypeKind.Float when normalizedType.BitWidth is int bitWidth
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: true, targetInfo),
-            StarkTypeKind.RawPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(targetInfo),
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(targetInfo),
             StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Slice => TryGetTargetAwareViewLayout(targetInfo),
             StarkTypeKind.FixedArray when normalizedType.ElementType is not null && normalizedType.FixedLength is int fixedLength
                 => TryGetTargetAwareFixedArrayLayout(normalizedType.ElementType, fixedLength, targetInfo, namedTypes, enumLayouts, activeNamedTypes),
@@ -309,7 +309,7 @@ internal static class LlvmAggregateEmissionSupport
                     <= 32 => 4,
                     <= 64 => 8,
                     <= 128 => 16,
-                    _ => 1
+                    _ => 16
                 },
             StarkAsmArchitecture.X86
                 => bitWidth switch
@@ -320,7 +320,7 @@ internal static class LlvmAggregateEmissionSupport
                     64 when isFloat => 4,
                     <= 64 => 4,
                     <= 128 => 16,
-                    _ => 1
+                    _ => 16
                 },
             StarkAsmArchitecture.Arm32
                 => bitWidth switch
@@ -330,7 +330,7 @@ internal static class LlvmAggregateEmissionSupport
                     <= 32 => 4,
                     <= 64 => 8,
                     <= 128 => 16,
-                    _ => 1
+                    _ => 16
                 },
             _ => null
         };

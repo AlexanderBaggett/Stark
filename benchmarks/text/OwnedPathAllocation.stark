@@ -1,0 +1,35 @@
+import System
+module Benchmarks.Text.OwnedPathAllocation
+
+fn bool AddPathFacts(System.Memory.MemoryResult<System.Text.OwnedAscii> result, rawmutptr<i64[min max]> checksum) {
+    switch (result) {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            *checksum += value.Length();
+            *checksum += System.Text.AsciiLength(System.IO.Path.Extension(value.View()));
+            *checksum += System.Text.AsciiLength(System.IO.Path.BaseName(value.View()));
+            *checksum += System.Text.AsciiLength(System.IO.Path.DirectoryName(value.View()));
+            return true;
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 2000] i = 0; i < 2000; i += 1) {
+        if (!AddPathFacts(System.IO.Path.Join("alpha", "beta.txt"), &checksum)) {
+            return 1;
+        }
+
+        if (!AddPathFacts(System.IO.Path.Join("alpha/", "/beta.txt"), &checksum)) {
+            return 2;
+        }
+    }
+
+    if (checksum != 108000) {
+        return 3;
+    }
+
+    return 0;
+}

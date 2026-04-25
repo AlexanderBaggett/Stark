@@ -1,15 +1,16 @@
 # `System.Net`
 
-`System.Net` is the planned root for networking APIs in the standard library.
+`System.Net` is the root for networking APIs in the standard library.
 
-The first standard-library networking slice includes TCP only. HTTP is
-explicitly not part of the Stark standard library; it should be built later as a
-package on top of `System.Net.Tcp`.
+The current implemented slice defines shared networking result/status/error
+types plus concrete IPv4 address and endpoint value types. TCP is the first
+networking child module after this foundation. HTTP is explicitly not part of
+the Stark standard library; it should be built later as a package on top of
+`System.Net.Tcp`.
 
-## Planned Public Surface
+## Public Surface
 
 ```stark
-export import System.Net.Tcp
 module System.Net
 
 public enum NetworkError {
@@ -35,15 +36,15 @@ public enum NetResult<T> {
 }
 
 public struct IPv4Address {
-    i8 [0 2**8 - 1] A;
-    i8 [0 2**8 - 1] B;
-    i8 [0 2**8 - 1] C;
-    i8 [0 2**8 - 1] D;
+    u8[0 255] A;
+    u8[0 255] B;
+    u8[0 255] C;
+    u8[0 255] D;
 }
 
 public struct IPv4Endpoint {
     IPv4Address Address;
-    i16 [0 2**16 - 1] Port;
+    u16[0 65535] Port;
 }
 ```
 
@@ -64,6 +65,12 @@ Those belong in packages once the package-management story exists.
 
 ## Current Status
 
-- This is a planned `v1.2` module family.
-- `System.Net.Tcp` is the only planned networking child module for the standard
-  library.
+- `System.Net` is implemented for the shared result/status/error model and IPv4
+  value types.
+- `System.Net.Tcp` is the only networking child module in the standard library.
+  Its owned closed-handle shell, `TcpClient.Connect`, `TcpClient.Read`,
+  `TcpClient.Write`, `TcpClient.Shutdown`, `TcpListener.Listen`,
+  `TcpListener.Accept`, and platform socket-close boundary are implemented.
+  Linux backs client connect, listener bind/listen/accept, read/write, and
+  shutdown with direct syscalls. Windows backs the same TCP surface with
+  Winsock.

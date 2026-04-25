@@ -1,0 +1,34 @@
+module Book.EnumsPatterns
+
+enum Token {
+    End,
+    Integer(i32[min max]),
+    Move { X: i32[min max], Y: i32[min max] },
+}
+
+finite law i32[min max] Score(Token token) {
+    switch (token) {
+        case Token.End:
+            return 0;
+        case Token.Integer(var value):
+            return value;
+        case Token.Move { X: var x, Y: var y }:
+            return x + y;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    if (Score(Token.End) != 0) {
+        return 1;
+    }
+
+    if (Score(Token.Integer(5)) != 5) {
+        return 2;
+    }
+
+    if (Score(Token.Move { X: 2, Y: 3 }) != 5) {
+        return 3;
+    }
+
+    return 0;
+}

@@ -32,6 +32,11 @@ jobs:
           ./scripts/regenerate-parser.sh
           git diff --exit-code -- src/Parsing/StarkLexer.cs src/Parsing/StarkParser.cs src/Parsing/StarkVisitor.cs src/Parsing/StarkBaseVisitor.cs
 
+      - name: Build website and check links
+        run: |
+          ./scripts/build-site.sh
+          bash ./scripts/check-site-links.sh
+
       - name: Prepare CI artifact directories
         run: mkdir -p .artifacts/logs .artifacts/test-results
 
@@ -40,6 +45,12 @@ jobs:
         run: |
           set -o pipefail
           dotnet build Stark.slnx --configuration Release 2>&1 | tee .artifacts/logs/dotnet-build.log
+
+      - name: Check book samples
+        shell: bash
+        run: |
+          set -o pipefail
+          ./scripts/check-book-samples.sh 2>&1 | tee .artifacts/logs/book-samples.log
 
       - name: Test
         shell: bash

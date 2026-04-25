@@ -4,7 +4,7 @@ This document defines the versioned Stark standard-library baseline for the firs
 
 It is intentionally narrower than every internal stdlib source file present in the repository. Only the public baseline below is part of the first release promise.
 
-For the language-side release cut line, see [V1ReleaseSubset.md](../Userfacing/V1ReleaseSubset.md). For unsupported or incomplete areas, see [UnsupportedFeatures.md](../Userfacing/UnsupportedFeatures.md).
+For the language-side release cut line, use the language reference and the active roadmap. For unsupported or incomplete areas, see [UnsupportedFeatures.md](../Userfacing/UnsupportedFeatures.md).
 
 ## Versioning Scheme
 
@@ -33,6 +33,25 @@ The first release baseline includes the following public modules:
 - `System.IO.Path`
 - `System.Math`
 - `System.Text`
+
+## Post-`v1.0` Repository Surface
+
+The repository currently contains additional implemented public modules beyond
+the `v1.0` compatibility promise:
+
+- `System.Collections`
+- `System.FileSystem`
+- `System.Memory`
+- `System.Net`
+- `System.Net.Tcp`
+- `System.Process`
+- `System.Threading`
+
+Those modules are documented under `docs/StandardLibrary/` and may ship in a
+post-`v1.0` release line, but this document does not retroactively add them to
+the `v1.0.x` baseline. When a release baseline is formally expanded, this file
+should get a new versioned baseline section rather than weakening the `v1.0`
+compatibility promise.
 
 The first release baseline does not treat the following internal implementation modules as public compatibility surface:
 
@@ -67,7 +86,7 @@ The baseline package identity is:
 
 - root module: `System`
 - package artifact: host-appropriate static library plus sidecar `.starkpkg.json` manifest
-- primary supported release platform: `x86_64` Linux as defined in [V1ReleaseSubset.md](../Userfacing/V1ReleaseSubset.md)
+- primary supported release platform: `x86_64` Linux
 
 For `v1.0`, the versioned baseline is defined by:
 

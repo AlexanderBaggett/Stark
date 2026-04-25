@@ -1,0 +1,20 @@
+import System
+module Book.Stdlib.TextFormatting
+
+fn bool FixedInterpolationHasExpectedLength() {
+    stack i64[-9223372036854775808 9223372036854775807] score = 42;
+
+    stack Ascii label[32] = $"Score: {score}";
+    stack Unicode wideLabel[32] = $"Score: {score}";
+
+    return System.Text.AsciiLength(System.Text.AsciiView(label)) == 9
+        && System.Text.UnicodeLength(System.Text.UnicodeView(wideLabel)) == 9;
+}
+
+export ffi fn i32[min max] main() {
+    if (!FixedInterpolationHasExpectedLength()) {
+        return 1;
+    }
+
+    return 0;
+}

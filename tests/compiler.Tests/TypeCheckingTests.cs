@@ -21,6 +21,975 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FunctionItemsPromoteToExplicitFunctionPointersAndIndirectCallsTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                return left + right;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647], i32[-2147483648 2147483647])> op = Add;
+                return op(40, 2);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal("Add", promotion.Signature.Name);
+        Assert.Equal(StarkTypeKind.FunctionPointer, promotion.TargetType.Kind);
+        var addressTaken = Assert.Single(typeCheckModel.AddressTakenFunctions);
+        Assert.Equal("Add", addressTaken.Signature.Name);
+        Assert.Equal(StarkFunctionKind.Fn, addressTaken.Signature.Kind);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        Assert.Equal(StarkTypeKind.FunctionPointer, indirectCall.FunctionPointerType.Kind);
+    }
+
+    [Fact]
+    public void FunctionItemPromotionPreservesFunctionKindFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i32[-2147483648 2147483647] Always() {
+                return 7;
+            }
+
+            fn void Run() {
+                stack fnptr<fn i32[-2147483648 2147483647]()> plain = Always;
+                stack fnptr<finite i32[-2147483648 2147483647]()> finiteOnly = Always;
+                stack fnptr<law i32[-2147483648 2147483647]()> lawOnly = Always;
+                stack fnptr<finite law i32[-2147483648 2147483647]()> strict = Always;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(4, typeCheckModel.FunctionPointerPromotions.Count);
+        Assert.All(typeCheckModel.FunctionPointerPromotions, static promotion => Assert.Equal("Always", promotion.Signature.Name));
+        var addressTaken = Assert.Single(typeCheckModel.AddressTakenFunctions);
+        Assert.Equal("Always", addressTaken.Signature.Name);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, addressTaken.Signature.Kind);
+    }
+
+    [Fact]
+    public void FunctionItemsPromoteFromEachDeclaredFunctionKind()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Plain() {
+                return 1;
+            }
+
+            finite i32[-2147483648 2147483647] FiniteOnly() {
+                return 2;
+            }
+
+            law i32[-2147483648 2147483647] LawOnly() {
+                return 3;
+            }
+
+            finite law i32[-2147483648 2147483647] Strict() {
+                return 4;
+            }
+
+            fn void Run() {
+                stack fnptr<fn i32[-2147483648 2147483647]()> plain = Plain;
+                stack fnptr<finite i32[-2147483648 2147483647]()> finiteOnly = FiniteOnly;
+                stack fnptr<law i32[-2147483648 2147483647]()> lawOnly = LawOnly;
+                stack fnptr<finite law i32[-2147483648 2147483647]()> strict = Strict;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        Assert.Equal(4, typeCheckModel.FunctionPointerPromotions.Count);
+        Assert.Equal(4, typeCheckModel.AddressTakenFunctions.Count);
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "Plain" && addressTaken.Signature.Kind == StarkFunctionKind.Fn);
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "FiniteOnly" && addressTaken.Signature.Kind == StarkFunctionKind.Finite);
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "LawOnly" && addressTaken.Signature.Kind == StarkFunctionKind.Law);
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "Strict" && addressTaken.Signature.Kind == StarkFunctionKind.FiniteLaw);
+    }
+
+    [Fact]
+    public void FunctionItemPromotionRejectsUnsatisfiedFunctionKindObligations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Plain() {
+                return 1;
+            }
+
+            finite i32[-2147483648 2147483647] FiniteOnly() {
+                return 2;
+            }
+
+            law i32[-2147483648 2147483647] LawOnly() {
+                return 3;
+            }
+
+            fn void Run() {
+                stack fnptr<finite i32[-2147483648 2147483647]()> needsFinite = Plain;
+                stack fnptr<law i32[-2147483648 2147483647]()> needsLaw = Plain;
+                stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromFinite = FiniteOnly;
+                stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromLaw = LawOnly;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Function item 'Plain' cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("finite", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Function item 'Plain' cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("law", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Function item 'FiniteOnly' cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("finite law", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Function item 'LawOnly' cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("finite law", StringComparison.Ordinal));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Empty(typeCheckModel.AddressTakenFunctions);
+    }
+
+    [Fact]
+    public void FunctionItemsPromoteInReturnAndArgumentTargetPositions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Target() {
+                return 41;
+            }
+
+            fn fnptr<fn i32[-2147483648 2147483647]()> Factory() {
+                return Target;
+            }
+
+            fn i32[-2147483648 2147483647] Apply(fnptr<fn i32[-2147483648 2147483647]()> callback) {
+                return callback() + 1;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                return Apply(Target);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(2, typeCheckModel.FunctionPointerPromotions.Count);
+        Assert.All(typeCheckModel.FunctionPointerPromotions, static promotion => Assert.Equal("Target", promotion.Signature.Name));
+        var addressTaken = Assert.Single(typeCheckModel.AddressTakenFunctions);
+        Assert.Equal("Target", addressTaken.Signature.Name);
+        Assert.Equal(StarkFunctionKind.Fn, addressTaken.Signature.Kind);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        Assert.Equal(StarkTypeKind.FunctionPointer, indirectCall.FunctionPointerType.Kind);
+    }
+
+    [Fact]
+    public void OverloadedFunctionItemPromotionsPreserveDistinctAddressTakenFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Pick() {
+                return 1;
+            }
+
+            fn i32[-2147483648 2147483647] Pick(i32[-2147483648 2147483647] value) {
+                return value;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack fnptr<fn i32[-2147483648 2147483647]()> first = Pick;
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> second = Pick;
+                return first() + second(2);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(2, typeCheckModel.FunctionPointerPromotions.Count);
+        Assert.All(typeCheckModel.FunctionPointerPromotions, static promotion => Assert.Equal("Pick", promotion.Signature.DisplaySourceName));
+        Assert.Equal(2, typeCheckModel.AddressTakenFunctions.Count);
+        Assert.All(typeCheckModel.AddressTakenFunctions, static addressTaken => Assert.Equal("Pick", addressTaken.Signature.DisplaySourceName));
+        Assert.Equal(
+            2,
+            typeCheckModel.AddressTakenFunctions
+                .Select(static addressTaken => addressTaken.Signature.Name)
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+    }
+
+    [Fact]
+    public void FunctionPointerPromotionRejectsAbiMismatchedFunctionItems()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[-9223372036854775808 9223372036854775807] Wide(i64[-9223372036854775808 9223372036854775807] value) {
+                return value;
+            }
+
+            fn void Run() {
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> op = Wide;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("cannot be promoted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NonCapturingLambdasTypeCheckAsExplicitFunctionPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Apply(fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> op) {
+                return op(41);
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = (i32[-2147483648 2147483647] value) => value + 1;
+                return Apply((i32[-2147483648 2147483647] value) => value + 1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(2, typeCheckModel.Lambdas.Count);
+        Assert.All(typeCheckModel.Lambdas, static lambda => Assert.Equal(StarkFunctionKind.Fn, lambda.FunctionPointerType.FunctionPointerKind));
+    }
+
+    [Fact]
+    public void NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureList()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] offset = 1;
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = (i32[-2147483648 2147483647] value) => value + offset;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3003"
+                && diagnostic.Message.Contains("Unknown symbol 'offset'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CapturingLambdaSyntaxIsCheckedButNotLoweredYet()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] offset = 1;
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = capture(copy offset) (i32[-2147483648 2147483647] value) => value + offset;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ExplicitCaptureListDoesNotExposeUnlistedOuterLocals()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] offset = 1;
+                stack i32[-2147483648 2147483647] secret = 2;
+                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = capture(copy offset) (i32[-2147483648 2147483647] value) => value + secret;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3003"
+                && diagnostic.Message.Contains("Unknown symbol 'secret'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ExplicitCaptureListsRejectDuplicateCapturedLocals()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] value = 1;
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback = capture(copy value, read value) () => value;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3006"
+                && diagnostic.Message.Contains("Lambda capture 'value' is listed more than once", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ExplicitCaptureListsReportUnknownClauseNamesAndModes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack i32[-2147483648 2147483647] value = 1;
+                stack fnptr<fn i32[-2147483648 2147483647]()> wrongClause = captures(copy value) () => value;
+                stack fnptr<fn i32[-2147483648 2147483647]()> wrongMode = capture(clone value) () => value;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Unknown lambda capture clause 'captures'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Unknown lambda capture mode 'clone'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeLambdaCaptureModesRequireUnsafeContext()
+    {
+        var bad = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[-2147483648 2147483647] token) {
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback = capture(unsafe addr token) () => 1;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("requires an unsafe context", StringComparison.Ordinal));
+
+        var good = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[-2147483648 2147483647] token, i32[-2147483648 2147483647] sharedState) {
+                unsafe {
+                    stack fnptr<fn i32[-2147483648 2147483647]()> callback = capture(unsafe addr token, unsafe shared sharedState) () => 1;
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(good.Succeeded);
+        Assert.DoesNotContain(
+            good.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024");
+        Assert.Contains(
+            good.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeLambdaCaptureModesRequireExplicitUnsafeMarkerAndRejectSafeModeMarkers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(
+                i32[-2147483648 2147483647] token,
+                i32[-2147483648 2147483647] sharedState,
+                i32[-2147483648 2147483647] copyValue) {
+                unsafe {
+                    stack fnptr<fn i32[-2147483648 2147483647]()> byAddress = capture(addr token) () => 1;
+                    stack fnptr<fn i32[-2147483648 2147483647]()> sharedCallback = capture(shared sharedState) () => 2;
+                    stack fnptr<fn i32[-2147483648 2147483647]()> copied = capture(unsafe copy copyValue) () => 3;
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Capture mode 'addr' must be written as 'unsafe addr'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Capture mode 'shared' must be written as 'unsafe shared'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Only 'addr' and 'shared' capture modes may be marked unsafe", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LambdaCaptureModeFactsArePreservedInTypeCheckModel()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(
+                i32[-2147483648 2147483647] copyValue,
+                i32[-2147483648 2147483647] readValue,
+                i32[-2147483648 2147483647] moveValue,
+                i32[-2147483648 2147483647] addrValue,
+                i32[-2147483648 2147483647] sharedValue) {
+                unsafe {
+                    stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                        capture(copy copyValue, read readValue, move moveValue, unsafe addr addrValue, unsafe shared sharedValue) () => copyValue + readValue;
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(5, typeCheckModel.LambdaCaptures.Count);
+
+        AssertCapture(typeCheckModel, "copyValue", "copy", isUnsafe: false);
+        AssertCapture(typeCheckModel, "readValue", "read", isUnsafe: false);
+        AssertCapture(typeCheckModel, "moveValue", "move", isUnsafe: false);
+        AssertCapture(typeCheckModel, "addrValue", "addr", isUnsafe: true);
+        AssertCapture(typeCheckModel, "sharedValue", "shared", isUnsafe: true);
+        Assert.Single(typeCheckModel.LambdaCaptures.Select(static capture => capture.LambdaLocation).Distinct());
+    }
+
+    [Fact]
+    public void CopyLambdaCapturesRejectMoveOnlyBindings()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Run() {
+                stack Token token = new Token() { Value = 1 };
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                    capture(copy token) () => token.Value;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Capture mode 'copy' cannot copy 'token'", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Use 'move' to transfer ownership", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CopyLambdaCapturesAllowTextViews()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack ascii label = "Score: ";
+                stack unicode word = "Ready";
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                    capture(copy label, copy word) () => 1;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Capture mode 'copy' cannot copy", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReadAndCopyLambdaCapturesDoNotExposeWritableBindings()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[-2147483648 2147483647] readValue = 1;
+                stack mut i32[-2147483648 2147483647] copyValue = 2;
+                stack fnptr<fn void()> readCallback = capture(read readValue) () => {
+                    readValue = 3;
+                    return;
+                };
+                stack fnptr<fn void()> copyCallback = capture(copy copyValue) () => {
+                    copyValue = 4;
+                    return;
+                };
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'readValue'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'copyValue'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MutLambdaCapturesExposeWritableBindingsInLambdaBody()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[-2147483648 2147483647] value = 1;
+                stack fnptr<fn void()> callback = capture(mut value) () => {
+                    value = 2;
+                    return;
+                };
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007");
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OutAndInitLambdaCapturesRejectReadsInLambdaBody()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[-2147483648 2147483647] outValue = 1;
+                stack mut i32[-2147483648 2147483647] initValue = 2;
+                stack fnptr<fn void()> outCallback = capture(out outValue) () => {
+                    stack i32[-2147483648 2147483647] readOut = outValue;
+                    return;
+                };
+                stack fnptr<fn void()> initCallback = capture(init initValue) () => {
+                    stack i32[-2147483648 2147483647] readInit = initValue;
+                    return;
+                };
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Assignment expects 'i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("out i32", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Assignment expects 'i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("init i32", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OutAndInitLambdaCapturesAllowWritesInLambdaBody()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[-2147483648 2147483647] outValue = 1;
+                stack mut i32[-2147483648 2147483647] initValue = 2;
+                stack fnptr<fn void()> callback = capture(out outValue, init initValue) () => {
+                    outValue = 3;
+                    initValue = 4;
+                    return;
+                };
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code is "STK3002" or "STK3007");
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeAddrLambdaCapturesExposeReadonlyAddressNotCapturedValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[-2147483648 2147483647] token) {
+                unsafe {
+                    stack fnptr<fn void()> badRead = capture(unsafe addr token) () => {
+                        stack i32[-2147483648 2147483647] value = token;
+                        return;
+                    };
+
+                    stack fnptr<fn void()> goodAddress = capture(unsafe addr token) () => {
+                        stack rawptr<frozen i32[-2147483648 2147483647]> address = token;
+                        return;
+                    };
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Assignment expects 'i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("rawptr<frozen i32", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("address", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeSharedLambdaCapturesExposeSharedReadOnlyBindings()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[-2147483648 2147483647] sharedValue) {
+                unsafe {
+                    stack fnptr<fn void()> callback = capture(unsafe shared sharedValue) () => {
+                        stack shared i32[-2147483648 2147483647] value = sharedValue;
+                        sharedValue = 3;
+                        return;
+                    };
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("value", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'sharedValue'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WritableLambdaCaptureModesRequireWritableBindings()
+    {
+        var bad = Compile(
+            """
+            module Demo
+
+            fn void Run(
+                i32[-2147483648 2147483647] mutValue,
+                i32[-2147483648 2147483647] outValue,
+                i32[-2147483648 2147483647] initValue) {
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                    capture(mut mutValue, out outValue, init initValue) () => 1;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Capture mode 'mut' needs 'mutValue'", StringComparison.Ordinal));
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Capture mode 'out' needs 'outValue'", StringComparison.Ordinal));
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Capture mode 'init' needs 'initValue'", StringComparison.Ordinal));
+
+        var good = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[-2147483648 2147483647] mutValue = 1;
+                stack mut i32[-2147483648 2147483647] outValue = 2;
+                stack mut i32[-2147483648 2147483647] initValue = 3;
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                    capture(mut mutValue, out outValue, init initValue) () => 1;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(good.Succeeded);
+        Assert.DoesNotContain(
+            good.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002");
+        Assert.Contains(
+            good.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeFunctionsRequireUnsafeContextDuringTypeChecking()
+    {
+        var bad = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch();
+
+            fn void Run() {
+                Touch();
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Unsafe function 'Touch' requires an unsafe context", StringComparison.Ordinal));
+
+        var good = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch();
+
+            fn void Run() {
+                unsafe {
+                    Touch();
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointers()
+    {
+        var outsideUnsafe = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[-2147483648 2147483647] Touch() {
+                return 1;
+            }
+
+            fn void Run() {
+                stack fnptr<fn i32[-2147483648 2147483647]()> callback = Touch;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(outsideUnsafe.Succeeded);
+        Assert.Contains(
+            outsideUnsafe.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("cannot be promoted to ordinary function pointer", StringComparison.Ordinal));
+        Assert.True(outsideUnsafe.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? outsideUnsafeModel));
+        Assert.NotNull(outsideUnsafeModel);
+        Assert.Empty(outsideUnsafeModel.AddressTakenFunctions);
+
+        var insideUnsafe = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[-2147483648 2147483647] Touch() {
+                return 1;
+            }
+
+            fn void Run() {
+                unsafe {
+                    stack fnptr<fn i32[-2147483648 2147483647]()> callback = Touch;
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(insideUnsafe.Succeeded);
+        Assert.Contains(
+            insideUnsafe.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("does not carry an unsafe requirement", StringComparison.Ordinal));
+        Assert.True(insideUnsafe.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? insideUnsafeModel));
+        Assert.NotNull(insideUnsafeModel);
+        Assert.Empty(insideUnsafeModel.AddressTakenFunctions);
+    }
+
+    [Fact]
+    public void UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[-2147483648 2147483647] Touch() {
+                return 1;
+            }
+
+            fn fnptr<fn i32[-2147483648 2147483647]()> Factory() {
+                return Touch;
+            }
+
+            fn void Register(fnptr<fn i32[-2147483648 2147483647]()> callback) {
+                return;
+            }
+
+            fn void Run() {
+                Register(Touch);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Empty(typeCheckModel.AddressTakenFunctions);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("cannot be promoted to ordinary function pointer", StringComparison.Ordinal));
+        Assert.True(
+            result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK3024") >= 2,
+            string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void TypeRelativeIntegerRangeEndpointsResolveAgainstContainingIntegerType()
     {
         var result = Compile(
@@ -54,8 +1023,9 @@ public sealed class TypeCheckingTests
         AssertIntegerRange(nonNegative.Parameters[0].Type, 64, BigInteger.Zero, new BigInteger(long.MaxValue));
 
         var bytePrefix = typeCheckModel.Functions["BytePrefix"];
-        AssertIntegerRange(bytePrefix.ReturnType, 8, BigInteger.Zero, new BigInteger(127));
-        AssertIntegerRange(bytePrefix.Parameters[0].Type, 8, BigInteger.Zero, new BigInteger(127));
+        AssertIntegerRange(bytePrefix.ReturnType, 8, BigInteger.Zero, new BigInteger(127), isUnsigned: true);
+        AssertIntegerRange(bytePrefix.Parameters[0].Type, 8, BigInteger.Zero, new BigInteger(127), isUnsigned: true);
+        Assert.Equal("u8[0 127]", bytePrefix.ReturnType.DisplayName);
     }
 
     [Fact]
@@ -85,7 +1055,7 @@ public sealed class TypeCheckingTests
                         """
                         module Lib.Foundation
 
-                        public const i32[0 max] Answer = 41;
+                        public const Answer = 41;
 
                         public struct Box {
                             i32[0 max] Value;
@@ -110,6 +1080,90 @@ public sealed class TypeCheckingTests
                 ])));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void ScalarConstDeclarationsInferSmallestExactNumericTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const BoardWidth = 80;
+            const i8 BoardWidthTyped = 80;
+            const i32 BoardWidthWide = 80;
+            const Negative = -129;
+            const BigCount = 2**16;
+            const u32 UnsignedSmall = 80;
+            const u32 UnsignedWide = 4294967295;
+            const SmallFloat = 3.5;
+            const FloatLiteral = 3.5f;
+            const f32 ExplicitFloat = 3.5;
+            const f64 ExplicitSmallFloat = 3.5f;
+
+            finite law i32[0 max] UseBoardWidth() {
+                return BoardWidth;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidth"].Type, 8, new BigInteger(80), new BigInteger(80));
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidthTyped"].Type, 8, new BigInteger(80), new BigInteger(80));
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidthWide"].Type, 8, new BigInteger(80), new BigInteger(80));
+        AssertIntegerRange(typeCheckModel.Globals["Negative"].Type, 16, new BigInteger(-129), new BigInteger(-129));
+        AssertIntegerRange(typeCheckModel.Globals["BigCount"].Type, 24, new BigInteger(65536), new BigInteger(65536));
+        AssertIntegerRange(typeCheckModel.Globals["UnsignedSmall"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
+        AssertIntegerRange(typeCheckModel.Globals["UnsignedWide"].Type, 32, BigInteger.Parse("4294967295"), BigInteger.Parse("4294967295"), isUnsigned: true);
+        Assert.Equal(StarkTypeKind.Float, typeCheckModel.Globals["SmallFloat"].Type.Kind);
+        Assert.Equal(64, typeCheckModel.Globals["SmallFloat"].Type.BitWidth);
+        Assert.Equal(StarkTypeKind.Float, typeCheckModel.Globals["FloatLiteral"].Type.Kind);
+        Assert.Equal(32, typeCheckModel.Globals["FloatLiteral"].Type.BitWidth);
+        Assert.Equal(StarkTypeKind.Float, typeCheckModel.Globals["ExplicitFloat"].Type.Kind);
+        Assert.Equal(32, typeCheckModel.Globals["ExplicitFloat"].Type.BitWidth);
+        Assert.Equal(StarkTypeKind.Float, typeCheckModel.Globals["ExplicitSmallFloat"].Type.Kind);
+        Assert.Equal(32, typeCheckModel.Globals["ExplicitSmallFloat"].Type.BitWidth);
+
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
+            && diagnostic.Message.Contains("BoardWidthWide", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("i8", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
+            && diagnostic.Message.Contains("UnsignedSmall", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
+            && diagnostic.Message.Contains("ExplicitFloat", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("f32", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
+            && diagnostic.Message.Contains("ExplicitSmallFloat", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("f32", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ScalarConstDeclarationsReportFriendlyNumericTypeDiagnostics()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32[min max] Ranged = 80;
+            const i8 TooSmall = 200;
+            const f32 TooPrecise = 0.1;
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3002"
+            && diagnostic.Message.Contains("already has one exact value", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("does not need an integer range", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3002"
+            && diagnostic.Message.Contains("TooSmall", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("does not fit in i8", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3002"
+            && diagnostic.Message.Contains("TooPrecise", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("without changing it", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -406,6 +1460,28 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void UnsignedIntegerRangeEndpointsBelowZeroAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn u8[-1 10] Bad(u8[-1 10] value) {
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("u8", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("0", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("255", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ReversedConstantArithmeticIntegerRangeEndpointsAreRejected()
     {
         var result = Compile(
@@ -623,6 +1699,103 @@ public sealed class TypeCheckingTests
         Assert.True(result.Succeeded);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void CompileTimeTextConcatenationTypeChecksAsTextLiteral()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law ascii Label() {
+                return "Score: " + "100";
+            }
+
+            finite law unicode WideLabel() {
+                return "Score: " + "100";
+            }
+
+            finite law unicode ExplicitWideLabel() {
+                return (unicode)"Score: " + (unicode)"100";
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void CompileTimeInterpolatedTextTypeChecksAsTextLiteral()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law ascii Label() {
+                const score = 100;
+                return $"Score: {score}, ready: {true}";
+            }
+
+            finite law unicode WideLabel() {
+                return $"Score: {100}";
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void FixedCapacityRuntimeInterpolatedTextTypeChecksWithKnownFormatter()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
+
+            fn Ascii Label(i32[-2147483648 2147483647] score) {
+                stack Ascii label[64] = $"Score: {score}";
+                return label;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void FixedCapacityTextConcatenationTypeChecksForAsciiAndUnicodeBuffers()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public finite law unicode UnicodeView(Unicode source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+            fn Ascii JoinAscii(Ascii left, ascii right) {
+                stack Ascii combined[64] = left + right;
+                return combined;
+            }
+
+            fn Unicode JoinUnicode(Unicode left, unicode right) {
+                stack Unicode combined[64] = left + right;
+                return combined;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -1516,6 +2689,52 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void NumericOverloadResolutionPrefersExactAndNarrowSafeMatches()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool PickFloat(f64 value) {
+                return true;
+            }
+
+            fn i32[-2147483648 2147483647] PickFloat(f32 value) {
+                return 1;
+            }
+
+            fn bool PickInteger(u32[0 max] value) {
+                return true;
+            }
+
+            fn i32[-2147483648 2147483647] PickInteger(i48[-140737488355328 140737488355327] value) {
+                return 2;
+            }
+
+            fn i32[-2147483648 2147483647] PickInteger(i64[-9223372036854775808 9223372036854775807] value) {
+                return 3;
+            }
+
+            fn i32[-2147483648 2147483647] PickInteger(f64 value) {
+                return 4;
+            }
+
+            fn bool RunFloat() {
+                stack f64 value = 3.5;
+                return PickFloat(value);
+            }
+
+            fn bool RunInteger() {
+                stack u32[0 max] value = (u32[0 max])42;
+                return PickInteger(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+    }
+
+    [Fact]
     public void MethodOverloadGroupsRegisterDistinctFunctionsAndResolveCalls()
     {
         var result = Compile(
@@ -1680,12 +2899,22 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("i32", StringComparison.Ordinal));
     }
 
-    private static void AssertIntegerRange(StarkTypeSymbol type, int bitWidth, BigInteger min, BigInteger max)
+    private static void AssertIntegerRange(StarkTypeSymbol type, int bitWidth, BigInteger min, BigInteger max, bool isUnsigned = false)
     {
         Assert.Equal(StarkTypeKind.Integer, type.Kind);
         Assert.Equal(bitWidth, type.BitWidth);
         Assert.Equal((BigInteger?)min, type.RangeMin);
         Assert.Equal((BigInteger?)max, type.RangeMax);
+        Assert.Equal(isUnsigned, type.IsUnsigned);
+    }
+
+    private static void AssertCapture(TypeCheckModel typeCheckModel, string name, string mode, bool isUnsafe)
+    {
+        var capture = Assert.Single(typeCheckModel.LambdaCaptures, item => item.Name == name);
+        Assert.Equal(mode, capture.Mode);
+        Assert.Equal(isUnsafe, capture.IsUnsafe);
+        Assert.Equal(StarkTypeKind.Integer, capture.Type.Kind);
+        Assert.Equal("Run", capture.EnclosingFunctionName);
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

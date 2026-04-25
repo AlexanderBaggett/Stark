@@ -391,7 +391,8 @@ internal static class LlvmSpecializationEmissionPlanner
         string symbolName,
         bool isFfi,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
-        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        bool isVarargs = false)
     {
         var returnsIndirect = !isFfi && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, namedTypes, enumLayouts);
         var parameters = new List<AbiParameterSymbol>();
@@ -432,7 +433,8 @@ internal static class LlvmSpecializationEmissionPlanner
             parameters,
             isFfi,
             SourceName: function.SourceName,
-            UsesFastCallingConvention: !isFfi);
+            UsesFastCallingConvention: !isFfi,
+            IsVarargs: isVarargs);
     }
 
     private static IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> BuildPublishedFunctionSemantics(LoadedModuleSet loadedModules)

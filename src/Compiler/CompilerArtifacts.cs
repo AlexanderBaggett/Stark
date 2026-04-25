@@ -94,6 +94,55 @@ internal static class FunctionKindFacts
     }
 }
 
+internal static class CallableValueFacts
+{
+    public static string BuildLambdaFunctionName(string enclosingFunctionName, SourceLocation location)
+    {
+        return $"{enclosingFunctionName}.__lambda_{location.Line}_{location.Column}";
+    }
+
+    public static TypedFunctionSignature BuildLambdaSignature(LambdaTypingRecord lambda)
+    {
+        var returnType = lambda.FunctionPointerType.FunctionPointerReturnType ?? StarkTypeSymbols.Error;
+        var parameterTypes = lambda.FunctionPointerType.FunctionPointerParameterTypes ?? [];
+        var parameters = parameterTypes
+            .Select((type, index) => new TypedParameterSymbol(lambda.ParameterNames[index], type))
+            .ToArray();
+
+        return new TypedFunctionSignature(
+            lambda.FunctionName,
+            returnType,
+            parameters,
+            SourceName: lambda.FunctionName,
+            Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn);
+    }
+
+    public static FunctionEffectProfile BuildLambdaEffectProfile(LambdaTypingRecord lambda)
+    {
+        var kind = lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn;
+        var isLaw = FunctionKindFacts.IsLaw(kind);
+        var isFinite = FunctionKindFacts.IsFinite(kind);
+
+        return new FunctionEffectProfile(
+            lambda.FunctionName,
+            kind,
+            ReadsArgumentMemory: false,
+            IsPure: isLaw,
+            NoSync: isLaw,
+            NoFree: isLaw,
+            NoUnwind: true,
+            WillReturn: isFinite,
+            MustProgress: isFinite,
+            UseFastCallingConvention: true,
+            IsFfi: false,
+            IsVarargs: false,
+            IsHot: false,
+            IsCold: false,
+            InlinePreference: InlinePreference.InlineHint,
+            IsStrictFp: false);
+    }
+}
+
 public enum InlinePreference
 {
     InlineHint,
@@ -107,7 +156,9 @@ public sealed record FunctionModifierSet(
     bool IsHot,
     bool IsCold,
     bool IsFfi,
-    bool IsStrictFp);
+    bool IsVarargs,
+    bool IsStrictFp,
+    bool IsUnsafe = false);
 
 public enum StarkAsmArchitecture
 {
@@ -649,7 +700,8 @@ public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, ConcreteTypeLayout> ConcreteLayouts,
     IReadOnlyDictionary<string, EnumLayoutSymbol> EnumLayouts,
     IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> FunctionSemantics,
-    IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates)
+    IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates,
+    PackageImageLinkageFacts? Linkage = null)
 {
     public bool HasPublishedFunctionSemantics => FunctionSemantics.Count > 0;
 
@@ -657,6 +709,11 @@ public sealed record LoadedPackageImageFacts(
         FunctionTemplates.Count > 0
         && FunctionTemplates.Values.All(static template => template.TypedBody is not null);
 }
+
+public sealed record PackageImageLinkageFacts(
+    string ObjectFileName,
+    IReadOnlySet<string> DefinedSymbols,
+    IReadOnlySet<string> ReferencedSymbols);
 
 public sealed record LoadedModuleSet(
     string RootModuleName,
@@ -687,6 +744,7 @@ public sealed record FunctionEffectProfile(
     bool MustProgress,
     bool UseFastCallingConvention,
     bool IsFfi,
+    bool IsVarargs,
     bool IsHot,
     bool IsCold,
     InlinePreference InlinePreference,
@@ -771,6 +829,7 @@ public enum StarkTypeKind
     RawPointer,
     FixedArray,
     Slice,
+    FunctionPointer,
     Named,
     Null
 }
@@ -782,8 +841,12 @@ public sealed record StarkTypeSymbol(
     string? NamedType = null,
     StarkTypeSymbol? ElementType = null,
     int? FixedLength = null,
+    StarkFunctionKind? FunctionPointerKind = null,
+    StarkTypeSymbol? FunctionPointerReturnType = null,
+    IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
     BigInteger? RangeMin = null,
     BigInteger? RangeMax = null,
+    bool IsUnsigned = false,
     bool IsMutablePointer = false,
     StarkBorrowKind BorrowKind = StarkBorrowKind.None,
     StarkAccessKind AccessKind = StarkAccessKind.None,
@@ -809,14 +872,23 @@ public static class StarkTypeSymbols
 
     public static IReadOnlyList<NamedTypeSymbol> BuiltinNamedTypes => [BuiltinOwnedAsciiNamedType, BuiltinOwnedUnicodeNamedType];
 
-    public static StarkTypeSymbol Integer(int bitWidth, BigInteger? rangeMin = null, BigInteger? rangeMax = null)
+    public static StarkTypeSymbol Integer(int bitWidth, BigInteger? rangeMin = null, BigInteger? rangeMax = null, bool isUnsigned = false)
     {
+        var prefix = isUnsigned ? "u" : "i";
         var displayName = rangeMin is null && rangeMax is null
-            ? $"i{bitWidth}"
-            : IsFullSignedIntegerRange(bitWidth, rangeMin, rangeMax)
-                ? $"i{bitWidth}"
-                : $"i{bitWidth}[{rangeMin} {rangeMax}]";
-        return new StarkTypeSymbol(StarkTypeKind.Integer, displayName, BitWidth: bitWidth, RangeMin: rangeMin, RangeMax: rangeMax);
+            ? $"{prefix}{bitWidth}"
+            : isUnsigned && IsFullUnsignedIntegerRange(bitWidth, rangeMin, rangeMax)
+                ? $"u{bitWidth}"
+                : !isUnsigned && IsFullSignedIntegerRange(bitWidth, rangeMin, rangeMax)
+                    ? $"i{bitWidth}"
+                    : $"{prefix}{bitWidth}[{rangeMin} {rangeMax}]";
+        return new StarkTypeSymbol(
+            StarkTypeKind.Integer,
+            displayName,
+            BitWidth: bitWidth,
+            RangeMin: rangeMin,
+            RangeMax: rangeMax,
+            IsUnsigned: isUnsigned);
     }
 
     public static StarkTypeSymbol Float(int bitWidth) => new(StarkTypeKind.Float, $"f{bitWidth}", BitWidth: bitWidth);
@@ -837,6 +909,27 @@ public static class StarkTypeSymbols
 
     public static StarkTypeSymbol Slice(StarkTypeSymbol elementType) =>
         new(StarkTypeKind.Slice, $"{elementType.DisplayName}[]", ElementType: elementType);
+
+    public static StarkTypeSymbol FunctionPointer(
+        StarkFunctionKind functionKind,
+        StarkTypeSymbol returnType,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+    {
+        var displayKind = functionKind switch
+        {
+            StarkFunctionKind.FiniteLaw => "finite law",
+            StarkFunctionKind.Finite => "finite",
+            StarkFunctionKind.Law => "law",
+            _ => "fn"
+        };
+        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select(static parameter => parameter.DisplayName))})>";
+        return new StarkTypeSymbol(
+            StarkTypeKind.FunctionPointer,
+            displayName,
+            FunctionPointerKind: functionKind,
+            FunctionPointerReturnType: returnType,
+            FunctionPointerParameterTypes: parameterTypes.ToArray());
+    }
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
 
@@ -863,6 +956,17 @@ public static class StarkTypeSymbols
         var min = -(BigInteger.One << (bitWidth - 1));
         var max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
         return rangeMin.Value == min && rangeMax.Value == max;
+    }
+
+    public static bool IsFullUnsignedIntegerRange(int bitWidth, BigInteger? rangeMin, BigInteger? rangeMax)
+    {
+        if (bitWidth <= 0 || rangeMin is null || rangeMax is null)
+        {
+            return false;
+        }
+
+        var max = (BigInteger.One << bitWidth) - BigInteger.One;
+        return rangeMin.Value == BigInteger.Zero && rangeMax.Value == max;
     }
 
     public static bool IsGenericInstantiation(StarkTypeSymbol type)
@@ -1025,6 +1129,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Unicode or
             StarkTypeKind.Integer or
             StarkTypeKind.Float or
+            StarkTypeKind.FunctionPointer or
             StarkTypeKind.Null)
         {
             return WithQualifiers(type, accessKind: StarkAccessKind.None, isMutableView: false);
@@ -1064,11 +1169,15 @@ public static class StarkTypeSymbols
             StarkTypeKind.Ascii => Ascii,
             StarkTypeKind.Unicode => Unicode,
             StarkTypeKind.Null => Null,
-            StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax),
+            StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
             StarkTypeKind.Float => Float(type.BitWidth ?? 32),
             StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
             StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength),
             StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
+            StarkTypeKind.FunctionPointer when type.FunctionPointerKind is { } functionKind
+                                               && type.FunctionPointerReturnType is { } returnType
+                                               && type.FunctionPointerParameterTypes is { } parameterTypes
+                => FunctionPointer(functionKind, returnType, parameterTypes),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
@@ -1222,7 +1331,10 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<string>? GenericParameterNames = null,
     string? TemplateName = null,
     IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
-    bool IsStatic = false)
+    bool IsStatic = false,
+    StarkFunctionKind Kind = StarkFunctionKind.Fn,
+    bool IsUnsafe = false,
+    bool IsVarargs = false)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -1267,6 +1379,38 @@ public sealed record LocalDeclarationTypingRecord(
 public sealed record DirectCallTypingRecord(
     TypedFunctionSignature Signature,
     SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record FunctionPointerPromotionTypingRecord(
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol TargetType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record AddressTakenFunctionTypingRecord(
+    TypedFunctionSignature Signature,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record IndirectCallTypingRecord(
+    StarkTypeSymbol FunctionPointerType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record LambdaTypingRecord(
+    string FunctionName,
+    StarkTypeSymbol FunctionPointerType,
+    IReadOnlyList<string> ParameterNames,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record LambdaCaptureTypingRecord(
+    string Name,
+    string Mode,
+    bool IsUnsafe,
+    StarkTypeSymbol Type,
+    SourceLocation Location,
+    SourceLocation LambdaLocation,
     string? EnclosingFunctionName = null);
 
 public sealed record ConversionTypingRecord(
@@ -1394,9 +1538,14 @@ public sealed record TypeCheckModel(
     IReadOnlyList<LocalDeclarationTypingRecord>? LocalDeclarationRecords = null,
     IReadOnlyList<ConversionTypingRecord>? ConversionRecords = null,
     IReadOnlyList<DirectCallTypingRecord>? DirectCallRecords = null,
+    IReadOnlyList<FunctionPointerPromotionTypingRecord>? FunctionPointerPromotionRecords = null,
+    IReadOnlyList<IndirectCallTypingRecord>? IndirectCallRecords = null,
     IReadOnlyList<FieldAccessTypingRecord>? FieldAccessRecords = null,
     IReadOnlyList<MemberCallTypingRecord>? MemberCallRecords = null,
-    IReadOnlyList<TypeLayoutExpressionTypingRecord>? TypeLayoutExpressionRecords = null)
+    IReadOnlyList<TypeLayoutExpressionTypingRecord>? TypeLayoutExpressionRecords = null,
+    IReadOnlyList<LambdaTypingRecord>? LambdaRecords = null,
+    IReadOnlyList<LambdaCaptureTypingRecord>? LambdaCaptureRecords = null,
+    IReadOnlyList<AddressTakenFunctionTypingRecord>? AddressTakenFunctionRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -1442,6 +1591,21 @@ public sealed record TypeCheckModel(
 
     public IReadOnlyList<DirectCallTypingRecord> DirectCalls =>
         DirectCallRecords ?? [];
+
+    public IReadOnlyList<FunctionPointerPromotionTypingRecord> FunctionPointerPromotions =>
+        FunctionPointerPromotionRecords ?? [];
+
+    public IReadOnlyList<AddressTakenFunctionTypingRecord> AddressTakenFunctions =>
+        AddressTakenFunctionRecords ?? [];
+
+    public IReadOnlyList<IndirectCallTypingRecord> IndirectCalls =>
+        IndirectCallRecords ?? [];
+
+    public IReadOnlyList<LambdaTypingRecord> Lambdas =>
+        LambdaRecords ?? [];
+
+    public IReadOnlyList<LambdaCaptureTypingRecord> LambdaCaptures =>
+        LambdaCaptureRecords ?? [];
 
     public IReadOnlyList<FieldAccessTypingRecord> FieldAccesses =>
         FieldAccessRecords ?? [];
@@ -1647,7 +1811,8 @@ public sealed record AbiFunctionSignature(
     IReadOnlyList<AbiParameterSymbol> Parameters,
     bool IsFfi,
     string? SourceName = null,
-    bool UsesFastCallingConvention = false)
+    bool UsesFastCallingConvention = false,
+    bool IsVarargs = false)
 {
     public string DisplaySourceName => SourceName ?? Name;
 
@@ -1738,7 +1903,7 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetScalarLayout((bitWidth + 7) / 8),
             StarkTypeKind.Float when concreteType.BitWidth is int floatWidth =>
                 TryGetScalarLayout((floatWidth + 7) / 8),
-            StarkTypeKind.RawPointer or StarkTypeKind.Null =>
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null =>
                 TryGetPointerLayout(),
             StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
                 TryGetViewLayout(),
@@ -1900,9 +2065,9 @@ internal static class ConcreteTypeLayoutHelper
         {
             1 => new ConcreteTypeLayout(1, 1),
             2 => new ConcreteTypeLayout(2, 2),
-            4 => new ConcreteTypeLayout(4, 4),
-            8 => new ConcreteTypeLayout(8, 8),
-            _ => new ConcreteTypeLayout(sizeBytes, 1)
+            <= 4 => new ConcreteTypeLayout(sizeBytes, 4),
+            <= 8 => new ConcreteTypeLayout(sizeBytes, 8),
+            _ => new ConcreteTypeLayout(sizeBytes, 16)
         };
     }
 
@@ -2070,7 +2235,12 @@ public sealed record HighLevelIrFunction(
 
 public sealed record HighLevelIrModule(
     string ModuleName,
-    IReadOnlyList<HighLevelIrFunction> Functions);
+    IReadOnlyList<HighLevelIrFunction> Functions,
+    IReadOnlyList<string>? AddressTakenFunctionRecords = null)
+{
+    public IReadOnlyList<string> AddressTakenFunctions =>
+        AddressTakenFunctionRecords ?? [];
+}
 
 public enum MidLevelIrStatementKind
 {
@@ -2147,6 +2317,9 @@ public sealed record MidLevelIrGlobalOperand(string Name, StarkTypeSymbol Type)
 public sealed record MidLevelIrGlobalAddressOperand(string Name, StarkTypeSymbol PointeeType, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, $"&{Name}");
 
+public sealed record MidLevelIrFunctionAddressOperand(string FunctionName, StarkTypeSymbol Type)
+    : MidLevelIrOperand(Type, FunctionName);
+
 public sealed record MidLevelIrIntegerConstantOperand(BigInteger Value, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, Value.ToString());
 
@@ -2193,6 +2366,14 @@ public sealed record MidLevelIrCallRValue(
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null)
+    : MidLevelIrRValue(Type, Text);
+
+public sealed record MidLevelIrIndirectCallRValue(
+    MidLevelIrOperand Target,
+    IReadOnlyList<MidLevelIrOperand> Arguments,
+    StarkTypeSymbol Type,
+    string Text,
+    StarkTypeSymbol? SourceReturnType = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrConvertRValue(
@@ -2348,7 +2529,12 @@ public sealed record MidLevelIrFunction(
 
 public sealed record MidLevelIrModule(
     string ModuleName,
-    IReadOnlyList<MidLevelIrFunction> Functions);
+    IReadOnlyList<MidLevelIrFunction> Functions,
+    IReadOnlyList<string>? AddressTakenFunctionRecords = null)
+{
+    public IReadOnlyList<string> AddressTakenFunctions =>
+        AddressTakenFunctionRecords ?? [];
+}
 
 public abstract record SsaValue(StarkTypeSymbol Type, string Text);
 
@@ -2372,6 +2558,9 @@ public sealed record SsaNullConstant(StarkTypeSymbol Type)
 
 public sealed record SsaGlobalAddressValue(string GlobalName, StarkTypeSymbol PointeeType, StarkTypeSymbol Type)
     : SsaValue(Type, $"&{GlobalName}");
+
+public sealed record SsaFunctionAddressValue(string FunctionName, StarkTypeSymbol Type)
+    : SsaValue(Type, FunctionName);
 
 public sealed record SsaUndefValue(StarkTypeSymbol Type)
     : SsaValue(Type, "undef");
@@ -2443,6 +2632,14 @@ public sealed record SsaCallRValue(
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null)
+    : SsaRValue(Type, Text);
+
+public sealed record SsaIndirectCallRValue(
+    SsaValue Target,
+    IReadOnlyList<SsaValue> Arguments,
+    StarkTypeSymbol Type,
+    string Text,
+    StarkTypeSymbol? SourceReturnType = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaConvertRValue(
@@ -2683,6 +2880,18 @@ public sealed record SsaFunction(
 
 public sealed record SsaIrModule(
     string ModuleName,
-    IReadOnlyList<SsaFunction> Functions);
+    IReadOnlyList<SsaFunction> Functions,
+    IReadOnlyList<string>? AddressTakenFunctionRecords = null)
+{
+    public IReadOnlyList<string> AddressTakenFunctions =>
+        AddressTakenFunctionRecords ?? [];
+}
 
-public sealed record LlvmIrModule(string ModuleName, string Text);
+public sealed record LlvmIrModule(
+    string ModuleName,
+    string Text,
+    IReadOnlyList<string>? AddressTakenFunctionRecords = null)
+{
+    public IReadOnlyList<string> AddressTakenFunctions =>
+        AddressTakenFunctionRecords ?? [];
+}

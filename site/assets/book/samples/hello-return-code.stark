@@ -1,0 +1,5 @@
+module Book.HelloReturnCode
+
+export ffi fn i32[min max] main() {
+    return 0;
+}

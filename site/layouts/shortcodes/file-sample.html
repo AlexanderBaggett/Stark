@@ -1,0 +1,4 @@
+{{- $path := .Get 0 -}}
+{{- $language := .Get 1 | default "text" -}}
+{{- $source := readFile $path -}}
+<pre><code class="language-{{ $language }}">{{ $source | htmlEscape }}</code></pre>

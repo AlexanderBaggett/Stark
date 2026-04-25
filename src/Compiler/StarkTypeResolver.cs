@@ -241,6 +241,11 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
         }
 
+        if (type.functionPointerType() is { } functionPointerType)
+        {
+            return ResolveFunctionPointerType(functionPointerType, genericParameters, currentModuleName);
+        }
+
         if (type.integerType() is { } integerType)
         {
             return ResolveIntegerType(integerType);
@@ -263,6 +268,33 @@ internal sealed class StarkTypeResolver
         }
 
         return ResolveBuiltinType(type.builtinType());
+    }
+
+    private StarkTypeSymbol ResolveFunctionPointerType(
+        StarkParser.FunctionPointerTypeContext type,
+        ISet<string>? genericParameters,
+        string? currentModuleName)
+    {
+        var signature = type.functionPointerSignature();
+        var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName);
+        var parameterTypes = signature.functionPointerParameterList().type_()
+            .Select(parameter => ResolveType(parameter, genericParameters, currentModuleName))
+            .ToArray();
+        return StarkTypeSymbols.FunctionPointer(
+            ParseFunctionKind(signature.functionKind()),
+            returnType,
+            parameterTypes);
+    }
+
+    private static StarkFunctionKind ParseFunctionKind(StarkParser.FunctionKindContext functionKind)
+    {
+        return functionKind.GetText() switch
+        {
+            "finite" => StarkFunctionKind.Finite,
+            "law" => StarkFunctionKind.Law,
+            "finitelaw" => StarkFunctionKind.FiniteLaw,
+            _ => StarkFunctionKind.Fn
+        };
     }
 
     public StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters = null, string? currentModuleName = null)
@@ -319,7 +351,7 @@ internal sealed class StarkTypeResolver
                 "STK3014",
                 "Integer range constraints must contain exactly two compile-time integer endpoint expressions.",
                 rangeConstraint);
-            return StarkTypeSymbols.Integer(width);
+            return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
         }
 
         var lower = ResolveIntegerRangeEndpoint(endpointTokens, 0, upperEndpointStart, typeMin, typeMax, rangeConstraint);
@@ -327,7 +359,16 @@ internal sealed class StarkTypeResolver
 
         if (lower is null || upper is null)
         {
-            return StarkTypeSymbols.Integer(width);
+            return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
+        }
+
+        if (isUnsigned && (lower.Value < typeMin || lower.Value > typeMax || upper.Value < typeMin || upper.Value > typeMax))
+        {
+            ReportError(
+                "STK3014",
+                $"Integer range endpoints for {integerTypeText} must be between {typeMin} and {typeMax}.",
+                rangeConstraint);
+            return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
         }
 
         if (lower.Value > upper.Value)
@@ -336,10 +377,10 @@ internal sealed class StarkTypeResolver
                 "STK3014",
                 $"Integer range lower bound '{lower.Value}' cannot exceed upper bound '{upper.Value}'.",
                 rangeConstraint);
-            return StarkTypeSymbols.Integer(width);
+            return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
         }
 
-        return StarkTypeSymbols.Integer(width, lower.Value, upper.Value);
+        return StarkTypeSymbols.Integer(width, lower.Value, upper.Value, isUnsigned);
     }
 
     private BigInteger? ResolveIntegerRangeEndpoint(
@@ -1003,6 +1044,16 @@ internal sealed class StarkTypeResolver
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
                 _ => coreType
             };
+        }
+        else if (coreType.Kind == StarkTypeKind.FunctionPointer
+            && coreType.FunctionPointerKind is { } functionKind
+            && coreType.FunctionPointerReturnType is { } returnType
+            && coreType.FunctionPointerParameterTypes is { } parameterTypes)
+        {
+            substitutedCore = StarkTypeSymbols.FunctionPointer(
+                functionKind,
+                SubstituteType(returnType, substitution),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray());
         }
         else
         {

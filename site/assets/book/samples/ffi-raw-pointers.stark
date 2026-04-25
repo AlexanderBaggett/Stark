@@ -1,0 +1,29 @@
+module Book.FfiRawPointers
+
+ffi fn i32[min max] native_value();
+
+fn bool HasAddress(rawptr<i32[min max]> ptr) {
+    return ptr != null;
+}
+
+fn i32[min max] ReadThroughRawPointer() {
+    stack mut i32[min max] value = 40;
+    stack rawmutptr<i32[min max]> writable = &value;
+
+    *writable = 42;
+
+    stack rawptr<i32[min max]> readable = (rawptr<i32[min max]>)writable;
+    if (!HasAddress(readable)) {
+        return 0;
+    }
+
+    return *readable;
+}
+
+export ffi fn i32[min max] main() {
+    if (ReadThroughRawPointer() != 42) {
+        return 1;
+    }
+
+    return 0;
+}

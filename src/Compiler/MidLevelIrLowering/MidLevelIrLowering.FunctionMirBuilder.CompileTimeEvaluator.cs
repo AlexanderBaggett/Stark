@@ -293,7 +293,14 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (statement.localConstantDeclaration() is { } localConstant)
                 {
-                    var declaredType = _builder.ResolveTypeWithGenericSubstitution(localConstant.type_(), moduleName);
+                    var declaredType = _builder.TryResolveLocalDeclarationType(
+                        TemplateLocalDeclarationFacts.ConstantKind,
+                        localConstant,
+                        out var typedLocalType)
+                        ? typedLocalType
+                        : localConstant.type_() is { } typeContext
+                            ? _builder.ResolveTypeWithGenericSubstitution(typeContext, moduleName)
+                            : StarkTypeSymbols.Error;
                     foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
                     {
                         if (declarator.variableInitializer()?.expression() is not { } initializerExpression

@@ -37,7 +37,7 @@ internal sealed class SsaLowerer
             .Select(LowerFunction)
             .ToArray();
 
-        return new SsaIrModule(mir.ModuleName, functions);
+        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
     }
 
     private SsaFunction LowerFunction(MidLevelIrFunction function)
@@ -367,6 +367,7 @@ internal sealed class SsaLowerer
                     binary.Type,
                     binary.Text)),
                 MidLevelIrCallRValue call => LowerCallRValue(blockId, block, call),
+                MidLevelIrIndirectCallRValue call => LowerIndirectCallRValue(blockId, block, call),
                 MidLevelIrConvertRValue convert => LowerConvertRValue(blockId, block, convert),
                 MidLevelIrExtractFieldRValue extract => EmitValue(block, new SsaExtractFieldRValue(
                     LowerOperand(blockId, block, extract.Target),
@@ -473,6 +474,16 @@ internal sealed class SsaLowerer
             return loweredCall;
         }
 
+        private SsaValue LowerIndirectCallRValue(int blockId, SsaBlockBuilder block, MidLevelIrIndirectCallRValue call)
+        {
+            return EmitValue(block, new SsaIndirectCallRValue(
+                LowerOperand(blockId, block, call.Target),
+                call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                call.Type,
+                call.Text,
+                call.SourceReturnType));
+        }
+
         private SsaValue LowerOperand(int blockId, SsaBlockBuilder block, MidLevelIrOperand operand)
         {
             return operand switch
@@ -486,6 +497,7 @@ internal sealed class SsaLowerer
                 MidLevelIrParameterOperand parameter => ReadVariable(blockId, parameter.Name, parameter.Type),
                 MidLevelIrGlobalOperand global => EmitValue(block, new SsaLoadGlobalRValue(global.Name, global.Type)),
                 MidLevelIrGlobalAddressOperand globalAddress => new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type),
+                MidLevelIrFunctionAddressOperand functionAddress => new SsaFunctionAddressValue(functionAddress.FunctionName, functionAddress.Type),
                 MidLevelIrIntegerConstantOperand integer => new SsaIntegerConstant(integer.Value, integer.Type),
                 MidLevelIrFloatConstantOperand floating => new SsaFloatConstant(floating.LiteralText, floating.Type),
                 MidLevelIrStringConstantOperand text => new SsaStringConstant(text.LiteralText, text.Type),
@@ -625,6 +637,8 @@ internal sealed class SsaLowerer
                 StarkTypeKind.Integer => false,
                 StarkTypeKind.Float => false,
                 StarkTypeKind.RawPointer => false,
+                StarkTypeKind.Ascii => false,
+                StarkTypeKind.Unicode => false,
                 StarkTypeKind.Null => false,
                 _ => true
             };
@@ -1389,6 +1403,12 @@ internal sealed class SsaLowerer
                         call.IndirectArgumentAddresses?
                             .Select(address => address is null ? null : RewriteValue(address, replacements))
                             .ToArray()),
+                SsaIndirectCallRValue call => new SsaIndirectCallRValue(
+                    RewriteValue(call.Target, replacements),
+                    call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
+                    call.Type,
+                    call.Text,
+                    call.SourceReturnType),
                 SsaConvertRValue convert => new SsaConvertRValue(
                     RewriteValue(convert.Operand, replacements),
                     convert.TargetType,

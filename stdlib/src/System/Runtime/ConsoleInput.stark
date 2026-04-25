@@ -1,8 +1,8 @@
 import System.IO.File
 module System.Runtime.ConsoleInput
 
-const i64[-9223372036854775808 9223372036854775807] ConsoleInputUnicodeCapacity = 8192;
-const i64[-9223372036854775808 9223372036854775807] ConsoleInputByteCapacity = 8192;
+const ConsoleInputUnicodeCapacity = 8192;
+const ConsoleInputByteCapacity = 8192;
 
 internal struct ConsoleByteStorage {
     i8[-128 127][8192] Storage;

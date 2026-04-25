@@ -220,6 +220,11 @@ internal static partial class PackageImageLoader
                         builder.Append("ffi ");
                     }
 
+                    if (method.IsUnsafe)
+                    {
+                        builder.Append("unsafe ");
+                    }
+
                     builder.Append(RenderFunctionKind(method.Kind));
                     builder.Append(' ');
                     builder.Append(method.ReturnType);
@@ -259,7 +264,7 @@ internal static partial class PackageImageLoader
             if (string.Equals(global.Kind, "globalconstant", StringComparison.Ordinal))
             {
                 builder.Append("const ");
-                builder.Append(global.Type);
+                builder.Append(RenderConstGlobalType(global.Type));
                 builder.Append(' ');
                 builder.Append(global.Name);
                 builder.AppendLine(" = 0;");
@@ -496,6 +501,16 @@ internal static partial class PackageImageLoader
             builder.Append("ffi ");
         }
 
+        if (function.IsVarargs)
+        {
+            builder.Append("varargs ");
+        }
+
+        if (function.IsUnsafe)
+        {
+            builder.Append("unsafe ");
+        }
+
         if (function.Asm is not null)
         {
             builder.Append("asm(");
@@ -590,6 +605,7 @@ internal static partial class PackageImageLoader
         string returnType,
         IReadOnlyList<StarkPackageTypedParameterManifest> parameters,
         bool isFfi,
+        bool isVarargs,
         bool isStrictFp,
         bool isHot,
         bool isCold,
@@ -599,7 +615,8 @@ internal static partial class PackageImageLoader
         IReadOnlyList<string>? genericParameters,
         bool hasBody = false,
         bool isStatic = false,
-        string? publishedOverloadKey = null)
+        string? publishedOverloadKey = null,
+        bool isUnsafe = false)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
@@ -615,7 +632,9 @@ internal static partial class PackageImageLoader
                 IsHot: isHot,
                 IsCold: isCold,
                 IsFfi: isFfi,
-                IsStrictFp: isStrictFp),
+                IsVarargs: isVarargs,
+                IsStrictFp: isStrictFp,
+                IsUnsafe: isUnsafe),
             HasBody: hasBody,
             Asm: CreateAsmModel(asm),
             GenericParameterNames: genericParameters ?? [],
@@ -636,6 +655,20 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
+            if (template.TypedBody is not null)
+            {
+                if (CanOmitBridgeBodyText(template.TypedBody))
+                {
+                    continue;
+                }
+
+                if (TryRenderGenericTemplateBody(template, out var renderedBodyText))
+                {
+                    templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
+                    continue;
+                }
+            }
+
             if (!string.IsNullOrEmpty(template.BodyText))
             {
                 templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
@@ -651,6 +684,21 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
+            if (template.TypedBody is not null)
+            {
+                if (CanOmitBridgeBodyText(template.TypedBody))
+                {
+                    continue;
+                }
+
+                if (TryRenderGenericTemplateBody(template, out var renderedBodyText))
+                {
+                    templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
+                }
+
+                continue;
+            }
+
             if (!string.IsNullOrEmpty(template.BodyText))
             {
                 templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
@@ -1127,7 +1175,9 @@ internal static partial class PackageImageLoader
                     }
                 }
 
-                localBuilder.Append(statement.Type.DisplayName);
+                localBuilder.Append(statement.IsConstant
+                    ? RenderConstLocalType(statement.Type)
+                    : statement.Type.DisplayName);
                 localBuilder.Append(' ');
                 localBuilder.Append(statement.Name);
                 localBuilder.Append(" = ");
@@ -1881,7 +1931,9 @@ internal static partial class PackageImageLoader
             function.IsHot,
             function.IsCold,
             function.InlinePreference,
-            function.HasExplicitInlinePreference);
+            function.HasExplicitInlinePreference,
+            function.IsUnsafe,
+            function.IsVarargs);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -1924,7 +1976,9 @@ internal static partial class PackageImageLoader
                 method.InlinePreference,
                 method.HasExplicitInlinePreference,
                 method.IsStatic,
-                method.Visibility))
+                method.Visibility,
+                method.IsUnsafe,
+                method.IsVarargs))
                 .ToArray(),
             type.Destructor);
     }
@@ -1948,6 +2002,29 @@ internal static partial class PackageImageLoader
             typeAlias.Visibility,
             RenderTypeReference(typeAlias.TargetType),
             typeAlias.GenericParameters);
+    }
+
+    private static string RenderConstGlobalType(string typeText)
+    {
+        var rangeStart = typeText.IndexOf('[');
+        if (rangeStart <= 1
+            || typeText[0] is not ('i' or 'u')
+            || !typeText[..rangeStart].Skip(1).All(char.IsDigit)
+            || typeText.IndexOf(']', rangeStart + 1) != typeText.Length - 1)
+        {
+            return typeText;
+        }
+
+        return typeText[..rangeStart];
+    }
+
+    private static string RenderConstLocalType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Integer
+            && type.BitWidth is int width
+            && type.ElementType is null
+            ? $"{(type.IsUnsigned ? "u" : "i")}{width}"
+            : type.DisplayName;
     }
 
 }

@@ -1,0 +1,25 @@
+module Book.CallableValues
+
+fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+    return left + right;
+}
+
+fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value) {
+    return op(value);
+}
+
+export ffi fn i32[min max] main() {
+    stack fnptr<fn i32[min max](i32[min max], i32[min max])> add = Add;
+    stack fnptr<fn i32[min max](i32[min max])> increment =
+        (i32[min max] value) => value + 1;
+
+    if (add(20, 22) != 42) {
+        return 1;
+    }
+
+    if (Apply(increment, 41) != 42) {
+        return 2;
+    }
+
+    return 0;
+}

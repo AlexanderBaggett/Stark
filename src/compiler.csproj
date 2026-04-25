@@ -14,4 +14,16 @@
     <None Include="$(AntlrGrammar)" Link="Stark.g4" Visible="false" />
   </ItemGroup>
 
+  <Target Name="WriteCompilerLauncherToRepoRoot" AfterTargets="Build" Condition="'$(WriteCompilerLauncherToRepoRoot)' != 'false'">
+    <ItemGroup>
+      <StarkUnixLauncherLine Include="#!/usr/bin/env sh" />
+      <StarkUnixLauncherLine Include="exec dotnet &quot;$(TargetPath)&quot; &quot;$@&quot;" />
+      <StarkWindowsLauncherLine Include="@echo off" />
+      <StarkWindowsLauncherLine Include="dotnet &quot;$(TargetPath)&quot; %*" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)/../stark" Lines="@(StarkUnixLauncherLine)" Overwrite="true" Condition="'$(OS)' != 'Windows_NT'" />
+    <Exec Command="chmod +x &quot;$(MSBuildProjectDirectory)/../stark&quot;" Condition="'$(OS)' != 'Windows_NT'" />
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)/../stark.cmd" Lines="@(StarkWindowsLauncherLine)" Overwrite="true" Condition="'$(OS)' == 'Windows_NT'" />
+  </Target>
+
 </Project>

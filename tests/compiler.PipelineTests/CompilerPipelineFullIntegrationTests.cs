@@ -2872,7 +2872,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            public const i32[-2147483648 2147483647] Answer = 42;
+            public const Answer = 42;
             internal static rawptr<i8[-128 127]> Buffer = null;
 
             fn i32[-2147483648 2147483647] Run() {
@@ -2888,8 +2888,8 @@ public sealed class CompilerPipelineFullIntegrationTests
 
         Assert.True(typeCheckModel.NamedTypes.ContainsKey("Widget"));
         Assert.True(typeCheckModel.Globals.ContainsKey("Answer"));
+        Assert.Equal("i8[42 42]", typeCheckModel.Globals["Answer"].Type.DisplayName);
         Assert.Equal("i32", typeCheckModel.Functions["Run"].ReturnType.DisplayName);
-        Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "42" && literal.Type.DisplayName == "i8[42 42]");
         Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "null" && literal.Type.Kind == StarkTypeKind.Null);
     }
 
@@ -4535,6 +4535,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                             IsHot: false,
                             IsCold: false,
                             IsFfi: false,
+                            IsVarargs: false,
                             IsStrictFp: false),
                         HasBody: false,
                         PublishedOverloadKey: "(BufferView)")),
@@ -4562,6 +4563,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                             IsHot: false,
                             IsCold: false,
                             IsFfi: false,
+                            IsVarargs: false,
                             IsStrictFp: false),
                         HasBody: false,
                         PublishedOverloadKey: "(borrowBox,BufferView)"))
@@ -5045,7 +5047,11 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             Assert.NotNull(facadeModule.TypedInterface);
             Assert.DoesNotContain(facadeModule.TypedInterface!.Functions, static function => function.QualifiedResolvedName == "Facade.LocalIdentity");
-            Assert.DoesNotContain(facadeModule.TypedInterface.Functions, static function => function.QualifiedResolvedName == "Facade.InternalIdentity");
+            var internalIdentity = Assert.Single(
+                facadeModule.TypedInterface.Functions,
+                static function => function.QualifiedResolvedName == "Facade.InternalIdentity");
+            Assert.Equal("internal", internalIdentity.Visibility);
+            Assert.False(internalIdentity.HasGenericTemplateBody);
 
             var publicIdentity = Assert.Single(
                 facadeModule.TypedInterface.Functions,
@@ -5058,7 +5064,14 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.False(concreteIdentity.HasGenericTemplateBody);
 
             Assert.DoesNotContain(facadeModule.TypedInterface.Types, static type => type.QualifiedName == "Facade.LocalBox");
-            Assert.DoesNotContain(facadeModule.TypedInterface.Types, static type => type.QualifiedName == "Facade.InternalBox");
+            var internalBox = Assert.Single(
+                facadeModule.TypedInterface.Types,
+                static type => type.QualifiedName == "Facade.InternalBox");
+            Assert.Equal("internal", internalBox.Visibility);
+            var internalEcho = Assert.Single(
+                internalBox.Methods!,
+                static method => method.QualifiedResolvedName == "Facade.InternalBox.Echo");
+            Assert.False(internalEcho.HasGenericTemplateBody);
 
             var publicBox = Assert.Single(
                 facadeModule.TypedInterface.Types,
@@ -6486,7 +6499,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public fn T Identity<T>(T value) {
                     stack T copy = value;
-                    const i32[-2147483648 2147483647] one = 1;
+                    const one = 1;
                     return copy;
                 }
                 """,
@@ -6511,7 +6524,9 @@ public sealed class CompilerPipelineFullIntegrationTests
             var localConstant = template.LocalDeclarations[1];
             Assert.Equal("const", localConstant.Kind);
             Assert.Equal("integer", localConstant.Type.Kind);
-            Assert.Equal(32, localConstant.Type.BitWidth);
+            Assert.Equal(8, localConstant.Type.BitWidth);
+            Assert.Equal("1", localConstant.Type.RangeMin);
+            Assert.Equal("1", localConstant.Type.RangeMax);
         }
         finally
         {

@@ -1,0 +1,24 @@
+import System
+module StandardLibraryExample
+
+finite law bool BitOperationsWork() {
+    stack i32[min max] answerBits = 42;
+    stack i32[min max] lowBit = 1;
+    stack i32[min max] rotateAmount = 3;
+
+    return System.BitOperations.PopCount(answerBits) == 3
+        && System.BitOperations.LeadingZeroCount(lowBit) == 31
+        && System.BitOperations.RotateLeft(lowBit, rotateAmount) == 8;
+}
+
+export ffi fn i32[min max] main() {
+    if (!BitOperationsWork()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Standard library ready") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

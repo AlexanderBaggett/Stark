@@ -32,7 +32,7 @@ internal sealed class LlvmFunctionSignatureBuilder
         }
 
         segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
-        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeName: false, parameterEffects)))})");
+        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({RenderAbiParameterList(abiFunction, includeNames: false, parameterEffects)})");
 
         var attributes = _attributeBuilder.BuildFunctionAttributes(abiFunction, effects, memoryEffects);
         if (!string.IsNullOrWhiteSpace(attributes))
@@ -70,7 +70,7 @@ internal sealed class LlvmFunctionSignatureBuilder
         }
 
         segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
-        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({string.Join(", ", abiFunction.Parameters.Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeName: true, parameterEffects)))})");
+        segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({RenderAbiParameterList(abiFunction, includeNames: true, parameterEffects)})");
 
         if (ResolveDefinitionAddressAttribute(internalize, specializationLinkage) is { } addressAttribute)
         {
@@ -89,6 +89,23 @@ internal sealed class LlvmFunctionSignatureBuilder
         }
 
         return string.Join(" ", segments);
+    }
+
+    private string RenderAbiParameterList(
+        AbiFunctionSignature abiFunction,
+        bool includeNames,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        var parameters = abiFunction.Parameters
+            .Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeNames, parameterEffects))
+            .ToList();
+
+        if (abiFunction.IsVarargs)
+        {
+            parameters.Add("...");
+        }
+
+        return string.Join(", ", parameters);
     }
 
     private static string? ResolveDefinitionLinkageKeyword(

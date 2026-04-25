@@ -783,15 +783,17 @@ internal sealed class NonLexicalBorrowLifetimeValidator
             return type.IsMutableView;
         }
 
-        return type.Kind switch
-        {
-            StarkTypeKind.Bool => false,
-            StarkTypeKind.Integer => false,
-            StarkTypeKind.Float => false,
-            StarkTypeKind.RawPointer => false,
-            StarkTypeKind.Null => false,
-            _ => true
-        };
+            return type.Kind switch
+            {
+                StarkTypeKind.Bool => false,
+                StarkTypeKind.Integer => false,
+                StarkTypeKind.Float => false,
+                StarkTypeKind.RawPointer => false,
+                StarkTypeKind.Ascii => false,
+                StarkTypeKind.Unicode => false,
+                StarkTypeKind.Null => false,
+                _ => true
+            };
     }
 
     private static string DescribeOwnerAction(string ownerName, string action)

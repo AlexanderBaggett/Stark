@@ -146,6 +146,39 @@ public sealed class OwnershipValidationTests
     }
 
     [Fact]
+    public void ImmutableTextViewsRemainUsableAfterByValueCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i64[0 max] ReadAscii(ascii value) {
+                return 1;
+            }
+
+            finite law i64[0 max] ReadUnicode(unicode value) {
+                return 1;
+            }
+
+            finite law i64[0 max] Run() {
+                stack ascii text = "alpha";
+                stack unicode wide = (unicode)"beta";
+                stack i64[0 max] first = ReadAscii(text);
+                stack i64[0 max] second = ReadAscii(text);
+                stack i64[0 max] third = ReadUnicode(wide);
+                stack i64[0 max] fourth = ReadUnicode(wide);
+                return first + second + third + fourth;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.DoesNotContain("text", ownership.Functions["Run"].Moves);
+        Assert.DoesNotContain("wide", ownership.Functions["Run"].Moves);
+    }
+
+    [Fact]
     public void ReassigningOwnedLocalDropsPreviousValue()
     {
         var result = Compile(
@@ -227,13 +260,20 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
-            struct Container {
-                ascii Name;
-                ascii Label;
+            struct Name {
+                i32[-2147483648 2147483647] Value;
             }
 
-            finite law ascii Run() {
-                stack Container value = new Container() { Name = "hi", Label = "there" };
+            struct Container {
+                Name Name;
+                Name Label;
+            }
+
+            finite law Name Run() {
+                stack Container value = new Container() {
+                    Name = new Name() { Value = 1 },
+                    Label = new Name() { Value = 2 }
+                };
                 return value.Name;
             }
             """);
@@ -251,16 +291,24 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
+            struct Name {
+                i32[-2147483648 2147483647] Value;
+            }
+
             struct NameBox {
-                ascii Value;
+                Name Value;
             }
 
             struct Container {
                 NameBox Name;
             }
 
-            finite law ascii Run() {
-                stack Container value = new Container() { Name = new NameBox() { Value = "hi" } };
+            finite law Name Run() {
+                stack Container value = new Container() {
+                    Name = new NameBox() {
+                        Value = new Name() { Value = 1 }
+                    }
+                };
                 return value.Name.Value;
             }
             """);
@@ -297,9 +345,66 @@ public sealed class OwnershipValidationTests
         AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
     }
 
-    private static CompilationResult Compile(string source)
+    [Fact]
+    public void RuntimeTextConcatenationConsumesOwnedTextResult()
     {
-        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
+        var result = Compile(
+            """
+            import System.Memory
+            import System.Text
+            module Demo
+
+            fn System.Memory.MemoryResult<System.Text.OwnedAscii> Make();
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = Make();
+                stack System.Memory.MemoryResult<System.Text.OwnedAscii> joined = "Score: " + result;
+                stack System.Memory.MemoryResult<System.Text.OwnedAscii> second = result;
+                return 0;
+            }
+            """,
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Memory", "/virtual/System.Memory.stark", IsExternal: false),
+                        """
+                        module System.Memory
+
+                        public enum MemoryError {
+                            OutOfMemory,
+                        }
+
+                        public enum MemoryResult<T> {
+                            Ok(T),
+                            Err(MemoryError),
+                        }
+                        """,
+                        "/virtual/System.Memory.stark"
+                    ),
+                    (
+                        new ResolvedModuleReference("System.Text", "/virtual/System.Text.stark", IsExternal: false),
+                        """
+                        import System.Memory
+                        module System.Text
+
+                        public struct OwnedAscii {
+                            ascii Text;
+                        }
+
+                        public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+                        """,
+                        "/virtual/System.Text.stark"
+                    )
+                ])));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
+    }
+
+    private static CompilationResult Compile(string source, CompilerOptions? options = null)
+    {
+        return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);
     }
 
     private static OwnershipValidationModel GetOwnership(CompilationResult result)

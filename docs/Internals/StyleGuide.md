@@ -120,11 +120,11 @@ Examples:
 
 ```stark
 struct Box {
-    i32 Width;
-    i32 Height;
+    i32[min max] Width;
+    i32[min max] Height;
 }
 
-record Point(i32 X, i32 Y) { }
+record Point(i32[min max] X, i32[min max] Y) { }
 ```
 
 This matches Stark's C#-like surface and keeps type shapes visually consistent with constructors and object initializers.
@@ -136,8 +136,8 @@ For Stark-owned top-level globals and constants, use `PascalCase`.
 Examples:
 
 ```stark
-const i32 PageSize = 4096;
-static mut i32 GlobalCounter = 0;
+const PageSize = 2**12;
+static mut i32[min max] GlobalCounter = 0;
 ```
 
 Do not use screaming snake case for ordinary Stark declarations.

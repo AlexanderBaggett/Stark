@@ -5,6 +5,38 @@ namespace compiler.Tests;
 public sealed partial class MidLevelIrLoweringTests
 {
     [Fact]
+    public void PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnostics()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Error {
+                Unknown(i32[-2147483648 2147483647]),
+            }
+
+            enum Result<T> {
+                Ok(T),
+                Err(Error),
+            }
+
+            fn Result<bool> Ok() {
+                return Result<bool>.Ok(true);
+            }
+
+            fn Result<bool> Bad() {
+                return Result<bool>.Err(Error.Unknown(-1));
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var mir = GetMir(result);
+        Assert.Contains(mir.Functions, static function => function.Name == "Ok" && function.SupportsDirectCodeGeneration);
+        Assert.Contains(mir.Functions, static function => function.Name == "Bad" && function.SupportsDirectCodeGeneration);
+    }
+
+    [Fact]
     public void IfStatementsLowerToBranchingBlocks()
     {
         var result = Compile(

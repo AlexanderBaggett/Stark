@@ -1,0 +1,34 @@
+import System
+module Book.Stdlib.MemoryCollections
+
+finite law bool MemoryOk(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut System.Collections.List<i32[0 max]> values = new();
+
+    if (!MemoryOk(values.Push(10))) {
+        return 1;
+    }
+
+    if (!MemoryOk(values.Push(32))) {
+        return 2;
+    }
+
+    if (values.Count() != 2) {
+        return 3;
+    }
+
+    stack mut i32[0 max] popped = 0;
+    if (!values.TryPop(popped) || popped != 32) {
+        return 4;
+    }
+
+    return 0;
+}

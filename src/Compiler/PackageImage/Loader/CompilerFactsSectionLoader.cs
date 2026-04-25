@@ -17,11 +17,13 @@ internal static partial class PackageImageLoader
         var loadedEnumLayouts = new Dictionary<string, EnumLayoutSymbol>(StringComparer.Ordinal);
         var loadedFunctionSemantics = new Dictionary<string, ImportedFunctionSemanticSummary>(StringComparer.Ordinal);
         var loadedFunctionTemplates = new Dictionary<string, ImportedFunctionTemplateSummary>(StringComparer.Ordinal);
+        PackageImageLinkageFacts? loadedLinkage = null;
         var localNamedTypes = CollectLocalNamedTypes(module);
 
         foreach (var function in module.Module.EffectiveTypedInterface?.Functions ?? [])
         {
             var qualifiedResolvedName = function.QualifiedResolvedName ?? function.QualifiedName;
+            _ = TryParseFunctionKind(function.Kind, out var functionKind);
             loadedFunctionSignatures[qualifiedResolvedName] = new TypedFunctionSignature(
                 qualifiedResolvedName,
                 BuildTypeSymbol(function.ReturnType, module.Module.ModuleName, localNamedTypes),
@@ -31,7 +33,10 @@ internal static partial class PackageImageLoader
                         BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
                     .ToArray(),
                 SourceName: function.QualifiedName,
-                GenericParameterNames: function.GenericParameters?.Count > 0 ? function.GenericParameters.ToArray() : null);
+                GenericParameterNames: function.GenericParameters?.Count > 0 ? function.GenericParameters.ToArray() : null,
+                Kind: functionKind,
+                IsUnsafe: function.IsUnsafe,
+                IsVarargs: function.IsVarargs);
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -42,6 +47,7 @@ internal static partial class PackageImageLoader
                 var genericParameterNames = FunctionGenericParameterFacts.CombineGenericParameterNames(
                     type.GenericParameters,
                     method.GenericParameters);
+                _ = TryParseFunctionKind(method.Kind, out var methodKind);
                 loadedFunctionSignatures[qualifiedResolvedName] = new TypedFunctionSignature(
                     qualifiedResolvedName,
                     BuildTypeSymbol(method.ReturnType, module.Module.ModuleName, localNamedTypes),
@@ -52,7 +58,10 @@ internal static partial class PackageImageLoader
                     .ToArray(),
                     SourceName: method.QualifiedName,
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
-                    IsStatic: method.IsStatic);
+                    IsStatic: method.IsStatic,
+                    Kind: methodKind,
+                    IsUnsafe: method.IsUnsafe,
+                    IsVarargs: method.IsVarargs);
             }
         }
 
@@ -203,6 +212,7 @@ internal static partial class PackageImageLoader
                     MustProgress: functionEffect.MustProgress,
                     UseFastCallingConvention: functionEffect.UseFastCallingConvention,
                     IsFfi: functionEffect.IsFfi,
+                    IsVarargs: functionEffect.IsVarargs,
                     IsHot: functionEffect.IsHot,
                     IsCold: functionEffect.IsCold,
                     InlinePreference: inlinePreference,
@@ -244,6 +254,14 @@ internal static partial class PackageImageLoader
                 }
 
                 loadedFunctionSemantics[functionSemantic.QualifiedResolvedName] = summary;
+            }
+
+            if (compilerFacts.Linkage is not null)
+            {
+                if (!TryBuildPackageImageLinkageFacts(compilerFacts.Linkage, out loadedLinkage))
+                {
+                    return false;
+                }
             }
         }
 
@@ -401,7 +419,12 @@ internal static partial class PackageImageLoader
             && loadedFunctionSemantics.Count == 0
             && loadedFunctionTemplates.Count == 0)
         {
-            return false;
+            if (module.Module.EffectiveTypedInterface is null
+                && module.Module.EffectiveCompilerFacts is null
+                && module.Module.EffectiveGenericTemplates is null)
+            {
+                return false;
+            }
         }
 
         facts = new LoadedPackageImageFacts(
@@ -415,7 +438,30 @@ internal static partial class PackageImageLoader
             loadedConcreteLayouts,
             loadedEnumLayouts,
             loadedFunctionSemantics,
-            loadedFunctionTemplates);
+            loadedFunctionTemplates,
+            loadedLinkage);
+        return true;
+    }
+
+    private static bool TryBuildPackageImageLinkageFacts(
+        StarkPackageLinkageManifest linkage,
+        out PackageImageLinkageFacts facts)
+    {
+        facts = default!;
+        if (string.IsNullOrWhiteSpace(linkage.ObjectFileName)
+            || linkage.DefinedSymbols is null)
+        {
+            return false;
+        }
+
+        facts = new PackageImageLinkageFacts(
+            linkage.ObjectFileName,
+            linkage.DefinedSymbols
+                .Where(static symbol => !string.IsNullOrWhiteSpace(symbol))
+                .ToHashSet(StringComparer.Ordinal),
+            (linkage.ReferencedSymbols ?? [])
+                .Where(static symbol => !string.IsNullOrWhiteSpace(symbol))
+                .ToHashSet(StringComparer.Ordinal));
         return true;
     }
 
@@ -466,7 +512,8 @@ internal static partial class PackageImageLoader
             parameters,
             abiFunction.IsFfi,
             SourceName: abiFunction.SourceName,
-            UsesFastCallingConvention: abiFunction.UsesFastCallingConvention);
+            UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
+            IsVarargs: abiFunction.IsVarargs);
         return true;
     }
 

@@ -1,0 +1,23 @@
+{{ define "main" }}
+<section class="page book-index">
+    {{ .Content }}
+    <section class="book-toc" aria-label="Book table of contents">
+        {{ $parts := slice "Book Metadata" "Part I: First Contact" "Part II: Stark's Core Language" "Part III: Packages, Effects, and Boundaries" "Part IV: The Standard Library" "Part V: Performance and Systems Programming" "Part VI: Projects" "Appendices" }}
+        {{ range $parts }}
+            {{ $part := . }}
+            {{ $pages := where $.Pages.ByWeight "Params.book_part" $part }}
+            {{ if $pages }}
+            <h2>{{ $part }}</h2>
+            <ol>
+                {{ range $pages }}
+                    <li>
+                        <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+                        {{ with .Params.book_status }}<span>{{ . }}</span>{{ end }}
+                    </li>
+                {{ end }}
+            </ol>
+            {{ end }}
+        {{ end }}
+    </section>
+</section>
+{{ end }}

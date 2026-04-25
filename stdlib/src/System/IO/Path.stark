@@ -1,3 +1,4 @@
+import System.Memory
 import System.Runtime.Platform
 import System.Text
 module System.IO.Path
@@ -19,6 +20,19 @@ internal fn void ResetDestination(rawmutptr<Ascii> destination) {
         Length = 0,
         Capacity = capacity
     };
+}
+
+fn System.Memory.MemoryResult<System.Text.OwnedAscii> FinishOwnedPathAscii(rawmutptr<i8[-128 127]> pointer, i64[0 max] byteLength, Ascii text) {
+    stack System.Text.OwnedAscii owned = new System.Text.OwnedAscii() {
+        Text = text,
+        Allocation = new System.Memory.Allocation() {
+            Pointer = pointer,
+            ByteLength = byteLength,
+            Alignment = 1,
+            Allocator = System.Memory.Allocator.Default()
+        }
+    };
+    return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(owned);
 }
 
 public finite law ascii DirectorySeparator() {
@@ -131,6 +145,81 @@ public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right) {
 
     (*destination).Length = required;
     return true;
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right) {
+    stack i64[-9223372036854775808 9223372036854775807] leftLength = System.Text.AsciiLength(left);
+    stack i64[-9223372036854775808 9223372036854775807] rightLength = System.Text.AsciiLength(right);
+    if (leftLength < 0 || rightLength < 0) {
+        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack mut i64[0 max] capacity = 0;
+    if (leftLength > 0 && rightLength > 0) {
+        if (IsDirectorySeparator(left[leftLength - 1, 1])) {
+            if (IsDirectorySeparator(right[0, 1])) {
+                if (leftLength > 9223372036854775807 - (rightLength - 1)) {
+                    return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+                }
+
+                capacity = (i64[0 max])(leftLength + rightLength - 1);
+            } else {
+                capacity = (i64[0 max])(leftLength + rightLength);
+            }
+        } else {
+            if (!IsDirectorySeparator(right[0, 1])) {
+                if (leftLength > 9223372036854775806 - rightLength) {
+                    return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+                }
+
+                capacity = (i64[0 max])(leftLength + rightLength + 1);
+            } else {
+                if (leftLength > 9223372036854775807 - rightLength) {
+                    return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+                }
+
+                capacity = (i64[0 max])(leftLength + rightLength);
+            }
+        }
+    } else {
+        if (leftLength > 9223372036854775807 - rightLength) {
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        capacity = (i64[0 max])(leftLength + rightLength);
+    }
+
+    stack mut System.Memory.Allocation allocation = new System.Memory.Allocation() {
+        Pointer = null,
+        ByteLength = 0,
+        Alignment = 1,
+        Allocator = System.Memory.Allocator.Default()
+    };
+    stack mut rawmutptr<i8[-128 127]> pointer = null;
+
+    if (capacity > 0) {
+        allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), capacity, 1);
+        if (allocation.Pointer == null) {
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        pointer = allocation.Pointer;
+    }
+
+    stack mut Ascii joined = new Ascii() {
+        Data = pointer,
+        Length = 0,
+        Capacity = capacity
+    };
+    if (!TryJoin(&joined, left, right)) {
+        if (pointer != null) {
+            System.Memory.Free(allocation);
+        }
+
+        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    return FinishOwnedPathAscii(pointer, capacity, joined);
 }
 
 public finite law ascii Extension(ascii path) {

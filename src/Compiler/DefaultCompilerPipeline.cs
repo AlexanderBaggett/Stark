@@ -487,6 +487,7 @@ public static class DefaultCompilerPipeline
                     MustProgress: false,
                     UseFastCallingConvention: false,
                     IsFfi: true,
+                    IsVarargs: false,
                     IsHot: false,
                     IsCold: false,
                     InlinePreference: InlinePreference.InlineHint,
@@ -509,6 +510,7 @@ public static class DefaultCompilerPipeline
                 MustProgress: isFinite,
                 UseFastCallingConvention: !function.Modifiers.IsFfi,
                 IsFfi: function.Modifiers.IsFfi,
+                IsVarargs: function.Modifiers.IsVarargs,
                 IsHot: function.Modifiers.IsHot,
                 IsCold: function.Modifiers.IsCold,
                 InlinePreference: function.Modifiers.InlinePreference,
@@ -2285,6 +2287,29 @@ public static class DefaultCompilerPipeline
                 };
             }
 
+            foreach (var lambda in typeModel.Lambdas)
+            {
+                var lambdaEffects = CallableValueFacts.BuildLambdaEffectProfile(lambda);
+                if (validationModel.Functions.TryGetValue(lambda.FunctionName, out var lambdaSummary))
+                {
+                    var effectiveKind = lambdaSummary.EffectiveKind;
+                    var isLaw = FunctionKindFacts.IsLaw(effectiveKind);
+                    var isFinite = FunctionKindFacts.IsFinite(effectiveKind);
+                    lambdaEffects = lambdaEffects with
+                    {
+                        Kind = effectiveKind,
+                        ReadsArgumentMemory = lambdaSummary.MemoryEffects?.ReadsArgumentMemory ?? lambdaEffects.ReadsArgumentMemory,
+                        IsPure = isLaw,
+                        NoSync = isLaw,
+                        NoFree = isLaw,
+                        WillReturn = isFinite,
+                        MustProgress = isFinite
+                    };
+                }
+
+                refined[lambda.FunctionName] = lambdaEffects;
+            }
+
             var refinedModel = new FunctionEffectModel(effectModel.ModuleName, refined);
             context.Artifacts.Set(CompilerArtifactKeys.FunctionEffects, refinedModel);
             context.Artifacts.Set(
@@ -3065,6 +3090,24 @@ public static class DefaultCompilerPipeline
                     .Where(static function => function is not null)
                     .Select(static function => function!))
                 .ToArray();
+            var lambdaFunctions = types.Lambdas
+                .Select(lambda =>
+                {
+                    var signature = types.Functions.TryGetValue(lambda.FunctionName, out var typedSignature)
+                        ? typedSignature
+                        : CallableValueFacts.BuildLambdaSignature(lambda);
+                    var profile = effects.Functions.TryGetValue(lambda.FunctionName, out var lambdaEffects)
+                        ? lambdaEffects
+                        : CallableValueFacts.BuildLambdaEffectProfile(lambda);
+
+                    return new HighLevelIrFunction(
+                        lambda.FunctionName,
+                        signature,
+                        HasBody: true,
+                        BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                        Effects: profile);
+                })
+                .ToArray();
             var declarationsByQualifiedName = CollectFunctionDeclarationsByQualifiedName(loadedModules);
             var specializedFunctions = MaterializeSpecializedFunctions(
                 specializationStrategy,
@@ -3073,12 +3116,21 @@ public static class DefaultCompilerPipeline
                 types.Functions,
                 fallbackSignatures);
             var functions = declaredFunctions
+                .Concat(lambdaFunctions)
                 .Concat(specializedFunctions)
                 .ToArray();
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.HighLevelIr,
-                new HighLevelIrModule(loadedModules.RootModuleName, functions));
+                new HighLevelIrModule(
+                    loadedModules.RootModuleName,
+                    functions,
+                    types.AddressTakenFunctions
+                        .Select(static function => function.Signature.Name)
+                        .Concat(types.Lambdas.Select(static lambda => lambda.FunctionName))
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(static name => name, StringComparer.Ordinal)
+                        .ToArray()));
         }
 
         private static IReadOnlyDictionary<string, FunctionDeclarationModel> CollectFunctionDeclarationsByQualifiedName(
@@ -3222,7 +3274,8 @@ public static class DefaultCompilerPipeline
                         parameters,
                         SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                         GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
-                        IsStatic: declaration.IsStatic);
+                        IsStatic: declaration.IsStatic,
+                        IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)));
                 }
             }
 

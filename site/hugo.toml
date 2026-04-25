@@ -1,0 +1,12 @@
+baseURL = "https://stark-lang.invalid/"
+languageCode = "en-us"
+title = "Stark"
+disableKinds = ["taxonomy", "term"]
+
+[markup]
+  [markup.highlight]
+    noClasses = false
+
+[params]
+  description = "Stark is a restrictive, performance-focused language targeting LLVM."
+  bookVersion = "v1.35 draft"

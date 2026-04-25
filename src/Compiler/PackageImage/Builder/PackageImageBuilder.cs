@@ -4,7 +4,8 @@ internal static partial class PackageImageBuilder
 {
     public static StarkPackageManifest Create(
         CompilationResult result,
-        string libraryOutputPath)
+        string libraryOutputPath,
+        StarkPackageNativeDependencyManifest? nativeDependencies = null)
     {
         var loadedModules = result.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
         var moduleGraph = result.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
@@ -15,8 +16,8 @@ internal static partial class PackageImageBuilder
         result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validationModel);
 
         var modules = new List<StarkPackageModuleManifest>();
-        var publishedModuleNames = loadedModules.Modules.Values
-            .Where(HasPublishedSurface)
+        var packagedModuleNames = loadedModules.Modules.Values
+            .Where(HasPackageImageSurface)
             .Select(static module => module.SyntaxModel.ModuleName)
             .ToHashSet(StringComparer.Ordinal);
 
@@ -28,7 +29,7 @@ internal static partial class PackageImageBuilder
                 .Select(static import => new StarkPackageReExportManifest(import.ModuleName))
                 .ToArray();
             var imports = module.SyntaxModel.Imports
-                .Where(import => import.IsReExport || publishedModuleNames.Contains(import.ModuleName))
+                .Where(import => import.IsReExport || packagedModuleNames.Contains(import.ModuleName))
                 .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
                 .ThenByDescending(static import => import.IsReExport)
                 .Select(static import => new StarkPackageImportManifest(import.ModuleName, import.IsReExport))
@@ -231,7 +232,8 @@ internal static partial class PackageImageBuilder
                         AbiFunctions: abiFunctions,
                         ConcreteLayouts: concreteLayouts,
                         EnumLayouts: enumLayouts,
-                        FunctionSemantics: functionSemantics),
+                        FunctionSemantics: functionSemantics,
+                        Linkage: BuildLinkageManifest(module, abiModel, abiFunctions, functionSemantics)),
                     GenericTemplates: genericTemplates.Count == 0
                         ? null
                         : new StarkPackageGenericTemplateSection(genericTemplates))));
@@ -240,7 +242,57 @@ internal static partial class PackageImageBuilder
         return new StarkPackageManifest(
             loadedModules.RootModuleName,
             Path.GetFileName(libraryOutputPath),
-            modules);
+            modules,
+            NormalizeNativeDependencies(nativeDependencies));
+    }
+
+    private static StarkPackageNativeDependencyManifest? NormalizeNativeDependencies(StarkPackageNativeDependencyManifest? dependencies)
+    {
+        if (dependencies is null)
+        {
+            return null;
+        }
+
+        var sources = NormalizeNativeDependencyList(dependencies.Sources);
+        var includeDirectories = NormalizeNativeDependencyList(dependencies.IncludeDirectories);
+        var libraryDirectories = NormalizeNativeDependencyList(dependencies.LibraryDirectories);
+        var libraries = NormalizeNativeDependencyList(dependencies.Libraries);
+        var linkArguments = NormalizeNativeDependencyList(dependencies.LinkArguments);
+        var pkgConfigPackages = NormalizeNativeDependencyList(dependencies.PkgConfigPackages);
+
+        if (sources is null
+            && includeDirectories is null
+            && libraryDirectories is null
+            && libraries is null
+            && linkArguments is null
+            && pkgConfigPackages is null)
+        {
+            return null;
+        }
+
+        return new StarkPackageNativeDependencyManifest(
+            sources,
+            includeDirectories,
+            libraryDirectories,
+            libraries,
+            linkArguments,
+            pkgConfigPackages);
+    }
+
+    private static IReadOnlyList<string>? NormalizeNativeDependencyList(IReadOnlyList<string>? values)
+    {
+        if (values is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var normalized = values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return normalized.Length == 0 ? null : normalized;
     }
 
     private static string LookupName(string moduleName, bool isRoot, string declarationName)
@@ -248,15 +300,72 @@ internal static partial class PackageImageBuilder
         return isRoot ? declarationName : $"{moduleName}.{declarationName}";
     }
 
-    private static bool HasPublishedSurface(LoadedModuleDocument module)
+    private static bool HasPackageImageSurface(LoadedModuleDocument module)
     {
         return module.SyntaxModel.Imports.Any(static import => import.IsReExport)
             || module.SyntaxModel.Declarations.Any(
-                static declaration => declaration.Visibility is StarkVisibility.Public or StarkVisibility.Export);
+                static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility));
     }
 
     private static bool ShouldIncludeInPackageImageSurface(StarkVisibility visibility)
     {
         return visibility is StarkVisibility.Internal or StarkVisibility.Public or StarkVisibility.Export;
+    }
+
+    private static StarkPackageLinkageManifest BuildLinkageManifest(
+        LoadedModuleDocument module,
+        AbiModel abiModel,
+        IReadOnlyList<StarkPackageAbiFunctionManifest> abiFunctions,
+        IReadOnlyList<StarkPackageFunctionSemanticManifest> functionSemantics)
+    {
+        var symbolByResolvedName = abiModel.Functions.Values
+            .GroupBy(static function => function.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => EscapeObjectSymbolName(group.First().SymbolName),
+                StringComparer.Ordinal);
+        var definedSymbols = abiFunctions
+            .Select(static function => EscapeObjectSymbolName(function.SymbolName))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+        var referencedSymbols = functionSemantics
+            .SelectMany(static semantic => semantic.CalledFunctions)
+            .Select(calledFunction => symbolByResolvedName.TryGetValue(calledFunction, out var symbolName) ? symbolName : null)
+            .Where(static symbolName => !string.IsNullOrWhiteSpace(symbolName))
+            .Cast<string>()
+            .Except(definedSymbols, StringComparer.Ordinal)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+
+        return new StarkPackageLinkageManifest(
+            BuildArchiveObjectFileName(module),
+            definedSymbols,
+            referencedSymbols.Length == 0 ? null : referencedSymbols);
+    }
+
+    private static string BuildArchiveObjectFileName(LoadedModuleDocument module)
+    {
+        var extension = OperatingSystem.IsWindows() ? ".obj" : ".o";
+        return module.Reference.IsRoot
+            ? $"root{extension}"
+            : $"{module.SyntaxModel.ModuleName.Replace(".", "_", StringComparison.Ordinal)}{extension}";
+    }
+
+    private static string EscapeObjectSymbolName(string symbolName)
+    {
+        if (string.IsNullOrWhiteSpace(symbolName))
+        {
+            return "_";
+        }
+
+        var builder = new System.Text.StringBuilder(symbolName.Length);
+        foreach (var ch in symbolName)
+        {
+            builder.Append(char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_');
+        }
+
+        return builder.ToString();
     }
 }

@@ -1,0 +1,15 @@
+module Book.Negative.LawCallsFn
+
+static i32[min max] Counter = 1;
+
+fn i32[min max] ReadsSharedState() {
+    return Counter;
+}
+
+finite law i32[min max] ClaimsPureAndFinite() {
+    return ReadsSharedState();
+}
+
+export ffi fn i32[min max] main() {
+    return ClaimsPureAndFinite();
+}

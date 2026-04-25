@@ -1,0 +1,27 @@
+import System
+module Book.Stdlib.ConsoleProcess
+
+finite law bool StatusOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool CurrentProcessLooksValid() {
+    return System.Process.CurrentId() > 0;
+}
+
+export ffi fn i32[min max] main() {
+    if (!CurrentProcessLooksValid()) {
+        return 1;
+    }
+
+    if (!StatusOk(System.Console.WriteLine("Stark standard library"))) {
+        return 2;
+    }
+
+    return 0;
+}

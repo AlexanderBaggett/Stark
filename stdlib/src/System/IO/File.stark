@@ -16,6 +16,12 @@ public enum FileBuffering {
     Full,
 }
 
+public enum SeekOrigin {
+    Begin,
+    Current,
+    End,
+}
+
 fn rawptr<i8[-128 127]> OpenHandle(ascii path, FileMode mode) {
     switch (mode) {
         case FileMode.Read:
@@ -26,6 +32,17 @@ fn rawptr<i8[-128 127]> OpenHandle(ascii path, FileMode mode) {
             return System.Runtime.Platform.OpenFileAppend(path);
         case FileMode.ReadWrite:
             return System.Runtime.Platform.OpenFileReadWrite(path);
+    }
+}
+
+finite law i32[-2147483648 2147483647] SeekOriginCode(SeekOrigin origin) {
+    switch (origin) {
+        case SeekOrigin.Begin:
+            return 0;
+        case SeekOrigin.Current:
+            return 1;
+        case SeekOrigin.End:
+            return 2;
     }
 }
 
@@ -505,6 +522,18 @@ public struct File {
         return System.Runtime.Platform.WriteFile(buffer, size, count, self.Handle);
     }
 
+    fn i64[-9223372036854775808 9223372036854775807] Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
+        if (self.Closed || self.Handle == null) {
+            return -1;
+        }
+
+        if (self.Flush() != 0) {
+            return -1;
+        }
+
+        return System.Runtime.Platform.SeekFile(self.Handle, offset, SeekOriginCode(origin));
+    }
+
     fn void WriteText(mut borrow File self, ascii text) {
         if (self.Closed || self.Handle == null) {
             return;
@@ -774,6 +803,10 @@ public fn i64[-9223372036854775808 9223372036854775807] ReadBytes(rawptr<i8[-128
 
 public fn i64[-9223372036854775808 9223372036854775807] WriteBytes(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.WriteFile(buffer, size, count, handle);
+}
+
+public fn i64[-9223372036854775808 9223372036854775807] Seek(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
+    return System.Runtime.Platform.SeekFile(handle, offset, SeekOriginCode(origin));
 }
 
 public fn void WriteText(rawptr<i8[-128 127]> handle, ascii text) {

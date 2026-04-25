@@ -7,6 +7,8 @@ namespace Stark.Compiler;
 
 internal sealed class OwnershipValidator
 {
+    private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
+
     private readonly CompilerPassContext _context;
     private readonly ParseResult _parseResult;
     private readonly SyntaxModel _syntaxModel;
@@ -51,6 +53,11 @@ internal sealed class OwnershipValidator
             }
 
             var summary = ValidateFunction(functionDeclaration, signature);
+            summaries[name] = summary;
+        }
+
+        foreach (var (name, summary) in ValidateLambdaFunctions())
+        {
             summaries[name] = summary;
         }
 
@@ -146,10 +153,21 @@ internal sealed class OwnershipValidator
             return;
         }
 
+        if (statement.unsafeStatement() is { } unsafeStatement)
+        {
+            CheckBlock(unsafeStatement.block(), state, signature, summary, openScope: true);
+            return;
+        }
+
         if (statement.localConstantDeclaration() is { } localConstant)
         {
-            CheckLocalDeclaration(
+            var declaredType = ResolveLocalDeclarationType(
+                TemplateLocalDeclarationFacts.ConstantKind,
+                localConstant,
                 localConstant.type_(),
+                signature.Name);
+            CheckLocalDeclaration(
+                declaredType,
                 localConstant.constantDeclarators().constantDeclarator()
                     .Select(static declarator => (
                         Identifier: (ITerminalNode)declarator.Identifier(),
@@ -342,7 +360,27 @@ internal sealed class OwnershipValidator
         TypedFunctionSignature signature,
         FunctionOwnershipBuilder summary)
     {
-        var declaredType = ResolveType(typeContext);
+        CheckLocalDeclaration(
+            ResolveType(typeContext),
+            declarators,
+            storageClass,
+            isMutable,
+            isConstant,
+            state,
+            signature,
+            summary);
+    }
+
+    private void CheckLocalDeclaration(
+        StarkTypeSymbol declaredType,
+        IReadOnlyList<(ITerminalNode Identifier, StarkParser.ExpressionContext? ConstantExpression, StarkParser.VariableInitializerContext? Initializer)> declarators,
+        StorageClass storageClass,
+        bool isMutable,
+        bool isConstant,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
 
         foreach (var declarator in declarators)
         {
@@ -404,6 +442,29 @@ internal sealed class OwnershipValidator
         }
     }
 
+    private StarkTypeSymbol ResolveLocalDeclarationType(
+        string declarationKind,
+        ParserRuleContext declarationContext,
+        StarkParser.Type_Context? typeContext,
+        string functionName)
+    {
+        var key = TemplateLocalDeclarationFacts.BuildLookupKey(
+            declarationKind,
+            declarationContext.Start.Line,
+            declarationContext.Start.Column + 1);
+        var typedDeclaration = _typeModel.LocalDeclarations.LastOrDefault(record =>
+            string.Equals(record.EnclosingFunctionName, functionName, StringComparison.Ordinal)
+            && TemplateLocalDeclarationFacts.BuildLookupKey(record.Kind, record.Location) == key);
+        if (typedDeclaration is not null)
+        {
+            return typedDeclaration.Type;
+        }
+
+        return typeContext is not null
+            ? ResolveType(typeContext)
+            : StarkTypeSymbols.Error;
+    }
+
     private ExpressionInfo EvaluateVariableInitializer(
         StarkParser.VariableInitializerContext initializer,
         FlowState state,
@@ -413,6 +474,13 @@ internal sealed class OwnershipValidator
     {
         if (initializer.expression() is { } expression)
         {
+            if (IsTextBufferType(declaredType)
+                && TryGetStandaloneInterpolatedTextLiteral(expression) is { } interpolatedLiteral)
+            {
+                EvaluateFixedTextStorageInterpolation(interpolatedLiteral, state, signature, summary);
+                return new ExpressionInfo(declaredType);
+            }
+
             return EvaluateExpression(expression, state, signature, summary, ValueUse.ForAssignment(declaredType), allowFunctionReference: false);
         }
 
@@ -429,6 +497,24 @@ internal sealed class OwnershipValidator
         }
 
         return new ExpressionInfo(declaredType);
+    }
+
+    private void EvaluateFixedTextStorageInterpolation(
+        StarkParser.LiteralContext literal,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        if (literal.StringLiteral() is not { } interpolatedString
+            || !InterpolatedText.TryParse(interpolatedString.GetText(), out var segments, out _))
+        {
+            return;
+        }
+
+        foreach (var hole in segments.OfType<InterpolatedTextHoleSegment>())
+        {
+            EvaluateExpression(hole.Expression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        }
     }
 
     private ExpressionInfo EvaluateExpression(
@@ -743,13 +829,94 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
-        return EvaluateBinaryChain(
-            expression.multiplicativeExpression(),
-            item => EvaluateMultiplicativeExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
-            state,
-            summary,
-            use,
-            expression);
+        var operands = expression.multiplicativeExpression();
+        var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(expression);
+        if (operators.Count == 0)
+        {
+            return EvaluateBinaryChain(
+                operands,
+                item => EvaluateMultiplicativeExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+                state,
+                summary,
+                use,
+                expression);
+        }
+
+        var current = EvaluateMultiplicativeExpression(operands[0], state, signature, summary, ValueUse.Read, allowFunctionReference);
+        for (var index = 1; index < operands.Length; index++)
+        {
+            var next = EvaluateMultiplicativeExpression(operands[index], state, signature, summary, ValueUse.Read, allowFunctionReference);
+            if (operators[index - 1] == "+"
+                && TryApplyRuntimeTextConcatenation(current, next, state, summary, expression, out var runtimeConcat))
+            {
+                current = runtimeConcat;
+                continue;
+            }
+
+            current = IsTextType(current.Type) && IsTextType(next.Type) && operators[index - 1] == "+"
+                ? new ExpressionInfo(FindCommonTextType(current.Type, next.Type))
+                : new ExpressionInfo(FindCommonType(current.Type, next.Type));
+        }
+
+        return ApplyUse(current, state, summary, use, expression);
+    }
+
+    private bool TryApplyRuntimeTextConcatenation(
+        ExpressionInfo left,
+        ExpressionInfo right,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context,
+        out ExpressionInfo result)
+    {
+        result = default!;
+
+        if ((IsTextBufferType(left.Type) || IsTextBufferType(right.Type))
+            && IsTextLikeForConcatenation(left.Type)
+            && IsTextLikeForConcatenation(right.Type))
+        {
+            result = new ExpressionInfo(IsUnicodeConcatSource(left.Type) || IsUnicodeConcatSource(right.Type)
+                ? StarkTypeSymbols.Unicode
+                : StarkTypeSymbols.Ascii);
+            return true;
+        }
+
+        if (!IsTextType(left.Type))
+        {
+            return false;
+        }
+
+        var sourceName = left.Type.Kind == StarkTypeKind.Unicode
+            ? "System.Text.ConcatUnicode"
+            : "System.Text.ConcatAscii";
+        if (!TryGetFunctionOverloads(sourceName, out var overloads))
+        {
+            return false;
+        }
+
+        var resolution = FunctionOverloadFacts.Resolve(
+            overloads,
+            receiverType: null,
+            [left.Type, NonNegativeI64Type, right.Type],
+            TypeCompatibilityFacts.CanAssign);
+        if (!resolution.Succeeded)
+        {
+            return false;
+        }
+
+        var signature = resolution.Match!;
+        if (signature.Parameters.Count >= 1)
+        {
+            ApplyUse(left, state, summary, ValueUse.ForCallArgument(signature.Parameters[0].Type), context);
+        }
+
+        if (signature.Parameters.Count >= 3)
+        {
+            ApplyUse(right, state, summary, ValueUse.ForCallArgument(signature.Parameters[2].Type), context);
+        }
+
+        result = new ExpressionInfo(signature.ReturnType);
+        return true;
     }
 
     private ExpressionInfo EvaluateMultiplicativeExpression(
@@ -790,6 +957,150 @@ internal sealed class OwnershipValidator
         }
 
         return ApplyUse(current ?? new ExpressionInfo(StarkTypeSymbols.Error), state, summary, use, context);
+    }
+
+    private static IReadOnlyList<string> ExtractOperators<TOperand>(ParserRuleContext context)
+        where TOperand : ParserRuleContext
+    {
+        var operators = new List<string>();
+        var builder = new System.Text.StringBuilder();
+
+        for (var index = 0; index < context.ChildCount; index++)
+        {
+            var child = context.GetChild(index);
+            if (child is TOperand)
+            {
+                if (builder.Length > 0)
+                {
+                    operators.Add(builder.ToString());
+                    builder.Clear();
+                }
+
+                continue;
+            }
+
+            builder.Append(child.GetText());
+        }
+
+        return operators;
+    }
+
+    private static StarkParser.LiteralContext? TryGetStandaloneInterpolatedTextLiteral(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var unary = multiplicative.unaryExpression(0);
+        if (unary.powerExpression() is not { } power
+            || power.unaryExpression() is not null
+            || power.postfixExpression() is not { } postfix
+            || postfix.postfixPart().Length != 0)
+        {
+            return null;
+        }
+
+        var literal = postfix.primaryExpression().literal();
+        return literal?.DOLLAR() is not null && literal.StringLiteral() is not null
+            ? literal
+            : null;
+    }
+
+    private static bool IsTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    private static bool IsTextBufferType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Named
+            && type.NamedType is StarkTypeSymbols.OwnedAsciiName or StarkTypeSymbols.OwnedUnicodeName;
+    }
+
+    private static bool IsTextLikeForConcatenation(StarkTypeSymbol type)
+    {
+        return IsTextType(type) || IsTextBufferType(type);
+    }
+
+    private static bool IsUnicodeConcatSource(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Unicode
+            || type.Kind == StarkTypeKind.Named
+                && string.Equals(type.NamedType, StarkTypeSymbols.OwnedUnicodeName, StringComparison.Ordinal);
+    }
+
+    private static StarkTypeSymbol FindCommonTextType(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        return left.Kind == StarkTypeKind.Unicode || right.Kind == StarkTypeKind.Unicode
+            ? StarkTypeSymbols.Unicode
+            : StarkTypeSymbols.Ascii;
     }
 
     private ExpressionInfo EvaluateUnaryExpression(
@@ -927,6 +1238,11 @@ internal sealed class OwnershipValidator
             return ResolveValue(identifier.GetText(), identifier.Symbol, state, summary, use, allowFunctionReference);
         }
 
+        if (expression.lambdaExpression() is { } lambdaExpression)
+        {
+            return EvaluateLambdaExpression(lambdaExpression, state, signature, summary, use);
+        }
+
         if (expression.enumConstructorExpression() is { } enumConstructorExpression)
         {
             var created = EvaluateEnumConstructorExpression(enumConstructorExpression, state, signature, summary);
@@ -950,6 +1266,118 @@ internal sealed class OwnershipValidator
         }
 
         return EvaluateExpression(expression.expression(), state, signature, summary, use, allowFunctionReference: false);
+    }
+
+    private ExpressionInfo EvaluateLambdaExpression(
+        StarkParser.LambdaExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        ValueUse use)
+    {
+        return ApplyUse(new ExpressionInfo(use.TargetType ?? StarkTypeSymbols.Error), state, summary, use, expression);
+    }
+
+    private Dictionary<string, FunctionOwnershipSummary> ValidateLambdaFunctions()
+    {
+        var summaries = new Dictionary<string, FunctionOwnershipSummary>(StringComparer.Ordinal);
+        if (_typeModel.Lambdas.Count == 0)
+        {
+            return summaries;
+        }
+
+        var lambdaContexts = CollectLambdaExpressionsByFunctionName();
+        foreach (var lambda in _typeModel.Lambdas)
+        {
+            if (!lambdaContexts.TryGetValue(lambda.FunctionName, out var expression))
+            {
+                continue;
+            }
+
+            var signature = _signatures.TryGetValue(lambda.FunctionName, out var typedSignature)
+                ? typedSignature
+                : CallableValueFacts.BuildLambdaSignature(lambda);
+            var summary = new FunctionOwnershipBuilder(signature.Name);
+            var state = new FlowState(_typeModel.NamedTypes);
+            var functionScope = state.EnterScope();
+
+            for (var index = 0; index < signature.Parameters.Count; index++)
+            {
+                var parameter = signature.Parameters[index];
+                var declarationParameter = index < expression.lambdaParameterList().parameter().Length
+                    ? expression.lambdaParameterList().parameter(index)
+                    : null;
+                state.Declare(new VariableInfo(
+                    parameter.Name,
+                    parameter.Type,
+                    StorageClass.None,
+                    VariableOrigin.Parameter,
+                    IsMutable: false,
+                    IsConstant: false,
+                    BorrowLifetime: parameter.Type.BorrowKind == StarkBorrowKind.None
+                        ? BorrowLifetime.None
+                        : BorrowLifetime.External,
+                    DeclarationLocation: declarationParameter is null ? null : Location(declarationParameter.Identifier().Symbol)),
+                    isInitialized: true);
+            }
+
+            if (expression.expression() is { } bodyExpression)
+            {
+                var value = EvaluateExpression(
+                    bodyExpression,
+                    state,
+                    signature,
+                    summary,
+                    ValueUse.ForReturn(signature.ReturnType),
+                    allowFunctionReference: false);
+
+                if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
+                {
+                    ValidateReturnedBorrowLifetime(value, summary, bodyExpression);
+                }
+            }
+            else if (expression.block() is { } block)
+            {
+                CheckBlock(block, state, signature, summary, openScope: true);
+            }
+
+            state.ExitScope(functionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
+            summaries[signature.Name] = summary.Build();
+        }
+
+        return summaries;
+    }
+
+    private Dictionary<string, StarkParser.LambdaExpressionContext> CollectLambdaExpressionsByFunctionName()
+    {
+        var lambdasByLocation = _typeModel.Lambdas
+            .GroupBy(static lambda => $"{lambda.Location.Line}:{lambda.Location.Column}")
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.ToArray(),
+                StringComparer.Ordinal);
+        var contexts = new Dictionary<string, StarkParser.LambdaExpressionContext>(StringComparer.Ordinal);
+
+        Collect(_parseResult.Root);
+        return contexts;
+
+        void Collect(IParseTree current)
+        {
+            if (current is StarkParser.LambdaExpressionContext lambdaExpression)
+            {
+                var key = $"{lambdaExpression.Start.Line}:{lambdaExpression.Start.Column + 1}";
+                if (lambdasByLocation.TryGetValue(key, out var matchingLambdas)
+                    && matchingLambdas.Length == 1)
+                {
+                    contexts[matchingLambdas[0].FunctionName] = lambdaExpression;
+                }
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index));
+            }
+        }
     }
 
     private ExpressionInfo EvaluateObjectCreation(
@@ -1587,7 +2015,8 @@ internal sealed class OwnershipValidator
         return type.Kind is StarkTypeKind.Bool
             or StarkTypeKind.Integer
             or StarkTypeKind.Float
-            or StarkTypeKind.RawPointer;
+            or StarkTypeKind.RawPointer
+            or StarkTypeKind.FunctionPointer;
     }
 
     private ExpressionInfo InvokeCall(
@@ -1661,6 +2090,16 @@ internal sealed class OwnershipValidator
 
         if (target.Function is null)
         {
+            if (target.Type.Kind == StarkTypeKind.FunctionPointer)
+            {
+                return ApplyUse(
+                    new ExpressionInfo(target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error),
+                    state,
+                    summary,
+                    use,
+                    arguments);
+            }
+
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
@@ -1682,7 +2121,9 @@ internal sealed class OwnershipValidator
         {
             var parameterType = index < explicitParameterCount
                 ? target.Function.Parameters[index + receiverOffset].Type
-                : StarkTypeSymbols.Error;
+                : target.Function.IsVarargs
+                    ? argumentValues[index].Type
+                    : StarkTypeSymbols.Error;
             var argumentValue = argumentValues[index];
 
             if (parameterType.BorrowKind != StarkBorrowKind.None)
@@ -1831,6 +2272,11 @@ internal sealed class OwnershipValidator
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
+        if (TryApplyValueTextConversionMemberAccess(target, memberName, out var valueTextConversion))
+        {
+            return valueTextConversion;
+        }
+
         var namedType = target.Type.NamedType is not null && _typeModel.NamedTypes.TryGetValue(target.Type.NamedType, out var resolved)
             ? resolved
             : null;
@@ -1885,6 +2331,55 @@ internal sealed class OwnershipValidator
 
         return new ExpressionInfo(
             StarkTypeSymbols.Error);
+    }
+
+    private bool TryApplyValueTextConversionMemberAccess(
+        ExpressionInfo target,
+        string memberName,
+        out ExpressionInfo value)
+    {
+        value = default!;
+
+        if (!TryGetValueTextConversionSourceName(memberName, out var sourceName)
+            || !TryGetFunctionOverloads(sourceName, out var overloads))
+        {
+            return false;
+        }
+
+        var candidates = overloads
+            .Where(static overload => !overload.IsStatic)
+            .Where(overload => overload.Parameters.Count != 0
+                && FunctionOverloadFacts.CanBindReceiver(overload.Parameters[0].Type, target.Type, TypeCompatibilityFacts.CanAssign))
+            .ToArray();
+        if (candidates.Length == 0)
+        {
+            return false;
+        }
+
+        if (candidates.Length == 1 && !candidates[0].IsGeneric)
+        {
+            value = new ExpressionInfo(
+                candidates[0].ReturnType,
+                Function: candidates[0],
+                BorrowLifetime: BorrowLifetime.None,
+                Receiver: target);
+            return true;
+        }
+
+        value = new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: sourceName, Receiver: target);
+        return true;
+    }
+
+    private static bool TryGetValueTextConversionSourceName(string memberName, out string sourceName)
+    {
+        sourceName = memberName switch
+        {
+            "ToAscii" => "System.Text.ToAscii",
+            "ToUnicode" => "System.Text.ToUnicode",
+            _ => string.Empty
+        };
+
+        return sourceName.Length != 0;
     }
 
     private ExpressionInfo ApplyUse(
@@ -2060,6 +2555,8 @@ internal sealed class OwnershipValidator
             StarkTypeKind.Integer => false,
             StarkTypeKind.Float => false,
             StarkTypeKind.RawPointer => false,
+            StarkTypeKind.Ascii => false,
+            StarkTypeKind.Unicode => false,
             StarkTypeKind.Null => false,
             _ => true
         };
@@ -2084,7 +2581,9 @@ internal sealed class OwnershipValidator
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
         {
-            return StarkTypeSymbols.Integer(Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0));
+            return StarkTypeSymbols.Integer(
+                Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
+                isUnsigned: left.IsUnsigned && right.IsUnsigned);
         }
 
         if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Float)

@@ -51,6 +51,9 @@ public sealed class CompilerCliTests
         Assert.Contains("-O0|-Og|-O1|-O2|-O3", text);
         Assert.Contains("--optimize <0|g|1|2|3>", text);
         Assert.Contains("--link-arg <arg>", text);
+        Assert.Contains("--native-source <path>", text);
+        Assert.Contains("--native-library <name>", text);
+        Assert.Contains("--native-pkg-config <name>", text);
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
@@ -1190,6 +1193,72 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitLibraryModeCompilesArchiveObjectsWithSectionGranularity()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-lib-sections-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "libFacade.a");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        var archiverLogPath = Path.Combine(tempDirectory.FullName, "archiver.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var archiverPath = await CreateUnixCaptureArchiverAsync(tempDirectory.FullName, archiverLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[-2147483648 2147483647] Used() {
+                    return 1;
+                }
+
+                public finite law i32[-2147483648 2147483647] Unused() {
+                    return 2;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-ffunction-sections", clangLog);
+            Assert.Contains("-fdata-sections", clangLog);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeBuildsImportedAggregateDependencies()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -1717,6 +1786,66 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitExecutableModeReportsFriendlyMissingNativeLibraryDiagnostic()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-missing-native-lib-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var linkerPath = await CreateUnixMissingLibraryLinkerAsync(tempDirectory.FullName, "MissingNative");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-o", outputPath,
+                    "--linker", linkerPath,
+                    "--native-library", "MissingNative"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var errorText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Contains("error STK7204 [native-link]", errorText, StringComparison.Ordinal);
+            Assert.Contains("Native library 'MissingNative' could not be found while linking.", errorText, StringComparison.Ordinal);
+            Assert.Contains("--native-library-dir", errorText, StringComparison.Ordinal);
+            Assert.Contains("cannot find -lMissingNative", errorText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeForwardsRelocationModelToLinker()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
@@ -1929,6 +2058,21 @@ public sealed class CompilerCliTests
               prev="$arg"
             done
             : > "$out"
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
+    }
+
+    private static async Task<string> CreateUnixMissingLibraryLinkerAsync(string directory, string libraryName)
+    {
+        var path = Path.Combine(directory, "missing-library-linker.sh");
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf 'ld: error: cannot find -l{{libraryName}}\n' >&2
+            exit 1
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;

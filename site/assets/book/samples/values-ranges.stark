@@ -1,0 +1,24 @@
+module Book.ValuesRanges
+
+finite law i32[0 100] KeepScore(i32[0 100] score) {
+    return score;
+}
+
+finite law u8[0 127] SmallUnsignedValue() {
+    return 42;
+}
+
+export ffi fn i32[min max] main() {
+    stack i32[0 100] score = KeepScore(40);
+    stack u8[0 127] byteValue = SmallUnsignedValue();
+
+    if (score != 40) {
+        return 1;
+    }
+
+    if (byteValue != 42) {
+        return 2;
+    }
+
+    return 0;
+}

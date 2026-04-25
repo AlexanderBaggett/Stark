@@ -74,6 +74,67 @@ The roles are:
 No section in `.starkpkg.json` is intended to be the normal place a user writes package APIs by hand.
 Users author Stark source; the compiler emits the package image.
 
+## Native Dependency Metadata
+
+Package images carry package-owned native dependency metadata. This lets an
+interop package own its C shim and link requirements instead of making every
+downstream user repeat a long command line.
+
+The current package-author CLI surface is:
+
+```bash
+compiler Raylib.stark --emit-lib \
+  -o dist/libRaylibStark.a \
+  --native-source RaylibNative.c \
+  --native-pkg-config raylib
+```
+
+The package image records those facts under its top-level native dependency
+section. Downstream executable builds that import the package image gather those
+facts, compile package-owned native sources, add package-owned library search
+directories, and pass package-owned native libraries/link arguments to the final
+link.
+
+When a dependency is not available through `pkg-config`, package authors can
+spell the same information explicitly with `--native-include-dir`,
+`--native-library-dir`, `--native-library`, and `--native-link-arg`. This keeps
+local and vendored native builds supported without making downstream users repeat
+those details.
+
+A future source-level Raylib package surface may look like this:
+
+```stark
+package Raylib {
+    native source "RaylibNative.c";
+    native library "raylib";
+    native library "GL";
+    native library "m";
+}
+```
+
+The source syntax is still planned. The implemented surface is the package-image
+metadata and CLI path above.
+
+Native dependency facts should cover only explicit package-owned interop needs:
+
+- native shim source files
+- include directories
+- library search directories
+- libraries
+- platform-specific system libraries and link arguments
+- optional discovery names such as `pkg-config` packages
+
+This is not an arbitrary build-script mechanism. The toolchain should gather
+transitive package metadata, compile package-owned native shims, de-duplicate
+link inputs deterministically, and report missing native paths with the package
+name and exact missing item. When the final native linker reports that a named
+system library such as `raylib` or `GL` cannot be found, the compiler also emits
+a Stark diagnostic that points users toward installing the library or adding a
+`-L` / `--native-library-dir` search path. When `pkg-config` cannot resolve a
+package-owned discovery name, the compiler reports the package name and suggests
+installing that native package, setting `PKG_CONFIG_PATH`, or using explicit
+native metadata instead.
+
 ## Loading Rules
 
 The loader should prefer the structured package image sections over synthetic source reconstruction.

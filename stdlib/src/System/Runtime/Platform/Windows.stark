@@ -8,28 +8,484 @@ internal ffi fn i32[-2147483648 2147483647] ReadFile(rawptr<i8[-128 127]> hFile,
 internal ffi fn rawmutptr<i8[-128 127]> CreateFileW(rawptr<i16[-32768 32767]> fileName, i32[-2147483648 2147483647] desiredAccess, i32[-2147483648 2147483647] shareMode, rawptr<i8[-128 127]> securityAttributes, i32[-2147483648 2147483647] creationDisposition, i32[-2147483648 2147483647] flagsAndAttributes, rawptr<i8[-128 127]> templateFile);
 internal ffi fn i32[-2147483648 2147483647] CloseHandle(rawptr<i8[-128 127]> handle);
 internal ffi fn i32[-2147483648 2147483647] FlushFileBuffers(rawptr<i8[-128 127]> handle);
+internal ffi fn i32[-2147483648 2147483647] SetFilePointerEx(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] distanceToMove, rawmutptr<i64[-9223372036854775808 9223372036854775807]> newFilePointer, i32[-2147483648 2147483647] moveMethod);
 internal ffi fn i32[-2147483648 2147483647] DeleteFileW(rawptr<i16[-32768 32767]> path);
 internal ffi fn i32[-2147483648 2147483647] MoveFileExW(rawptr<i16[-32768 32767]> existingPath, rawptr<i16[-32768 32767]> newPath, i32[-2147483648 2147483647] flags);
 internal ffi fn i32[-2147483648 2147483647] GetFileAttributesW(rawptr<i16[-32768 32767]> path);
+internal ffi fn i32[-2147483648 2147483647] CreateDirectoryW(rawptr<i16[-32768 32767]> path, rawptr<i8[-128 127]> securityAttributes);
+internal ffi fn i32[-2147483648 2147483647] RemoveDirectoryW(rawptr<i16[-32768 32767]> path);
+internal ffi fn rawmutptr<i8[-128 127]> FindFirstFileW(rawptr<i16[-32768 32767]> fileName, rawmutptr<i8[-128 127]> findData);
+internal ffi fn i32[-2147483648 2147483647] FindNextFileW(rawptr<i8[-128 127]> findHandle, rawmutptr<i8[-128 127]> findData);
+internal ffi fn i32[-2147483648 2147483647] FindClose(rawptr<i8[-128 127]> findHandle);
 internal ffi fn i32[-2147483648 2147483647] GetCurrentDirectoryW(i32[-2147483648 2147483647] bufferLength, rawmutptr<i16[-32768 32767]> buffer);
 internal ffi fn i32[-2147483648 2147483647] GetConsoleMode(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> mode);
 internal ffi fn i32[-2147483648 2147483647] GetLastError();
+internal ffi fn void ExitProcess(i32[-2147483648 2147483647] exitCode);
+internal ffi fn i32[-2147483648 2147483647] GetCurrentProcessId();
+internal ffi fn i32[-2147483648 2147483647] SwitchToThread();
+internal ffi fn void Sleep(i32[-2147483648 2147483647] milliseconds);
+internal ffi fn rawmutptr<i8[-128 127]> CreateThread(
+    rawptr<i8[-128 127]> threadAttributes,
+    i64[0 max] stackSize,
+    fnptr<fn i32[-2147483648 2147483647](fnptr<fn i32[-2147483648 2147483647]()>)> startAddress,
+    fnptr<fn i32[-2147483648 2147483647]()> parameter,
+    i32[-2147483648 2147483647] creationFlags,
+    rawmutptr<i32[-2147483648 2147483647]> threadId);
+internal ffi fn i32[-2147483648 2147483647] WaitForSingleObject(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] milliseconds);
+internal ffi fn i32[-2147483648 2147483647] GetExitCodeThread(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> exitCode);
+internal ffi fn i32[-2147483648 2147483647] WaitOnAddress(
+    rawptr<i32[-2147483648 2147483647]> address,
+    rawptr<i32[-2147483648 2147483647]> compareAddress,
+    i64[0 max] addressSize,
+    i32[-2147483648 2147483647] milliseconds);
+internal ffi fn void WakeByAddressSingle(rawptr<i32[-2147483648 2147483647]> address);
+internal ffi fn void WakeByAddressAll(rawptr<i32[-2147483648 2147483647]> address);
+internal ffi fn i32[-2147483648 2147483647] WSAStartup(u16[0 65535] versionRequested, rawmutptr<i8[-128 127]> data);
+internal ffi fn i32[-2147483648 2147483647] WSAGetLastError();
+internal ffi fn rawmutptr<i8[-128 127]> WSASocketW(
+    i32[-2147483648 2147483647] addressFamily,
+    i32[-2147483648 2147483647] socketType,
+    i32[-2147483648 2147483647] protocol,
+    rawptr<i8[-128 127]> protocolInfo,
+    i32[-2147483648 2147483647] group,
+    i32[-2147483648 2147483647] flags);
+internal ffi fn i32[-2147483648 2147483647] connect(rawptr<i8[-128 127]> socket, rawptr<i8[-128 127]> address, i32[-2147483648 2147483647] addressLength);
+internal ffi fn i32[-2147483648 2147483647] bind(rawptr<i8[-128 127]> socket, rawptr<i8[-128 127]> address, i32[-2147483648 2147483647] addressLength);
+internal ffi fn i32[-2147483648 2147483647] listen(rawptr<i8[-128 127]> socket, i32[-2147483648 2147483647] backlog);
+internal ffi fn rawmutptr<i8[-128 127]> accept(rawptr<i8[-128 127]> socket, rawmutptr<i8[-128 127]> address, rawmutptr<i32[-2147483648 2147483647]> addressLength);
+internal ffi fn i32[-2147483648 2147483647] recv(rawptr<i8[-128 127]> socket, rawmutptr<i8[-128 127]> buffer, i32[-2147483648 2147483647] length, i32[-2147483648 2147483647] flags);
+internal ffi fn i32[-2147483648 2147483647] send(rawptr<i8[-128 127]> socket, rawptr<i8[-128 127]> buffer, i32[-2147483648 2147483647] length, i32[-2147483648 2147483647] flags);
+internal ffi fn i32[-2147483648 2147483647] shutdown(rawptr<i8[-128 127]> socket, i32[-2147483648 2147483647] how);
+internal ffi fn i32[-2147483648 2147483647] closesocket(rawptr<i8[-128 127]> socket);
 
-const i32[-2147483648 2147483647] WinStdOutputHandle = -11;
-const i32[-2147483648 2147483647] WinStdErrorHandle = -12;
-const i32[-2147483648 2147483647] WinStdInputHandle = -10;
-const i32[-2147483648 2147483647] WinGenericRead = -2147483647 - 1;
-const i32[-2147483648 2147483647] WinGenericWrite = 1073741824;
-const i32[-2147483648 2147483647] WinFileAppendData = 4;
-const i32[-2147483648 2147483647] WinFileShareRead = 1;
-const i32[-2147483648 2147483647] WinFileShareWrite = 2;
-const i32[-2147483648 2147483647] WinCreateAlways = 2;
-const i32[-2147483648 2147483647] WinOpenExisting = 3;
-const i32[-2147483648 2147483647] WinOpenAlways = 4;
-const i32[-2147483648 2147483647] WinFileAttributeNormal = 128;
-const i32[-2147483648 2147483647] WinMoveFileReplaceExisting = 1;
-const i32[-2147483648 2147483647] WinInvalidFileAttributes = -1;
-const i64[-9223372036854775808 9223372036854775807] WinLongPathThreshold = 248;
+const WinStdOutputHandle = -11;
+const WinStdErrorHandle = -12;
+const WinStdInputHandle = -10;
+const WinGenericRead = -2147483647 - 1;
+const WinGenericWrite = 1073741824;
+const WinFileAppendData = 4;
+const WinFileShareRead = 1;
+const WinFileShareWrite = 2;
+const WinCreateAlways = 2;
+const WinOpenExisting = 3;
+const WinOpenAlways = 4;
+const WinFileAttributeNormal = 128;
+const WinFileAttributeDirectory = 16;
+const WinFileAttributeReparsePoint = 1024;
+const WinMoveFileReplaceExisting = 1;
+const WinInvalidFileAttributes = -1;
+const WinFindDataFileNameOffset = 44;
+const WinFindDataMaxFileNameLength = 260;
+const WinFindDataMinBytes = 592;
+const WinErrorNoMoreFiles = 18;
+const WinLongPathThreshold = 248;
+const WinWaitObject0 = 0;
+const WinInfinite = -1;
+const WinMaxSleepMilliseconds = 2147483647;
+const WinI32AddressBytes = 4;
+const WinSockVersion2_2 = 514;
+const WinAddressFamilyInet = 2;
+const WinSocketStream = 1;
+const WinSocketProtocolTcp = 6;
+const WinSocketNoHandleInheritFlag = 128;
+const WinSockaddrInLength = 16;
+const WinDefaultTcpListenBacklog = 128;
+
+static mut bool WinSockStarted = false;
+
+internal fn i32[-2147483648 2147483647] ProcessId() {
+    return GetCurrentProcessId();
+}
+
+internal ffi fn i32[-2147483648 2147483647] ThreadEntryThunk(fnptr<fn i32[-2147483648 2147483647]()> entry) {
+    return entry();
+}
+
+internal fn rawptr<i8[-128 127]> StartThread(fnptr<fn i32[-2147483648 2147483647]()> entry) {
+    stack rawmutptr<i8[-128 127]> handle = CreateThread(null, 0, ThreadEntryThunk, entry, 0, null);
+    if (IsInvalidHandle(handle)) {
+        return null;
+    }
+
+    return (rawptr<i8[-128 127]>)handle;
+}
+
+internal fn i32[-2147483648 2147483647] JoinThread(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> exitCode) {
+    if (handle == null || exitCode == null) {
+        return -1;
+    }
+
+    if (WaitForSingleObject(handle, WinInfinite) != WinWaitObject0) {
+        return NegativeLastError();
+    }
+
+    if (GetExitCodeThread(handle, exitCode) == 0) {
+        return NegativeLastError();
+    }
+
+    if (CloseHandle(handle) == 0) {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] DetachThread(rawptr<i8[-128 127]> handle) {
+    if (handle == null) {
+        return -1;
+    }
+
+    if (CloseHandle(handle) == 0) {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] NegativeSocketError() {
+    stack i32[-2147483648 2147483647] error = WSAGetLastError();
+    if (error <= 0) {
+        return -1;
+    }
+
+    return -error;
+}
+
+internal fn i32[-2147483648 2147483647] EnsureWinSockStarted() {
+    if (WinSockStarted) {
+        return 0;
+    }
+
+    stack mut i8[-128 127][512] data;
+    stack i32[-2147483648 2147483647] result = WSAStartup(WinSockVersion2_2, &data[0]);
+    if (result != 0) {
+        return -result;
+    }
+
+    WinSockStarted = true;
+    return 0;
+}
+
+internal finite law bool IsInvalidSocket(rawmutptr<i8[-128 127]> handle) {
+    if (handle == null) {
+        return true;
+    }
+
+    return (i64[-9223372036854775808 9223372036854775807])handle == -1;
+}
+
+internal fn rawptr<i8[-128 127]> OpenTcpSocket(rawmutptr<i32[-2147483648 2147483647]> status) {
+    stack i32[-2147483648 2147483647] startup = EnsureWinSockStarted();
+    if (startup < 0) {
+        if (status != null) {
+            *status = startup;
+        }
+
+        return null;
+    }
+
+    stack rawmutptr<i8[-128 127]> socketHandle = WSASocketW(
+        WinAddressFamilyInet,
+        WinSocketStream,
+        WinSocketProtocolTcp,
+        null,
+        0,
+        WinSocketNoHandleInheritFlag);
+    if (IsInvalidSocket(socketHandle)) {
+        if (status != null) {
+            *status = NegativeSocketError();
+        }
+
+        return null;
+    }
+
+    return (rawptr<i8[-128 127]>)socketHandle;
+}
+
+internal fn void WriteTcpIPv4Sockaddr(
+    rawmutptr<i8[-128 127]> destination,
+    u8[0 255] a,
+    u8[0 255] b,
+    u8[0 255] c,
+    u8[0 255] d,
+    u16[0 65535] port)
+{
+    if (destination == null) {
+        return;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+    while willexit (index < WinSockaddrInLength) {
+        *(&destination[index]) = (i8[-128 127])0;
+        index += 1;
+    }
+
+    stack i32[-2147483648 2147483647] portValue = (i32[-2147483648 2147483647])port;
+    *(&destination[0]) = (i8[-128 127])WinAddressFamilyInet;
+    *(&destination[1]) = (i8[-128 127])0;
+    *(&destination[2]) = (i8[-128 127])(portValue >> 8);
+    *(&destination[3]) = (i8[-128 127])(portValue & 255);
+    *(&destination[4]) = (i8[-128 127])a;
+    *(&destination[5]) = (i8[-128 127])b;
+    *(&destination[6]) = (i8[-128 127])c;
+    *(&destination[7]) = (i8[-128 127])d;
+}
+
+internal fn rawptr<i8[-128 127]> ConnectTcpIPv4(
+    u8[0 255] a,
+    u8[0 255] b,
+    u8[0 255] c,
+    u8[0 255] d,
+    u16[0 65535] port,
+    rawmutptr<i32[-2147483648 2147483647]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    stack rawptr<i8[-128 127]> handle = OpenTcpSocket(status);
+    if (handle == null) {
+        return null;
+    }
+
+    stack mut i8[-128 127][16] address;
+    WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
+
+    if (connect(handle, (rawptr<i8[-128 127]>)(&address[0]), (i32[-2147483648 2147483647])WinSockaddrInLength) != 0) {
+        stack i32[-2147483648 2147483647] error = NegativeSocketError();
+        CloseSocket(handle);
+        if (status != null) {
+            *status = error;
+        }
+
+        return null;
+    }
+
+    return handle;
+}
+
+internal fn rawptr<i8[-128 127]> ListenTcpIPv4(
+    u8[0 255] a,
+    u8[0 255] b,
+    u8[0 255] c,
+    u8[0 255] d,
+    u16[0 65535] port,
+    rawmutptr<i32[-2147483648 2147483647]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    stack rawptr<i8[-128 127]> handle = OpenTcpSocket(status);
+    if (handle == null) {
+        return null;
+    }
+
+    stack mut i8[-128 127][16] address;
+    WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
+
+    if (bind(handle, (rawptr<i8[-128 127]>)(&address[0]), (i32[-2147483648 2147483647])WinSockaddrInLength) != 0) {
+        stack i32[-2147483648 2147483647] error = NegativeSocketError();
+        CloseSocket(handle);
+        if (status != null) {
+            *status = error;
+        }
+
+        return null;
+    }
+
+    if (listen(handle, WinDefaultTcpListenBacklog) != 0) {
+        stack i32[-2147483648 2147483647] error = NegativeSocketError();
+        CloseSocket(handle);
+        if (status != null) {
+            *status = error;
+        }
+
+        return null;
+    }
+
+    return handle;
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]> buffer,
+    i64[0 max] capacity)
+{
+    if (handle == null) {
+        return -10057;
+    }
+
+    if (capacity == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -10014;
+    }
+
+    stack i32[-2147483648 2147483647] request = RequestedChunkLength((i64[-9223372036854775808 9223372036854775807])capacity);
+    stack i32[-2147483648 2147483647] result = recv(handle, buffer, request, 0);
+    if (result < 0) {
+        return NegativeSocketError();
+    }
+
+    return (i64[-9223372036854775808 9223372036854775807])result;
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]> buffer,
+    i64[0 max] length)
+{
+    if (handle == null) {
+        return -10057;
+    }
+
+    if (length == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -10014;
+    }
+
+    stack i32[-2147483648 2147483647] request = RequestedChunkLength((i64[-9223372036854775808 9223372036854775807])length);
+    stack i32[-2147483648 2147483647] result = send(handle, buffer, request, 0);
+    if (result < 0) {
+        return NegativeSocketError();
+    }
+
+    return (i64[-9223372036854775808 9223372036854775807])result;
+}
+
+internal fn rawptr<i8[-128 127]> AcceptSocket(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i32[-2147483648 2147483647]> status)
+{
+    if (handle == null) {
+        if (status != null) {
+            *status = -10057;
+        }
+
+        return null;
+    }
+
+    stack i32[-2147483648 2147483647] startup = EnsureWinSockStarted();
+    if (startup < 0) {
+        if (status != null) {
+            *status = startup;
+        }
+
+        return null;
+    }
+
+    stack rawmutptr<i8[-128 127]> acceptedHandle = accept(handle, null, null);
+    if (IsInvalidSocket(acceptedHandle)) {
+        if (status != null) {
+            *status = NegativeSocketError();
+        }
+
+        return null;
+    }
+
+    if (status != null) {
+        *status = 0;
+    }
+
+    return (rawptr<i8[-128 127]>)acceptedHandle;
+}
+
+internal fn i32[-2147483648 2147483647] ShutdownSocket(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] how) {
+    if (handle == null) {
+        return -10057;
+    }
+
+    if (how < 0 || how > 2) {
+        return -10045;
+    }
+
+    if (shutdown(handle, how) != 0) {
+        return NegativeSocketError();
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] CloseSocket(rawptr<i8[-128 127]> handle) {
+    if (handle == null) {
+        return 0;
+    }
+
+    if (closesocket(handle) != 0) {
+        return NegativeSocketError();
+    }
+
+    return 0;
+}
+
+internal fn void YieldThread() {
+    SwitchToThread();
+    return;
+}
+
+internal fn void SleepThreadMilliseconds(i64[0 max] milliseconds) {
+    stack mut i64[0 max] remaining = milliseconds;
+    while willexit (remaining > 0) {
+        stack mut i64[0 max] chunk = remaining;
+        if (chunk > WinMaxSleepMilliseconds) {
+            chunk = (i64[0 max])WinMaxSleepMilliseconds;
+        }
+
+        Sleep((i32[-2147483648 2147483647])chunk);
+        remaining -= chunk;
+    }
+
+    return;
+}
+
+internal fn i32[-2147483648 2147483647] WaitReadable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
+    return -10045;
+}
+
+internal fn i32[-2147483648 2147483647] WaitWritable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
+    return -10045;
+}
+
+internal fn i32[-2147483648 2147483647] FutexWait(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] expected) {
+    if (address == null) {
+        return -14;
+    }
+
+    if (*address != expected) {
+        return -11;
+    }
+
+    stack i32[-2147483648 2147483647] compare = expected;
+    if (WaitOnAddress(address, &compare, WinI32AddressBytes, WinInfinite) != 0) {
+        return 0;
+    }
+
+    return NegativeLastError();
+}
+
+internal fn i32[-2147483648 2147483647] FutexWake(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] count) {
+    if (address == null) {
+        return -14;
+    }
+
+    if (count <= 0) {
+        return 0;
+    }
+
+    if (count == 1) {
+        WakeByAddressSingle(address);
+        return 0;
+    }
+
+    WakeByAddressAll(address);
+    return 0;
+}
 
 internal fn void ResetAsciiDestination(rawmutptr<Ascii> destination) {
     if (destination == null) {
@@ -357,7 +813,7 @@ internal fn bool TryDecodeUtf8PathToWide(
     stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
 
     while willexit (readIndex < length) {
-        stack i32[-2147483648 2147483647] codePoint = 0;
+        stack mut i32[-2147483648 2147483647] codePoint = 0;
         if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint)) {
             return false;
         }
@@ -461,8 +917,8 @@ internal fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[-32768 32767]> destin
     }
 
     stack mut i16[-32768 32767][4096] absolutePath;
-    stack rawptr<i16[-32768 32767]> absoluteSource = source;
-    stack i64[-9223372036854775808 9223372036854775807] absoluteLength = sourceLength;
+    stack mut rawptr<i16[-32768 32767]> absoluteSource = source;
+    stack mut i64[-9223372036854775808 9223372036854775807] absoluteLength = sourceLength;
 
     if (!HasLongPathPrefix(source, sourceLength)
         && !IsDriveAbsoluteWidePath(source, sourceLength)
@@ -600,7 +1056,7 @@ internal fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16[-32768
     stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
     while willexit (readIndex < required) {
         stack i32[-2147483648 2147483647] first = UnsignedWide(*(&source[readIndex]));
-        stack i32[-2147483648 2147483647] codePoint = first;
+        stack mut i32[-2147483648 2147483647] codePoint = first;
         readIndex += 1;
 
         if (55296 <= first && first <= 56319) {
@@ -652,12 +1108,12 @@ internal fn i32[-2147483648 2147483647] WriteBufferToHandle(rawptr<i8[-128 127]>
         return -1;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] remaining = length;
-    stack i64[-9223372036854775808 9223372036854775807] written = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] remaining = length;
+    stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
 
     while willexit (remaining > 0) {
         stack i32[-2147483648 2147483647] request = RequestedChunkLength(remaining);
-        stack i32[-2147483648 2147483647] chunkWritten = 0;
+        stack mut i32[-2147483648 2147483647] chunkWritten = 0;
         stack rawptr<i8[-128 127]> chunk = &buffer[written];
         stack i32[-2147483648 2147483647] result = WriteFile(handle, chunk, request, &chunkWritten, null);
         if (result == 0) {
@@ -997,6 +1453,19 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteFile(rawptr<i8[-1
     return ((i64[-9223372036854775808 9223372036854775807])bytesWritten) / size;
 }
 
+internal fn i64[-9223372036854775808 9223372036854775807] SeekFile(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, i32[-2147483648 2147483647] origin) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] newPosition = 0;
+    if (SetFilePointerEx(handle, offset, &newPosition, origin) == 0) {
+        return (i64[-9223372036854775808 9223372036854775807])NegativeLastError();
+    }
+
+    return newPosition;
+}
+
 internal fn i32[-2147483648 2147483647] DeleteFile(ascii path) {
     stack mut i16[-32768 32767][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
@@ -1026,12 +1495,237 @@ internal fn i32[-2147483648 2147483647] MoveFile(ascii oldPath, ascii newPath) {
 }
 
 internal fn bool FileExists(ascii path) {
+    return PathExists(path);
+}
+
+internal fn bool PathExists(ascii path) {
     stack mut i16[-32768 32767][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
         return false;
     }
 
     return GetFileAttributesW(&pathBuffer[0]) != WinInvalidFileAttributes;
+}
+
+internal fn bool IsFile(ascii path) {
+    stack mut i16[-32768 32767][4096] pathBuffer;
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        return false;
+    }
+
+    stack i32[-2147483648 2147483647] attributes = GetFileAttributesW(&pathBuffer[0]);
+    if (attributes == WinInvalidFileAttributes) {
+        return false;
+    }
+
+    return (attributes & WinFileAttributeDirectory) == 0;
+}
+
+internal fn bool IsDirectory(ascii path) {
+    stack mut i16[-32768 32767][4096] pathBuffer;
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        return false;
+    }
+
+    stack i32[-2147483648 2147483647] attributes = GetFileAttributesW(&pathBuffer[0]);
+    if (attributes == WinInvalidFileAttributes) {
+        return false;
+    }
+
+    return (attributes & WinFileAttributeDirectory) != 0;
+}
+
+internal fn i32[-2147483648 2147483647] CreateDirectory(ascii path) {
+    stack mut i16[-32768 32767][4096] pathBuffer;
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        return -1;
+    }
+
+    if (CreateDirectoryW(&pathBuffer[0], null) == 0) {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] DeleteDirectory(ascii path) {
+    stack mut i16[-32768 32767][4096] pathBuffer;
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        return -1;
+    }
+
+    if (RemoveDirectoryW(&pathBuffer[0]) == 0) {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal fn bool TryBuildWindowsDirectorySearchPath(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, ascii path) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut Ascii searchPath = new Ascii() {
+        Data = pathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = pathBuffer.Writable()
+    };
+    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.AsciiLength(path);
+    stack ascii fullPath = path[0, length];
+    stack mut ascii suffix = "\\*";
+    if (length > 0 && IsDirectorySeparator(path[length - 1, 1])) {
+        suffix = "*";
+    }
+
+    if (!System.Text.TryConcatAscii(&searchPath, fullPath, suffix)) {
+        return false;
+    }
+
+    return TryBuildWindowsWidePath(destination, capacity, System.Text.AsciiView(searchPath));
+}
+
+internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path) {
+    stack mut i8[-128 127][592] findData;
+    stack mut i16[-32768 32767][4096] searchPath;
+    if (!TryBuildWindowsDirectorySearchPath(&searchPath[0], 4096, path)) {
+        return null;
+    }
+
+    stack rawmutptr<i8[-128 127]> findHandle = FindFirstFileW(&searchPath[0], &findData[0]);
+    if (IsInvalidHandle(findHandle)) {
+        return null;
+    }
+
+    return (rawptr<i8[-128 127]>)findHandle;
+}
+
+internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
+    if (handle == null) {
+        return 0;
+    }
+
+    if (FindClose(handle) == 0) {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WindowsWideNullTerminatedLength(rawptr<i16[-32768 32767]> data, i64[-9223372036854775808 9223372036854775807] maxLength) {
+    if (data == null || maxLength <= 0) {
+        return 0;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] length = 0;
+    while willexit (length < maxLength) {
+        if (*(&data[length]) == (i16[-32768 32767])0) {
+            return length;
+        }
+
+        length += 1;
+    }
+
+    return maxLength;
+}
+
+internal finite law bool IsDotWideDirectoryEntry(rawptr<i16[-32768 32767]> data, i64[-9223372036854775808 9223372036854775807] length) {
+    if (data == null) {
+        return false;
+    }
+
+    if (length == 1) {
+        return UnsignedWide(*(&data[0])) == 46;
+    }
+
+    if (length == 2) {
+        return UnsignedWide(*(&data[0])) == 46 && UnsignedWide(*(&data[1])) == 46;
+    }
+
+    return false;
+}
+
+internal fn i32[-2147483648 2147483647] DirectoryEntryKindFromWindowsAttributes(i32[-2147483648 2147483647] attributes) {
+    if ((attributes & WinFileAttributeReparsePoint) != 0) {
+        return 3;
+    }
+
+    if ((attributes & WinFileAttributeDirectory) != 0) {
+        return 2;
+    }
+
+    return 1;
+}
+
+internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]> buffer,
+    i64[-9223372036854775808 9223372036854775807] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
+    rawmutptr<Ascii> name,
+    rawmutptr<i32[-2147483648 2147483647]> kind)
+{
+    if (handle == null || buffer == null || capacity < WinFindDataMinBytes || readPos == null || readLength == null || name == null || kind == null) {
+        return -1;
+    }
+
+    stack rawmutptr<i8[-128 127]> nameData = (*name).Data;
+    stack i64[-9223372036854775808 9223372036854775807] nameCapacity = (*name).Capacity;
+
+    while willexit (true) {
+        if (*readLength > 0) {
+            *readLength = 0;
+        }
+        else if (FindNextFileW(handle, buffer) == 0) {
+            stack i32[-2147483648 2147483647] error = GetLastError();
+            if (error == WinErrorNoMoreFiles) {
+                *kind = 0;
+                *name = new Ascii() {
+                    Data = nameData,
+                    Length = -1,
+                    Capacity = nameCapacity
+                };
+                return 0;
+            }
+
+            if (error <= 0) {
+                *kind = -1;
+                *name = new Ascii() {
+                    Data = nameData,
+                    Length = -2,
+                    Capacity = nameCapacity
+                };
+                return -1;
+            }
+
+            *kind = -error;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -2,
+                Capacity = nameCapacity
+            };
+            return -error;
+        }
+
+        stack rawptr<i32[-2147483648 2147483647]> attributesPointer = (rawptr<i32[-2147483648 2147483647]>)buffer;
+        stack i32[-2147483648 2147483647] attributes = *attributesPointer;
+        stack rawptr<i16[-32768 32767]> nameSource = (rawptr<i16[-32768 32767]>)(&buffer[WinFindDataFileNameOffset]);
+        stack i64[-9223372036854775808 9223372036854775807] nameLength = WindowsWideNullTerminatedLength(nameSource, WinFindDataMaxFileNameLength);
+        if (IsDotWideDirectoryEntry(nameSource, nameLength)) {
+            continue;
+        }
+
+        if (!TryCopyWideUtf8(name, nameSource, (i32[-2147483648 2147483647])nameLength)) {
+            *kind = -1;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -2,
+                Capacity = nameCapacity
+            };
+            return -1;
+        }
+
+        *kind = DirectoryEntryKindFromWindowsAttributes(attributes);
+        return 1;
+    }
 }
 
 internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {

@@ -79,6 +79,7 @@ internal static partial class PackageImageLoader
                         RenderTypeReference(method.ReturnType),
                         method.Parameters,
                         method.IsFfi,
+                        method.IsVarargs,
                         method.IsStrictFp,
                         method.IsHot,
                         method.IsCold,
@@ -100,7 +101,8 @@ internal static partial class PackageImageLoader
                             method.SymbolName,
                             method.Parameters),
                         isStatic: method.IsStatic,
-                        publishedOverloadKey: publishedOverloadKey)));
+                        publishedOverloadKey: publishedOverloadKey,
+                        isUnsafe: method.IsUnsafe)));
             }
         }
 
@@ -139,6 +141,7 @@ internal static partial class PackageImageLoader
                     RenderTypeReference(function.ReturnType),
                     function.Parameters,
                     function.IsFfi,
+                    function.IsVarargs,
                     function.IsStrictFp,
                     function.IsHot,
                     function.IsCold,
@@ -159,7 +162,8 @@ internal static partial class PackageImageLoader
                         function.QualifiedName,
                         function.SymbolName,
                         function.Parameters),
-                    publishedOverloadKey: publishedOverloadKey)));
+                    publishedOverloadKey: publishedOverloadKey,
+                    isUnsafe: function.IsUnsafe)));
         }
 
         syntaxModel = new SyntaxModel(

@@ -1,0 +1,341 @@
+import Raylib.Types
+export import Raylib.Types
+module Raylib.Audio
+
+public ffi fn void InitAudioDevice();
+public ffi fn void CloseAudioDevice();
+public ffi fn bool IsAudioDeviceReady();
+public ffi fn void SetMasterVolume(f32 volume);
+public ffi fn f32 GetMasterVolume();
+internal ffi fn void stark_raylib_LoadWave(rawmutptr<Wave> result, ascii fileName);
+public fn Wave LoadWave(ascii fileName) {
+    stack mut Wave result = DefaultWave();
+    stark_raylib_LoadWave(&result, fileName);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadWaveFromMemory(rawmutptr<Wave> result, ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize);
+public fn Wave LoadWaveFromMemory(ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize) {
+    stack mut Wave result = DefaultWave();
+    stark_raylib_LoadWaveFromMemory(&result, fileType, fileData, dataSize);
+    return result;
+}
+
+internal ffi fn bool stark_raylib_IsWaveValid(rawptr<Wave> wave);
+public fn bool IsWaveValid(Wave wave) {
+    return stark_raylib_IsWaveValid(&wave);
+}
+
+internal ffi fn void stark_raylib_LoadSound(rawmutptr<Sound> result, ascii fileName);
+public fn Sound LoadSound(ascii fileName) {
+    stack mut Sound result = DefaultSound();
+    stark_raylib_LoadSound(&result, fileName);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadSoundFromWave(rawmutptr<Sound> result, rawptr<Wave> wave);
+public fn Sound LoadSoundFromWave(Wave wave) {
+    stack mut Sound result = DefaultSound();
+    stark_raylib_LoadSoundFromWave(&result, &wave);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadSoundAlias(rawmutptr<Sound> result, rawptr<Sound> source);
+public fn Sound LoadSoundAlias(Sound source) {
+    stack mut Sound result = DefaultSound();
+    stark_raylib_LoadSoundAlias(&result, &source);
+    return result;
+}
+
+internal ffi fn bool stark_raylib_IsSoundValid(rawptr<Sound> sound);
+public fn bool IsSoundValid(Sound sound) {
+    return stark_raylib_IsSoundValid(&sound);
+}
+
+internal ffi fn void stark_raylib_UpdateSound(rawptr<Sound> sound, rawptr<i8[min max]> data, i32[min max] sampleCount);
+public fn void UpdateSound(Sound sound, rawptr<i8[min max]> data, i32[min max] sampleCount) {
+    stark_raylib_UpdateSound(&sound, data, sampleCount);
+    return;
+}
+
+internal ffi fn void stark_raylib_UnloadWave(rawptr<Wave> wave);
+public fn void UnloadWave(Wave wave) {
+    stark_raylib_UnloadWave(&wave);
+    return;
+}
+
+internal ffi fn void stark_raylib_UnloadSound(rawptr<Sound> sound);
+public fn void UnloadSound(Sound sound) {
+    stark_raylib_UnloadSound(&sound);
+    return;
+}
+
+internal ffi fn void stark_raylib_UnloadSoundAlias(rawptr<Sound> aliasValue);
+public fn void UnloadSoundAlias(Sound aliasValue) {
+    stark_raylib_UnloadSoundAlias(&aliasValue);
+    return;
+}
+
+internal ffi fn bool stark_raylib_ExportWave(rawptr<Wave> wave, ascii fileName);
+public fn bool ExportWave(Wave wave, ascii fileName) {
+    return stark_raylib_ExportWave(&wave, fileName);
+}
+
+internal ffi fn bool stark_raylib_ExportWaveAsCode(rawptr<Wave> wave, ascii fileName);
+public fn bool ExportWaveAsCode(Wave wave, ascii fileName) {
+    return stark_raylib_ExportWaveAsCode(&wave, fileName);
+}
+
+internal ffi fn void stark_raylib_PlaySound(rawptr<Sound> sound);
+public fn void PlaySound(Sound sound) {
+    stark_raylib_PlaySound(&sound);
+    return;
+}
+
+internal ffi fn void stark_raylib_StopSound(rawptr<Sound> sound);
+public fn void StopSound(Sound sound) {
+    stark_raylib_StopSound(&sound);
+    return;
+}
+
+internal ffi fn void stark_raylib_PauseSound(rawptr<Sound> sound);
+public fn void PauseSound(Sound sound) {
+    stark_raylib_PauseSound(&sound);
+    return;
+}
+
+internal ffi fn void stark_raylib_ResumeSound(rawptr<Sound> sound);
+public fn void ResumeSound(Sound sound) {
+    stark_raylib_ResumeSound(&sound);
+    return;
+}
+
+internal ffi fn bool stark_raylib_IsSoundPlaying(rawptr<Sound> sound);
+public fn bool IsSoundPlaying(Sound sound) {
+    return stark_raylib_IsSoundPlaying(&sound);
+}
+
+internal ffi fn void stark_raylib_SetSoundVolume(rawptr<Sound> sound, f32 volume);
+public fn void SetSoundVolume(Sound sound, f32 volume) {
+    stark_raylib_SetSoundVolume(&sound, volume);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetSoundPitch(rawptr<Sound> sound, f32 pitch);
+public fn void SetSoundPitch(Sound sound, f32 pitch) {
+    stark_raylib_SetSoundPitch(&sound, pitch);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetSoundPan(rawptr<Sound> sound, f32 pan);
+public fn void SetSoundPan(Sound sound, f32 pan) {
+    stark_raylib_SetSoundPan(&sound, pan);
+    return;
+}
+
+internal ffi fn void stark_raylib_WaveCopy(rawmutptr<Wave> result, rawptr<Wave> wave);
+public fn Wave WaveCopy(Wave wave) {
+    stack mut Wave result = DefaultWave();
+    stark_raylib_WaveCopy(&result, &wave);
+    return result;
+}
+
+public ffi fn void WaveCrop(rawmutptr<Wave> wave, i32[min max] initFrame, i32[min max] finalFrame);
+public ffi fn void WaveFormat(rawmutptr<Wave> wave, i32[min max] sampleRate, i32[min max] sampleSize, i32[min max] channels);
+internal ffi fn rawmutptr<f32> stark_raylib_LoadWaveSamples(rawptr<Wave> wave);
+public fn rawmutptr<f32> LoadWaveSamples(Wave wave) {
+    return stark_raylib_LoadWaveSamples(&wave);
+}
+
+public ffi fn void UnloadWaveSamples(rawmutptr<f32> samples);
+internal ffi fn void stark_raylib_LoadMusicStream(rawmutptr<Music> result, ascii fileName);
+public fn Music LoadMusicStream(ascii fileName) {
+    stack mut Music result = DefaultMusic();
+    stark_raylib_LoadMusicStream(&result, fileName);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadMusicStreamFromMemory(rawmutptr<Music> result, ascii fileType, rawptr<u8[0 255]> data, i32[min max] dataSize);
+public fn Music LoadMusicStreamFromMemory(ascii fileType, rawptr<u8[0 255]> data, i32[min max] dataSize) {
+    stack mut Music result = DefaultMusic();
+    stark_raylib_LoadMusicStreamFromMemory(&result, fileType, data, dataSize);
+    return result;
+}
+
+internal ffi fn bool stark_raylib_IsMusicValid(rawptr<Music> music);
+public fn bool IsMusicValid(Music music) {
+    return stark_raylib_IsMusicValid(&music);
+}
+
+internal ffi fn void stark_raylib_UnloadMusicStream(rawptr<Music> music);
+public fn void UnloadMusicStream(Music music) {
+    stark_raylib_UnloadMusicStream(&music);
+    return;
+}
+
+internal ffi fn void stark_raylib_PlayMusicStream(rawptr<Music> music);
+public fn void PlayMusicStream(Music music) {
+    stark_raylib_PlayMusicStream(&music);
+    return;
+}
+
+internal ffi fn bool stark_raylib_IsMusicStreamPlaying(rawptr<Music> music);
+public fn bool IsMusicStreamPlaying(Music music) {
+    return stark_raylib_IsMusicStreamPlaying(&music);
+}
+
+internal ffi fn void stark_raylib_UpdateMusicStream(rawptr<Music> music);
+public fn void UpdateMusicStream(Music music) {
+    stark_raylib_UpdateMusicStream(&music);
+    return;
+}
+
+internal ffi fn void stark_raylib_StopMusicStream(rawptr<Music> music);
+public fn void StopMusicStream(Music music) {
+    stark_raylib_StopMusicStream(&music);
+    return;
+}
+
+internal ffi fn void stark_raylib_PauseMusicStream(rawptr<Music> music);
+public fn void PauseMusicStream(Music music) {
+    stark_raylib_PauseMusicStream(&music);
+    return;
+}
+
+internal ffi fn void stark_raylib_ResumeMusicStream(rawptr<Music> music);
+public fn void ResumeMusicStream(Music music) {
+    stark_raylib_ResumeMusicStream(&music);
+    return;
+}
+
+internal ffi fn void stark_raylib_SeekMusicStream(rawptr<Music> music, f32 position);
+public fn void SeekMusicStream(Music music, f32 position) {
+    stark_raylib_SeekMusicStream(&music, position);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetMusicVolume(rawptr<Music> music, f32 volume);
+public fn void SetMusicVolume(Music music, f32 volume) {
+    stark_raylib_SetMusicVolume(&music, volume);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetMusicPitch(rawptr<Music> music, f32 pitch);
+public fn void SetMusicPitch(Music music, f32 pitch) {
+    stark_raylib_SetMusicPitch(&music, pitch);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetMusicPan(rawptr<Music> music, f32 pan);
+public fn void SetMusicPan(Music music, f32 pan) {
+    stark_raylib_SetMusicPan(&music, pan);
+    return;
+}
+
+internal ffi fn f32 stark_raylib_GetMusicTimeLength(rawptr<Music> music);
+public fn f32 GetMusicTimeLength(Music music) {
+    return stark_raylib_GetMusicTimeLength(&music);
+}
+
+internal ffi fn f32 stark_raylib_GetMusicTimePlayed(rawptr<Music> music);
+public fn f32 GetMusicTimePlayed(Music music) {
+    return stark_raylib_GetMusicTimePlayed(&music);
+}
+
+internal ffi fn void stark_raylib_LoadAudioStream(rawmutptr<AudioStream> result, u32[0 max] sampleRate, u32[0 max] sampleSize, u32[0 max] channels);
+public fn AudioStream LoadAudioStream(u32[0 max] sampleRate, u32[0 max] sampleSize, u32[0 max] channels) {
+    stack mut AudioStream result = DefaultAudioStream();
+    stark_raylib_LoadAudioStream(&result, sampleRate, sampleSize, channels);
+    return result;
+}
+
+internal ffi fn bool stark_raylib_IsAudioStreamValid(rawptr<AudioStream> stream);
+public fn bool IsAudioStreamValid(AudioStream stream) {
+    return stark_raylib_IsAudioStreamValid(&stream);
+}
+
+internal ffi fn void stark_raylib_UnloadAudioStream(rawptr<AudioStream> stream);
+public fn void UnloadAudioStream(AudioStream stream) {
+    stark_raylib_UnloadAudioStream(&stream);
+    return;
+}
+
+internal ffi fn void stark_raylib_UpdateAudioStream(rawptr<AudioStream> stream, rawptr<i8[min max]> data, i32[min max] frameCount);
+public fn void UpdateAudioStream(AudioStream stream, rawptr<i8[min max]> data, i32[min max] frameCount) {
+    stark_raylib_UpdateAudioStream(&stream, data, frameCount);
+    return;
+}
+
+internal ffi fn bool stark_raylib_IsAudioStreamProcessed(rawptr<AudioStream> stream);
+public fn bool IsAudioStreamProcessed(AudioStream stream) {
+    return stark_raylib_IsAudioStreamProcessed(&stream);
+}
+
+internal ffi fn void stark_raylib_PlayAudioStream(rawptr<AudioStream> stream);
+public fn void PlayAudioStream(AudioStream stream) {
+    stark_raylib_PlayAudioStream(&stream);
+    return;
+}
+
+internal ffi fn void stark_raylib_PauseAudioStream(rawptr<AudioStream> stream);
+public fn void PauseAudioStream(AudioStream stream) {
+    stark_raylib_PauseAudioStream(&stream);
+    return;
+}
+
+internal ffi fn void stark_raylib_ResumeAudioStream(rawptr<AudioStream> stream);
+public fn void ResumeAudioStream(AudioStream stream) {
+    stark_raylib_ResumeAudioStream(&stream);
+    return;
+}
+
+internal ffi fn bool stark_raylib_IsAudioStreamPlaying(rawptr<AudioStream> stream);
+public fn bool IsAudioStreamPlaying(AudioStream stream) {
+    return stark_raylib_IsAudioStreamPlaying(&stream);
+}
+
+internal ffi fn void stark_raylib_StopAudioStream(rawptr<AudioStream> stream);
+public fn void StopAudioStream(AudioStream stream) {
+    stark_raylib_StopAudioStream(&stream);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetAudioStreamVolume(rawptr<AudioStream> stream, f32 volume);
+public fn void SetAudioStreamVolume(AudioStream stream, f32 volume) {
+    stark_raylib_SetAudioStreamVolume(&stream, volume);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetAudioStreamPitch(rawptr<AudioStream> stream, f32 pitch);
+public fn void SetAudioStreamPitch(AudioStream stream, f32 pitch) {
+    stark_raylib_SetAudioStreamPitch(&stream, pitch);
+    return;
+}
+
+internal ffi fn void stark_raylib_SetAudioStreamPan(rawptr<AudioStream> stream, f32 pan);
+public fn void SetAudioStreamPan(AudioStream stream, f32 pan) {
+    stark_raylib_SetAudioStreamPan(&stream, pan);
+    return;
+}
+
+public ffi fn void SetAudioStreamBufferSizeDefault(i32[min max] size);
+internal ffi fn void stark_raylib_SetAudioStreamCallback(rawptr<AudioStream> stream, AudioCallback callback);
+public fn void SetAudioStreamCallback(AudioStream stream, AudioCallback callback) {
+    stark_raylib_SetAudioStreamCallback(&stream, callback);
+    return;
+}
+
+internal ffi fn void stark_raylib_AttachAudioStreamProcessor(rawptr<AudioStream> stream, AudioCallback processor);
+public fn void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
+    stark_raylib_AttachAudioStreamProcessor(&stream, processor);
+    return;
+}
+
+internal ffi fn void stark_raylib_DetachAudioStreamProcessor(rawptr<AudioStream> stream, AudioCallback processor);
+public fn void DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
+    stark_raylib_DetachAudioStreamProcessor(&stream, processor);
+    return;
+}
+
+public ffi fn void AttachAudioMixedProcessor(AudioCallback processor);
+public ffi fn void DetachAudioMixedProcessor(AudioCallback processor);

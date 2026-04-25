@@ -106,6 +106,60 @@ internal static class NativeToolchain
         return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo, optimizationLevel);
     }
 
+    public static NativeToolchainResult EmitNativeObject(
+        string sourcePath,
+        string outputPath,
+        IEnumerable<string>? includeDirectories = null,
+        LlvmTargetInfo? targetInfo = null,
+        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
+    {
+        var fullSourcePath = Path.GetFullPath(sourcePath);
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "clang",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("-ffunction-sections");
+        startInfo.ArgumentList.Add("-fdata-sections");
+        AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+        AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly: true);
+
+        foreach (var includeDirectory in includeDirectories ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(includeDirectory))
+            {
+                continue;
+            }
+
+            startInfo.ArgumentList.Add("-I");
+            startInfo.ArgumentList.Add(Path.GetFullPath(includeDirectory));
+        }
+
+        startInfo.ArgumentList.Add(fullSourcePath);
+        startInfo.ArgumentList.Add("-o");
+        startInfo.ArgumentList.Add(fullOutputPath);
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start clang.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return new NativeToolchainResult(
+            process.ExitCode == 0,
+            fullOutputPath,
+            standardOutput,
+            standardError);
+    }
+
     public static NativeToolchainResult EmitExecutable(
         string llvmIr,
         string outputPath,
@@ -220,6 +274,8 @@ internal static class NativeToolchain
             if (compileOnly)
             {
                 startInfo.ArgumentList.Add("-c");
+                startInfo.ArgumentList.Add("-ffunction-sections");
+                startInfo.ArgumentList.Add("-fdata-sections");
             }
 
             AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);

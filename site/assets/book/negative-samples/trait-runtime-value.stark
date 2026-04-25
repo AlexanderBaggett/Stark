@@ -1,0 +1,14 @@
+module Book.Negative.TraitRuntimeValue
+
+trait Comparable {
+    law i32[min max] Compare(i32[min max] other);
+}
+
+struct Holder {
+    Comparable Rules;
+}
+
+export ffi fn i32[min max] main() {
+    stack Comparable local = new Comparable();
+    return 0;
+}

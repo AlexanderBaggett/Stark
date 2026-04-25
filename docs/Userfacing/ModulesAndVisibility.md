@@ -285,304 +285,77 @@ The simplest good rule set is:
 
 This keeps the surface model small and easy to reason about.
 
-## Lowering Intent
+## Optimization Intent
 
-The source language does not expose LLVM linkage terms directly, but the frontend should lower using the most restrictive correct linkage.
+The source language does not expose linker or backend terms directly.
+Programmers choose only the Stark visibility level:
 
-Broad lowering intent:
-
-- module-private declarations
-  - prefer `private` or `internal`
+- module-private
 - `internal`
-  - prefer `internal`
 - `public`
-  - use the most restrictive linkage consistent with package API semantics
-  - rely on package compilation model and LTO internalization where possible
 - `export`
-  - use true externally visible linkage
 
-The frontend always prefers the narrowest correct visibility and linkage.
+The build then preserves the most restrictive correct binary visibility for the
+selected output. This is why Stark separates `public` from `export`: a
+declaration can be part of the Stark source API without becoming an open binary
+ABI symbol.
 
 ## Executables and Shared Libraries
 
 ### Executables
 
-When building executables, Stark should aggressively assume local resolution.
-
-The intended strategy is:
-
-- mark non-export symbols `dso_local`
-- avoid semantic interposition by default
-- keep non-export roots eligible for internalization
-
-This preserves direct calls and direct global access.
+When building executables, declarations that are not `export` are treated as
+local to the final program wherever possible. This keeps ordinary calls and data
+access direct and predictable.
 
 ### Shared Libraries
 
-When building shared libraries, Stark should still preserve direct internal access wherever possible.
-
-The intended strategy is:
-
-- use hidden visibility by default
-- export only explicitly marked `export` declarations
-- avoid default-visible preemptable symbols unless the ABI really requires them
-
-This preserves direct internal calls and direct internal data access inside the shared library.
+When building shared libraries, only declarations explicitly marked `export`
+are intended to become ABI-visible. Ordinary `public` declarations remain Stark
+source API, not automatic foreign ABI.
 
 ## Generics and Monomorphization
 
-If Stark uses monomorphization, identical instantiations may appear in multiple codegen units.
+Stark generics are intended to stay zero-cost from the user's perspective.
+Generic functions and generic types are specialized for the concrete types used
+by a program when a body is available.
 
-The intended lowering strategy is:
+From source code, this means:
 
-- use ODR-style deduplicable linkage for generic instantiations
-- prefer the equivalent of `linkonce_odr`, not plain `linkonce`
-- group associated generated data in the same comdat when required
+- a generic declaration can be `public` or `export` like any other declaration
+- a public generic package API can be used by downstream Stark code without the
+  downstream package having the original source files on disk
+- repeated use of the same concrete instantiation behaves as one logical
+  instantiation, not as user-visible duplicated work
+- `cold`, `noinline`, `inline`, and `inlinehint` still express the author's
+  intent for generic functions
+- generic specialization does not introduce dynamic dispatch or hidden runtime
+  lookup
 
-This is required to preserve safe inlining and correct deduplication behavior.
+Example:
 
-Within one compilation, Stark should assign each generic instantiation to a
-single owning module:
+```stark
+module Boxes
 
-- source-backed templates are owned by their defining module
-- manifest-backed imported templates are owned by the root consumer module
+public struct Box<T> {
+    T Value;
 
-This keeps ownership deterministic for later monomorphization without forcing
-runtime indirection or duplicate local-specialization planning inside one build.
+    finite law T Get(borrow Box<T> self) {
+        return self.Value;
+    }
+}
 
-Identical concrete instantiations for the same owner module should also be
-deduplicated before later lowering so the compiler does not plan or emit the
-same specialization work more than once per build.
+public finite law Box<T> MakeBox<T>(T value) {
+    return new Box<T>() { Value = value };
+}
+```
 
-For `v1.1` planning, these owned instantiations should use deterministic,
-fully-spelled internal symbol names derived from owner module, template name,
-and concrete type arguments rather than sequence numbers or hash-only names.
+A downstream module can import `Boxes`, call `MakeBox<i32[0 max]>`, and use
+`Box<i32[0 max]>` as an ordinary concrete type.
 
-The current code-size planning heuristics are intentionally simple:
-
-- declaration-only generics stay declaration-only in the plan
-- `cold` or `noinline` generics prefer reduced cloning
-- tiny or explicitly inline generics prefer inline-friendly specialization
-- everything else stays on the default specialization path
-
-The current linkage planning rules are also intentionally simple:
-
-- root-owned instantiations prefer single-owner internal linkage
-- manifest-consumer-owned instantiations also stay single-owner internal
-- source-backed imported instantiations prefer ODR-style deduplicable linkage with comdat-compatible grouping
-
-When a package image publishes public or export generic template bodies, a
-manifest-backed consumer may materialize and emit its owned concrete
-specialization without needing the original source module on disk.
-
-Package-image modules also preserve an explicit public or export source-surface
-section for imports, re-exports, aliases, globals, types, and functions, so
-tooling and fallback source bridging do not have to recover that surface only
-from typed compiler facts.
-
-Compiler-owned package image data is now also grouped explicitly under
-compiler sections, so typed interface data, compiler facts, and generic
-template sections no longer need to exist only as flat module-level fields.
-The older flat fields remain temporarily as a compatibility bridge while the
-sectioned path becomes primary.
-
-New compiler-emitted package images now write typed interface data, compiler
-facts, and generic template sections to those explicit compiler sections
-instead of duplicating the same compiler-owned data into the older flat
-compiler fields.
-
-When both representations are present at once, the compiler prefers the
-explicit compiler sections over the legacy flat fields.
-
-The explicit source-surface section is similarly preferred over the older flat
-source-surface fields. If the explicit source-surface section is absent, the
-older flat surface fields remain as a compatibility fallback for authored
-overload identity and temporary source bridging.
-
-New compiler-emitted package images now write authored source-surface data to
-the explicit source-surface section instead of duplicating that same authored
-surface into legacy flat fields.
-
-Imported package-image concrete layout facts are now also consumed during
-monomorphization planning so manifest-backed generic instantiations with large
-by-value aggregate ABI cost prefer code-size reduction instead of being treated
-like trivially inline helpers.
-
-Specialization planning now also uses imported ABI facts directly when deciding
-whether a manifest-backed generic specialization can keep an ABI fallback path.
-If a package image publishes a specializable generic body but omits ABI facts
-for that template, the compiler now plans only the owned concrete body path
-instead of claiming an unavailable ABI boundary fallback.
-that explicit source-surface section instead of duplicating the same authored
-surface into the older flat source-surface fields.
-
-That source-surface section now preserves authored declaration spellings for
-published type references such as alias-based function signatures, record
-primary-constructor parameters, record fields, and published method
-signatures, instead of normalizing all of them through the typed interface
-first.
-
-When a typed interface and explicit source surface are both present, the
-temporary package-image source bridge can now use that authored source-surface
-overload identity to find published generic template bodies, even while its
-emitted fallback declarations still use canonical typed-interface spellings.
-
-If a published imported generic function or method also carries a supported
-typed template body,
-including simple explicit conversion helpers, unary and binary operator
-helpers, conditional helpers with binary or logical conditions, simple
-module-qualified direct-call helpers, receiver-style member-call helpers,
-simple index-access helpers over already-supported MIR indexable families,
-including text-slice helpers, simple chained field/index/member receiver forms,
-grouped-expression receiver forms, and direct-call-result or
-object-creation-result receiver forms,
-side-effect-only direct/member-call statements for void helpers, explicit
-`return;` in void helpers, simple local `const` helpers, and local-update
-helpers with mutable reassignment and simple `if`/`else` branching or simple
-`while`/`for` loops, including structural `break` and `continue` inside those
-loops, plus simple switch-pattern helpers over already-published enum and
-aggregate pattern facts, that end in a return,
-the temporary package-image source bridge may now emit only the declaration
-surface and let downstream type checking plus MIR lowering consume the typed
-template body directly instead of relying on reconstructed body text.
-
-Those package-image template sections now also preserve published code-size
-planning facts such as `cold`/`noinline` intent, top-level statement count,
-and typed primary-constructor facts for object creation lowering, so imported
-generic planning and MIR lowering do not need to recover all of that from
-reconstructed source text.
-
-They also preserve typed local declaration facts, so imported generic bodies
-do not need to recover local `const`, local variable, or `for` initializer
-types from bridge source text during type checking and MIR lowering.
-
-They also preserve typed direct-call target facts, so imported generic bodies
-can keep resolving direct helper calls even when the bridge body text is no
-longer the source of truth for callee lookup.
-
-They also preserve typed explicit-conversion target facts, so imported generic
-bodies can keep lowering explicit casts even when the bridge conversion type
-text is no longer trustworthy.
-
-They also preserve typed enum-constructor facts, so imported generic bodies can
-keep lowering named-field enum constructors even when the bridge enum case
-target or member names are no longer trustworthy.
-
-They also preserve typed tuple-enum-constructor call facts, so imported generic
-bodies can keep lowering positional enum constructor calls even when the bridge
-enum case target is no longer trustworthy.
-
-They also preserve typed unit-enum-case value facts, so imported generic bodies
-can keep lowering unit enum cases even when the bridge enum case target is no
-longer trustworthy.
-
-They also preserve typed enum-pattern target facts, so imported generic bodies
-can keep type-checking and lowering enum switch patterns even when the bridge
-enum case target is no longer trustworthy.
-
-They also preserve typed enum-pattern member facts, so imported generic bodies
-can keep type-checking and lowering named-field enum switch patterns even when
-the bridge member names are no longer trustworthy.
-
-They also preserve typed aggregate-pattern target facts, so imported generic
-bodies can keep type-checking and lowering aggregate switch patterns even when
-the bridge aggregate type text is no longer trustworthy.
-
-They also preserve typed field-access facts, so imported generic bodies can
-keep lowering projected field reads without rediscovering field layout or
-projected field types from the bridge body text.
-
-They also preserve typed object-creation target types, so imported generic
-bodies can keep resolving `new TypeName(...)` aggregate targets even when the
-bridge type text is no longer trustworthy.
-
-They also preserve typed object-initializer member facts, so imported generic
-bodies can keep lowering `new T() { ... }` field assignments even when bridge
-field names are no longer the source of truth.
-
-They also preserve typed member-call target facts, so imported generic bodies
-can keep lowering receiver-style helper calls even when the bridge body text is
-no longer trustworthy for member lookup.
-
-They also preserve a first typed template-body subset for simple helper
-bodies such as `return value;`, `return 1;`,
-`return takeLeft ? left : right;`, `return new Box<T>(value);`,
-`return Boxed<T>.Value { Data: value, Tag: tag };`,
-`return Boxed<T>.Value { Data: value, Tag: 1 };`,
-`return Option<T>.Some(value);`, `return Option<T>.None;`,
-`return box.Value;`, `return box.Echo(value);`, `return Callee(value);`, and
-`stack T copy = value; return copy;`, plus local `const` helpers like
-`const T copy = value; return copy;`, plus void helper statements like
-`ResetValue(box);` or `box.Reset();`, so imported generic MIR lowering can
-prefer structured body facts over reconstructed bridge text for those helper
-shapes.
-
-Package-image modules also preserve plain imports in addition to `export
-import` re-exports, so imported generic bodies can continue to resolve
-transitive module dependencies after package publication.
-
-Imported public and export type aliases now also resolve from typed
-package-image facts instead of reconstructed bridge alias declarations, so
-manifest-backed consumers do not need to trust bridge alias target text just
-to use a published alias.
-
-Imported public and export globals now also resolve from typed package-image
-facts instead of reconstructed bridge global declarations, so manifest-backed
-consumers do not need to trust bridge global type text just to use a published
-constant or static variable.
-
-Imported public and export named type shape now also resolves from typed
-package-image facts instead of reconstructed bridge type declarations, and
-record primary-constructor shapes do the same, so manifest-backed consumers do
-not need to trust bridge field or primary-constructor type text just to create
-or project those imported types.
-
-Imported explicit struct and record constructor signatures also resolve from
-typed package-image facts instead of reconstructed bridge declarations, so
-manifest-backed consumers do not need published constructor bodies or
-declaration text just to call those imported constructors.
-
-Imported trait and doctrine methods now also take their published signatures
-from typed package-image facts instead of reconstructed bridge declarations,
-so manifest-backed consumers do not need to trust bridge return or parameter
-type text just to use those imported compile-time-only method surfaces.
-
-Published package-image record types also preserve their primary-constructor
-shape, so imported generic bodies can construct those records directly rather
-than depending on a field-only approximation at the package boundary.
-
-They also preserve deferred nested-generic instantiation patterns, so
-recursive package-boundary specialization planning can follow generic callees
-without rediscovering that structure from the imported body text first.
-
-They now also preserve deferred nested generic type-instantiation patterns, so
-package-boundary monomorphization planning can keep concrete imported helper
-types aligned with the concrete generic bodies that need them.
-
-That specialization materialization is now recursive for discovered generic
-callee dependencies, so one owned concrete body may cause additional owned
-concrete bodies to be emitted in the same build.
-
-Within that build, repeated requests for the same concrete instantiation stay
-deduplicated under one single-owner internal symbol, and call sites target
-that concrete symbol directly instead of an ABI fallback or template symbol.
-
-The current specialization-priority rules are also intentionally simple:
-
-- declaration-only instantiations stay on the direct ABI fallback path
-- source-backed generic instantiations prefer an owned concrete body before any ABI fallback
-- eligible imported `law` instantiations may add a caller-specialized clone path ahead of the owned body
-- `cold` or `noinline` planning suppresses that clone path to keep code-size-oriented instantiations on the owned-body or ABI path
-
-If two different generic templates would map to the same fully spelled internal
-specialization symbol, Stark now reports that conflict during specialization
-planning rather than silently picking one.
-
-The current codegen-strategy bridge is also intentionally simple:
-
-- ABI-only specializations keep using the existing Stark ABI surface
-- owned specializations plan one concrete emitted body under the monomorphized symbol
-- eligible imported `law` specializations may additionally expose a law-caller clone path while keeping the owned body as the general fallback
+Additional package and specialization rationale is documented in
+[PackageImage.md](../Internals/PackageImage.md) and
+[LanguageInternals.md](../Internals/LanguageInternals.md).
 
 ## Constants and Global Data
 
@@ -596,9 +369,9 @@ The following are immutable unless explicitly declared otherwise:
 - type metadata when possible
 - variant tables when possible
 
-Immutable global data should be emitted as constants.
-
-When address identity is not semantically meaningful, the frontend should also use address-insignificance-friendly lowering such as local unnamed-address style handling.
+Immutable global data should be written with `const` when the reachable object
+graph is meant to be deeply readonly. Use `static` or `static mut` when the
+binding or reachable value needs ordinary global state semantics.
 
 This enables:
 
@@ -626,26 +399,21 @@ This supports:
 - sealed laws and traits
 - stronger whole-program optimization
 
-## LTO and Compilation Strategy
+## Compilation Strategy
 
-Stark is designed to work well with ThinLTO.
+Stark is designed to work well with whole-program and package-aware optimized
+builds.
 
-The intended compilation strategy is:
+The source-level rules that matter are:
 
-- one LLVM module per source file
-- ThinLTO enabled by default in optimized builds when practical
-- cross-module importing for small hot functions
-- LTO internalization for final binaries
+- keep helpers module-private or `internal` unless they are true package API
+- use `public` for downstream Stark source API
+- use `export` only for ABI boundaries
+- keep imports explicit
+- keep package boundaries deliberate
 
-This enables:
-
-- cross-module inlining
-- better dead stripping
-- stronger whole-program constant propagation
-- recovery of internal-style optimization on declarations that were initially more visible than strictly necessary
-
-Stark does not rely on LTO alone. Restrictive visibility is still emitted up front.
-
+Those choices give the build tools more room to optimize without changing the
+source program's meaning.
 ## What Stark Avoids
 
 Stark avoids the following unless there is a strong justification:

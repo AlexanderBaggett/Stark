@@ -1,0 +1,11 @@
+[project]
+name = "build-your-own-git"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "Init.stark"
+output = "init"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }

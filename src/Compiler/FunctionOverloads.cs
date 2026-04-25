@@ -235,13 +235,13 @@ internal static class FunctionOverloadFacts
         IReadOnlyList<StarkTypeSymbol> argumentTypes,
         Func<StarkTypeSymbol, StarkTypeSymbol, bool> canAssign)
     {
-        var matches = new List<(TypedFunctionSignature Signature, int ExactMatches, int GenericPenalty)>();
+        var matches = new List<(TypedFunctionSignature Signature, int ExactMatches, int ConversionCost, int GenericPenalty)>();
 
         foreach (var candidate in candidates)
         {
-            if (TryResolveCandidate(candidate, receiverType, argumentTypes, canAssign, out var resolvedCandidate, out var exactMatches, out var genericPenalty))
+            if (TryResolveCandidate(candidate, receiverType, argumentTypes, canAssign, out var resolvedCandidate, out var exactMatches, out var conversionCost, out var genericPenalty))
             {
-                matches.Add((resolvedCandidate, exactMatches, genericPenalty));
+                matches.Add((resolvedCandidate, exactMatches, conversionCost, genericPenalty));
             }
         }
 
@@ -254,11 +254,16 @@ internal static class FunctionOverloadFacts
         }
 
         var bestExactMatchCount = matches.Max(static match => match.ExactMatches);
-        var bestGenericPenalty = matches
+        var bestConversionCost = matches
             .Where(match => match.ExactMatches == bestExactMatchCount)
+            .Min(static match => match.ConversionCost);
+        var bestGenericPenalty = matches
+            .Where(match => match.ExactMatches == bestExactMatchCount && match.ConversionCost == bestConversionCost)
             .Min(static match => match.GenericPenalty);
         var bestMatches = matches
-            .Where(match => match.ExactMatches == bestExactMatchCount && match.GenericPenalty == bestGenericPenalty)
+            .Where(match => match.ExactMatches == bestExactMatchCount
+                && match.ConversionCost == bestConversionCost
+                && match.GenericPenalty == bestGenericPenalty)
             .Select(static match => match.Signature)
             .ToArray();
 
@@ -289,6 +294,10 @@ internal static class FunctionOverloadFacts
         return coreType.Kind switch
         {
             StarkTypeKind.Named when coreType.NamedType is not null => coreType.NamedType,
+            StarkTypeKind.Integer when coreType.BitWidth is int bitWidth
+                                        && coreType.IsUnsigned
+                                        && StarkTypeSymbols.IsFullUnsignedIntegerRange(bitWidth, coreType.RangeMin, coreType.RangeMax)
+                => $"u{bitWidth}",
             StarkTypeKind.Integer when coreType.BitWidth is int bitWidth
                                         && StarkTypeSymbols.IsFullSignedIntegerRange(bitWidth, coreType.RangeMin, coreType.RangeMax)
                 => $"i{bitWidth}",
@@ -399,10 +408,12 @@ internal static class FunctionOverloadFacts
         Func<StarkTypeSymbol, StarkTypeSymbol, bool> canAssign,
         out TypedFunctionSignature resolvedCandidate,
         out int exactMatches,
+        out int conversionCost,
         out int genericPenalty)
     {
         resolvedCandidate = candidate;
         exactMatches = 0;
+        conversionCost = 0;
         genericPenalty = 0;
 
         var receiverOffset = receiverType is null ? 0 : 1;
@@ -412,7 +423,14 @@ internal static class FunctionOverloadFacts
         }
 
         var explicitParameterCount = candidate.Parameters.Count - receiverOffset;
-        if (explicitParameterCount != argumentTypes.Count)
+        if (candidate.IsVarargs)
+        {
+            if (argumentTypes.Count < explicitParameterCount)
+            {
+                return false;
+            }
+        }
+        else if (explicitParameterCount != argumentTypes.Count)
         {
             return false;
         }
@@ -435,13 +453,14 @@ internal static class FunctionOverloadFacts
                 return false;
             }
 
-            if (receiverParameterType == receiverType)
+            conversionCost += GetBindingCost(receiverParameterType, receiverType);
+            if (IsExactOverloadTypeMatch(receiverParameterType, receiverType))
             {
                 exactMatches++;
             }
         }
 
-        for (var index = 0; index < argumentTypes.Count; index++)
+        for (var index = 0; index < explicitParameterCount; index++)
         {
             var parameterType = resolvedCandidate.Parameters[index + receiverOffset].Type;
             var argumentType = argumentTypes[index];
@@ -450,13 +469,63 @@ internal static class FunctionOverloadFacts
                 return false;
             }
 
-            if (parameterType == argumentType)
+            conversionCost += GetBindingCost(parameterType, argumentType);
+            if (IsExactOverloadTypeMatch(parameterType, argumentType))
             {
                 exactMatches++;
             }
         }
 
         return true;
+    }
+
+    private static int GetBindingCost(StarkTypeSymbol targetType, StarkTypeSymbol sourceType)
+    {
+        var target = StripQualifiers(targetType);
+        var source = StripQualifiers(sourceType);
+
+        if (IsExactOverloadTypeMatch(target, source))
+        {
+            return 0;
+        }
+
+        if (target.Kind == StarkTypeKind.Integer && source.Kind == StarkTypeKind.Integer)
+        {
+            var widthCost = target.BitWidth is int targetWidth && source.BitWidth is int sourceWidth
+                ? Math.Max(0, targetWidth - sourceWidth)
+                : 128;
+            var signednessCost = target.IsUnsigned == source.IsUnsigned ? 0 : 64;
+            return 10 + widthCost + signednessCost;
+        }
+
+        if (target.Kind == StarkTypeKind.Float && source.Kind == StarkTypeKind.Float)
+        {
+            var widthCost = target.BitWidth is int targetWidth && source.BitWidth is int sourceWidth
+                ? Math.Max(0, targetWidth - sourceWidth)
+                : 128;
+            return 100 + widthCost;
+        }
+
+        if (target.Kind == StarkTypeKind.Float && source.Kind == StarkTypeKind.Integer)
+        {
+            var widthCost = source.BitWidth ?? 128;
+            return 1_000 + widthCost;
+        }
+
+        return 10_000;
+    }
+
+    private static bool IsExactOverloadTypeMatch(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        if (Equals(left, right))
+        {
+            return true;
+        }
+
+        return string.Equals(
+            BuildCanonicalTypeKey(left),
+            BuildCanonicalTypeKey(right),
+            StringComparison.Ordinal);
     }
 
     private static bool TryInstantiateGenericCandidate(
@@ -654,6 +723,34 @@ internal static class FunctionOverloadFacts
                             substitution)));
         }
 
+        if (strippedParameterType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            if (strippedParameterType.FunctionPointerKind != strippedArgumentType.FunctionPointerKind
+                || strippedParameterType.FunctionPointerReturnType is null
+                || strippedArgumentType.FunctionPointerReturnType is null
+                || strippedParameterType.FunctionPointerParameterTypes is not { } parameterTypes
+                || strippedArgumentType.FunctionPointerParameterTypes is not { } argumentParameterTypes
+                || parameterTypes.Count != argumentParameterTypes.Count
+                || !TryInferTypeArguments(
+                    strippedParameterType.FunctionPointerReturnType,
+                    strippedArgumentType.FunctionPointerReturnType,
+                    genericParameters,
+                    substitution))
+            {
+                return false;
+            }
+
+            for (var index = 0; index < parameterTypes.Count; index++)
+            {
+                if (!TryInferTypeArguments(parameterTypes[index], argumentParameterTypes[index], genericParameters, substitution))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         return strippedParameterType == strippedArgumentType;
     }
 
@@ -692,6 +789,14 @@ internal static class FunctionOverloadFacts
             && strippedType.TypeArguments.Any(argument => ContainsGenericParameter(argument, genericParameters)))
         {
             return true;
+        }
+
+        if (strippedType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return strippedType.FunctionPointerReturnType is not null
+                   && ContainsGenericParameter(strippedType.FunctionPointerReturnType, genericParameters)
+                   || strippedType.FunctionPointerParameterTypes is { Count: > 0 }
+                   && strippedType.FunctionPointerParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameters));
         }
 
         return strippedType.ElementType is not null
@@ -749,6 +854,16 @@ internal static class FunctionOverloadFacts
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
                 _ => coreType
             };
+        }
+        else if (coreType.Kind == StarkTypeKind.FunctionPointer
+            && coreType.FunctionPointerKind is { } functionKind
+            && coreType.FunctionPointerReturnType is { } returnType
+            && coreType.FunctionPointerParameterTypes is { } parameterTypes)
+        {
+            substitutedCore = StarkTypeSymbols.FunctionPointer(
+                functionKind,
+                SubstituteType(returnType, substitution),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray());
         }
         else
         {

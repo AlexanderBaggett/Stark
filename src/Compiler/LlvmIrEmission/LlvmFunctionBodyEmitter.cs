@@ -373,6 +373,7 @@ internal sealed class LlvmFunctionBodyEmitter
         return value switch
         {
             SsaGlobalAddressValue => true,
+            SsaFunctionAddressValue => true,
             SsaValueReference reference when reference.Type.Kind == StarkTypeKind.RawPointer =>
                 IsKnownNonNullPointerReference(reference, visitedValueNames),
             _ => value.Type.Kind == StarkTypeKind.RawPointer
@@ -571,6 +572,9 @@ internal sealed class LlvmFunctionBodyEmitter
             case SsaCallRValue call:
                 EmitCall(instruction.ResultName, result, call);
                 return;
+            case SsaIndirectCallRValue indirectCall:
+                EmitIndirectCall(result, indirectCall);
+                return;
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA rvalue '{instruction.Value.GetType().Name}'.");
         }
@@ -589,34 +593,38 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             }
 
-            var opcode = sourceType.BitWidth < targetType.BitWidth ? "sext" : "trunc";
+            var opcode = sourceType.BitWidth < targetType.BitWidth
+                ? (HasUnsignedIntegerSemantics(sourceType) ? "zext" : "sext")
+                : "trunc";
             AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;
         }
 
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Float)
         {
+            var opcode = HasUnsignedIntegerSemantics(sourceType) ? "uitofp" : "sitofp";
             if (_isStrictFp)
             {
                 AppendLine(
-                    $"  {result} = call {MapType(targetType)} @{GetConstrainedIntegerToFloatIntrinsicName(sourceType, targetType)}({MapType(sourceType)} {FormatValue(convert.Operand)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
+                    $"  {result} = call {MapType(targetType)} @{GetConstrainedIntegerToFloatIntrinsicName(sourceType, targetType, opcode)}({MapType(sourceType)} {FormatValue(convert.Operand)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
                 return;
             }
 
-            AppendLine($"  {result} = sitofp {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
+            AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;
         }
 
         if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Integer)
         {
+            var opcode = HasUnsignedIntegerSemantics(targetType) ? "fptoui" : "fptosi";
             if (_isStrictFp)
             {
                 AppendLine(
-                    $"  {result} = call {MapType(targetType)} @{GetConstrainedFloatToIntegerIntrinsicName(sourceType, targetType)}({MapType(sourceType)} {FormatValue(convert.Operand)}, metadata !\"fpexcept.strict\") strictfp");
+                    $"  {result} = call {MapType(targetType)} @{GetConstrainedFloatToIntegerIntrinsicName(sourceType, targetType, opcode)}({MapType(sourceType)} {FormatValue(convert.Operand)}, metadata !\"fpexcept.strict\") strictfp");
                 return;
             }
 
-            AppendLine($"  {result} = fptosi {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
+            AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;
         }
 
@@ -657,7 +665,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
         {
-            AppendLine($"  {result} = getelementptr i8, ptr {FormatValue(convert.Operand)}, i64 0");
+            AppendLine($"  {result} = select i1 true, ptr {FormatValue(convert.Operand)}, ptr {FormatValue(convert.Operand)}");
             return;
         }
 
@@ -717,13 +725,13 @@ internal sealed class LlvmFunctionBodyEmitter
                 SsaBinaryOperator.WrappingAdd => "add",
                 SsaBinaryOperator.WrappingSubtract => "sub",
                 SsaBinaryOperator.WrappingMultiply => "mul",
-                SsaBinaryOperator.Divide => "sdiv",
-                SsaBinaryOperator.Modulo => "srem",
+                SsaBinaryOperator.Divide => HasUnsignedIntegerSemantics(binary.Type) ? "udiv" : "sdiv",
+                SsaBinaryOperator.Modulo => HasUnsignedIntegerSemantics(binary.Type) ? "urem" : "srem",
                 SsaBinaryOperator.BitwiseAnd => "and",
                 SsaBinaryOperator.BitwiseXor => "xor",
                 SsaBinaryOperator.BitwiseOr => "or",
                 SsaBinaryOperator.ShiftLeft => "shl",
-                SsaBinaryOperator.ShiftRight => "ashr",
+                SsaBinaryOperator.ShiftRight => HasUnsignedIntegerSemantics(binary.Left.Type) ? "lshr" : "ashr",
                 _ => string.Empty
             };
 
@@ -791,10 +799,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     SsaBinaryOperator.Equal => "eq",
                     SsaBinaryOperator.NotEqual => "ne",
-                    SsaBinaryOperator.LessThan => binary.Left.Type.Kind == StarkTypeKind.Bool ? "ult" : "slt",
-                    SsaBinaryOperator.LessThanOrEqual => binary.Left.Type.Kind == StarkTypeKind.Bool ? "ule" : "sle",
-                    SsaBinaryOperator.GreaterThan => binary.Left.Type.Kind == StarkTypeKind.Bool ? "ugt" : "sgt",
-                    SsaBinaryOperator.GreaterThanOrEqual => binary.Left.Type.Kind == StarkTypeKind.Bool ? "uge" : "sge",
+                    SsaBinaryOperator.LessThan => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "ult" : "slt",
+                    SsaBinaryOperator.LessThanOrEqual => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "ule" : "sle",
+                    SsaBinaryOperator.GreaterThan => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "ugt" : "sgt",
+                    SsaBinaryOperator.GreaterThanOrEqual => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "uge" : "sge",
                     _ => string.Empty
                 };
 
@@ -1797,9 +1805,38 @@ internal sealed class LlvmFunctionBodyEmitter
             return true;
         }
 
+        if (normalizedType.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return true;
+        }
+
         GetSignedIntegerBounds(bitWidth, out min, out max);
         return true;
     }
+
+    private static bool HasUnsignedIntegerSemantics(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        if (normalizedType.Kind != StarkTypeKind.Integer
+            || normalizedType.BitWidth is not int bitWidth
+            || !TryGetIntegerTypeRange(normalizedType, out var min, out var max))
+        {
+            return false;
+        }
+
+        if (normalizedType.IsUnsigned)
+        {
+            return true;
+        }
+
+        GetSignedIntegerBounds(bitWidth, out _, out var signedMax);
+        return min >= BigInteger.Zero && max > signedMax;
+    }
+
+    private static bool ShouldUseUnsignedIntegerComparison(StarkTypeSymbol type)
+        => type.Kind == StarkTypeKind.Bool || HasUnsignedIntegerSemantics(type);
 
     private string GetFixedArrayIndexGepFlags(SsaValue? index, StarkTypeSymbol aggregateType)
     {
@@ -1995,7 +2032,15 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         var userParameters = abiCallee.UserParameters;
-        if (userParameters.Count != call.Arguments.Count)
+        if (abiCallee.IsVarargs)
+        {
+            if (call.Arguments.Count < userParameters.Count)
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"ABI parameter count mismatch for '{call.FunctionName}': expected at least {userParameters.Count}, got {call.Arguments.Count}.");
+            }
+        }
+        else if (userParameters.Count != call.Arguments.Count)
         {
             throw new UnsupportedBodyEmissionException(
                 $"ABI parameter count mismatch for '{call.FunctionName}': expected {userParameters.Count}, got {call.Arguments.Count}.");
@@ -2062,7 +2107,16 @@ internal sealed class LlvmFunctionBodyEmitter
             arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot));
         }
 
+        if (abiCallee.IsVarargs)
+        {
+            for (var index = userParameters.Count; index < call.Arguments.Count; index++)
+            {
+                arguments.Add(RenderDirectVarargArgument(call.Arguments[index]));
+            }
+        }
+
         var renderedArguments = string.Join(", ", arguments);
+        var callTarget = RenderCallTarget(abiCallee);
         var callPrefixSegments = new List<string>();
         if (ShouldEmitTailCallMarker(resultName))
         {
@@ -2085,7 +2139,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (abiCallee.ReturnsIndirect)
         {
-            AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}");
+            AppendLine($"  {callPrefix} void {callTarget}({renderedArguments}){strictFpCallSuffix}");
             _indirectAggregateValueSlots[resultName] = indirectReturnSlot!;
             if (RequiresAggregateValueMaterialization(resultName, sourceReturnType))
             {
@@ -2096,12 +2150,65 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (call.Type.Kind == StarkTypeKind.Void)
         {
-            AppendLine($"  {callPrefix} void @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}");
+            AppendLine($"  {callPrefix} void {callTarget}({renderedArguments}){strictFpCallSuffix}");
             return;
         }
 
         var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(call.Type);
-        AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} @{EscapeIdentifier(abiCallee.SymbolName)}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}");
+        AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}");
+    }
+
+    private string RenderCallTarget(AbiFunctionSignature abiCallee)
+    {
+        var escapedName = $"@{EscapeIdentifier(abiCallee.SymbolName)}";
+        if (!abiCallee.IsVarargs)
+        {
+            return escapedName;
+        }
+
+        var parameterTypes = abiCallee.Parameters
+            .Select(parameter => MapType(parameter.LlvmType))
+            .Append("...");
+        return $"({string.Join(", ", parameterTypes)}) {escapedName}";
+    }
+
+    private void EmitIndirectCall(string result, SsaIndirectCallRValue call)
+    {
+        if (call.Target.Type.FunctionPointerParameterTypes is not { } parameterTypes)
+        {
+            throw new UnsupportedBodyEmissionException("Indirect call target is missing function-pointer parameter type metadata.");
+        }
+
+        if (parameterTypes.Count != call.Arguments.Count)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Indirect call argument count mismatch: expected {parameterTypes.Count}, got {call.Arguments.Count}.");
+        }
+
+        var arguments = new List<string>(call.Arguments.Count);
+        for (var index = 0; index < call.Arguments.Count; index++)
+        {
+            arguments.Add($"{MapType(parameterTypes[index])} {FormatValue(call.Arguments[index])}");
+        }
+
+        var callPrefixSegments = new List<string> { "call" };
+        if (ShouldUseFastMathFlags(call.Type))
+        {
+            callPrefixSegments.Add("fast");
+        }
+
+        callPrefixSegments.Add("fastcc");
+        var callPrefix = string.Join(" ", callPrefixSegments);
+        var renderedArguments = string.Join(", ", arguments);
+        var strictFpCallSuffix = GetStrictFpCallSuffix();
+
+        if (call.Type.Kind == StarkTypeKind.Void)
+        {
+            AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}");
+            return;
+        }
+
+        AppendLine($"  {result} = {callPrefix} {MapType(call.Type)} {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}{GetValueRangeMetadataSuffix(call.Type)}");
     }
 
     private bool ShouldEmitTailCallMarker(string resultName)
@@ -2201,16 +2308,18 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private static string GetConstrainedIntegerToFloatIntrinsicName(
         StarkTypeSymbol sourceType,
-        StarkTypeSymbol targetType)
+        StarkTypeSymbol targetType,
+        string opcode)
     {
-        return $"llvm.experimental.constrained.sitofp.{GetFloatIntrinsicSuffix(targetType)}.i{sourceType.BitWidth}";
+        return $"llvm.experimental.constrained.{opcode}.{GetFloatIntrinsicSuffix(targetType)}.i{sourceType.BitWidth}";
     }
 
     private static string GetConstrainedFloatToIntegerIntrinsicName(
         StarkTypeSymbol sourceType,
-        StarkTypeSymbol targetType)
+        StarkTypeSymbol targetType,
+        string opcode)
     {
-        return $"llvm.experimental.constrained.fptosi.i{targetType.BitWidth}.{GetFloatIntrinsicSuffix(sourceType)}";
+        return $"llvm.experimental.constrained.{opcode}.i{targetType.BitWidth}.{GetFloatIntrinsicSuffix(sourceType)}";
     }
 
     private string GetTypeAlignmentSuffix(StarkTypeSymbol type)
@@ -3461,7 +3570,7 @@ internal sealed class LlvmFunctionBodyEmitter
             StarkTypeKind.Integer => "0",
             StarkTypeKind.Float => "0.0",
             StarkTypeKind.Bool => "false",
-            StarkTypeKind.RawPointer => "null",
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer => "null",
             _ => "zeroinitializer"
         };
     }
@@ -3870,6 +3979,7 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaBoolConstant boolean => boolean.Value ? "true" : "false",
             SsaNullConstant => "null",
             SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}",
+            SsaFunctionAddressValue functionAddress => $"@{EscapeIdentifier(functionAddress.FunctionName)}",
             SsaZeroInitializerValue => "zeroinitializer",
             SsaUndefValue => "undef",
             _ => throw new UnsupportedBodyEmissionException($"Unsupported SSA value '{value.GetType().Name}'.")
@@ -4662,7 +4772,8 @@ internal sealed class LlvmFunctionBodyEmitter
             StarkTypeKind.Bool
             or StarkTypeKind.Integer
             or StarkTypeKind.Float
-            or StarkTypeKind.RawPointer;
+            or StarkTypeKind.RawPointer
+            or StarkTypeKind.FunctionPointer;
     }
 
     private static string GetTbaaTypeKey(StarkTypeSymbol type)
@@ -4674,6 +4785,7 @@ internal sealed class LlvmFunctionBodyEmitter
             StarkTypeKind.Integer => $"integer:{normalizedType.BitWidth}",
             StarkTypeKind.Float => $"float:{normalizedType.BitWidth}",
             StarkTypeKind.RawPointer => "rawptr",
+            StarkTypeKind.FunctionPointer => "fnptr",
             StarkTypeKind.Ascii => "text:ascii",
             StarkTypeKind.Unicode => "text:unicode",
             StarkTypeKind.FixedArray => $"array:{normalizedType.FixedLength}:{GetTbaaTypeKey(normalizedType.ElementType ?? StarkTypeSymbols.Error)}",
@@ -4692,6 +4804,7 @@ internal sealed class LlvmFunctionBodyEmitter
             StarkTypeKind.Integer => $"stark.i{normalizedType.BitWidth}",
             StarkTypeKind.Float => $"stark.f{normalizedType.BitWidth}",
             StarkTypeKind.RawPointer => "stark.ptr",
+            StarkTypeKind.FunctionPointer => "stark.fnptr",
             StarkTypeKind.Ascii => "stark.text.ascii",
             StarkTypeKind.Unicode => "stark.text.unicode",
             StarkTypeKind.FixedArray => $"stark.array.{normalizedType.DisplayName}",
@@ -4862,7 +4975,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private static string FormatFloatLiteral(SsaFloatConstant floating)
     {
         if (!double.TryParse(
-                floating.LiteralText,
+                CompileTimeExpressionEvaluator.StripFloatSuffix(floating.LiteralText),
                 NumberStyles.Float | NumberStyles.AllowThousands,
                 CultureInfo.InvariantCulture,
                 out var parsed))
@@ -4905,6 +5018,34 @@ internal sealed class LlvmFunctionBodyEmitter
 
         segments.Add(FormatValue(argument));
         return string.Join(" ", segments);
+    }
+
+    private string RenderDirectVarargArgument(SsaValue argument)
+    {
+        var sourceType = StarkTypeSymbols.WithQualifiers(
+            argument.Type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        var llvmType = LowerCVarargArgumentType(sourceType);
+
+        if (llvmType.Kind == StarkTypeKind.RawPointer && IsStringType(sourceType))
+        {
+            return $"ptr {ExtractStringDataPointer(argument)}";
+        }
+
+        return $"{MapType(llvmType)} {FormatValue(argument)}";
+    }
+
+    private static StarkTypeSymbol LowerCVarargArgumentType(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            StarkTypeKind.Unicode => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false),
+            _ => type
+        };
     }
 
     private string RenderIndirectArgumentPointer(AbiParameterSymbol parameter, string pointerValue)

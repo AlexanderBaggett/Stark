@@ -12,12 +12,25 @@ public enum FileMode {
     ReadWrite,
 }
 
+public enum FileBuffering {
+    None,
+    Line,
+    Full,
+}
+
+public enum SeekOrigin {
+    Begin,
+    Current,
+    End,
+}
+
 public struct File {
     finite law bool IsOpen(File self);
     fn i32 Close(mut borrow File self);
     fn i32 Flush(mut borrow File self);
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
+    fn i64 Seek(mut borrow File self, i64 offset, SeekOrigin origin);
     fn void WriteText(mut borrow File self, ascii text);
     fn void WriteText(mut borrow File self, unicode text);
     fn void WriteLine(mut borrow File self, ascii text);
@@ -45,6 +58,7 @@ public fn i32 Close(rawptr<i8> handle);
 public fn i32 Flush(rawptr<i8> handle);
 public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
 public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
+public fn i64 Seek(rawptr<i8> handle, i64 offset, SeekOrigin origin);
 public fn void WriteText(rawptr<i8> handle, ascii text);
 public fn void WriteText(rawptr<i8> handle, unicode text);
 public fn void WriteLine(rawptr<i8> handle, ascii text);
@@ -71,7 +85,8 @@ fn void WriteOwned() {
 
 - Owned file handles and destructor-driven close are implemented.
 - Raw-handle helpers remain available for compatibility and tests.
-- On Linux, open/read/write/close/delete/move/exists now go through the internal syscall-backed file-descriptor boundary.
+- On Linux, open/read/write/close/seek/delete/move/exists now go through the internal syscall-backed file-descriptor boundary.
+- On Windows, seek uses `SetFilePointerEx` through the internal platform boundary.
 - `Exists` now uses the Linux `stat` boundary instead of probing with open/close.
 - Raw-handle text helpers support both `ascii` and `unicode`.
 - Owned file writes now support `None`, `Line`, and `Full` userspace buffering with an internal fixed-size buffer.

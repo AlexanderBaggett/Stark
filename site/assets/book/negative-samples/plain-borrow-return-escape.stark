@@ -1,0 +1,21 @@
+module Book.Negative.PlainBorrowReturnEscape
+
+struct Cell {
+    i32[min max] Value;
+}
+
+finite borrow i32[min max] BadSlot(borrow Cell cell) {
+    return cell.Value;
+}
+
+export ffi fn i32[min max] main() {
+    stack Cell cell = new Cell() {
+        Value = 7
+    };
+
+    if (BadSlot(cell) != 7) {
+        return 1;
+    }
+
+    return 0;
+}

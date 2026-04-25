@@ -1,0 +1,23 @@
+module Book.StorageLifetimes
+
+const ExpectedTotal = 15;
+
+finite bool TryTotal(i32[min max][3] values, out i32[min max] total) {
+    total = values[0] + values[1] + values[2];
+    return true;
+}
+
+export ffi fn i32[min max] main() {
+    stack i32[min max][3] values = { 4, 5, 6 };
+    stack mut i32[min max] total = 0;
+
+    if (!TryTotal(values, total)) {
+        return 1;
+    }
+
+    if (total != ExpectedTotal) {
+        return 2;
+    }
+
+    return 0;
+}

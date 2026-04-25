@@ -1,0 +1,39 @@
+import System
+module Book.Stdlib.FilesDirectoriesPathsText
+
+finite law bool BoolValue(System.IO.IOResult<bool> result) {
+    switch (result) {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn bool WriteMarker(ascii path) {
+    stack mut System.IO.File.File file =
+        System.IO.File.Open(path, System.IO.File.FileMode.Write);
+
+    if (!file.IsOpen()) {
+        return false;
+    }
+
+    file.WriteLine("marker");
+    return file.Close() == 0;
+}
+
+export ffi fn i32[min max] main() {
+    if (!WriteMarker("stark-book-file.txt")) {
+        return 1;
+    }
+
+    if (!BoolValue(System.FileSystem.Exists("stark-book-file.txt"))) {
+        return 2;
+    }
+
+    if (System.IO.File.Delete("stark-book-file.txt") != 0) {
+        return 3;
+    }
+
+    return 0;
+}

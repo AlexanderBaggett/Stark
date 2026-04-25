@@ -9,7 +9,8 @@ internal sealed class SsaCleanupOptimizer
     {
         return new SsaIrModule(
             module.ModuleName,
-            module.Functions.Select(OptimizeFunction).ToArray());
+            module.Functions.Select(OptimizeFunction).ToArray(),
+            module.AddressTakenFunctions);
     }
 
     public SsaFunction OptimizeFunction(SsaFunction function)
@@ -2284,7 +2285,8 @@ internal sealed class SsaConstantPropagator
     {
         return new SsaIrModule(
             module.ModuleName,
-            module.Functions.Select(OptimizeFunction).ToArray());
+            module.Functions.Select(OptimizeFunction).ToArray(),
+            module.AddressTakenFunctions);
     }
 
     public SsaFunction OptimizeFunction(SsaFunction function)
@@ -2749,7 +2751,7 @@ internal sealed class SsaConstantPropagator
 
     private static bool FoldIntegerNegate(SsaIntegerConstant integer, out SsaValue folded)
     {
-        if (!TryFitSignedInteger(-integer.Value, integer.Type.BitWidth ?? 0, out var fitted))
+        if (!TryFitInteger(-integer.Value, integer.Type, out var fitted))
         {
             folded = integer;
             return false;
@@ -2771,8 +2773,8 @@ internal sealed class SsaConstantPropagator
         var mask = (BigInteger.One << bitWidth) - 1;
         var twosComplement = integer.Value & mask;
         var inverted = (~twosComplement) & mask;
-        var signed = FromTwosComplement(inverted, bitWidth);
-        folded = new SsaIntegerConstant(signed, integer.Type);
+        var foldedValue = integer.Type.IsUnsigned ? inverted : FromTwosComplement(inverted, bitWidth);
+        folded = new SsaIntegerConstant(foldedValue, integer.Type);
         return true;
     }
 
@@ -2950,7 +2952,7 @@ internal sealed class SsaConstantPropagator
 
     private static bool TryFoldSignedInteger(StarkTypeSymbol type, BigInteger value, out SsaValue folded)
     {
-        if (TryFitSignedInteger(value, type.BitWidth ?? 0, out var fitted))
+        if (TryFitInteger(value, type, out var fitted))
         {
             folded = new SsaIntegerConstant(fitted, type);
             return true;
@@ -2970,14 +2972,14 @@ internal sealed class SsaConstantPropagator
 
         var modulus = BigInteger.One << bitWidth;
         var normalized = ((value % modulus) + modulus) % modulus;
-        var wrapped = FromTwosComplement(normalized, bitWidth);
+        var wrapped = type.IsUnsigned ? normalized : FromTwosComplement(normalized, bitWidth);
         folded = new SsaIntegerConstant(wrapped, type);
         return true;
     }
 
     private static bool TryClampSignedInteger(StarkTypeSymbol type, BigInteger value, out SsaValue folded)
     {
-        if (!TryGetSignedIntegerBounds(type.BitWidth ?? 0, out var min, out var max))
+        if (!TryGetIntegerBounds(type, out var min, out var max))
         {
             folded = new SsaIntegerConstant(value, type);
             return false;
@@ -2988,10 +2990,10 @@ internal sealed class SsaConstantPropagator
         return true;
     }
 
-    private static bool TryFitSignedInteger(BigInteger value, int bitWidth, out BigInteger fitted)
+    private static bool TryFitInteger(BigInteger value, StarkTypeSymbol type, out BigInteger fitted)
     {
         fitted = value;
-        if (!TryGetSignedIntegerBounds(bitWidth, out var min, out var max))
+        if (!TryGetIntegerBounds(type, out var min, out var max))
         {
             return false;
         }
@@ -3002,6 +3004,25 @@ internal sealed class SsaConstantPropagator
         }
 
         return true;
+    }
+
+    private static bool TryGetIntegerBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            min = BigInteger.Zero;
+            max = BigInteger.Zero;
+            return false;
+        }
+
+        if (type.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return true;
+        }
+
+        return TryGetSignedIntegerBounds(bitWidth, out min, out max);
     }
 
     private static bool TryGetSignedIntegerBounds(int bitWidth, out BigInteger min, out BigInteger max)

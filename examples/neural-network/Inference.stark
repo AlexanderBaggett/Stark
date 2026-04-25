@@ -1,0 +1,47 @@
+module NeuralNetwork
+
+record Sample(
+    i32[min max] X0,
+    i32[min max] X1) { }
+
+record HiddenLayer(
+    i32[min max] A,
+    i32[min max] B) { }
+
+finite law i32[min max] Relu(i32[min max] value) {
+    if (value < 0) {
+        return 0;
+    }
+
+    return value;
+}
+
+finite law HiddenLayer Encode(Sample input) {
+    return new HiddenLayer(
+        Relu(input.X0 * 2 - input.X1 + 10),
+        Relu(input.X1 * 3 - input.X0));
+}
+
+finite law i32[min max] Score(HiddenLayer hidden) {
+    return hidden.A * 2 + hidden.B * 3 - 150;
+}
+
+finite law bool Predict(Sample input) {
+    return Score(Encode(input)) > 0;
+}
+
+export ffi fn i32[min max] main() {
+    if (!Predict(new Sample(40, 20))) {
+        return 1;
+    }
+
+    if (Predict(new Sample(0, 0))) {
+        return 2;
+    }
+
+    if (Score(Encode(new Sample(40, 20))) != 50) {
+        return 3;
+    }
+
+    return 0;
+}

@@ -23,7 +23,7 @@ internal static class TypeCompatibilityFacts
 
         if (target.Kind == StarkTypeKind.Integer && source.Kind == StarkTypeKind.Integer)
         {
-            if (target.BitWidth is null || source.BitWidth is null || source.BitWidth > target.BitWidth)
+            if (target.BitWidth is null || source.BitWidth is null)
             {
                 return false;
             }
@@ -67,6 +67,11 @@ internal static class TypeCompatibilityFacts
             return true;
         }
 
+        if (target.Kind == StarkTypeKind.FunctionPointer && source.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return AreFunctionPointerTypesAssignable(target, source);
+        }
+
         if (target.Kind == StarkTypeKind.Slice && source.Kind == StarkTypeKind.FixedArray && target.ElementType is not null && source.ElementType is not null)
         {
             return CanAssign(target.ElementType, source.ElementType);
@@ -90,6 +95,42 @@ internal static class TypeCompatibilityFacts
         return target.Kind == StarkTypeKind.Named
             && source.Kind == StarkTypeKind.Named
             && string.Equals(target.NamedType, source.NamedType, StringComparison.Ordinal);
+    }
+
+    public static bool AreFunctionPointerTypesAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
+    {
+        if (target.FunctionPointerKind is not { } targetKind
+            || source.FunctionPointerKind is not { } sourceKind
+            || target.FunctionPointerReturnType is not { } targetReturn
+            || source.FunctionPointerReturnType is not { } sourceReturn
+            || target.FunctionPointerParameterTypes is not { } targetParameters
+            || source.FunctionPointerParameterTypes is not { } sourceParameters
+            || targetParameters.Count != sourceParameters.Count)
+        {
+            return false;
+        }
+
+        if (!FunctionKindSatisfies(sourceKind, targetKind)
+            || !Equals(targetReturn, sourceReturn))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < targetParameters.Count; index++)
+        {
+            if (!Equals(sourceParameters[index], targetParameters[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static bool FunctionKindSatisfies(StarkFunctionKind source, StarkFunctionKind target)
+    {
+        return (!FunctionKindFacts.IsLaw(target) || FunctionKindFacts.IsLaw(source))
+            && (!FunctionKindFacts.IsFinite(target) || FunctionKindFacts.IsFinite(source));
     }
 
     public static bool AreQualifiersAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -171,6 +212,13 @@ internal static class TypeCompatibilityFacts
         {
             min = type.RangeMin.Value;
             max = type.RangeMax.Value;
+            return true;
+        }
+
+        if (type.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
             return true;
         }
 

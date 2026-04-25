@@ -45,7 +45,8 @@ stack mut System.Collections.List<i32[0 max]> values = new();
 Custom allocator:
 
 ```stark
-stack mut System.Collections.List<i32[0 max]> values = new(myCustomAllocator);
+stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+stack mut System.Collections.List<i32[0 max]> values = new(allocator);
 ```
 
 The collection value is an owned header. It owns any heap backing storage and

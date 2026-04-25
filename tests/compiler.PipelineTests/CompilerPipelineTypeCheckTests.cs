@@ -299,7 +299,7 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public const i32[-2147483648 2147483647] Answer = 42;
+                public const Answer = 42;
                 public static mut i32[-2147483648 2147483647] Counter = 0;
                 """,
                 facadePath));
@@ -349,7 +349,7 @@ public sealed class CompilerPipelineTypeCheckTests
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
             Assert.NotNull(typeCheckModel);
-            Assert.Equal("i32", typeCheckModel.Globals["Facade.Answer"].Type.DisplayName);
+            Assert.Equal("i8[42 42]", typeCheckModel.Globals["Facade.Answer"].Type.DisplayName);
             Assert.True(typeCheckModel.Globals["Facade.Answer"].IsConst);
             Assert.Equal("i32", typeCheckModel.Globals["Facade.Counter"].Type.DisplayName);
             Assert.True(typeCheckModel.Globals["Facade.Counter"].IsMutable);

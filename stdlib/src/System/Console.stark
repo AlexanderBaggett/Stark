@@ -4,8 +4,8 @@ import System.Runtime.Platform
 import System.Text
 module System.Console
 
-const i64[-9223372036854775808 9223372036854775807] ConsoleInputUnicodeCapacity = 8192;
-const i64[-9223372036854775808 9223372036854775807] ConsoleInputByteCapacity = 8192;
+const ConsoleInputUnicodeCapacity = 8192;
+const ConsoleInputByteCapacity = 8192;
 
 internal struct ConsoleByteStorage {
     i8[-128 127][8192] Storage;
@@ -23,11 +23,16 @@ internal struct UnicodeConsoleLineStorage {
     i32[-2147483648 2147483647][8192] Storage;
 }
 
+internal struct AsciiConsoleLineStorage {
+    i8[-128 127][8192] Storage;
+}
+
 internal struct UnicodeConsoleUnitStorage {
     i32[-2147483648 2147483647][1] Storage;
 }
 
 static mut UnicodeConsoleLineStorage ConsoleReadLineStorage = new UnicodeConsoleLineStorage();
+static mut AsciiConsoleLineStorage ConsoleReadAsciiLineStorage = new AsciiConsoleLineStorage();
 static mut UnicodeConsoleUnitStorage ConsoleReadUnitStorage = new UnicodeConsoleUnitStorage();
 static mut ConsoleByteStorage ConsoleInputStorage = new ConsoleByteStorage();
 static mut i64[-9223372036854775808 9223372036854775807] ConsoleInputReadPos = 0;
@@ -286,6 +291,14 @@ fn Unicode BuildConsoleReadLineResult(i64[-9223372036854775808 92233720368547758
     };
 }
 
+fn Ascii BuildConsoleReadAsciiLineResult(i64[-9223372036854775808 9223372036854775807] length) {
+    return new Ascii() {
+        Data = &ConsoleReadAsciiLineStorage.Storage[0],
+        Length = length,
+        Capacity = ConsoleInputByteCapacity
+    };
+}
+
 fn Unicode BuildConsoleReadUnitResult(i32[-2147483648 2147483647] codePoint, i64[-9223372036854775808 9223372036854775807] length) {
     if (length > 0) {
         ConsoleReadUnitStorage.Storage[0] = NormalizeUnicodeCodePoint(codePoint);
@@ -425,6 +438,34 @@ public fn Unicode ReadLine() {
         &ConsoleReadLineStorage.Storage[0],
         ConsoleInputUnicodeCapacity);
     return BuildConsoleReadLineResult(lineLength);
+}
+
+public fn Ascii ReadAsciiLine() {
+    stack mut ConsoleSingleByteStorage nextByte = new ConsoleSingleByteStorage();
+    stack mut i64[-9223372036854775808 9223372036854775807] byteLength = 0;
+
+    while willexit (byteLength < ConsoleInputByteCapacity) {
+        if (!TryReadInputByte(&nextByte.Storage[0])) {
+            break;
+        }
+
+        if (nextByte.Storage[0] == (i8[-128 127])10) {
+            if (byteLength > 0 && *(&ConsoleReadAsciiLineStorage.Storage[byteLength - 1]) == (i8[-128 127])13) {
+                byteLength -= 1;
+            }
+
+            break;
+        }
+
+        *(&ConsoleReadAsciiLineStorage.Storage[byteLength]) = nextByte.Storage[0];
+        byteLength += 1;
+    }
+
+    return BuildConsoleReadAsciiLineResult(byteLength);
+}
+
+public fn Unicode ReadUnicodeLine() {
+    return ReadLine();
 }
 
 public fn Unicode Read() {

@@ -62,19 +62,21 @@ internal static partial class PackageImageBuilder
 
                 case DeclarationKind.GlobalConstant:
                 case DeclarationKind.GlobalVariable:
-                    if (globalLookup.TryGetValue(declaration.Name, out var globalManifest)
-                        && globalSyntaxLookup.TryGetValue(declaration.Name, out var globalTypeSyntax))
+                    if (globalLookup.TryGetValue(declaration.Name, out var globalManifest))
                     {
-                        sourceGlobals.Add(globalManifest with
+                        sourceGlobals.Add(globalSyntaxLookup.TryGetValue(declaration.Name, out var globalTypeSyntax) && globalTypeSyntax is not null
+                            ? globalManifest with
                         {
                             Type = GetContextSourceText(module.ParseResult, globalTypeSyntax)
-                        });
+                        }
+                            : globalManifest);
                     }
 
                     break;
 
                 case DeclarationKind.TypeAlias when declaration.TypeAlias is not null:
-                    if (typeAliasLookup.TryGetValue(declaration.Name, out var typeAliasManifest)
+                    if (GenericTemplatePublicationPolicy.HasPublishedApiVisibility(declaration.Visibility)
+                        && typeAliasLookup.TryGetValue(declaration.Name, out var typeAliasManifest)
                         && typeAliasSyntaxLookup.TryGetValue(declaration.Name, out var typeAliasSyntax))
                     {
                         sourceTypeAliases.Add(typeAliasManifest with
@@ -468,16 +470,25 @@ internal static partial class PackageImageBuilder
             .ToDictionary(static typeAlias => typeAlias.Identifier().GetText(), StringComparer.Ordinal);
     }
 
-    private static Dictionary<string, StarkParser.Type_Context> BuildGlobalDeclarationSyntaxLookup(LoadedModuleDocument module)
+    private static Dictionary<string, StarkParser.Type_Context?> BuildGlobalDeclarationSyntaxLookup(LoadedModuleDocument module)
     {
-        var lookup = new Dictionary<string, StarkParser.Type_Context>(StringComparer.Ordinal);
+        var lookup = new Dictionary<string, StarkParser.Type_Context?>(StringComparer.Ordinal);
 
         foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
         {
             if (declaration.globalConstantDeclaration() is { } constantDeclaration)
             {
-                lookup[constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText()] =
-                    constantDeclaration.type_();
+                if (constantDeclaration.type_() is { } typeContext)
+                {
+                    lookup[constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText()] =
+                        typeContext;
+                }
+                else
+                {
+                    lookup[constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText()] =
+                        null;
+                }
+
                 continue;
             }
 

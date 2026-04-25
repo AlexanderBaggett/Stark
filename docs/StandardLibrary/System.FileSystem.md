@@ -1,13 +1,13 @@
 # `System.FileSystem`
 
-`System.FileSystem` is the planned public module for filesystem-level operations
-that are broader than an already-open file handle.
+`System.FileSystem` is the public module for filesystem-level operations that
+are broader than an already-open file handle.
 
 `System.IO.File` remains the owned file-handle API. `System.FileSystem` owns
 directory creation/deletion, directory listing, metadata queries, and whole-path
 operations.
 
-## Planned Public Surface
+## Public Surface
 
 ```stark
 import System.IO
@@ -46,9 +46,9 @@ public fn System.IO.IOResult<bool> IsDirectory(ascii path);
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
 ```
 
-`DeleteDirectory` is intentionally part of the first planned surface. The
-initial operation should be non-recursive so mistakes do not delete a tree by
-accident. Recursive deletion can be added later as a deliberately named helper.
+`DeleteDirectory` is intentionally non-recursive so mistakes do not delete a
+tree by accident. Recursive deletion can be added later as a deliberately named
+helper.
 
 ## Directory Listing
 
@@ -103,7 +103,8 @@ filesystem state.
 
 `System.IO.Path` exists today and should remain source-compatible.
 
-For `v1.2`, the filesystem documentation should decide whether path helpers are:
+For a later standard-library slice, the filesystem documentation should decide
+whether path helpers are:
 
 - kept in `System.IO.Path` and re-exported from `System.FileSystem`
 - moved to `System.FileSystem.Path` with compatibility forwarding
@@ -114,7 +115,11 @@ split.
 
 ## Current Status
 
-- This is a planned `v1.2` module.
-- File deletion and move already exist today through `System.IO.File`.
-- Directory deletion, directory listing, metadata queries, and allocation-backed
-  owned entry names remain implementation work.
+- `CreateDirectory`, non-recursive `DeleteDirectory`, `OpenDirectory`,
+  `Directory.ReadNext`, `Exists`, `IsFile`, `IsDirectory`, and `Move` are
+  implemented.
+- `Directory` is an owned handle with best-effort close-on-drop cleanup.
+- `FileSystemEntry.Name` is owned entry-name storage, so callers are not tied to
+  the directory iterator's internal buffer.
+- Recursive deletion and filesystem path namespace changes are intentionally
+  left out of this slice.

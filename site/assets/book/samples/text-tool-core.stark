@@ -1,0 +1,27 @@
+module Book.TextToolCore
+
+enum ToolStatus {
+    Ok,
+    UnknownCommand,
+}
+
+finite law ToolStatus ClassifyCommand(ascii command) {
+    if (command[0] == 'r' && command[1] == 'u' && command[2] == 'n') {
+        return ToolStatus.Ok;
+    }
+
+    return ToolStatus.UnknownCommand;
+}
+
+finite law i32[min max] ExitCode(ToolStatus status) {
+    switch (status) {
+        case ToolStatus.Ok:
+            return 0;
+        case ToolStatus.UnknownCommand:
+            return 2;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    return ExitCode(ClassifyCommand("run"));
+}

@@ -6,7 +6,8 @@ namespace Stark.Compiler;
 internal sealed record StarkPackageManifest(
     string RootModule,
     string LibraryFileName,
-    IReadOnlyList<StarkPackageModuleManifest> Modules)
+    IReadOnlyList<StarkPackageModuleManifest> Modules,
+    StarkPackageNativeDependencyManifest? NativeDependencies = null)
 {
     internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -21,6 +22,14 @@ internal sealed record StarkPackageManifest(
         return JsonSerializer.Deserialize<StarkPackageManifest>(json, SerializerOptions);
     }
 }
+
+internal sealed record StarkPackageNativeDependencyManifest(
+    IReadOnlyList<string>? Sources = null,
+    IReadOnlyList<string>? IncludeDirectories = null,
+    IReadOnlyList<string>? LibraryDirectories = null,
+    IReadOnlyList<string>? Libraries = null,
+    IReadOnlyList<string>? LinkArguments = null,
+    IReadOnlyList<string>? PkgConfigPackages = null);
 
 internal sealed record StarkPackageModuleManifest(
     string ModuleName,
@@ -92,7 +101,9 @@ internal sealed record StarkPackageFunctionManifest(
     bool IsHot = false,
     bool IsCold = false,
     string InlinePreference = "inlinehint",
-    bool HasExplicitInlinePreference = false);
+    bool HasExplicitInlinePreference = false,
+    bool IsUnsafe = false,
+    bool IsVarargs = false);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -130,7 +141,9 @@ internal sealed record StarkPackageMethodManifest(
     string InlinePreference = "inlinehint",
     bool HasExplicitInlinePreference = false,
     bool IsStatic = false,
-    string? Visibility = null);
+    string? Visibility = null,
+    bool IsUnsafe = false,
+    bool IsVarargs = false);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -191,6 +204,7 @@ internal sealed record StarkPackageTypeReference(
     int? BitWidth = null,
     string? RangeMin = null,
     string? RangeMax = null,
+    bool? IsUnsigned = null,
     bool IsMutablePointer = false,
     string? BorrowKind = null,
     string? AccessKind = null,
@@ -198,7 +212,10 @@ internal sealed record StarkPackageTypeReference(
     bool IsMutableView = false,
     int? FixedLength = null,
     StarkPackageTypeReference? ElementType = null,
-    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null);
+    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
+    string? FunctionKind = null,
+    StarkPackageTypeReference? ReturnType = null,
+    IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null);
 
 internal sealed record StarkPackageTypedParameterManifest(
     string Name,
@@ -231,7 +248,9 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool IsHot = false,
     bool IsCold = false,
     string InlinePreference = "inlinehint",
-    bool HasExplicitInlinePreference = false);
+    bool HasExplicitInlinePreference = false,
+    bool IsUnsafe = false,
+    bool IsVarargs = false);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -252,7 +271,9 @@ internal sealed record StarkPackageTypedMethodManifest(
     string InlinePreference = "inlinehint",
     bool HasExplicitInlinePreference = false,
     bool IsStatic = false,
-    string? Visibility = null);
+    string? Visibility = null,
+    bool IsUnsafe = false,
+    bool IsVarargs = false);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
@@ -459,7 +480,13 @@ internal sealed record StarkPackageCompilerFactsSection(
     IReadOnlyList<StarkPackageAbiFunctionManifest>? AbiFunctions = null,
     IReadOnlyList<StarkPackageConcreteTypeLayoutManifest>? ConcreteLayouts = null,
     IReadOnlyList<StarkPackageEnumLayoutManifest>? EnumLayouts = null,
-    IReadOnlyList<StarkPackageFunctionSemanticManifest>? FunctionSemantics = null);
+    IReadOnlyList<StarkPackageFunctionSemanticManifest>? FunctionSemantics = null,
+    StarkPackageLinkageManifest? Linkage = null);
+
+internal sealed record StarkPackageLinkageManifest(
+    string ObjectFileName,
+    IReadOnlyList<string> DefinedSymbols,
+    IReadOnlyList<string>? ReferencedSymbols = null);
 
 internal sealed record StarkPackageFunctionEffectManifest(
     string QualifiedResolvedName,
@@ -476,7 +503,8 @@ internal sealed record StarkPackageFunctionEffectManifest(
     bool IsHot,
     bool IsCold,
     string InlinePreference,
-    bool IsStrictFp);
+    bool IsStrictFp,
+    bool IsVarargs = false);
 
 internal sealed record StarkPackageAbiParameterManifest(
     string SourceName,
@@ -493,7 +521,8 @@ internal sealed record StarkPackageAbiFunctionManifest(
     IReadOnlyList<StarkPackageAbiParameterManifest> Parameters,
     bool IsFfi,
     string? SourceName = null,
-    bool UsesFastCallingConvention = false);
+    bool UsesFastCallingConvention = false,
+    bool IsVarargs = false);
 
 internal sealed record StarkPackageFunctionMemoryEffectsManifest(
     bool ReadsArgumentMemory,

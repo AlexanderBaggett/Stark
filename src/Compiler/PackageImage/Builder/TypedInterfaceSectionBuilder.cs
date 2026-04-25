@@ -45,7 +45,9 @@ internal static partial class PackageImageBuilder
             IsHot: declarationFunction.Modifiers.IsHot,
             IsCold: declarationFunction.Modifiers.IsCold,
             InlinePreference: RenderInlinePreference(declarationFunction.Modifiers.InlinePreference),
-            HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference);
+            HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference,
+            IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
+            IsVarargs: effects.IsVarargs);
         return true;
     }
 
@@ -84,7 +86,9 @@ internal static partial class PackageImageBuilder
             IsHot: manifest.IsHot,
             IsCold: manifest.IsCold,
             InlinePreference: manifest.InlinePreference,
-            HasExplicitInlinePreference: manifest.HasExplicitInlinePreference);
+            HasExplicitInlinePreference: manifest.HasExplicitInlinePreference,
+            IsUnsafe: manifest.IsUnsafe,
+            IsVarargs: manifest.IsVarargs);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -376,6 +380,8 @@ internal static partial class PackageImageBuilder
                     InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),
                     HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference,
                     IsStatic: declaration.Function.IsStatic,
+                    IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
+                    IsVarargs: effects.IsVarargs,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant());
             })
             .Where(static manifest => manifest is not null)
@@ -435,7 +441,9 @@ internal static partial class PackageImageBuilder
                     InlinePreference: RenderInlinePreference(declaration.Function.Modifiers.InlinePreference),
                     HasExplicitInlinePreference: declaration.Function.Modifiers.HasExplicitInlinePreference,
                     IsStatic: declaration.Function.IsStatic,
-                    Visibility: declaration.Visibility.ToString().ToLowerInvariant());
+                    Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
+                    IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
+                    IsVarargs: effects.IsVarargs);
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()

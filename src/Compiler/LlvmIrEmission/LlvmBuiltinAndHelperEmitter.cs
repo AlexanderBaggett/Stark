@@ -2022,6 +2022,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return true;
         }
 
+        if (TryResolveSystemRuntimeBuiltin(moduleName, function, out var systemRuntimeBuiltinKind))
+        {
+            builder.AppendLine(_buildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
+            EmitSystemRuntimeBuiltin(builder, abiFunction, systemRuntimeBuiltinKind);
+            builder.AppendLine("}");
+            return true;
+        }
+
         if (!TryGetSystemTextBuiltin(moduleName, function.Name, out var builtinKind))
         {
             return false;
@@ -2196,6 +2204,44 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             default:
                 throw new InvalidOperationException($"Unsupported System.Collections builtin '{builtinKind}'.");
         }
+    }
+
+    private void EmitSystemRuntimeBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction,
+        SystemRuntimeBuiltinKind builtinKind)
+    {
+        switch (builtinKind)
+        {
+            case SystemRuntimeBuiltinKind.GetByteSliceParts:
+            case SystemRuntimeBuiltinKind.GetMutableByteSliceParts:
+                EmitByteSlicePartsBuiltin(builder, abiFunction);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported System.Runtime builtin '{builtinKind}'.");
+        }
+    }
+
+    private void EmitByteSlicePartsBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 1)
+        {
+            throw new InvalidOperationException($"System.Runtime byte slice parts builtin '{abiFunction.Name}' expects exactly one user parameter.");
+        }
+
+        var sourceParameter = abiFunction.UserParameters[0];
+        var sourceType = MapType(sourceParameter.SourceType);
+        var resultType = MapType(abiFunction.SourceReturnType);
+
+        builder.AppendLine("entry:");
+        var sourceValue = MaterializeAggregateBuiltinParameterValue(builder, sourceParameter, "byte_slice_source");
+        builder.AppendLine($"  %byte_slice_data = extractvalue {sourceType} {sourceValue}, 0");
+        builder.AppendLine($"  %byte_slice_length = extractvalue {sourceType} {sourceValue}, 1");
+        builder.AppendLine($"  %byte_slice_parts_with_data = insertvalue {resultType} zeroinitializer, ptr %byte_slice_data, 0");
+        builder.AppendLine($"  %byte_slice_parts = insertvalue {resultType} %byte_slice_parts_with_data, i64 %byte_slice_length, 1");
+        EmitAggregateBuiltinReturn(builder, abiFunction, resultType, "%byte_slice_parts");
     }
 
     private void EmitListSliceViewBuiltin(
@@ -2863,9 +2909,23 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         StringBuilder builder,
         AbiFunctionSignature abiFunction)
     {
+        EmitSliceViewDataBuiltin(builder, abiFunction);
+    }
+
+    private void EmitTextViewLengthBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        EmitSliceViewLengthBuiltin(builder, abiFunction);
+    }
+
+    private void EmitSliceViewDataBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
         if (abiFunction.UserParameters.Count != 1)
         {
-            throw new InvalidOperationException($"System.Text data builtin '{abiFunction.Name}' expects exactly one user parameter.");
+            throw new InvalidOperationException($"Slice data builtin '{abiFunction.Name}' expects exactly one user parameter.");
         }
 
         var sourceParameter = abiFunction.UserParameters[0];
@@ -2878,13 +2938,13 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"  ret {resultType} %view_data");
     }
 
-    private void EmitTextViewLengthBuiltin(
+    private void EmitSliceViewLengthBuiltin(
         StringBuilder builder,
         AbiFunctionSignature abiFunction)
     {
         if (abiFunction.UserParameters.Count != 1)
         {
-            throw new InvalidOperationException($"System.Text length builtin '{abiFunction.Name}' expects exactly one user parameter.");
+            throw new InvalidOperationException($"Slice length builtin '{abiFunction.Name}' expects exactly one user parameter.");
         }
 
         var sourceParameter = abiFunction.UserParameters[0];
@@ -2930,12 +2990,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"  %concat_left_length = extractvalue {viewLlvmType} {leftValue}, 1");
         builder.AppendLine($"  %concat_right_data = extractvalue {viewLlvmType} {rightValue}, 0");
         builder.AppendLine($"  %concat_right_length = extractvalue {viewLlvmType} {rightValue}, 1");
+        builder.AppendLine("  %concat_left_nonnegative = icmp sge i64 %concat_left_length, 0");
+        builder.AppendLine("  %concat_right_nonnegative = icmp sge i64 %concat_right_length, 0");
+        builder.AppendLine("  %concat_capacity_nonnegative = icmp sge i64 %concat_capacity, 0");
+        builder.AppendLine("  %concat_lengths_nonnegative = and i1 %concat_left_nonnegative, %concat_right_nonnegative");
+        builder.AppendLine("  %concat_nonnegative_inputs = and i1 %concat_lengths_nonnegative, %concat_capacity_nonnegative");
+        builder.AppendLine("  %concat_max_after_left = sub i64 9223372036854775807, %concat_left_length");
+        builder.AppendLine("  %concat_no_length_overflow = icmp sle i64 %concat_right_length, %concat_max_after_left");
         builder.AppendLine("  %concat_required = add i64 %concat_left_length, %concat_right_length");
-        builder.AppendLine("  %concat_has_capacity = icmp ule i64 %concat_required, %concat_capacity");
+        builder.AppendLine("  %concat_valid_lengths = and i1 %concat_nonnegative_inputs, %concat_no_length_overflow");
+        builder.AppendLine("  %concat_has_capacity = icmp sle i64 %concat_required, %concat_capacity");
         builder.AppendLine("  %concat_needs_storage = icmp ne i64 %concat_required, 0");
         builder.AppendLine("  %concat_has_data = icmp ne ptr %concat_data, null");
         builder.AppendLine("  %concat_storage_ready = select i1 %concat_needs_storage, i1 %concat_has_data, i1 true");
-        builder.AppendLine("  %concat_success = and i1 %concat_has_capacity, %concat_storage_ready");
+        builder.AppendLine("  %concat_size_ok = and i1 %concat_valid_lengths, %concat_has_capacity");
+        builder.AppendLine("  %concat_success = and i1 %concat_size_ok, %concat_storage_ready");
         builder.AppendLine("  br i1 %concat_success, label %concat_copy_left_check, label %concat_fail");
         builder.AppendLine("concat_fail:");
         builder.AppendLine("  ret i1 false");
@@ -3035,6 +3104,49 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             };
         }
 
+        if (TryResolveSystemRuntimeBuiltin(moduleName, function, out var runtimeBuiltinKind)
+            || TryGetSystemRuntimeBuiltin(moduleName, functionName, out runtimeBuiltinKind))
+        {
+            return runtimeBuiltinKind switch
+            {
+                SystemRuntimeBuiltinKind.GetByteSliceParts
+                    => function.Parameters.ToDictionary(
+                        static parameter => parameter.Name,
+                        static parameter => new ParameterMemoryEffectSummary(
+                            parameter.Name,
+                            parameter.Type.DisplayName,
+                            IsMemoryBacked: true,
+                            GuaranteedNonNull: false,
+                            GuaranteedReadOnly: true,
+                            GuaranteedWriteOnly: false,
+                            GuaranteedNoAlias: false,
+                            DereferenceableBytes: null,
+                            AlignmentBytes: null,
+                            Reads: true,
+                            Writes: false,
+                            CaptureKind: ParameterCaptureKind.Return),
+                        StringComparer.Ordinal),
+                SystemRuntimeBuiltinKind.GetMutableByteSliceParts
+                    => function.Parameters.ToDictionary(
+                        static parameter => parameter.Name,
+                        static parameter => new ParameterMemoryEffectSummary(
+                            parameter.Name,
+                            parameter.Type.DisplayName,
+                            IsMemoryBacked: true,
+                            GuaranteedNonNull: false,
+                            GuaranteedReadOnly: false,
+                            GuaranteedWriteOnly: false,
+                            GuaranteedNoAlias: parameter.Type.IsMutableView,
+                            DereferenceableBytes: null,
+                            AlignmentBytes: null,
+                            Reads: true,
+                            Writes: false,
+                            CaptureKind: ParameterCaptureKind.Return),
+                        StringComparer.Ordinal),
+                _ => null
+            };
+        }
+
         if (!TryGetSystemTextBuiltin(moduleName, functionName, out var builtinKind))
         {
             return null;
@@ -3080,6 +3192,54 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                     StringComparer.Ordinal),
             _ => null
         };
+    }
+
+    private static bool TryGetSystemRuntimeBuiltin(
+        string moduleName,
+        string functionName,
+        out SystemRuntimeBuiltinKind builtinKind)
+    {
+        builtinKind = default;
+
+        string sourceName;
+        if (functionName.Contains('.', StringComparison.Ordinal))
+        {
+            const string prefix = "System.Runtime.";
+            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName[prefix.Length..];
+        }
+        else
+        {
+            if (!string.Equals(moduleName, "System.Runtime", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            sourceName = functionName;
+        }
+
+        builtinKind = sourceName switch
+        {
+            "GetByteSliceParts" => SystemRuntimeBuiltinKind.GetByteSliceParts,
+            "GetMutableByteSliceParts" => SystemRuntimeBuiltinKind.GetMutableByteSliceParts,
+            _ => default
+        };
+
+        return sourceName is "GetByteSliceParts" or "GetMutableByteSliceParts";
+    }
+
+    private static bool TryResolveSystemRuntimeBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemRuntimeBuiltinKind builtinKind)
+    {
+        return TryGetSystemRuntimeBuiltin(moduleName, function.TemplateName ?? function.DisplaySourceName, out builtinKind)
+            || TryGetSystemRuntimeBuiltin(moduleName, function.DisplaySourceName, out builtinKind)
+            || TryGetSystemRuntimeBuiltin(moduleName: string.Empty, function.TemplateName ?? function.Name, out builtinKind);
     }
 
     private static bool TryGetSystemTextBuiltin(
@@ -3840,6 +4000,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         Allocate,
         Reallocate,
         Free
+    }
+
+    private enum SystemRuntimeBuiltinKind
+    {
+        GetByteSliceParts,
+        GetMutableByteSliceParts
     }
 
     private enum SystemCollectionsBuiltinKind

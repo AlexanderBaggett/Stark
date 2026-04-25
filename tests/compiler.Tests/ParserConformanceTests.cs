@@ -19,6 +19,62 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "callable values unsafe blocks and explicit lambda captures",
+            """
+            module Demo
+
+            unsafe fn void Danger();
+            fn void RegisterZero(fnptr<fn i32[0 max]()> callback);
+            fn void RegisterOne(fnptr<fn i32[0 max](i32[0 max])> callback);
+
+            fn void Run(i32[0 max] scale, i32[0 max] token, i32[0 max] sharedState) {
+                stack fnptr<fn i32[0 max](i32[0 max])> callback = Transform;
+                RegisterZero(() => 0);
+                RegisterOne(capture(copy scale, read token, move sharedState) (i32[0 max] index) => {
+                    return index;
+                });
+
+                unsafe {
+                    Danger();
+                    RegisterZero(capture(unsafe addr token, unsafe shared sharedState) () => 0);
+                }
+            }
+
+            fn i32[0 max] Transform(i32[0 max] value) {
+                return value;
+            }
+            """
+        },
+        {
+            "constant interpolated text literal",
+            """
+            module Demo
+
+            finite law ascii Label() {
+                return $"Score: {100}";
+            }
+            """
+        },
+        {
+            "fixed-capacity stack text concatenation declaration",
+            """
+            module Demo
+
+            fn void Join(Ascii left, Ascii right, Unicode wideLeft, Unicode wideRight) {
+                stack Ascii combined[4096] = left + right;
+                stack Unicode wideCombined[4096] = wideLeft + wideRight;
+            }
+            """
+        },
+        {
+            "ffi varargs function declaration",
+            """
+            module Native
+
+            public ffi varargs fn i32[min max] printf(ascii format);
+            """
+        },
+        {
             "record members support fields methods constructors and generics",
             """
             module Models
@@ -283,6 +339,20 @@ public sealed class ParserConformanceTests
                 i512[-1 1] l,
                 i768[-1 1] m,
                 i1024[-1 1] n,
+                u8[0 max] ua,
+                u16[0 max] ub,
+                u24[0 max] uc,
+                u32[0 max] ud,
+                u48[0 max] ue,
+                u64[0 max] uf,
+                u96[0 max] ug,
+                u128[0 max] uh,
+                u192[0 max] ui,
+                u256[0 max] uj,
+                u384[0 max] uk,
+                u512[0 max] ul,
+                u768[0 max] um,
+                u1024[0 max] un,
                 f16 half,
                 f32 single,
                 f64 doubleValue,

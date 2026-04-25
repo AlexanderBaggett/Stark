@@ -13,6 +13,15 @@ public sealed record ParseResult(
     public bool Succeeded => SyntaxErrorCount == 0;
 }
 
+public sealed record ExpressionParseResult(
+    StarkParser.ExpressionContext Root,
+    IReadOnlyList<ParseDiagnostic> Diagnostics,
+    string SourceText)
+{
+    public int SyntaxErrorCount => Diagnostics.Count;
+    public bool Succeeded => SyntaxErrorCount == 0;
+}
+
 public static class StarkSyntax
 {
     public static ParseResult ParseCompilationUnit(string source)
@@ -33,6 +42,35 @@ public static class StarkSyntax
         tokens.Fill();
         ValidateTextLiterals(tokens, errors);
         return new ParseResult(root, errors.Diagnostics, source);
+    }
+
+    public static ExpressionParseResult ParseExpression(string source)
+    {
+        var input = new AntlrInputStream(source);
+        var lexer = new StarkLexer(input);
+        var tokens = new CommonTokenStream(lexer);
+        var parser = new StarkParser(tokens);
+        var errors = new CountingErrorListener();
+
+        lexer.RemoveErrorListeners();
+        parser.RemoveErrorListeners();
+
+        lexer.AddErrorListener(errors);
+        parser.AddErrorListener(errors);
+
+        var root = parser.expression();
+        if (tokens.LA(1) != StarkParser.Eof)
+        {
+            var token = tokens.LT(1);
+            errors.AddDiagnostic(
+                token.Line,
+                token.Column + 1,
+                $"Unexpected text '{token.Text}' after the interpolation expression.");
+        }
+
+        tokens.Fill();
+        ValidateTextLiterals(tokens, errors);
+        return new ExpressionParseResult(root, errors.Diagnostics, source);
     }
 
     private static void ValidateTextLiterals(CommonTokenStream tokens, CountingErrorListener errors)

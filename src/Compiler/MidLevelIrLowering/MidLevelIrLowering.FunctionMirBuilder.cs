@@ -11,6 +11,8 @@ internal sealed partial class MidLevelIrLowerer
 {
     private sealed partial class FunctionMirBuilder : IDisposable
     {
+        private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
+
         private enum AggregatePatternFieldKind
         {
             Discard,
@@ -224,6 +226,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly Stack<BreakTargets> _breakTargets = [];
         private readonly Stack<ScopeFrame> _scopes = [];
         private readonly CompileTimeEvaluator _compileTimeEvaluator;
+        private readonly CompileTimeEvaluator.CompileTimeEvaluationState _compileTimeConstantState = new();
         private readonly ImportedTemplateLowerer _importedTemplateLowerer;
         private readonly PlaceLowerer _placeLowerer;
         private readonly RuntimeDropLowerer _runtimeDropLowerer;
@@ -410,23 +413,84 @@ internal sealed partial class MidLevelIrLowerer
 
             if (!CurrentBlock.HasTerminator)
             {
-                CurrentBlock.Terminator = _function.Signature.ReturnType.Kind == StarkTypeKind.Void
-                    ? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, Targets: [], Location: _functionLocation)
-                    : new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: [], Location: _functionLocation);
+                CompleteOpenFunctionTerminator();
             }
+        }
+
+        public void LowerLambda(StarkParser.LambdaExpressionContext expression)
+        {
+            if (expression.expression() is { } bodyExpression)
+            {
+                if (_function.Signature.ReturnType.Kind == StarkTypeKind.Void)
+                {
+                    LowerExpressionStatement(bodyExpression);
+                    if (!CurrentBlock.HasTerminator)
+                    {
+                        EmitStorageDeadBeyondDepth(0);
+                        CurrentBlock.Terminator = new MidLevelIrTerminator(
+                            MidLevelIrTerminatorKind.Return,
+                            Targets: [],
+                            Location: CreateSourceLocation(expression.Start) ?? _functionLocation);
+                    }
+                }
+                else
+                {
+                    var operand = LowerReturnExpressionToOperand(bodyExpression, _function.Signature.ReturnType);
+                    if (_function.Signature.ReturnType.BorrowKind == StarkBorrowKind.None)
+                    {
+                        RecordMoveFromOperand(operand, _function.Signature.ReturnType);
+                    }
+
+                    EmitStorageDeadBeyondDepth(0);
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Return,
+                        Targets: [],
+                        ValueText: bodyExpression.GetText(),
+                        Value: operand,
+                        Location: CreateSourceLocation(expression.Start) ?? _functionLocation);
+                }
+            }
+            else if (expression.block() is { } block)
+            {
+                LowerBlock(block);
+            }
+            else
+            {
+                MarkUnsupported(expression, "Unsupported lambda body shape.");
+            }
+
+            if (!CurrentBlock.HasTerminator)
+            {
+                CompleteOpenFunctionTerminator();
+            }
+        }
+
+        private void CompleteOpenFunctionTerminator()
+        {
+            CurrentBlock.Terminator = _function.Signature.ReturnType.Kind == StarkTypeKind.Void
+                ? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, Targets: [], Location: _functionLocation)
+                : new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: [], Location: _functionLocation);
         }
 
         private void LowerBlock(StarkParser.BlockContext block)
         {
             _scopes.Push(new ScopeFrame());
+            _compileTimeConstantState.PushScope();
 
-            foreach (var statement in block.statement())
+            try
             {
-                LowerStatement(statement);
-                if (_constructorReturnTargets.Count > 0 && CurrentBlock.HasTerminator)
+                foreach (var statement in block.statement())
                 {
-                    break;
+                    LowerStatement(statement);
+                    if (_constructorReturnTargets.Count > 0 && CurrentBlock.HasTerminator)
+                    {
+                        break;
+                    }
                 }
+            }
+            finally
+            {
+                _compileTimeConstantState.PopScope();
             }
 
             var scope = _scopes.Pop();
@@ -534,23 +598,46 @@ internal sealed partial class MidLevelIrLowerer
 
         private void LowerConstantDeclaration(StarkParser.LocalConstantDeclarationContext declaration)
         {
-            var declaredType = TryResolvePublishedLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, declaration, out var publishedType)
+            var declaredType = TryResolveLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, declaration, out var publishedType)
                 ? publishedType
-                : ResolveTypeWithGenericSubstitution(declaration.type_(), CurrentModuleName);
+                : declaration.type_() is { } typeContext
+                    ? ResolveTypeWithGenericSubstitution(typeContext, CurrentModuleName)
+                    : StarkTypeSymbols.Error;
             foreach (var declarator in declaration.constantDeclarators().constantDeclarator())
             {
                 var name = declarator.Identifier().GetText();
                 RegisterLocal(name, declaredType, storageClass: "local", isMutable: false, isConstant: true);
                 TrackDeclaredLocal(name, declaredType);
                 Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
+                TrackCompileTimeConstant(name, declaredType, declarator.variableInitializer());
                 LowerVariableInitializer(name, declaredType, declarator.variableInitializer());
                 InitializeRuntimeDropState(name, declaredType, isActive: true);
             }
         }
 
+        private void TrackCompileTimeConstant(
+            string name,
+            StarkTypeSymbol declaredType,
+            StarkParser.VariableInitializerContext initializer)
+        {
+            if (initializer.expression() is not { } expression
+                || !_compileTimeEvaluator.TryEvaluateExpression(
+                    expression,
+                    CurrentModuleName,
+                    _compileTimeConstantState,
+                    activeCalls: null,
+                    out var constant)
+                || !CompileTimeExpressionEvaluator.TryCoerce(constant, declaredType, out var coerced))
+            {
+                return;
+            }
+
+            _compileTimeConstantState.Declare(name, coerced, isMutable: false);
+        }
+
         private void LowerVariableDeclaration(StarkParser.LocalVariableDeclarationContext declaration)
         {
-            var declaredType = TryResolvePublishedLocalDeclarationType(TemplateLocalDeclarationFacts.VariableKind, declaration, out var publishedType)
+            var declaredType = TryResolveLocalDeclarationType(TemplateLocalDeclarationFacts.VariableKind, declaration, out var publishedType)
                 ? publishedType
                 : ResolveTypeWithGenericSubstitution(declaration.type_(), CurrentModuleName);
             var storageClass = declaration.storageClass().GetText();
@@ -558,6 +645,18 @@ internal sealed partial class MidLevelIrLowerer
             foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
             {
                 var name = declarator.Identifier().GetText();
+                if (TryGetFixedTextStorageCapacity(declarator, out var fixedTextCapacity))
+                {
+                    LowerFixedTextStorageVariableDeclaration(
+                        name,
+                        declaredType,
+                        storageClass,
+                        declaration.MUT() is not null,
+                        fixedTextCapacity,
+                        declarator.variableInitializer());
+                    continue;
+                }
+
                 RegisterLocal(name, declaredType, storageClass, declaration.MUT() is not null, isConstant: false);
                 TrackDeclaredLocal(name, declaredType);
                 Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
@@ -569,6 +668,606 @@ internal sealed partial class MidLevelIrLowerer
                     SetRuntimeDropState(name, isActive: true);
                 }
             }
+        }
+
+        private bool TryGetFixedTextStorageCapacity(StarkParser.VariableDeclaratorContext declarator, out int capacity)
+        {
+            capacity = 0;
+            if (declarator.variableStorageCapacity() is not { } capacityContext
+                || !_compileTimeEvaluator.TryEvaluateInteger(
+                    capacityContext.expression(),
+                    CurrentModuleName,
+                    _compileTimeConstantState,
+                    activeCalls: null,
+                    out var capacityValue)
+                || capacityValue <= 0
+                || capacityValue > int.MaxValue)
+            {
+                return false;
+            }
+
+            capacity = (int)capacityValue;
+            return true;
+        }
+
+        private void LowerFixedTextStorageVariableDeclaration(
+            string name,
+            StarkTypeSymbol declaredType,
+            string storageClass,
+            bool isMutable,
+            int capacity,
+            StarkParser.VariableInitializerContext? initializer)
+        {
+            if (!IsTextBufferType(declaredType))
+            {
+                RegisterLocal(name, declaredType, storageClass, isMutable, isConstant: false);
+                TrackDeclaredLocal(name, declaredType);
+                Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
+                InitializeRuntimeDropState(name, declaredType, isActive: false);
+                if (initializer is not null)
+                {
+                    LowerVariableInitializer(name, declaredType, initializer);
+                    SetRuntimeDropState(name, isActive: true);
+                }
+
+                return;
+            }
+
+            var unitType = GetFixedTextStorageUnitType(declaredType);
+            var storageType = StarkTypeSymbols.FixedArray(unitType, capacity);
+            var storageName = AllocateTemporaryName($"{name}_text_storage");
+
+            RegisterLocal(storageName, storageType, storageClass: "stack", isMutable: true, isConstant: false);
+            TrackDeclaredLocal(storageName, storageType);
+            Emit(MidLevelIrStatementKind.StorageLive, storageName, storageName, storageType);
+            InitializeRuntimeDropState(storageName, storageType, isActive: false);
+
+            RegisterLocal(name, declaredType, storageClass, isMutable, isConstant: false);
+            TrackDeclaredLocal(name, declaredType);
+            Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
+            InitializeRuntimeDropState(name, declaredType, isActive: false);
+
+            var emptyText = BuildFixedTextStorageValue(storageName, storageType, declaredType, capacity);
+            if (emptyText is null)
+            {
+                MarkUnsupported(initializer, "Fixed text storage value could not be initialized.");
+                return;
+            }
+
+            Emit(MidLevelIrStatementKind.Assign, $"{name}[{capacity}]", name, declaredType, new MidLevelIrUseRValue(emptyText));
+            SetRuntimeDropState(name, isActive: true);
+
+            if (initializer is null)
+            {
+                return;
+            }
+
+            if (initializer.expression() is not { } expression)
+            {
+                MarkUnsupported(initializer, "Fixed text storage initializer requires a text-building expression.");
+                return;
+            }
+
+            if (TryGetStandaloneInterpolatedTextLiteral(expression) is { } interpolatedLiteral)
+            {
+                if (!LowerFixedTextStorageInterpolatedInitializer(name, declaredType, interpolatedLiteral))
+                {
+                    MarkUnsupported(initializer, "Fixed text storage interpolation could not be lowered.");
+                }
+
+                return;
+            }
+
+            if (TryGetStandaloneAdditiveExpression(expression) is not { } additive)
+            {
+                MarkUnsupported(initializer, "Fixed text storage initializer requires a text-building expression.");
+                return;
+            }
+
+            if (!LowerFixedTextStorageConcatInitializer(name, declaredType, additive))
+            {
+                MarkUnsupported(initializer, "Fixed text storage concatenation could not be lowered.");
+            }
+        }
+
+        private MidLevelIrOperand? BuildFixedTextStorageValue(
+            string storageName,
+            StarkTypeSymbol storageType,
+            StarkTypeSymbol textType,
+            int capacity)
+        {
+            var unitType = GetFixedTextStorageUnitType(textType);
+            var storageAddress = CreateAddressOfLocal(storageName, storageType);
+            if (storageAddress is null)
+            {
+                return null;
+            }
+
+            var dataPointer = EmitTemporary(
+                new MidLevelIrElementAddressRValue(
+                    storageAddress,
+                    storageType,
+                    Index: null,
+                    ConstantIndex: 0,
+                    AddressType(unitType, isMutable: true),
+                    $"&{storageName}[0]"),
+                "textdata");
+            if (dataPointer is null)
+            {
+                return null;
+            }
+
+            return BuildTextBufferValue(textType, dataPointer, length: BigInteger.Zero, capacity: capacity);
+        }
+
+        private MidLevelIrOperand? BuildTextBufferValue(
+            StarkTypeSymbol textType,
+            MidLevelIrOperand dataPointer,
+            BigInteger length,
+            BigInteger capacity)
+        {
+            if (!TryGetTextBufferNamedType(textType, out var namedType))
+            {
+                return null;
+            }
+
+            MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(textType);
+            var values = new (string FieldName, MidLevelIrOperand Value)[]
+            {
+                ("Data", dataPointer),
+                ("Length", new MidLevelIrIntegerConstantOperand(length, StarkTypeSymbols.Integer(64))),
+                ("Capacity", new MidLevelIrIntegerConstantOperand(capacity, StarkTypeSymbols.Integer(64)))
+            };
+
+            foreach (var (fieldName, value) in values)
+            {
+                if (!namedType.TryGetField(fieldName, out var field, out var fieldIndex))
+                {
+                    return null;
+                }
+
+                var updated = EmitTemporary(
+                    new MidLevelIrInsertFieldRValue(
+                        current,
+                        field.Name,
+                        fieldIndex,
+                        value,
+                        textType,
+                        $"{current.Text}.{field.Name} = {value.Text}"),
+                    "textfield");
+                if (updated is null)
+                {
+                    return null;
+                }
+
+                current = updated;
+            }
+
+            return current;
+        }
+
+        private bool LowerFixedTextStorageConcatInitializer(
+            string destinationName,
+            StarkTypeSymbol destinationType,
+            StarkParser.AdditiveExpressionContext additive)
+        {
+            var operands = additive.multiplicativeExpression();
+            var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(additive);
+            if (operands.Length < 2 || operators.Any(static item => item != "+"))
+            {
+                return false;
+            }
+
+            var viewType = GetFixedTextStorageViewType(destinationType);
+            var current = LowerFixedTextConcatOperandToView(operands[0], viewType);
+            if (current is null)
+            {
+                MarkUnsupported(operands[0], "Fixed text storage concatenation could not lower the left operand to a text view.");
+                return false;
+            }
+
+            for (var index = 1; index < operands.Length; index++)
+            {
+                var next = LowerFixedTextConcatOperandToView(operands[index], viewType);
+                if (next is null)
+                {
+                    MarkUnsupported(operands[index], "Fixed text storage concatenation could not lower the right operand to a text view.");
+                    return false;
+                }
+
+                var destinationAddress = CreateMutableAddressOfLocalForInitialization(destinationName, destinationType);
+                if (destinationAddress is null)
+                {
+                    MarkUnsupported(additive, "Fixed text storage concatenation could not address the destination buffer.");
+                    return false;
+                }
+
+                if (!TryBuildFixedTextConcatCall(destinationAddress, current, next, $"{current.Text} + {next.Text}", out var call))
+                {
+                    MarkUnsupported(additive, "Fixed text storage concatenation could not resolve the System.Text concat helper.");
+                    return false;
+                }
+
+                var success = EmitTemporary(call, "textconcat");
+                if (success is null)
+                {
+                    MarkUnsupported(additive, "Fixed text storage concatenation could not materialize the concat result.");
+                    return false;
+                }
+
+                EmitTrapOnFalse(success, "textconcat_overflow");
+                current = BuildTextBufferView(new MidLevelIrLocalOperand(destinationName, destinationType), viewType);
+                if (current is null)
+                {
+                    MarkUnsupported(additive, "Fixed text storage concatenation could not view the destination after concat.");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool LowerFixedTextStorageInterpolatedInitializer(
+            string destinationName,
+            StarkTypeSymbol destinationType,
+            StarkParser.LiteralContext literal)
+        {
+            if (literal.StringLiteral() is not { } interpolatedString
+                || !InterpolatedText.TryParse(interpolatedString.GetText(), out var segments, out _))
+            {
+                return false;
+            }
+
+            var viewType = GetFixedTextStorageViewType(destinationType);
+            var current = BuildTextBufferView(new MidLevelIrLocalOperand(destinationName, destinationType), viewType);
+            if (current is null)
+            {
+                MarkUnsupported(literal, "Fixed text storage interpolation could not view the destination buffer.");
+                return false;
+            }
+
+            foreach (var segment in segments)
+            {
+                var next = LowerInterpolatedTextSegmentToView(segment, destinationType, viewType);
+                if (next is null)
+                {
+                    MarkUnsupported(literal, "Fixed text storage interpolation could not lower one of its parts.");
+                    return false;
+                }
+
+                if (!AppendFixedTextStorageSegment(destinationName, destinationType, current, next, literal))
+                {
+                    return false;
+                }
+
+                current = BuildTextBufferView(new MidLevelIrLocalOperand(destinationName, destinationType), viewType);
+                if (current is null)
+                {
+                    MarkUnsupported(literal, "Fixed text storage interpolation could not view the destination after appending text.");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private MidLevelIrOperand? LowerInterpolatedTextSegmentToView(
+            InterpolatedTextSegment segment,
+            StarkTypeSymbol destinationType,
+            StarkTypeSymbol viewType)
+        {
+            if (segment is InterpolatedTextRawSegment raw)
+            {
+                return raw.Value.Length == 0
+                    ? BuildTextBufferView(new MidLevelIrStringConstantOperand("\"\"", viewType), viewType)
+                    : new MidLevelIrStringConstantOperand(TextLiteralDecoder.EncodeStringLiteral(raw.Value), viewType);
+            }
+
+            var hole = (InterpolatedTextHoleSegment)segment;
+            var value = LowerExpressionToOperand(hole.Expression, expectedType: null);
+            if (value is null)
+            {
+                MarkUnsupported(hole.Expression, "Interpolated text hole did not lower to a value.");
+                return null;
+            }
+
+            if (CanUseFixedTextConcatSource(destinationType, value.Type))
+            {
+                return BuildTextBufferView(value, viewType);
+            }
+
+            if (!TextFormattingFacts.TryGetFixedBufferFormatInfo(destinationType, value.Type, out var formatInfo))
+            {
+                MarkUnsupported(hole.Expression, $"Interpolated text does not have a formatter for '{value.Type.DisplayName}'.");
+                return null;
+            }
+
+            return LowerFormattedInterpolatedTextHole(value, destinationType, viewType, formatInfo, hole.Expression);
+        }
+
+        private MidLevelIrOperand? LowerFormattedInterpolatedTextHole(
+            MidLevelIrOperand value,
+            StarkTypeSymbol destinationType,
+            StarkTypeSymbol viewType,
+            FixedTextFormatInfo formatInfo,
+            ParserRuleContext context)
+        {
+            var storageName = AllocateTemporaryName("interpolation_format_storage");
+            var textName = AllocateTemporaryName("interpolation_format_text");
+            var unitType = GetFixedTextStorageUnitType(destinationType);
+            var storageType = StarkTypeSymbols.FixedArray(unitType, formatInfo.Capacity);
+
+            RegisterLocal(storageName, storageType, storageClass: "stack", isMutable: true, isConstant: false);
+            TrackDeclaredLocal(storageName, storageType);
+            Emit(MidLevelIrStatementKind.StorageLive, storageName, storageName, storageType);
+            InitializeRuntimeDropState(storageName, storageType, isActive: false);
+
+            RegisterLocal(textName, destinationType, storageClass: "stack", isMutable: true, isConstant: false);
+            TrackDeclaredLocal(textName, destinationType);
+            Emit(MidLevelIrStatementKind.StorageLive, textName, textName, destinationType);
+            InitializeRuntimeDropState(textName, destinationType, isActive: false);
+
+            var emptyText = BuildFixedTextStorageValue(storageName, storageType, destinationType, formatInfo.Capacity);
+            if (emptyText is null)
+            {
+                MarkUnsupported(context, "Interpolated text formatter storage could not be initialized.");
+                return null;
+            }
+
+            Emit(MidLevelIrStatementKind.Assign, $"{textName}[{formatInfo.Capacity}]", textName, destinationType, new MidLevelIrUseRValue(emptyText));
+            SetRuntimeDropState(textName, isActive: true);
+
+            var destinationAddress = CreateMutableAddressOfLocalForInitialization(textName, destinationType);
+            if (destinationAddress is null)
+            {
+                MarkUnsupported(context, "Interpolated text formatter storage could not be addressed.");
+                return null;
+            }
+
+            if (!TryBuildFixedTextFormatCall(destinationAddress, value, formatInfo.FunctionName, context.GetText(), out var call))
+            {
+                MarkUnsupported(context, $"Interpolated text could not call '{formatInfo.FunctionName}'.");
+                return null;
+            }
+
+            var success = EmitTemporary(call, "textformat");
+            if (success is null)
+            {
+                MarkUnsupported(context, "Interpolated text formatter result could not be materialized.");
+                return null;
+            }
+
+            EmitTrapOnFalse(success, "textformat_overflow");
+            return BuildTextBufferView(new MidLevelIrLocalOperand(textName, destinationType), viewType);
+        }
+
+        private bool AppendFixedTextStorageSegment(
+            string destinationName,
+            StarkTypeSymbol destinationType,
+            MidLevelIrOperand current,
+            MidLevelIrOperand next,
+            ParserRuleContext context)
+        {
+            var destinationAddress = CreateMutableAddressOfLocalForInitialization(destinationName, destinationType);
+            if (destinationAddress is null)
+            {
+                MarkUnsupported(context, "Fixed text storage interpolation could not address the destination buffer.");
+                return false;
+            }
+
+            if (!TryBuildFixedTextConcatCall(destinationAddress, current, next, $"{current.Text} + {next.Text}", out var call))
+            {
+                MarkUnsupported(context, "Fixed text storage interpolation could not resolve the System.Text concat helper.");
+                return false;
+            }
+
+            var success = EmitTemporary(call, "textconcat");
+            if (success is null)
+            {
+                MarkUnsupported(context, "Fixed text storage interpolation could not materialize the concat result.");
+                return false;
+            }
+
+            EmitTrapOnFalse(success, "textconcat_overflow");
+            return true;
+        }
+
+        private MidLevelIrOperand? LowerFixedTextConcatOperandToView(
+            StarkParser.MultiplicativeExpressionContext expression,
+            StarkTypeSymbol viewType)
+        {
+            var operand = LowerMultiplicativeExpression(expression, expectedType: null);
+            if (operand is null)
+            {
+                MarkUnsupported(expression, "Fixed text storage operand did not lower to a value.");
+                return null;
+            }
+
+            return BuildTextBufferView(operand, viewType);
+        }
+
+        private MidLevelIrOperand? BuildTextBufferView(MidLevelIrOperand operand, StarkTypeSymbol viewType)
+        {
+            if (operand.Type.Kind == viewType.Kind)
+            {
+                return CoerceOperand(operand, viewType);
+            }
+
+            if (!IsTextBufferType(operand.Type))
+            {
+                return CoerceOperand(operand, viewType);
+            }
+
+            var functionName = GetSystemTextFunctionName(viewType.Kind == StarkTypeKind.Unicode
+                ? "UnicodeView"
+                : "AsciiView");
+            if (!TryGetFunctionOverloads(functionName, out var overloads))
+            {
+                MarkUnsupported(reason: $"Could not find '{functionName}' while lowering fixed text storage concatenation.");
+                return null;
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                receiverType: null,
+                [operand.Type],
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded
+                || !TryBuildCall(functionName, resolution.Match!, receiver: null, receiverPlace: null, operand.Text, out var call, [operand]))
+            {
+                MarkUnsupported(reason: $"Could not call '{functionName}' for operand type '{operand.Type.DisplayName}'.");
+                return null;
+            }
+
+            return EmitTemporary(call, "textview");
+        }
+
+        private bool TryBuildFixedTextConcatCall(
+            MidLevelIrOperand destinationAddress,
+            MidLevelIrOperand left,
+            MidLevelIrOperand right,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+            var functionName = GetSystemTextFunctionName(left.Type.Kind == StarkTypeKind.Unicode
+                ? "TryConcatUnicode"
+                : "TryConcatAscii");
+            if (!TryGetFunctionOverloads(functionName, out var overloads))
+            {
+                MarkUnsupported(reason: $"Could not find '{functionName}' while lowering fixed text storage concatenation.");
+                return false;
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                receiverType: null,
+                [destinationAddress.Type, left.Type, right.Type],
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded)
+            {
+                MarkUnsupported(reason: $"Could not match '{functionName}' for '{destinationAddress.Type.DisplayName}', '{left.Type.DisplayName}', and '{right.Type.DisplayName}'.");
+                return false;
+            }
+
+            if (!TryBuildCall(functionName, resolution.Match!, receiver: null, receiverPlace: null, text, out call, [destinationAddress, left, right]))
+            {
+                MarkUnsupported(reason: $"Could not build call to '{functionName}' for fixed text storage concatenation.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryBuildFixedTextFormatCall(
+            MidLevelIrOperand destinationAddress,
+            MidLevelIrOperand value,
+            string functionName,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+            var sourceName = GetSystemTextFunctionName(functionName);
+            if (!TryGetFunctionOverloads(sourceName, out var overloads))
+            {
+                MarkUnsupported(reason: $"Could not find '{sourceName}' while lowering fixed text storage interpolation.");
+                return false;
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                receiverType: null,
+                [destinationAddress.Type, value.Type],
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded)
+            {
+                MarkUnsupported(reason: $"Could not match '{sourceName}' for '{destinationAddress.Type.DisplayName}' and '{value.Type.DisplayName}'.");
+                return false;
+            }
+
+            if (!TryBuildCall(sourceName, resolution.Match!, receiver: null, receiverPlace: null, text, out call, [destinationAddress, value]))
+            {
+                MarkUnsupported(reason: $"Could not build call to '{sourceName}' for fixed text storage interpolation.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private void EmitTrapOnFalse(MidLevelIrOperand condition, string label)
+        {
+            var continueBlock = CreateBlock($"{label}_ok");
+            var failBlock = CreateBlock($"{label}_fail");
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [continueBlock.Id, failBlock.Id],
+                ConditionText: condition.Text,
+                Condition: condition);
+
+            CurrentBlock = failBlock;
+            CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: []);
+            CurrentBlock = continueBlock;
+        }
+
+        private MidLevelIrOperand? CreateMutableAddressOfLocalForInitialization(string name, StarkTypeSymbol type)
+        {
+            EnsureAddressableLocal(name);
+            return EmitTemporary(
+                new MidLevelIrAddressOfLocalRValue(name, type, AddressType(type, isMutable: true), $"&{name}"),
+                "addr");
+        }
+
+        private static bool IsTextBufferType(StarkTypeSymbol type)
+        {
+            return type.Kind == StarkTypeKind.Named
+                && type.NamedType is StarkTypeSymbols.OwnedAsciiName or StarkTypeSymbols.OwnedUnicodeName;
+        }
+
+        private static bool CanUseFixedTextConcatSource(StarkTypeSymbol destination, StarkTypeSymbol source)
+        {
+            return destination.NamedType switch
+            {
+                StarkTypeSymbols.OwnedAsciiName => source.Kind == StarkTypeKind.Ascii
+                    || source.Kind == StarkTypeKind.Named && source.NamedType == StarkTypeSymbols.OwnedAsciiName,
+                StarkTypeSymbols.OwnedUnicodeName => source.Kind == StarkTypeKind.Unicode
+                    || source.Kind == StarkTypeKind.Named && source.NamedType == StarkTypeSymbols.OwnedUnicodeName,
+                _ => false
+            };
+        }
+
+        private bool TryGetTextBufferNamedType(StarkTypeSymbol type, out NamedTypeSymbol namedType)
+        {
+            if (type.Kind == StarkTypeKind.Named
+                && type.NamedType is { } typeName
+                && (_typeModel.NamedTypes.TryGetValue(typeName, out namedType!)
+                    || StarkTypeSymbols.TryGetBuiltinNamedType(typeName, out namedType!)))
+            {
+                return true;
+            }
+
+            namedType = null!;
+            return false;
+        }
+
+        private static StarkTypeSymbol GetFixedTextStorageUnitType(StarkTypeSymbol textType)
+        {
+            return textType.NamedType == StarkTypeSymbols.OwnedUnicodeName
+                ? StarkTypeSymbols.Integer(32)
+                : StarkTypeSymbols.Integer(8);
+        }
+
+        private static StarkTypeSymbol GetFixedTextStorageViewType(StarkTypeSymbol textType)
+        {
+            return textType.NamedType == StarkTypeSymbols.OwnedUnicodeName
+                ? StarkTypeSymbols.Unicode
+                : StarkTypeSymbols.Ascii;
+        }
+
+        private string GetSystemTextFunctionName(string name)
+        {
+            return string.Equals(CurrentModuleName, "System.Text", StringComparison.Ordinal)
+                ? name
+                : $"System.Text.{name}";
         }
 
         private void LowerVariableInitializer(string name, StarkTypeSymbol declaredType, StarkParser.VariableInitializerContext initializer)
@@ -726,7 +1425,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (TryLowerExpressionAsRValue(expression, out var value))
             {
-                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
+                EmitEvaluateExpressionStatement(expression, value);
                 return true;
             }
 
@@ -788,11 +1487,32 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (TryLowerExpressionAsRValue(expression, out var value))
             {
-                Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
+                EmitEvaluateExpressionStatement(expression, value);
                 return true;
             }
 
             return TryLowerConditionalCallStatement(expression);
+        }
+
+        private void EmitEvaluateExpressionStatement(StarkParser.ExpressionContext expression, MidLevelIrRValue value)
+        {
+            Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
+
+            if (value is MidLevelIrCallRValue call && IsKnownNoReturnCall(call.FunctionName))
+            {
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Unreachable,
+                    Targets: [],
+                    Location: CreateSourceLocation(expression.Start) ?? _currentStatementLocation ?? _functionLocation);
+            }
+        }
+
+        private static bool IsKnownNoReturnCall(string functionName)
+        {
+            return string.Equals(functionName, "System.Process.Exit", StringComparison.Ordinal)
+                || string.Equals(functionName, "System.Runtime.Platform.ExitProcess", StringComparison.Ordinal)
+                || string.Equals(functionName, "System.Runtime.Platform.Linux.ExitProcess", StringComparison.Ordinal)
+                || string.Equals(functionName, "System.Runtime.Platform.Windows.ExitProcess", StringComparison.Ordinal);
         }
 
         private static bool CanLowerConditionalCallStatementBranch(StarkParser.ExpressionContext expression)
@@ -1120,7 +1840,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
             {
-                var declaredType = TryResolvePublishedLocalDeclarationType(TemplateLocalDeclarationFacts.ForVariableKind, localForVariableDeclaration, out var publishedType)
+                var declaredType = TryResolveLocalDeclarationType(TemplateLocalDeclarationFacts.ForVariableKind, localForVariableDeclaration, out var publishedType)
                     ? publishedType
                     : ResolveTypeWithGenericSubstitution(localForVariableDeclaration.type_(), CurrentModuleName);
                 var storageClass = localForVariableDeclaration.storageClass().GetText();
@@ -1197,7 +1917,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? LowerExpressionToOperand(StarkParser.ExpressionContext expression, StarkTypeSymbol? expectedType = null)
         {
-            if (_compileTimeEvaluator.TryEvaluateExpression(expression, CurrentModuleName, state: null, activeCalls: null, out var constant))
+            if (_compileTimeEvaluator.TryEvaluateExpression(expression, CurrentModuleName, _compileTimeConstantState, activeCalls: null, out var constant))
             {
                 if (expectedType is not null
                     && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
@@ -1435,10 +2155,15 @@ internal sealed partial class MidLevelIrLowerer
         {
             var operands = expression.multiplicativeExpression();
             var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(expression);
+            if (operators.Count == 0)
+            {
+                return LowerMultiplicativeExpression(operands[0], expectedType);
+            }
+
             return LowerBinaryChain(
                 operands,
                 operators,
-                item => LowerMultiplicativeExpression(item, expectedType),
+                item => LowerMultiplicativeExpression(item, expectedType: null),
                 MapBinaryOperator,
                 requireInteger: false,
                 expectedType);
@@ -1627,6 +2352,47 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 if (call.SourceReturnType is { } sourceReturnType
+                    && StarkTypeSymbols.IsPointerBackedBorrowReturn(sourceReturnType))
+                {
+                    if (expectedType is not null
+                        && expectedType.BorrowKind != StarkBorrowKind.None
+                        && TypeCompatibilityFacts.CanAssign(expectedType, sourceReturnType))
+                    {
+                        return callResult;
+                    }
+
+                    var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
+                    var loaded = EmitTemporary(
+                        new MidLevelIrLoadIndirectRValue(
+                            callResult,
+                            valueType,
+                            $"{callResult.Text}:load"),
+                        "load");
+                    return loaded is null
+                        ? null
+                        : expectedType is null
+                            ? loaded
+                            : CoerceOperand(loaded, expectedType);
+                }
+
+                return expectedType is null ? callResult : CoerceOperand(callResult, expectedType);
+            }
+
+            if (TryLowerIndirectCallExpression(expression, out var indirectCall))
+            {
+                if (indirectCall.Type.Kind == StarkTypeKind.Void)
+                {
+                    MarkUnsupported();
+                    return null;
+                }
+
+                var callResult = EmitTemporary(indirectCall, "call");
+                if (callResult is null)
+                {
+                    return null;
+                }
+
+                if (indirectCall.SourceReturnType is { } sourceReturnType
                     && StarkTypeSymbols.IsPointerBackedBorrowReturn(sourceReturnType))
                 {
                     if (expectedType is not null
@@ -1920,7 +2686,12 @@ internal sealed partial class MidLevelIrLowerer
 
             if (expression.Identifier() is { } identifier)
             {
-                return ResolveNamedOperand(identifier.GetText());
+                return ResolveNamedOperand(identifier.GetText(), expectedType);
+            }
+
+            if (expression.lambdaExpression() is { } lambdaExpression)
+            {
+                return LowerLambdaExpression(lambdaExpression, expectedType);
             }
 
             if (expression.enumConstructorExpression() is { } enumConstructorExpression)
@@ -1937,12 +2708,12 @@ internal sealed partial class MidLevelIrLowerer
             {
                 return !TryBuildGenericEnumCaseName(genericEnumCaseReference, out var genericEnumCaseName)
                     ? null
-                    : ResolveNamedOperand(genericEnumCaseName);
+                    : ResolveNamedOperand(genericEnumCaseName, expectedType);
             }
 
             if (expression.qualifiedName() is { } qualifiedName)
             {
-                return ResolveNamedOperand(qualifiedName.GetText());
+                return ResolveNamedOperand(qualifiedName.GetText(), expectedType);
             }
 
             if (expression.objectCreationExpression() is { } objectCreationExpression)
@@ -1951,6 +2722,30 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return LowerExpressionToOperand(expression.expression(), expectedType);
+        }
+
+        private MidLevelIrOperand? LowerLambdaExpression(
+            StarkParser.LambdaExpressionContext expression,
+            StarkTypeSymbol? expectedType)
+        {
+            if (expectedType?.Kind != StarkTypeKind.FunctionPointer)
+            {
+                MarkUnsupported(expression, "Lambda expressions require an explicit function-pointer target type during MIR lowering.");
+                return null;
+            }
+
+            var line = expression.Start.Line;
+            var column = expression.Start.Column + 1;
+            var lambda = _typeModel.Lambdas.LastOrDefault(lambda =>
+                lambda.Location.Line == line
+                && lambda.Location.Column == column);
+            if (lambda is null)
+            {
+                MarkUnsupported(expression, "No type-checked non-capturing lambda record was found for MIR lowering.");
+                return null;
+            }
+
+            return new MidLevelIrFunctionAddressOperand(lambda.FunctionName, expectedType);
         }
 
         private MidLevelIrOperand? LowerTypeLayoutExpression(
@@ -3112,6 +3907,91 @@ internal sealed partial class MidLevelIrLowerer
             return false;
         }
 
+        private bool TryLowerIndirectCallExpression(StarkParser.PostfixExpressionContext expression, out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+
+            if (expression.postfixPart().Length != 1
+                || expression.postfixPart()[0].argumentList() is not { } arguments)
+            {
+                return false;
+            }
+
+            if (IsEnumCaseCallTarget(expression.primaryExpression()))
+            {
+                return false;
+            }
+
+            var target = LowerPrimaryExpression(expression.primaryExpression(), expectedType: null);
+            if (target?.Type.Kind != StarkTypeKind.FunctionPointer)
+            {
+                return false;
+            }
+
+            return TryBuildIndirectCall(target, arguments, $"{target.Text}{arguments.GetText()}", out call);
+        }
+
+        private bool IsEnumCaseCallTarget(StarkParser.PrimaryExpressionContext expression)
+        {
+            if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
+            {
+                return TryResolveEnumCaseReference(genericEnumCaseReference, out _, out _, out _);
+            }
+
+            return expression.qualifiedName() is { } qualifiedName
+                && TryResolveEnumCaseReference(qualifiedName.GetText(), out _, out _, out _);
+        }
+
+        private bool TryBuildIndirectCall(
+            MidLevelIrOperand target,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+
+            if (target.Type.FunctionPointerReturnType is not { } returnType
+                || target.Type.FunctionPointerParameterTypes is not { } parameterTypes
+                || parameterTypes.Count != arguments.argument().Length)
+            {
+                return false;
+            }
+
+            var loweredArguments = new List<MidLevelIrOperand>(arguments.argument().Length);
+            for (var index = 0; index < arguments.argument().Length; index++)
+            {
+                var parameterType = parameterTypes[index];
+                if (RequiresIndirectArgument(parameterType))
+                {
+                    MarkUnsupported(reason: "Indirect function-pointer calls with borrow/out/init parameters require ABI metadata and are not lowered yet.");
+                    return false;
+                }
+
+                var lowered = LowerExpressionToOperand(arguments.argument(index).expression(), parameterType);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                var argument = CoerceCallArgument(lowered, parameterType);
+                if (argument is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(argument);
+                RecordMoveFromOperand(argument, parameterType);
+            }
+
+            call = new MidLevelIrIndirectCallRValue(
+                target,
+                loweredArguments,
+                StarkTypeSymbols.BorrowReturnRuntimeType(returnType),
+                text,
+                returnType);
+            return true;
+        }
+
         private bool TryBuildCall(
             string functionName,
             StarkParser.ArgumentListContext arguments,
@@ -3132,6 +4012,11 @@ internal sealed partial class MidLevelIrLowerer
                 if (overloads.Count == 0)
                 {
                     return false;
+                }
+
+                if (overloads.Count == 1 && !overloads[0].IsGeneric)
+                {
+                    return TryBuildCall(overloads[0].Name, overloads[0], receiver: null, receiverPlace: null, arguments, text, out call);
                 }
 
                 return TryBuildOverloadedCall(overloads, receiver: null, receiverPlace: null, arguments, text, out call);
@@ -3162,6 +4047,25 @@ internal sealed partial class MidLevelIrLowerer
         {
             call = default!;
 
+            if (TryGetValueTextConversionSourceName(memberName, out var valueTextConversionSourceName)
+                && TryGetFunctionOverloads(valueTextConversionSourceName, out var valueTextConversionOverloads))
+            {
+                var candidates = valueTextConversionOverloads
+                    .Where(static overload => !overload.IsStatic)
+                    .Where(overload => overload.Parameters.Count != 0
+                        && FunctionOverloadFacts.CanBindReceiver(overload.Parameters[0].Type, receiver.Type, TypeCompatibilityFacts.CanAssign))
+                    .ToArray();
+                if (candidates.Length != 0)
+                {
+                    if (candidates.Length == 1 && !candidates[0].IsGeneric)
+                    {
+                        return TryBuildCall(candidates[0].Name, candidates[0], receiver, receiverPlace, arguments, text, out call);
+                    }
+
+                    return TryBuildOverloadedCall(candidates, receiver, receiverPlace, arguments, text, out call);
+                }
+            }
+
             if (receiver.Type.NamedType is not { } namedTypeName)
             {
                 return false;
@@ -3176,6 +4080,11 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
+                if (overloads.Count == 1 && !overloads[0].IsGeneric)
+                {
+                    return TryBuildCall(overloads[0].Name, overloads[0], receiver, receiverPlace, arguments, text, out call);
+                }
+
                 return TryBuildOverloadedCall(overloads, receiver, receiverPlace, arguments, text, out call);
             }
 
@@ -3187,6 +4096,18 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return TryBuildCall(signature.Name, signature, receiver, receiverPlace, arguments, text, out call);
+        }
+
+        private static bool TryGetValueTextConversionSourceName(string memberName, out string sourceName)
+        {
+            sourceName = memberName switch
+            {
+                "ToAscii" => "System.Text.ToAscii",
+                "ToUnicode" => "System.Text.ToUnicode",
+                _ => string.Empty
+            };
+
+            return sourceName.Length != 0;
         }
 
         private bool TryBuildPublishedMemberCall(
@@ -3271,9 +4192,14 @@ internal sealed partial class MidLevelIrLowerer
             }
             else
             {
-                foreach (var argument in arguments.argument())
+                var receiverOffset = receiver is null ? 0 : 1;
+                var explicitParameterCount = Math.Max(0, signature.Parameters.Count - receiverOffset);
+                for (var index = 0; index < arguments.argument().Length; index++)
                 {
-                    var lowered = LowerExpressionToOperand(argument.expression(), expectedType: null);
+                    var expectedArgumentType = !signature.IsGeneric && index < explicitParameterCount
+                        ? signature.Parameters[index + receiverOffset].Type
+                        : null;
+                    var lowered = LowerExpressionToOperand(arguments.argument(index).expression(), expectedArgumentType);
                     if (lowered is null)
                     {
                         call = default!;
@@ -3284,7 +4210,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
-            return TryBuildCall(functionName, signature, receiver, receiverPlace, text, out call, explicitArguments);
+            return TryBuildCall(functionName, signature, receiver, receiverPlace, text, out call, explicitArguments, arguments);
         }
 
         private bool TryBuildCall(
@@ -3294,7 +4220,8 @@ internal sealed partial class MidLevelIrLowerer
             PlaceTarget? receiverPlace,
             string text,
             out MidLevelIrCallRValue call,
-            IReadOnlyList<MidLevelIrOperand> loweredExplicitArguments)
+            IReadOnlyList<MidLevelIrOperand> loweredExplicitArguments,
+            StarkParser.ArgumentListContext? syntaxArguments = null)
         {
             call = default!;
 
@@ -3330,10 +4257,17 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(receiverOperand);
-                indirectArgumentLocals.Add(
-                    ResolveIndirectArgumentLocal(receiverParameterType, receiver)
-                    ?? ResolveIndirectArgumentLocal(receiverParameterType, receiverOperand));
-                indirectArgumentAddresses.Add(ResolveIndirectArgumentAddress(receiverParameterType, receiverPlace));
+                var indirectArgumentAddress = receiverPlace is { Path.Count: > 0 }
+                    ? ResolveIndirectArgumentAddress(receiverParameterType, receiverPlace)
+                    : null;
+                var indirectArgumentLocal = indirectArgumentAddress is null
+                    ? ResolveIndirectArgumentLocal(receiverParameterType, receiver)
+                        ?? ResolveIndirectArgumentLocal(receiverParameterType, receiverOperand)
+                    : null;
+                indirectArgumentLocals.Add(indirectArgumentLocal);
+                indirectArgumentAddresses.Add(indirectArgumentLocal is null
+                    ? indirectArgumentAddress
+                    : null);
                 RecordMoveFromOperand(receiverOperand, receiverParameterType);
             }
 
@@ -3348,14 +4282,32 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                indirectArgumentLocals.Add(
-                    ResolveIndirectArgumentLocal(parameterType, sourceArgument)
-                    ?? ResolveIndirectArgumentLocal(parameterType, argument));
-                indirectArgumentAddresses.Add(null);
+                var indirectArgumentAddress = syntaxArguments is not null && index < syntaxArguments.argument().Length
+                    ? ResolveIndirectArgumentAddress(parameterType, syntaxArguments.argument(index).expression())
+                    : null;
+                indirectArgumentLocals.Add(indirectArgumentAddress is null
+                    ? ResolveIndirectArgumentLocal(parameterType, sourceArgument)
+                        ?? ResolveIndirectArgumentLocal(parameterType, argument)
+                    : null);
+                indirectArgumentAddresses.Add(indirectArgumentAddress);
                 RecordMoveFromOperand(argument, parameterType);
             }
 
-            if (loweredExplicitArguments.Count != explicitParameterCount)
+            if (signature.IsVarargs)
+            {
+                if (loweredExplicitArguments.Count < explicitParameterCount)
+                {
+                    return false;
+                }
+
+                for (var index = explicitParameterCount; index < loweredExplicitArguments.Count; index++)
+                {
+                    loweredArguments.Add(loweredExplicitArguments[index]);
+                    indirectArgumentLocals.Add(null);
+                    indirectArgumentAddresses.Add(null);
+                }
+            }
+            else if (loweredExplicitArguments.Count != explicitParameterCount)
             {
                 return false;
             }
@@ -3527,6 +4479,26 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? LowerLiteral(StarkParser.LiteralContext literal, StarkTypeSymbol? expectedType)
         {
+            if (literal.DOLLAR() is not null && literal.StringLiteral() is { } interpolatedString)
+            {
+                if (!InterpolatedText.TryFold(
+                        interpolatedString.GetText(),
+                        new CompileTimeEvaluationServices(
+                            TryResolveIdentifier: _compileTimeConstantState.TryResolve),
+                        out var foldedLiteral,
+                        out _))
+                {
+                    MarkUnsupported(literal, "Interpolated text literals must fold before MIR lowering.");
+                    return null;
+                }
+
+                var foldedType = TextLiteralDecoder.CanUseUtf8Storage(foldedLiteral, TextLiteralKind.String)
+                    ? StarkTypeSymbols.Ascii
+                    : StarkTypeSymbols.Unicode;
+                var foldedOperand = new MidLevelIrStringConstantOperand(foldedLiteral, foldedType);
+                return expectedType is null ? foldedOperand : CoerceOperand(foldedOperand, expectedType);
+            }
+
             var literalType = LookupLiteralType(literal);
             var operand = CreateLiteralOperand(literal.GetText(), literalType);
             return expectedType is null ? operand : CoerceOperand(operand, expectedType);
@@ -3592,7 +4564,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (type.Kind == StarkTypeKind.Float)
             {
-                return new MidLevelIrFloatConstantOperand(literalText, type);
+                return new MidLevelIrFloatConstantOperand(CompileTimeExpressionEvaluator.StripFloatSuffix(literalText), type);
             }
 
             return new MidLevelIrIntegerConstantOperand(ParseIntegerLiteralText(literalText), type);
@@ -3605,12 +4577,18 @@ internal sealed partial class MidLevelIrLowerer
                 : StarkTypeSymbols.Unicode;
         }
 
-        private MidLevelIrOperand? ResolveNamedOperand(string name)
+        private MidLevelIrOperand? ResolveNamedOperand(string name, StarkTypeSymbol? expectedType = null)
         {
             var operand = TryResolveNamedValueOperand(name);
             if (operand is not null)
             {
-                return operand;
+                return expectedType is null ? operand : CoerceOperand(operand, expectedType);
+            }
+
+            if (expectedType?.Kind == StarkTypeKind.FunctionPointer
+                && TryResolveFunctionAddressOperand(name, expectedType, out var functionAddress))
+            {
+                return functionAddress;
             }
 
             if (TryResolveFunctionSignature(name, out _))
@@ -3621,6 +4599,45 @@ internal sealed partial class MidLevelIrLowerer
 
             MarkUnsupported();
             return null;
+        }
+
+        private bool TryResolveFunctionAddressOperand(
+            string name,
+            StarkTypeSymbol targetType,
+            out MidLevelIrFunctionAddressOperand operand)
+        {
+            operand = default!;
+
+            if (!TryGetFunctionOverloads(name, out var overloads))
+            {
+                if (!TryResolveFunctionSignature(name, out var signature))
+                {
+                    return false;
+                }
+
+                overloads = [signature];
+            }
+
+            overloads = FilterDirectCallableTypeMemberFunctions(name, overloads);
+            var candidates = overloads
+                .Where(static function => !function.IsGeneric)
+                .Where(static function => !function.IsUnsafe)
+                .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(
+                    targetType,
+                    StarkTypeSymbols.FunctionPointer(
+                        function.Kind,
+                        function.ReturnType,
+                        function.Parameters.Select(static parameter => parameter.Type).ToArray())))
+                .ToArray();
+
+            if (candidates.Length != 1)
+            {
+                return false;
+            }
+
+            var function = candidates[0];
+            operand = new MidLevelIrFunctionAddressOperand(ResolveCallTargetName(function.Name, function), targetType);
+            return true;
         }
 
         private MidLevelIrOperand? TryResolveNamedValueOperand(string name)
@@ -3858,7 +4875,7 @@ internal sealed partial class MidLevelIrLowerer
             return names;
         }
 
-        private bool TryResolvePublishedLocalDeclarationType(
+        private bool TryResolveLocalDeclarationType(
             string declarationKind,
             ParserRuleContext declarationContext,
             out StarkTypeSymbol type)
@@ -3871,6 +4888,19 @@ internal sealed partial class MidLevelIrLowerer
                     out var publishedType))
             {
                 type = ApplyGenericSubstitution(publishedType);
+                return true;
+            }
+
+            var key = TemplateLocalDeclarationFacts.BuildLookupKey(
+                declarationKind,
+                declarationContext.Start.Line,
+                declarationContext.Start.Column + 1);
+            var typedDeclaration = _typeModel.LocalDeclarations.LastOrDefault(record =>
+                string.Equals(record.EnclosingFunctionName, _function.Name, StringComparison.Ordinal)
+                && TemplateLocalDeclarationFacts.BuildLookupKey(record.Kind, record.Location) == key);
+            if (typedDeclaration is not null)
+            {
+                type = typedDeclaration.Type;
                 return true;
             }
 
@@ -4239,7 +5269,22 @@ internal sealed partial class MidLevelIrLowerer
                     return null;
                 }
 
-                var resultType = FindCommonType(current.Type, next.Type);
+                if (operators[index - 1] == "+"
+                    && TryBuildRuntimeTextConcatenation(current, next, $"{operands[index - 1].GetText()} + {operands[index].GetText()}", out var runtimeConcat))
+                {
+                    current = EmitTemporary(runtimeConcat, "concat");
+                    if (current is null)
+                    {
+                        return null;
+                    }
+
+                    continue;
+                }
+
+                var operatorText = operators[index - 1];
+                var resultType = operatorText is "<<" or ">>"
+                    ? current.Type
+                    : FindCommonType(current.Type, next.Type);
                 if (requireInteger && resultType.Kind != StarkTypeKind.Integer)
                 {
                     MarkUnsupported();
@@ -4253,8 +5298,15 @@ internal sealed partial class MidLevelIrLowerer
                     return null;
                 }
 
+                if (operators[index - 1] == "+"
+                    && TryFoldTextConstantConcatenation(left, right, resultType, out var foldedText))
+                {
+                    current = foldedText;
+                    continue;
+                }
+
                 current = EmitTemporary(
-                    new MidLevelIrBinaryRValue(mapOperator(operators[index - 1]), left, right, resultType, operators[index - 1]),
+                    new MidLevelIrBinaryRValue(mapOperator(operatorText), left, right, resultType, operatorText),
                     "bin");
 
                 if (current is null)
@@ -4264,6 +5316,69 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return expectedType is null ? current : CoerceOperand(current, expectedType);
+        }
+
+        private bool TryBuildRuntimeTextConcatenation(
+            MidLevelIrOperand left,
+            MidLevelIrOperand right,
+            string text,
+            out MidLevelIrCallRValue call)
+        {
+            call = default!;
+
+            var sourceName = left.Type.Kind switch
+            {
+                StarkTypeKind.Unicode => "System.Text.ConcatUnicode",
+                StarkTypeKind.Ascii => "System.Text.ConcatAscii",
+                _ => null
+            };
+            if (sourceName is null || !TryGetFunctionOverloads(sourceName, out var overloads))
+            {
+                return false;
+            }
+
+            if (left is not MidLevelIrStringConstantOperand literalLeft
+                || !TryGetTextLiteralLength(literalLeft.LiteralText, left.Type, out var leftLength))
+            {
+                return false;
+            }
+
+            var leftLengthOperand = new MidLevelIrIntegerConstantOperand(leftLength, NonNegativeI64Type);
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                receiverType: null,
+                [left.Type, leftLengthOperand.Type, right.Type],
+                TypeCompatibilityFacts.CanAssign);
+            if (!resolution.Succeeded)
+            {
+                return false;
+            }
+
+            return TryBuildCall(
+                resolution.Match!.Name,
+                resolution.Match,
+                receiver: null,
+                receiverPlace: null,
+                text,
+                out call,
+                [left, leftLengthOperand, right]);
+        }
+
+        private static bool TryGetTextLiteralLength(string literalText, StarkTypeSymbol type, out BigInteger length)
+        {
+            var kind = literalText.StartsWith('\'')
+                ? TextLiteralKind.Character
+                : TextLiteralKind.String;
+            if (!TextLiteralDecoder.TryDecode(literalText, kind, out var decoded, out _))
+            {
+                length = default;
+                return false;
+            }
+
+            length = type.Kind == StarkTypeKind.Unicode
+                ? decoded.Utf32CodeUnits.Length
+                : decoded.Utf8Bytes.Length;
+            return true;
         }
 
         private MidLevelIrOperand? LowerComparisonChain<TOperandContext>(
@@ -4428,6 +5543,13 @@ internal sealed partial class MidLevelIrLowerer
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
                     "ptrcast");
+            }
+
+            if (operand.Type.Kind == StarkTypeKind.FunctionPointer
+                && targetType.Kind == StarkTypeKind.FunctionPointer
+                && TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(targetType, operand.Type))
+            {
+                return operand;
             }
 
             if ((operand.Type.Kind == StarkTypeKind.Ascii && targetType.Kind == StarkTypeKind.Unicode)
@@ -4894,7 +6016,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (switchType.Kind == StarkTypeKind.Float && literal.FloatLiteral() is { } floatLiteral)
             {
-                return new MidLevelIrFloatConstantOperand(floatLiteral.GetText(), switchType);
+                return new MidLevelIrFloatConstantOperand(CompileTimeExpressionEvaluator.StripFloatSuffix(floatLiteral.GetText()), switchType);
             }
 
             if (switchType.Kind == StarkTypeKind.RawPointer && literal.NULL() is not null)
@@ -4948,6 +6070,13 @@ internal sealed partial class MidLevelIrLowerer
                 && TryLowerCallExpression(postfix, out var call))
             {
                 value = call;
+                return true;
+            }
+
+            if (TryGetSimplePostfixExpression(expression) is { } indirectPostfix
+                && TryLowerIndirectCallExpression(indirectPostfix, out var indirectCall))
+            {
+                value = indirectCall;
                 return true;
             }
 
@@ -5028,6 +6157,96 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return TryGetSimplePostfixExpression(multiplicative.unaryExpression(0));
+        }
+
+        private static StarkParser.AdditiveExpressionContext? TryGetStandaloneAdditiveExpression(StarkParser.ExpressionContext expression)
+        {
+            var assignment = expression.assignmentExpression();
+            if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+            {
+                return null;
+            }
+
+            if (conditional.expression().Length != 0)
+            {
+                return null;
+            }
+
+            var logicalOr = conditional.logicalOrExpression();
+            if (logicalOr.logicalAndExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var logicalAnd = logicalOr.logicalAndExpression(0);
+            if (logicalAnd.bitwiseOrExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+            if (bitwiseOr.bitwiseXorExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+            if (bitwiseXor.bitwiseAndExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+            if (bitwiseAnd.equalityExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var equality = bitwiseAnd.equalityExpression(0);
+            if (equality.relationalExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var relational = equality.relationalExpression(0);
+            if (relational.shiftExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var shift = relational.shiftExpression(0);
+            return shift.additiveExpression().Length == 1
+                ? shift.additiveExpression(0)
+                : null;
+        }
+
+        private static StarkParser.LiteralContext? TryGetStandaloneInterpolatedTextLiteral(StarkParser.ExpressionContext expression)
+        {
+            var additive = TryGetStandaloneAdditiveExpression(expression);
+            if (additive is null || additive.multiplicativeExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var multiplicative = additive.multiplicativeExpression(0);
+            if (multiplicative.unaryExpression().Length != 1)
+            {
+                return null;
+            }
+
+            var unary = multiplicative.unaryExpression(0);
+            if (unary.powerExpression() is not { } power
+                || power.unaryExpression() is not null
+                || power.postfixExpression() is not { } postfix
+                || postfix.postfixPart().Length != 0)
+            {
+                return null;
+            }
+
+            var literal = postfix.primaryExpression().literal();
+            return literal?.DOLLAR() is not null && literal.StringLiteral() is not null
+                ? literal
+                : null;
         }
 
         private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.UnaryExpressionContext expression)
@@ -5115,6 +6334,33 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return BuildAddress(target);
+        }
+
+        private MidLevelIrOperand? ResolveIndirectArgumentAddress(
+            StarkTypeSymbol parameterType,
+            StarkParser.ExpressionContext expression)
+        {
+            if (!RequiresIndirectArgument(parameterType)
+                || !TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
+                || MayEvaluateNestedExpressionForAddress(unaryExpression)
+                || !TryResolveAssignmentTarget(unaryExpression, out var target))
+            {
+                return null;
+            }
+
+            return ResolveIndirectArgumentAddress(parameterType, target);
+        }
+
+        private static bool MayEvaluateNestedExpressionForAddress(StarkParser.UnaryExpressionContext expression)
+        {
+            if (expression.unaryOperator() is not null)
+            {
+                return true;
+            }
+
+            var postfix = expression.powerExpression()?.postfixExpression();
+            return postfix is not null && postfix.postfixPart().Any(static part =>
+                part.argumentList() is not null || part.expressionList() is not null);
         }
 
         private static bool RequiresIndirectArgument(StarkTypeSymbol type)
@@ -5356,9 +6602,16 @@ internal sealed partial class MidLevelIrLowerer
                 return StarkTypeSymbols.Error;
             }
 
+            if (left.DisplayName == right.DisplayName)
+            {
+                return left;
+            }
+
             if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
             {
-                return StarkTypeSymbols.Integer(Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0));
+                return StarkTypeSymbols.Integer(
+                    Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
+                    isUnsigned: left.IsUnsigned && right.IsUnsigned);
             }
 
             if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Float)
@@ -5657,6 +6910,39 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return false;
+        }
+
+        private static bool TryFoldTextConstantConcatenation(
+            MidLevelIrOperand left,
+            MidLevelIrOperand right,
+            StarkTypeSymbol resultType,
+            out MidLevelIrOperand folded)
+        {
+            folded = null!;
+            if (left is not MidLevelIrStringConstantOperand leftText
+                || right is not MidLevelIrStringConstantOperand rightText
+                || resultType.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode))
+            {
+                return false;
+            }
+
+            if (!TextLiteralDecoder.TryConcatenateAsStringLiteral(
+                    leftText.LiteralText,
+                    GetTextLiteralKind(leftText.LiteralText),
+                    rightText.LiteralText,
+                    GetTextLiteralKind(rightText.LiteralText),
+                    out var literalText))
+            {
+                return false;
+            }
+
+            folded = new MidLevelIrStringConstantOperand(literalText, resultType);
+            return true;
+        }
+
+        private static TextLiteralKind GetTextLiteralKind(string literalText)
+        {
+            return literalText.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String;
         }
 
         private static int[] DecodeTextLiteralUnits(string literalText, StarkTypeSymbol textType)

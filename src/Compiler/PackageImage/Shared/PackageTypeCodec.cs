@@ -23,6 +23,7 @@ internal static partial class PackageImageBuilder
             BitWidth: type.BitWidth,
             RangeMin: type.RangeMin?.ToString(),
             RangeMax: type.RangeMax?.ToString(),
+            IsUnsigned: type.IsUnsigned ? true : null,
             IsMutablePointer: type.IsMutablePointer,
             BorrowKind: type.BorrowKind == StarkBorrowKind.None ? null : type.BorrowKind.ToString().ToLowerInvariant(),
             AccessKind: type.AccessKind == StarkAccessKind.None ? null : type.AccessKind.ToString().ToLowerInvariant(),
@@ -32,6 +33,13 @@ internal static partial class PackageImageBuilder
             ElementType: type.ElementType is null ? null : BuildPublishedAbiTypeReference(type.ElementType, moduleName, localNamedTypes),
             TypeArguments: type.TypeArguments is { Count: > 0 }
                 ? type.TypeArguments.Select(argument => BuildPublishedAbiTypeReference(argument, moduleName, localNamedTypes)).ToArray()
+                : null,
+            FunctionKind: type.FunctionPointerKind is null ? null : RenderPackageFunctionKind(type.FunctionPointerKind.Value),
+            ReturnType: type.FunctionPointerReturnType is null
+                ? null
+                : BuildPublishedAbiTypeReference(type.FunctionPointerReturnType, moduleName, localNamedTypes),
+            ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
+                ? type.FunctionPointerParameterTypes.Select(parameter => BuildPublishedAbiTypeReference(parameter, moduleName, localNamedTypes)).ToArray()
                 : null);
     }
 
@@ -122,6 +130,7 @@ internal static partial class PackageImageBuilder
             BitWidth: type.BitWidth,
             RangeMin: type.RangeMin?.ToString(),
             RangeMax: type.RangeMax?.ToString(),
+            IsUnsigned: type.IsUnsigned ? true : null,
             IsMutablePointer: type.IsMutablePointer,
             BorrowKind: type.BorrowKind == StarkBorrowKind.None ? null : type.BorrowKind.ToString().ToLowerInvariant(),
             AccessKind: type.AccessKind == StarkAccessKind.None ? null : type.AccessKind.ToString().ToLowerInvariant(),
@@ -131,7 +140,25 @@ internal static partial class PackageImageBuilder
             ElementType: type.ElementType is null ? null : BuildTypeReference(type.ElementType, moduleName, stripCurrentModulePrefix),
             TypeArguments: type.TypeArguments is { Count: > 0 }
                 ? type.TypeArguments.Select(argument => BuildTypeReference(argument, moduleName, stripCurrentModulePrefix)).ToArray()
+                : null,
+            FunctionKind: type.FunctionPointerKind is null ? null : RenderPackageFunctionKind(type.FunctionPointerKind.Value),
+            ReturnType: type.FunctionPointerReturnType is null
+                ? null
+                : BuildTypeReference(type.FunctionPointerReturnType, moduleName, stripCurrentModulePrefix),
+            ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
+                ? type.FunctionPointerParameterTypes.Select(parameter => BuildTypeReference(parameter, moduleName, stripCurrentModulePrefix)).ToArray()
                 : null);
+    }
+
+    private static string RenderPackageFunctionKind(StarkFunctionKind kind)
+    {
+        return kind switch
+        {
+            StarkFunctionKind.Finite => "finite",
+            StarkFunctionKind.Law => "law",
+            StarkFunctionKind.FiniteLaw => "finite law",
+            _ => "fn"
+        };
     }
 
     private static string NormalizeNamedType(StarkTypeSymbol type, string moduleName, bool stripCurrentModulePrefix)
@@ -329,11 +356,16 @@ internal static partial class PackageImageLoader
             "integer" => StarkTypeSymbols.Integer(
                 type.BitWidth ?? 32,
                 type.RangeMin is null ? null : BigInteger.Parse(type.RangeMin, System.Globalization.CultureInfo.InvariantCulture),
-                type.RangeMax is null ? null : BigInteger.Parse(type.RangeMax, System.Globalization.CultureInfo.InvariantCulture)),
+                type.RangeMax is null ? null : BigInteger.Parse(type.RangeMax, System.Globalization.CultureInfo.InvariantCulture),
+                type.IsUnsigned == true),
             "float" => StarkTypeSymbols.Float(type.BitWidth ?? 32),
             "rawpointer" => StarkTypeSymbols.RawPointer(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.IsMutablePointer),
             "fixedarray" => StarkTypeSymbols.FixedArray(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.FixedLength),
             "slice" => StarkTypeSymbols.Slice(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),
+            "functionpointer" when type.ReturnType is not null => StarkTypeSymbols.FunctionPointer(
+                ParsePackageFunctionKind(type.FunctionKind),
+                BuildTypeSymbol(type.ReturnType, currentModuleName, localNamedTypes),
+                (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray()),
             "named" when type.TypeArguments is { Count: > 0 } => StarkTypeSymbols.GenericInstantiation(
                 normalizedNamedType ?? "<unnamed>",
                 type.TypeArguments.Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
@@ -347,6 +379,17 @@ internal static partial class PackageImageLoader
             accessKind: ParseAccessKind(type.AccessKind),
             initializationKind: ParseInitializationKind(type.InitializationKind),
             isMutableView: type.IsMutableView);
+    }
+
+    private static StarkFunctionKind ParsePackageFunctionKind(string? functionKind)
+    {
+        return functionKind switch
+        {
+            "finite" => StarkFunctionKind.Finite,
+            "law" => StarkFunctionKind.Law,
+            "finite law" or "finitelaw" => StarkFunctionKind.FiniteLaw,
+            _ => StarkFunctionKind.Fn
+        };
     }
 
     private static string QualifyLoadedNamedType(
@@ -396,11 +439,12 @@ internal static partial class PackageImageLoader
             "ascii" => "ascii",
             "unicode" => "unicode",
             "null" => "null",
-            "integer" => PackageImageIntegerTypeText.Render(type.BitWidth, type.RangeMin, type.RangeMax),
+            "integer" => PackageImageIntegerTypeText.Render(type.BitWidth, type.RangeMin, type.RangeMax, type.IsUnsigned == true),
             "float" => $"f{type.BitWidth}",
             "rawpointer" => $"{(type.IsMutablePointer ? "rawmutptr" : "rawptr")}<{RenderTypeReference(type.ElementType!)}>",
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select(RenderTypeReference))})>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",
             _ => type.Name ?? type.Kind
@@ -410,25 +454,55 @@ internal static partial class PackageImageLoader
             ? core
             : $"{string.Join(" ", qualifiers)} {core}";
     }
+
+    private static string RenderTypeReferenceFunctionKind(string? functionKind)
+    {
+        return functionKind switch
+        {
+            "finite" => "finite",
+            "law" => "law",
+            "finite law" or "finitelaw" => "finite law",
+            _ => "fn"
+        };
+    }
 }
 
 file static class PackageImageIntegerTypeText
 {
-    public static string Render(int? bitWidth, string? rangeMin, string? rangeMax)
+    public static string Render(int? bitWidth, string? rangeMin, string? rangeMax, bool isUnsigned)
     {
         var normalizedBitWidth = bitWidth ?? 32;
-        if (rangeMin is not null && rangeMax is not null)
-        {
-            return $"i{normalizedBitWidth}[{rangeMin} {rangeMax}]";
-        }
-
+        var prefix = isUnsigned ? "u" : "i";
         if (normalizedBitWidth <= 0)
         {
-            return $"i{normalizedBitWidth}";
+            return $"{prefix}{normalizedBitWidth}";
         }
 
-        var min = -(BigInteger.One << (normalizedBitWidth - 1));
-        var max = (BigInteger.One << (normalizedBitWidth - 1)) - BigInteger.One;
-        return $"i{normalizedBitWidth}[{min} {max}]";
+        var min = isUnsigned ? BigInteger.Zero : -(BigInteger.One << (normalizedBitWidth - 1));
+        var max = isUnsigned
+            ? (BigInteger.One << normalizedBitWidth) - BigInteger.One
+            : (BigInteger.One << (normalizedBitWidth - 1)) - BigInteger.One;
+        if (rangeMin is null && rangeMax is null)
+        {
+            return isUnsigned
+                ? $"{prefix}{normalizedBitWidth}[0 max]"
+                : $"{prefix}{normalizedBitWidth}[min max]";
+        }
+
+        if (rangeMin is not null && rangeMax is not null)
+        {
+            var parsedMin = BigInteger.Parse(rangeMin, System.Globalization.CultureInfo.InvariantCulture);
+            var parsedMax = BigInteger.Parse(rangeMax, System.Globalization.CultureInfo.InvariantCulture);
+            if (parsedMin == min && parsedMax == max)
+            {
+                return isUnsigned
+                    ? $"{prefix}{normalizedBitWidth}[0 max]"
+                    : $"{prefix}{normalizedBitWidth}[min max]";
+            }
+
+            return $"{prefix}{normalizedBitWidth}[{rangeMin} {rangeMax}]";
+        }
+
+        return $"{prefix}{normalizedBitWidth}[{min} {max}]";
     }
 }

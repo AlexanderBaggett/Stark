@@ -5,6 +5,39 @@ namespace compiler.Tests;
 public sealed class TypeTypingDiagnosticsTests
 {
     [Fact]
+    public void VarargsModifierRequiresFfiDeclaration()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public varargs fn void Log(ascii format);
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4119", "uses 'varargs'", "only available for 'ffi' functions", "ffi varargs fn");
+    }
+
+    [Fact]
+    public void FfiVarargsRejectsArgumentsThatNeedHiddenCPromotion()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi varargs fn i32[min max] printf(ascii format);
+
+            fn i32[min max] Run(f32 value) {
+                return printf("%f", value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3009", "Extra argument 2", "f32", "Cast f32 to f64");
+    }
+
+    [Fact]
     public void ConstructorArgumentsAreCheckedAgainstRecordPrimaryShape()
     {
         var result = Compile(
@@ -999,6 +1032,99 @@ public sealed class TypeTypingDiagnosticsTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "compile-time text constant");
+    }
+
+    [Fact]
+    public void RuntimeTextConcatenationExplainsStorageRequirement()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Join(ascii left) {
+                return left + "!";
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Only compile-time text constants can use '+'", "System.Text.TryConcatAscii");
+    }
+
+    [Fact]
+    public void RuntimeTextBufferConcatenationExplainsFixedCapacityRequirement()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Join(Ascii left, Ascii right) {
+                stack Ascii combined = left + right;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "need a destination capacity", "stack Ascii combined[4096]");
+    }
+
+    [Fact]
+    public void FixedTextStorageCapacityIsOnlyForStackTextBuffers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Bad(i64[0 max] size, Ascii left, Ascii right) {
+                stack i32[-2147483648 2147483647] number[4] = 0;
+                heap Ascii heapText[16] = left + right;
+                stack Ascii dynamicText[size] = left + right;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "only for stack Ascii or Unicode", "number");
+        AssertDiagnostic(result, "STK3002", "must use stack storage", "heapText");
+        AssertDiagnostic(result, "STK3002", "capacity Stark can know at compile time", "dynamicText");
+    }
+
+    [Fact]
+    public void RuntimeInterpolatedTextExplainsStorageRequirement()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn ascii Label(i32[-2147483648 2147483647] score) {
+                return $"Score: {score}";
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "Interpolated text with runtime value 'score' needs caller-owned storage", "fixed-capacity buffer");
+    }
+
+    [Fact]
+    public void FixedCapacityInterpolatedTextRequiresKnownFormatter()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public finite law ascii AsciiView(Ascii source);
+            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+            fn Ascii Label(rawptr<i8[-128 127]> pointer) {
+                stack Ascii label[64] = $"Pointer: {pointer}";
+                return label;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "does not know how to format 'rawptr<i8>'", "Convert the value to text first");
     }
 
     [Fact]

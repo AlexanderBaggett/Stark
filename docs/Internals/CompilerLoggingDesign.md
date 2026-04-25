@@ -1,18 +1,19 @@
 # Compiler Logging and Trace Design
 
-Status: Proposed  
+Status: Core logging implemented; value tracing and trace artifacts deferred  
 Scope: Milestone 6.5 core visibility, with mature-toolchain tracing deferred to v2.0
 
 ## Problem
 
-Stark's current compiler logs are useful for pass lifecycle visibility, but they do not yet explain how values move through the compiler or why lowering stops.
+Stark's compiler logs now support low-noise normal output, verbose output, stage
+and symbol context, and structured event categories. They still do not fully
+explain how individual values move through the compiler.
 
 Today the main pain points are:
 
-- `info` output is dominated by pass boilerplate instead of value flow.
+- value flow is still mostly invisible unless a developer inspects artifacts.
 - it is hard to answer which function, source line, expression, or lowered value a log event refers to.
-- `MarkUnsupported()` and similar early exits are visible, but not yet modeled as first-class "gap" events.
-- there is no clean way to opt into deeper tracing without flooding normal output.
+- some remaining `MarkUnsupported()` and similar early exits still need to be converted into first-class "gap" events.
 - there is no structured on-disk trace artifact for post-mortem debugging.
 
 The missing capability is not just "more logs". It is compiler observability: the ability to follow an entity through the pipeline and understand where it continued, changed shape, or stopped.

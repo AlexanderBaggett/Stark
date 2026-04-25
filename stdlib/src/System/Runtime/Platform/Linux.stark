@@ -11,6 +11,50 @@ internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxS
     "syscall"
 }
 
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxMapThreadRegion(i64[-9223372036854775808 9223372036854775807] length)
+    in("rsi") length,
+    out("rax") return,
+    clobber("rdi", "rdx", "r10", "r8", "r9", "rcx", "r11")
+{
+    "xorq %rdi, %rdi\nmovq $$9, %rax\nmovq $$3, %rdx\nmovq $$131106, %r10\nmovq $$-1, %r8\nxorq %r9, %r9\nsyscall"
+}
+
+internal ffi asm(x86_64) fn i32[-2147483648 2147483647] LinuxReleaseThreadReference(rawptr<i8[-128 127]> control)
+    in("rdi") control,
+    out("rax") return
+{
+    "movl $$-1, %eax\nlock xaddl %eax, 32(%rdi)"
+}
+
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxCloneThread(i64[-9223372036854775808 9223372036854775807] flags, rawptr<i8[-128 127]> childStack, rawptr<i8[-128 127]> control)
+    in("rdi") flags,
+    in("rsi") childStack,
+    in("r12") control,
+    out("rax") return,
+    clobber("rdx", "r10", "r8", "r9", "r13", "r14", "r15", "rbx", "rcx", "r11")
+{
+    "movq $$56, %rax\nxorq %rdx, %rdx\nxorq %r10, %r10\nxorq %r8, %r8\nsyscall\ntestq %rax, %rax\njnz 2f\nmovq (%r12), %r13\ncallq *%r13\nmovl %eax, 24(%r12)\nmovl $$1, 28(%r12)\nmovq 8(%r12), %r14\nmovq 16(%r12), %r15\nmovl $$-1, %eax\nlock xaddl %eax, 32(%r12)\ncmpl $$1, %eax\njne 1f\nmovq $$11, %rax\nmovq %r14, %rdi\nmovq %r15, %rsi\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n1:\nmovq $$202, %rax\nleaq 28(%r12), %rdi\nmovq $$129, %rsi\nmovq $$1, %rdx\nxorq %r10, %r10\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n2:"
+}
+
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Integer(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1)
+    in("rax") number,
+    in("rdi") arg1,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2Pointers(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
 internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2PathBuffer(i64[-9223372036854775808 9223372036854775807] number, rawmutptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2)
     in("rax") number,
     in("rdi") arg1,
@@ -21,7 +65,39 @@ internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxS
     "syscall"
 }
 
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2HandleInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3Integers(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
 internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleBuffer(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleIntegerInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
     in("rax") number,
     in("rdi") arg1,
     in("rsi") arg2,
@@ -90,9 +166,61 @@ internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxS
     "syscall"
 }
 
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4HandlePointersInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    in("r10") arg4,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+
 internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Handle(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1)
     in("x8") number,
     in("x0") arg1,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxMapThreadRegion(i64[-9223372036854775808 9223372036854775807] length)
+    in("x1") length,
+    out("x0") return
+{
+    "mov x0, xzr\nsub x0, x0, #38"
+}
+
+internal ffi asm(aarch64) fn i32[-2147483648 2147483647] LinuxReleaseThreadReference(rawptr<i8[-128 127]> control)
+    in("x1") control,
+    out("x0") return
+{
+    "mov x0, xzr\nsub x0, x0, #38"
+}
+
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxCloneThread(i64[-9223372036854775808 9223372036854775807] flags, rawptr<i8[-128 127]> childStack, rawptr<i8[-128 127]> control)
+    in("x1") flags,
+    in("x2") childStack,
+    in("x3") control,
+    out("x0") return
+{
+    "mov x0, xzr\nsub x0, x0, #38"
+}
+
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Integer(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1)
+    in("x8") number,
+    in("x0") arg1,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2Pointers(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
     out("x0") return
 {
     "svc #0"
@@ -107,7 +235,36 @@ internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Linux
     "svc #0"
 }
 
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2HandleInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3Integers(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    out("x0") return
+{
+    "svc #0"
+}
+
 internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleBuffer(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    out("x0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleIntegerInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
     in("x8") number,
     in("x0") arg1,
     in("x1") arg2,
@@ -170,9 +327,60 @@ internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Linux
     "svc #0"
 }
 
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4HandlePointersInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+    in("x8") number,
+    in("x0") arg1,
+    in("x1") arg2,
+    in("x2") arg3,
+    in("x3") arg4,
+    out("x0") return
+{
+    "svc #0"
+}
+
 internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Handle(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1)
     in("a7") number,
     in("a0") arg1,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxMapThreadRegion(i64[-9223372036854775808 9223372036854775807] length)
+    in("a1") length,
+    out("a0") return
+{
+    "li a0, -38"
+}
+
+internal ffi asm(riscv64) fn i32[-2147483648 2147483647] LinuxReleaseThreadReference(rawptr<i8[-128 127]> control)
+    in("a1") control,
+    out("a0") return
+{
+    "li a0, -38"
+}
+
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxCloneThread(i64[-9223372036854775808 9223372036854775807] flags, rawptr<i8[-128 127]> childStack, rawptr<i8[-128 127]> control)
+    in("a1") flags,
+    in("a2") childStack,
+    in("a3") control,
+    out("a0") return
+{
+    "li a0, -38"
+}
+
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Integer(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1)
+    in("a7") number,
+    in("a0") arg1,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2Pointers(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
     out("a0") return
 {
     "ecall"
@@ -187,7 +395,36 @@ internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Linux
     "ecall"
 }
 
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2HandleInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3Integers(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    out("a0") return
+{
+    "ecall"
+}
+
 internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleBuffer(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    out("a0") return
+{
+    "ecall"
+}
+
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleIntegerInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
     in("a7") number,
     in("a0") arg1,
     in("a1") arg2,
@@ -250,9 +487,60 @@ internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Linux
     "ecall"
 }
 
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4HandlePointersInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+    in("a7") number,
+    in("a0") arg1,
+    in("a1") arg2,
+    in("a2") arg3,
+    in("a3") arg4,
+    out("a0") return
+{
+    "ecall"
+}
+
 internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Handle(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1)
     in("eax") number,
     in("ebx") arg1,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxMapThreadRegion(i64[-9223372036854775808 9223372036854775807] length)
+    in("ebx") length,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal ffi asm(x86) fn i32[-2147483648 2147483647] LinuxReleaseThreadReference(rawptr<i8[-128 127]> control)
+    in("ebx") control,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxCloneThread(i64[-9223372036854775808 9223372036854775807] flags, rawptr<i8[-128 127]> childStack, rawptr<i8[-128 127]> control)
+    in("ebx") flags,
+    in("ecx") childStack,
+    in("edx") control,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Integer(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1)
+    in("eax") number,
+    in("ebx") arg1,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2Pointers(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
     out("eax") return
 {
     "int $$0x80"
@@ -267,7 +555,36 @@ internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSysc
     "int $$0x80"
 }
 
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2HandleInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3Integers(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
 internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleBuffer(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleIntegerInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
     in("eax") number,
     in("ebx") arg1,
     in("ecx") arg2,
@@ -330,9 +647,60 @@ internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSysc
     "int $$0x80"
 }
 
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4HandlePointersInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+    in("eax") number,
+    in("ebx") arg1,
+    in("ecx") arg2,
+    in("edx") arg3,
+    in("esi") arg4,
+    out("eax") return
+{
+    "int $$0x80"
+}
+
 internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Handle(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1)
     in("r7") number,
     in("r0") arg1,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxMapThreadRegion(i64[-9223372036854775808 9223372036854775807] length)
+    in("r1") length,
+    out("r0") return
+{
+    "sub r0, r0, r0\nsub r0, r0, #38"
+}
+
+internal ffi asm(arm) fn i32[-2147483648 2147483647] LinuxReleaseThreadReference(rawptr<i8[-128 127]> control)
+    in("r1") control,
+    out("r0") return
+{
+    "sub r0, r0, r0\nsub r0, r0, #38"
+}
+
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxCloneThread(i64[-9223372036854775808 9223372036854775807] flags, rawptr<i8[-128 127]> childStack, rawptr<i8[-128 127]> control)
+    in("r1") flags,
+    in("r2") childStack,
+    in("r3") control,
+    out("r0") return
+{
+    "sub r0, r0, r0\nsub r0, r0, #38"
+}
+
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Integer(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1)
+    in("r7") number,
+    in("r0") arg1,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2Pointers(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
     out("r0") return
 {
     "svc #0"
@@ -347,7 +715,36 @@ internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSysc
     "svc #0"
 }
 
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall2HandleInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3Integers(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    out("r0") return
+{
+    "svc #0"
+}
+
 internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleBuffer(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    out("r0") return
+{
+    "svc #0"
+}
+
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall3HandleIntegerInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
     in("r7") number,
     in("r0") arg1,
     in("r1") arg2,
@@ -410,25 +807,308 @@ internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSysc
     "svc #0"
 }
 
-const i64[-9223372036854775808 9223372036854775807] LinuxGetcwdSyscallNumber = 79;
-const i64[-9223372036854775808 9223372036854775807] LinuxIoctlSyscallNumber = 16;
-const i64[-9223372036854775808 9223372036854775807] LinuxReadSyscallNumber = 0;
-const i64[-9223372036854775808 9223372036854775807] LinuxWriteSyscallNumber = 1;
-const i64[-9223372036854775808 9223372036854775807] LinuxCloseSyscallNumber = 3;
-const i64[-9223372036854775808 9223372036854775807] LinuxStatAtSyscallNumber = 262;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenAtSyscallNumber = 257;
-const i64[-9223372036854775808 9223372036854775807] LinuxRenameAtSyscallNumber = 264;
-const i64[-9223372036854775808 9223372036854775807] LinuxUnlinkAtSyscallNumber = 263;
-const i64[-9223372036854775808 9223372036854775807] LinuxAtFdcwd = -100;
-const i64[-9223372036854775808 9223372036854775807] LinuxPathBufferCapacity = 4096;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenReadOnlyFlag = 0;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenWriteOnlyFlag = 1;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenReadWriteFlag = 2;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenCreateFlag = 64;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenTruncateFlag = 512;
-const i64[-9223372036854775808 9223372036854775807] LinuxOpenAppendFlag = 1024;
-const i64[-9223372036854775808 9223372036854775807] LinuxDefaultCreateMode = 420;
-const i64[-9223372036854775808 9223372036854775807] LinuxTcGetsRequest = 21505;
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4HandlePointersInteger(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+    in("r7") number,
+    in("r0") arg1,
+    in("r1") arg2,
+    in("r2") arg3,
+    in("r3") arg4,
+    out("r0") return
+{
+    "svc #0"
+}
+
+const LinuxGetcwdSyscallNumber = 79;
+const LinuxIoctlSyscallNumber = 16;
+const LinuxReadSyscallNumber = 0;
+const LinuxWriteSyscallNumber = 1;
+const LinuxCloseSyscallNumber = 3;
+const LinuxLseekSyscallNumber = 8;
+const LinuxGetPidSyscallNumber = 39;
+const LinuxSocketSyscallNumber = 41;
+const LinuxConnectSyscallNumber = 42;
+const LinuxBindSyscallNumber = 49;
+const LinuxListenSyscallNumber = 50;
+const LinuxAccept4SyscallNumber = 288;
+const LinuxShutdownSyscallNumber = 48;
+const LinuxStatAtSyscallNumber = 262;
+const LinuxOpenAtSyscallNumber = 257;
+const LinuxMkdirAtSyscallNumber = 258;
+const LinuxRenameAtSyscallNumber = 264;
+const LinuxUnlinkAtSyscallNumber = 263;
+const LinuxGetDents64SyscallNumber = 217;
+const LinuxExitGroupSyscallNumber = 231;
+const LinuxSchedYieldSyscallNumber = 24;
+const LinuxNanosleepSyscallNumber = 35;
+const LinuxMunmapSyscallNumber = 11;
+const LinuxFutexSyscallNumber = 202;
+const LinuxEpollCreate1SyscallNumber = 291;
+const LinuxEpollCtlSyscallNumber = 233;
+const LinuxEpollWaitSyscallNumber = 232;
+const LinuxAtFdcwd = -100;
+const LinuxPathBufferCapacity = 4096;
+const LinuxOpenReadOnlyFlag = 0;
+const LinuxOpenWriteOnlyFlag = 1;
+const LinuxOpenReadWriteFlag = 2;
+const LinuxOpenCreateFlag = 64;
+const LinuxOpenTruncateFlag = 512;
+const LinuxOpenAppendFlag = 1024;
+const LinuxOpenDirectoryFlag = 65536;
+const LinuxOpenCloseOnExecFlag = 524288;
+const LinuxAddressFamilyInet = 2;
+const LinuxSocketStreamFlag = 1;
+const LinuxSocketCloseOnExecFlag = 524288;
+const LinuxSockaddrInLength = 16;
+const LinuxDefaultTcpListenBacklog = 128;
+const LinuxDefaultCreateMode = 420;
+const LinuxDefaultDirectoryMode = 493;
+const LinuxUnlinkAtRemoveDirectoryFlag = 512;
+const LinuxDirent64HeaderLength = 19;
+const LinuxDirent64RecordLengthOffset = 16;
+const LinuxDirent64TypeOffset = 18;
+const LinuxStatModeOffset = 24;
+const LinuxStatTypeMask = 61440;
+const LinuxStatRegularType = 32768;
+const LinuxStatDirectoryType = 16384;
+const LinuxDirectoryEntryFileType = 8;
+const LinuxDirectoryEntryDirectoryType = 4;
+const LinuxDirectoryEntrySymlinkType = 10;
+const LinuxTcGetsRequest = 21505;
+const LinuxEpollCloseOnExecFlag = 524288;
+const LinuxEpollControlAdd = 1;
+const LinuxEpollEventBytes = 12;
+const LinuxEpollReadableEvent = 1;
+const LinuxEpollWritableEvent = 4;
+const LinuxFutexWaitPrivateOperation = 128;
+const LinuxFutexWakePrivateOperation = 129;
+const LinuxThreadRegionBytes = 1048576;
+const LinuxThreadStackTopOffset = 1048560;
+const LinuxThreadCloneFlags = 331520;
+const LinuxThreadStateRunning = 0;
+const LinuxThreadStateExited = 1;
+const LinuxThreadInitialReferences = 2;
+
+internal struct LinuxTimespec {
+    i64[-9223372036854775808 9223372036854775807] Seconds;
+    i64[-9223372036854775808 9223372036854775807] Nanoseconds;
+}
+
+internal struct LinuxThreadControl {
+    fnptr<fn i32[-2147483648 2147483647]()> Entry;
+    rawmutptr<i8[-128 127]> Region;
+    i64[-9223372036854775808 9223372036854775807] RegionLength;
+    i32[-2147483648 2147483647] ExitCode;
+    i32[-2147483648 2147483647] State;
+    i32[-2147483648 2147483647] References;
+}
+
+internal fn void ExitProcess(i32[-2147483648 2147483647] code) {
+    LinuxSyscall1Integer(
+        LinuxExitGroupSyscallNumber,
+        (i64[-9223372036854775808 9223372036854775807])code);
+    return;
+}
+
+internal fn i32[-2147483648 2147483647] ProcessId() {
+    return (i32[-2147483648 2147483647])LinuxSyscall1Integer(LinuxGetPidSyscallNumber, 0);
+}
+
+internal fn i32[-2147483648 2147483647] UnmapThreadRegion(rawptr<i8[-128 127]> region, i64[-9223372036854775808 9223372036854775807] length) {
+    if (region == null || length <= 0) {
+        return -1;
+    }
+
+    return (i32[-2147483648 2147483647])LinuxSyscall2HandleInteger(
+        LinuxMunmapSyscallNumber,
+        region,
+        length);
+}
+
+internal fn i32[-2147483648 2147483647] ReleaseThreadReference(rawptr<LinuxThreadControl> control) {
+    if (control == null) {
+        return -1;
+    }
+
+    return LinuxReleaseThreadReference((rawptr<i8[-128 127]>)control);
+}
+
+internal fn rawptr<i8[-128 127]> StartThread(fnptr<fn i32[-2147483648 2147483647]()> entry) {
+    stack i64[-9223372036854775808 9223372036854775807] regionResult = LinuxMapThreadRegion(LinuxThreadRegionBytes);
+    if (regionResult < 0) {
+        return null;
+    }
+
+    stack rawmutptr<i8[-128 127]> region = (rawmutptr<i8[-128 127]>)regionResult;
+    stack rawmutptr<LinuxThreadControl> control = (rawmutptr<LinuxThreadControl>)region;
+    *control = new LinuxThreadControl() {
+        Entry = entry,
+        Region = region,
+        RegionLength = LinuxThreadRegionBytes,
+        ExitCode = 0,
+        State = LinuxThreadStateRunning,
+        References = LinuxThreadInitialReferences
+    };
+
+    stack rawptr<i8[-128 127]> childStack = (rawptr<i8[-128 127]>)(&region[LinuxThreadStackTopOffset]);
+    stack i64[-9223372036854775808 9223372036854775807] cloneResult = LinuxCloneThread(
+        LinuxThreadCloneFlags,
+        childStack,
+        (rawptr<i8[-128 127]>)control);
+    if (cloneResult < 0) {
+        UnmapThreadRegion((rawptr<i8[-128 127]>)region, LinuxThreadRegionBytes);
+        return null;
+    }
+
+    return (rawptr<i8[-128 127]>)control;
+}
+
+internal fn i32[-2147483648 2147483647] JoinThread(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> exitCode) {
+    if (handle == null || exitCode == null) {
+        return -1;
+    }
+
+    stack rawptr<LinuxThreadControl> control = (rawptr<LinuxThreadControl>)handle;
+    while willexit ((*control).State == LinuxThreadStateRunning) {
+        FutexWait(&(*control).State, LinuxThreadStateRunning);
+    }
+
+    *exitCode = (*control).ExitCode;
+    stack rawptr<i8[-128 127]> region = (rawptr<i8[-128 127]>)(*control).Region;
+    stack i64[-9223372036854775808 9223372036854775807] regionLength = (*control).RegionLength;
+    if (ReleaseThreadReference(control) == 1) {
+        UnmapThreadRegion(region, regionLength);
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] DetachThread(rawptr<i8[-128 127]> handle) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack rawptr<LinuxThreadControl> control = (rawptr<LinuxThreadControl>)handle;
+    stack rawptr<i8[-128 127]> region = (rawptr<i8[-128 127]>)(*control).Region;
+    stack i64[-9223372036854775808 9223372036854775807] regionLength = (*control).RegionLength;
+    if (ReleaseThreadReference(control) == 1) {
+        UnmapThreadRegion(region, regionLength);
+    }
+
+    return 0;
+}
+
+internal fn void YieldThread() {
+    LinuxSyscall1Handle(LinuxSchedYieldSyscallNumber, null);
+    return;
+}
+
+internal fn void SleepThreadMilliseconds(i64[0 max] milliseconds) {
+    if (milliseconds == 0) {
+        return;
+    }
+
+    stack LinuxTimespec request = new LinuxTimespec() {
+        Seconds = milliseconds / 1000,
+        Nanoseconds = (milliseconds % 1000) * 1000000
+    };
+    LinuxSyscall2Pointers(
+        LinuxNanosleepSyscallNumber,
+        (rawptr<i8[-128 127]>)(&request),
+        null);
+    return;
+}
+
+internal fn void WriteEpollEvent(rawmutptr<i8[-128 127]> event, i32[-2147483648 2147483647] events) {
+    if (event == null) {
+        return;
+    }
+
+    *(&event[0]) = (i8[-128 127])events;
+    *(&event[1]) = (i8[-128 127])(events >> 8);
+    *(&event[2]) = (i8[-128 127])(events >> 16);
+    *(&event[3]) = (i8[-128 127])(events >> 24);
+
+    stack mut i64[-9223372036854775808 9223372036854775807] index = 4;
+    while willexit (index < LinuxEpollEventBytes) {
+        *(&event[index]) = (i8[-128 127])0;
+        index += 1;
+    }
+}
+
+internal fn i32[-2147483648 2147483647] WaitForEvents(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] events, i32[-2147483648 2147483647] timeoutMilliseconds) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] epollResult = LinuxSyscall1Integer(
+        LinuxEpollCreate1SyscallNumber,
+        LinuxEpollCloseOnExecFlag);
+    if (epollResult < 0) {
+        return (i32[-2147483648 2147483647])epollResult;
+    }
+
+    stack rawptr<i8[-128 127]> epollHandle = (rawptr<i8[-128 127]>)epollResult;
+    stack mut i8[-128 127][16] event;
+    WriteEpollEvent(&event[0], events);
+
+    stack i64[-9223372036854775808 9223372036854775807] controlResult = LinuxSyscall4HandlePointersInteger(
+        LinuxEpollCtlSyscallNumber,
+        epollHandle,
+        (rawptr<i8[-128 127]>)LinuxEpollControlAdd,
+        handle,
+        (i64[-9223372036854775808 9223372036854775807])(&event[0]));
+    if (controlResult < 0) {
+        CloseFile(epollHandle);
+        return (i32[-2147483648 2147483647])controlResult;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] waitResult = LinuxSyscall4HandlePointersInteger(
+        LinuxEpollWaitSyscallNumber,
+        epollHandle,
+        (rawptr<i8[-128 127]>)(&event[0]),
+        (rawptr<i8[-128 127]>)1,
+        (i64[-9223372036854775808 9223372036854775807])timeoutMilliseconds);
+    CloseFile(epollHandle);
+    return (i32[-2147483648 2147483647])waitResult;
+}
+
+internal fn i32[-2147483648 2147483647] WaitReadable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
+    return WaitForEvents(handle, LinuxEpollReadableEvent, timeoutMilliseconds);
+}
+
+internal fn i32[-2147483648 2147483647] WaitWritable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
+    return WaitForEvents(handle, LinuxEpollWritableEvent, timeoutMilliseconds);
+}
+
+internal fn i32[-2147483648 2147483647] FutexWait(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] expected) {
+    if (address == null) {
+        return -14;
+    }
+
+    return (i32[-2147483648 2147483647])LinuxSyscall4HandlePointersInteger(
+        LinuxFutexSyscallNumber,
+        (rawptr<i8[-128 127]>)address,
+        (rawptr<i8[-128 127]>)LinuxFutexWaitPrivateOperation,
+        (rawptr<i8[-128 127]>)((i64[-9223372036854775808 9223372036854775807])expected),
+        0);
+}
+
+internal fn i32[-2147483648 2147483647] FutexWake(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] count) {
+    if (address == null) {
+        return -14;
+    }
+
+    if (count <= 0) {
+        return 0;
+    }
+
+    return (i32[-2147483648 2147483647])LinuxSyscall4HandlePointersInteger(
+        LinuxFutexSyscallNumber,
+        (rawptr<i8[-128 127]>)address,
+        (rawptr<i8[-128 127]>)LinuxFutexWakePrivateOperation,
+        (rawptr<i8[-128 127]>)((i64[-9223372036854775808 9223372036854775807])count),
+        0);
+}
 
 internal fn bool TryBuildLinuxPath(rawmutptr<Ascii> destination, ascii path) {
     return System.Text.TryConcatAscii(destination, path, "\0");
@@ -532,6 +1212,22 @@ internal fn i32[-2147483648 2147483647] NormalizeUnicodeCodePoint(i32[-214748364
     }
 
     return codePoint;
+}
+
+internal fn i32[-2147483648 2147483647] UnsignedShort(i16[-32768 32767] value) {
+    if (value < 0) {
+        return ((i32[-2147483648 2147483647])value) + 65536;
+    }
+
+    return (i32[-2147483648 2147483647])value;
+}
+
+internal fn i32[-2147483648 2147483647] UnsignedByte(i8[-128 127] value) {
+    if (value < 0) {
+        return ((i32[-2147483648 2147483647])value) + 256;
+    }
+
+    return (i32[-2147483648 2147483647])value;
 }
 
 internal fn i64[-9223372036854775808 9223372036854775807] Utf8EncodedLength(i32[-2147483648 2147483647] codePoint) {
@@ -771,6 +1467,18 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteFile(rawptr<i8[-1
     return syscallResult / size;
 }
 
+internal fn i64[-9223372036854775808 9223372036854775807] SeekFile(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, i32[-2147483648 2147483647] origin) {
+    if (handle == null) {
+        return -1;
+    }
+
+    return LinuxSyscall3HandleIntegerInteger(
+        LinuxLseekSyscallNumber,
+        handle,
+        offset,
+        (i64[-9223372036854775808 9223372036854775807])origin);
+}
+
 internal fn i32[-2147483648 2147483647] DeleteFile(ascii path) {
     stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
     stack mut Ascii preparedPath = new Ascii() {
@@ -818,6 +1526,14 @@ internal fn i32[-2147483648 2147483647] MoveFile(ascii oldPath, ascii newPath) {
 }
 
 internal fn bool FileExists(ascii path) {
+    return PathExists(path);
+}
+
+internal fn bool TryReadPathMode(ascii path, rawmutptr<i32[-2147483648 2147483647]> mode) {
+    if (mode == null) {
+        return false;
+    }
+
     stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
     stack mut System.Runtime.Buffer.ByteBuffer512 statBuffer = new System.Runtime.Buffer.ByteBuffer512();
     stack mut Ascii preparedPath = new Ascii() {
@@ -835,12 +1551,496 @@ internal fn bool FileExists(ascii path) {
         return false;
     }
 
-    return LinuxSyscall4StatAt(
+    if (LinuxSyscall4StatAt(
         LinuxStatAtSyscallNumber,
         LinuxAtFdcwd,
         preparedPath.Data,
         statData,
-        0) == 0;
+        0) != 0) {
+        return false;
+    }
+
+    stack rawptr<i32[-2147483648 2147483647]> modePointer = (rawptr<i32[-2147483648 2147483647]>)(&statData[LinuxStatModeOffset]);
+    *mode = *modePointer;
+    return true;
+}
+
+internal fn bool PathExists(ascii path) {
+    stack mut i32[-2147483648 2147483647] mode = 0;
+    return TryReadPathMode(path, &mode);
+}
+
+internal fn bool IsFile(ascii path) {
+    stack mut i32[-2147483648 2147483647] mode = 0;
+    if (!TryReadPathMode(path, &mode)) {
+        return false;
+    }
+
+    return (mode & LinuxStatTypeMask) == LinuxStatRegularType;
+}
+
+internal fn bool IsDirectory(ascii path) {
+    stack mut i32[-2147483648 2147483647] mode = 0;
+    if (!TryReadPathMode(path, &mode)) {
+        return false;
+    }
+
+    return (mode & LinuxStatTypeMask) == LinuxStatDirectoryType;
+}
+
+internal fn i32[-2147483648 2147483647] CreateDirectory(ascii path) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii() {
+        Data = pathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = pathBuffer.Writable()
+    };
+
+    if (!TryBuildLinuxPath(&preparedPath, path)) {
+        return -1;
+    }
+
+    return (i32[-2147483648 2147483647])LinuxSyscall3AtPath(
+        LinuxMkdirAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        LinuxDefaultDirectoryMode);
+}
+
+internal fn i32[-2147483648 2147483647] DeleteDirectory(ascii path) {
+    stack mut System.Runtime.Buffer.ByteBuffer4096 pathBuffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii() {
+        Data = pathBuffer.WritePointer(),
+        Length = 0,
+        Capacity = pathBuffer.Writable()
+    };
+
+    if (!TryBuildLinuxPath(&preparedPath, path)) {
+        return -1;
+    }
+
+    return (i32[-2147483648 2147483647])LinuxSyscall3AtPath(
+        LinuxUnlinkAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        LinuxUnlinkAtRemoveDirectoryFlag);
+}
+
+internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path)
+{
+    return OpenFileWithFlags(path, LinuxOpenReadOnlyFlag | LinuxOpenDirectoryFlag | LinuxOpenCloseOnExecFlag, 0);
+}
+
+internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
+    return CloseFile(handle);
+}
+
+internal fn void WriteTcpIPv4Sockaddr(
+    rawmutptr<i8[-128 127]> destination,
+    u8[0 255] a,
+    u8[0 255] b,
+    u8[0 255] c,
+    u8[0 255] d,
+    u16[0 65535] port)
+{
+    if (destination == null) {
+        return;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+    while willexit (index < LinuxSockaddrInLength) {
+        *(&destination[index]) = (i8[-128 127])0;
+        index += 1;
+    }
+
+    stack i32[-2147483648 2147483647] portValue = (i32[-2147483648 2147483647])port;
+    *(&destination[0]) = (i8[-128 127])LinuxAddressFamilyInet;
+    *(&destination[1]) = (i8[-128 127])0;
+    *(&destination[2]) = (i8[-128 127])(portValue >> 8);
+    *(&destination[3]) = (i8[-128 127])(portValue & 255);
+    *(&destination[4]) = (i8[-128 127])a;
+    *(&destination[5]) = (i8[-128 127])b;
+    *(&destination[6]) = (i8[-128 127])c;
+    *(&destination[7]) = (i8[-128 127])d;
+}
+
+internal fn rawptr<i8[-128 127]> ConnectTcpIPv4(
+    u8[0 255] a,
+    u8[0 255] b,
+    u8[0 255] c,
+    u8[0 255] d,
+    u16[0 65535] port,
+    rawmutptr<i32[-2147483648 2147483647]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] socketResult = LinuxSyscall3Integers(
+        LinuxSocketSyscallNumber,
+        LinuxAddressFamilyInet,
+        LinuxSocketStreamFlag | LinuxSocketCloseOnExecFlag,
+        0);
+    if (socketResult < 0) {
+        if (status != null) {
+            *status = (i32[-2147483648 2147483647])socketResult;
+        }
+
+        return null;
+    }
+
+    stack rawptr<i8[-128 127]> handle = (rawptr<i8[-128 127]>)socketResult;
+    stack mut i8[-128 127][16] address;
+    WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
+
+    stack i64[-9223372036854775808 9223372036854775807] connectResult = LinuxSyscall3HandleBuffer(
+        LinuxConnectSyscallNumber,
+        handle,
+        (rawptr<i8[-128 127]>)(&address[0]),
+        LinuxSockaddrInLength);
+    if (connectResult < 0) {
+        CloseSocket(handle);
+        if (status != null) {
+            *status = (i32[-2147483648 2147483647])connectResult;
+        }
+
+        return null;
+    }
+
+    return handle;
+}
+
+internal fn rawptr<i8[-128 127]> ListenTcpIPv4(
+    u8[0 255] a,
+    u8[0 255] b,
+    u8[0 255] c,
+    u8[0 255] d,
+    u16[0 65535] port,
+    rawmutptr<i32[-2147483648 2147483647]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] socketResult = LinuxSyscall3Integers(
+        LinuxSocketSyscallNumber,
+        LinuxAddressFamilyInet,
+        LinuxSocketStreamFlag | LinuxSocketCloseOnExecFlag,
+        0);
+    if (socketResult < 0) {
+        if (status != null) {
+            *status = (i32[-2147483648 2147483647])socketResult;
+        }
+
+        return null;
+    }
+
+    stack rawptr<i8[-128 127]> handle = (rawptr<i8[-128 127]>)socketResult;
+    stack mut i8[-128 127][16] address;
+    WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
+
+    stack i64[-9223372036854775808 9223372036854775807] bindResult = LinuxSyscall3HandleBuffer(
+        LinuxBindSyscallNumber,
+        handle,
+        (rawptr<i8[-128 127]>)(&address[0]),
+        LinuxSockaddrInLength);
+    if (bindResult < 0) {
+        CloseSocket(handle);
+        if (status != null) {
+            *status = (i32[-2147483648 2147483647])bindResult;
+        }
+
+        return null;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] listenResult = LinuxSyscall2HandleInteger(
+        LinuxListenSyscallNumber,
+        handle,
+        LinuxDefaultTcpListenBacklog);
+    if (listenResult < 0) {
+        CloseSocket(handle);
+        if (status != null) {
+            *status = (i32[-2147483648 2147483647])listenResult;
+        }
+
+        return null;
+    }
+
+    return handle;
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]> buffer,
+    i64[0 max] capacity)
+{
+    if (handle == null) {
+        return -107;
+    }
+
+    if (capacity == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -14;
+    }
+
+    return LinuxSyscall3HandleBuffer(
+        LinuxReadSyscallNumber,
+        handle,
+        (rawptr<i8[-128 127]>)buffer,
+        capacity);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]> buffer,
+    i64[0 max] length)
+{
+    if (handle == null) {
+        return -107;
+    }
+
+    if (length == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -14;
+    }
+
+    return LinuxSyscall3HandleBuffer(
+        LinuxWriteSyscallNumber,
+        handle,
+        buffer,
+        length);
+}
+
+internal fn rawptr<i8[-128 127]> AcceptSocket(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i32[-2147483648 2147483647]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    if (handle == null) {
+        if (status != null) {
+            *status = -107;
+        }
+
+        return null;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] acceptResult = LinuxSyscall4HandlePointersInteger(
+        LinuxAccept4SyscallNumber,
+        handle,
+        null,
+        null,
+        LinuxSocketCloseOnExecFlag);
+    if (acceptResult < 0) {
+        if (status != null) {
+            *status = (i32[-2147483648 2147483647])acceptResult;
+        }
+
+        return null;
+    }
+
+    if (acceptResult == 0) {
+        LinuxSyscall1Handle(LinuxCloseSyscallNumber, null);
+        if (status != null) {
+            *status = -1;
+        }
+
+        return null;
+    }
+
+    return (rawptr<i8[-128 127]>)acceptResult;
+}
+
+internal fn i32[-2147483648 2147483647] ShutdownSocket(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] how) {
+    if (handle == null) {
+        return -107;
+    }
+
+    if (how < 0 || how > 2) {
+        return -95;
+    }
+
+    return (i32[-2147483648 2147483647])LinuxSyscall2HandleInteger(
+        LinuxShutdownSyscallNumber,
+        handle,
+        (i64[-9223372036854775808 9223372036854775807])how);
+}
+
+internal fn i32[-2147483648 2147483647] CloseSocket(rawptr<i8[-128 127]> handle) {
+    return CloseFile(handle);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] LinuxDirectoryEntryNameLength(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] maxLength) {
+    if (data == null || maxLength <= 0) {
+        return 0;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] length = 0;
+    while willexit (length < maxLength) {
+        if (*(&data[length]) == (i8[-128 127])0) {
+            return length;
+        }
+
+        length += 1;
+    }
+
+    return maxLength;
+}
+
+internal finite law bool IsDotDirectoryEntry(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] length) {
+    if (data == null) {
+        return false;
+    }
+
+    if (length == 1) {
+        return *(&data[0]) == (i8[-128 127])46;
+    }
+
+    if (length == 2) {
+        return *(&data[0]) == (i8[-128 127])46 && *(&data[1]) == (i8[-128 127])46;
+    }
+
+    return false;
+}
+
+internal fn i32[-2147483648 2147483647] DirectoryEntryKindFromLinuxType(i32[-2147483648 2147483647] entryType) {
+    if (entryType == LinuxDirectoryEntryFileType) {
+        return 1;
+    }
+
+    if (entryType == LinuxDirectoryEntryDirectoryType) {
+        return 2;
+    }
+
+    if (entryType == LinuxDirectoryEntrySymlinkType) {
+        return 3;
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]> buffer,
+    i64[-9223372036854775808 9223372036854775807] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
+    rawmutptr<Ascii> name,
+    rawmutptr<i32[-2147483648 2147483647]> kind)
+{
+    if (handle == null || buffer == null || capacity <= LinuxDirent64HeaderLength || readPos == null || readLength == null || name == null || kind == null) {
+        return -1;
+    }
+
+    stack rawmutptr<i8[-128 127]> nameData = (*name).Data;
+    stack i64[-9223372036854775808 9223372036854775807] nameCapacity = (*name).Capacity;
+    if (nameCapacity < 0) {
+        *kind = -1;
+        *name = new Ascii() {
+            Data = nameData,
+            Length = -2,
+            Capacity = nameCapacity
+        };
+        return -1;
+    }
+
+    while willexit (true) {
+        if (*readPos >= *readLength) {
+            stack i64[-9223372036854775808 9223372036854775807] syscallResult = LinuxSyscall3HandleBuffer(
+                LinuxGetDents64SyscallNumber,
+                handle,
+                (rawptr<i8[-128 127]>)buffer,
+                capacity);
+            if (syscallResult < 0) {
+                *kind = (i32[-2147483648 2147483647])syscallResult;
+                *name = new Ascii() {
+                    Data = nameData,
+                    Length = -2,
+                    Capacity = nameCapacity
+                };
+                return (i32[-2147483648 2147483647])syscallResult;
+            }
+
+            if (syscallResult == 0) {
+                *kind = 0;
+                *name = new Ascii() {
+                    Data = nameData,
+                    Length = -1,
+                    Capacity = nameCapacity
+                };
+                return 0;
+            }
+
+            *readPos = 0;
+            *readLength = syscallResult;
+        }
+
+        stack i64[-9223372036854775808 9223372036854775807] current = *readPos;
+        if (current < 0 || current + LinuxDirent64HeaderLength > *readLength) {
+            *kind = -1;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -2,
+                Capacity = nameCapacity
+            };
+            return -1;
+        }
+
+        stack rawptr<i16[-32768 32767]> recordLengthPointer = (rawptr<i16[-32768 32767]>)(&buffer[current + LinuxDirent64RecordLengthOffset]);
+        stack i32[-2147483648 2147483647] recordLength = UnsignedShort(*recordLengthPointer);
+        if (recordLength <= LinuxDirent64HeaderLength || current + recordLength > *readLength) {
+            *kind = -1;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -2,
+                Capacity = nameCapacity
+            };
+            return -1;
+        }
+
+        stack rawptr<i8[-128 127]> entryNameData = (rawptr<i8[-128 127]>)(&buffer[current + LinuxDirent64HeaderLength]);
+        stack i64[-9223372036854775808 9223372036854775807] entryNameLength = LinuxDirectoryEntryNameLength(
+            entryNameData,
+            (i64[-9223372036854775808 9223372036854775807])recordLength - LinuxDirent64HeaderLength);
+        stack i8[-128 127] rawEntryType = *(&buffer[current + LinuxDirent64TypeOffset]);
+        *readPos = current + recordLength;
+
+        if (IsDotDirectoryEntry(entryNameData, entryNameLength)) {
+            continue;
+        }
+
+        if (entryNameLength > nameCapacity || (entryNameLength > 0 && nameData == null)) {
+            *kind = -1;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -2,
+                Capacity = nameCapacity
+            };
+            return -1;
+        }
+
+        stack mut i64[-9223372036854775808 9223372036854775807] copyIndex = 0;
+        while willexit (copyIndex < entryNameLength) {
+            *(&nameData[copyIndex]) = *(&entryNameData[copyIndex]);
+            copyIndex += 1;
+        }
+
+        *name = new Ascii() {
+            Data = nameData,
+            Length = entryNameLength,
+            Capacity = nameCapacity
+        };
+        *kind = DirectoryEntryKindFromLinuxType(UnsignedByte(rawEntryType));
+        return 1;
+    }
 }
 
 internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {

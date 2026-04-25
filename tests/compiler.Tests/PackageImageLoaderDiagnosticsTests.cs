@@ -50,6 +50,33 @@ public sealed class PackageImageLoaderDiagnosticsTests
         Assert.Contains(diagnostics, static diagnostic => diagnostic.Code == "STK7108");
     }
 
+    [Fact]
+    public void ValidateManifestAcceptsRichReExportOnlyModuleWithEmptyFacts()
+    {
+        var manifest = new StarkPackageManifest(
+            RootModule: "Facade",
+            LibraryFileName: "libFacade.a",
+            Modules:
+            [
+                new StarkPackageModuleManifest(
+                    ModuleName: "Facade",
+                    ReExports: [],
+                    Functions: [],
+                    Types: [],
+                    Globals: [],
+                    SourceSurface: new StarkPackageSourceSurfaceSection(
+                        ReExports: [new StarkPackageReExportManifest("Facade.IO")]),
+                    CompilerSections: new StarkPackageCompilerSectionsManifest(
+                        TypedInterface: new StarkPackageTypedInterfaceSection([], [], [], Imports: []),
+                        CompilerFacts: new StarkPackageCompilerFactsSection([]))),
+                CreateRichModule("Facade.IO")
+            ]);
+
+        var diagnostics = PackageImageLoader.ValidateManifest(manifest, "/virtual/Facade.starkpkg.json");
+
+        Assert.Empty(diagnostics);
+    }
+
     private static StarkPackageModuleManifest CreateLegacyOnlyModule(string moduleName)
     {
         return new StarkPackageModuleManifest(
@@ -58,5 +85,19 @@ public sealed class PackageImageLoaderDiagnosticsTests
             Functions: [],
             Types: [],
             Globals: []);
+    }
+
+    private static StarkPackageModuleManifest CreateRichModule(string moduleName)
+    {
+        return new StarkPackageModuleManifest(
+            ModuleName: moduleName,
+            ReExports: [],
+            Functions: [],
+            Types: [],
+            Globals: [],
+            SourceSurface: new StarkPackageSourceSurfaceSection(),
+            CompilerSections: new StarkPackageCompilerSectionsManifest(
+                TypedInterface: new StarkPackageTypedInterfaceSection([], [], [], Imports: []),
+                CompilerFacts: new StarkPackageCompilerFactsSection([])));
     }
 }

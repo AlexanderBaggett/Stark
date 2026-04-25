@@ -1,0 +1,19 @@
+import Units
+module Geometry
+
+public struct Rectangle {
+    Units.Length Width;
+    Units.Length Height;
+}
+
+internal finite law i32[min max] Multiply(Units.Length left, Units.Length right) {
+    return left * right;
+}
+
+public finite law i32[min max] Area(Rectangle rectangle) {
+    return Multiply(rectangle.Width, rectangle.Height);
+}
+
+public finite law i32[min max] ScaleArea(Rectangle rectangle, i32[1 10] scale) {
+    return Area(rectangle) * scale;
+}

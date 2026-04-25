@@ -253,10 +253,10 @@ internal sealed class DebugMetadataEmitter
         {
             StarkTypeKind.Bool => CreateMetadata("!DIBasicType(name: \"bool\", size: 1, encoding: DW_ATE_boolean)"),
             StarkTypeKind.Integer when type.BitWidth is int bitWidth
-                => CreateMetadata($"!DIBasicType(name: \"{EscapeMetadataString(type.DisplayName)}\", size: {bitWidth}, encoding: DW_ATE_signed)"),
+                => CreateMetadata($"!DIBasicType(name: \"{EscapeMetadataString(type.DisplayName)}\", size: {bitWidth}, encoding: {(type.IsUnsigned ? "DW_ATE_unsigned" : "DW_ATE_signed")})"),
             StarkTypeKind.Float when type.BitWidth is int bitWidth
                 => CreateMetadata($"!DIBasicType(name: \"{EscapeMetadataString(type.DisplayName)}\", size: {bitWidth}, encoding: DW_ATE_float)"),
-            StarkTypeKind.RawPointer => CreatePointerTypeRef(type),
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer => CreatePointerTypeRef(type),
             StarkTypeKind.FixedArray => CreateFixedArrayTypeRef(type),
             StarkTypeKind.Slice => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
             StarkTypeKind.Ascii => CreateOpaqueCompositeTypeRef(type.DisplayName, type),

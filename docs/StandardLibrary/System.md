@@ -7,20 +7,18 @@ It re-exports:
 - `System.BitOperations`
 - `System.Collections`
 - `System.Console`
+- `System.FileSystem`
 - `System.IO`
 - `System.Math`
 - `System.Memory`
-- `System.Text`
-
-Planned `v1.2` additions:
-
-- `System.FileSystem`
 - `System.Net`
 - `System.Net.Tcp`
+- `System.Process`
+- `System.Text`
 - `System.Threading`
 
 It also imports internal runtime support and the `System.Syscall` module during package build, but `System.Syscall` is not re-exported through `System`.
-Internal runtime modules such as `System.Runtime.Buffer` are compiled into the package implementation, but they are not part of the public package image or supported import surface.
+Internal runtime modules such as `System.Runtime.Buffer` are compiled into the package implementation and may appear in package images as internal implementation surface, but they are not public root re-exports or supported user import surface.
 
 ## Example
 
@@ -43,5 +41,9 @@ export ffi fn i32 main() {
 - `System.Memory` currently exposes the first allocator vocabulary and internal default-allocation contract needed for owned collections and buffers.
 - `System.Collections` currently exposes the first owned allocator-backed collection surface for `List<T>`, `Stack<T>`, `Queue<T>`, `LinkedList<T>`, and `Dictionary<K, V>`. Pop/remove accessors use source-level `out T` bodies, safe retborrow accessors and `List<T>` slice views are lowered, and dictionary keys are currently limited to compiler-proven `bool` and Stark integer types.
 - `System.IO.Path` currently provides the separator/dot-path helpers plus a low-level caller-buffer `CurrentDirectory` API documented in its module reference.
-- `System.FileSystem`, `System.Net`, `System.Net.Tcp`, and `System.Threading` are planned `v1.2` modules and are documented as design targets rather than implemented public package surface today.
+- `System.FileSystem` currently exposes directory creation/deletion, directory opening/iteration with owned entry names, and filesystem metadata queries.
+- `System.Threading` currently exposes the no-state `ThreadEntry` callable alias, compact thread status/result enums, owned `Thread` construction, `Join`, `Detach`, best-effort drop cleanup, and static scheduler helpers for yield and millisecond sleep.
+- `System.Net` currently exposes the shared networking error/result/status vocabulary plus IPv4 address and endpoint value types.
+- `System.Net.Tcp` currently exposes `TcpShutdown` plus owned `TcpClient` and `TcpListener` lifecycle shells. `TcpClient.Connect` returns `NetResult<TcpClient>` and is backed by Linux `socket`/`connect` and Windows Winsock; `TcpClient.Read` and `TcpClient.Write` use safe byte slices and Linux read/write syscall paths or Winsock `recv`/`send`; `TcpListener.Listen` is backed by Linux `socket`/`bind`/`listen` and Windows Winsock; `TcpListener.Accept` is backed by Linux `accept4` and Winsock `accept`; `TcpClient.Shutdown` is backed by Linux `shutdown` and Winsock `shutdown`; `Close` is routed through the platform socket-close boundary for open handles, with Linux using `close(2)` and Windows using `closesocket`.
+- `System.Process` currently exposes `CurrentId` and `Exit` as the public process helper surface over the internal platform layer.
 - `System.Net.Http` is intentionally not planned for the standard library. HTTP should be provided by packages built on `System.Net.Tcp`.

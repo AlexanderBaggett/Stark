@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using Antlr4.Runtime;
 using Antlr4.Runtime.Tree;
@@ -8,6 +9,7 @@ namespace Stark.Compiler;
 internal sealed class TypeChecker
 {
     private static readonly int[] SupportedIntegerLiteralWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
+    private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
     private const string BoolTrueCoverageKey = "bool:true";
     private const string BoolFalseCoverageKey = "bool:false";
 
@@ -73,6 +75,12 @@ internal sealed class TypeChecker
     private readonly List<LocalDeclarationTypingRecord> _localDeclarations = [];
     private readonly List<ConversionTypingRecord> _conversions = [];
     private readonly List<DirectCallTypingRecord> _directCalls = [];
+    private readonly List<FunctionPointerPromotionTypingRecord> _functionPointerPromotions = [];
+    private readonly List<AddressTakenFunctionTypingRecord> _addressTakenFunctions = [];
+    private readonly HashSet<string> _addressTakenFunctionNames = new(StringComparer.Ordinal);
+    private readonly List<IndirectCallTypingRecord> _indirectCalls = [];
+    private readonly List<LambdaTypingRecord> _lambdas = [];
+    private readonly List<LambdaCaptureTypingRecord> _lambdaCaptures = [];
     private readonly List<FieldAccessTypingRecord> _fieldAccesses = [];
     private readonly List<MemberCallTypingRecord> _memberCalls = [];
     private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
@@ -81,6 +89,8 @@ internal sealed class TypeChecker
     private readonly List<DeferredFunctionInstantiationTriggerRecord> _deferredFunctionInstantiationTriggers = [];
     private readonly List<DeferredTypeInstantiationTriggerRecord> _deferredTypeInstantiationTriggers = [];
     private readonly List<TypeInstantiationTriggerRecord> _typeInstantiationTriggers = [];
+    private readonly HashSet<StarkParser.AdditiveExpressionContext> _fixedTextStorageConcatExpressions = [];
+    private readonly HashSet<StarkParser.LiteralContext> _fixedTextStorageInterpolatedLiterals = [];
     private readonly HashSet<string> _functionInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deferredFunctionInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deferredTypeInstantiationKeys = new(StringComparer.Ordinal);
@@ -92,6 +102,7 @@ internal sealed class TypeChecker
     private ISet<string>? _currentFunctionGenericParameters;
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
+    private int _unsafeDepth;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
     private IReadOnlyList<ImportedTemplateObjectCreationSummary>? _currentImportedTemplateObjectCreations;
     private IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int>? _currentImportedTemplateObjectCreationOrdinals;
@@ -175,9 +186,14 @@ internal sealed class TypeChecker
             _localDeclarations,
             _conversions,
             _directCalls,
+            _functionPointerPromotions,
+            _indirectCalls,
             _fieldAccesses,
             _memberCalls,
-            _typeLayoutExpressions);
+            _typeLayoutExpressions,
+            _lambdas,
+            _lambdaCaptures,
+            _addressTakenFunctions);
     }
 
     private void CollectTypeAliasSources()
@@ -555,6 +571,11 @@ internal sealed class TypeChecker
 
         foreach (var declarator in fieldDeclaration.variableDeclarators().variableDeclarator())
         {
+            if (declarator.variableStorageCapacity() is { } capacity)
+            {
+                ReportStorageCapacityUnsupported(declarator.Identifier().GetText(), "field", capacity);
+            }
+
             var fieldName = declarator.Identifier().GetText();
             AddField(
                 fields,
@@ -647,7 +668,9 @@ internal sealed class TypeChecker
                 {
                     var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
                     ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
-                    var isAbiBoundary = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal))
+                    var isFfi = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                    var isVarargs = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal));
+                    var isAbiBoundary = isFfi
                         || declarationModel.Visibility == StarkVisibility.Export;
                     if (isAbiBoundary)
                     {
@@ -680,7 +703,10 @@ internal sealed class TypeChecker
                         parameters,
                         SourceName: sourceQualifiedName,
                         GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
-                        IsStatic: functionSyntax.IsStatic);
+                        IsStatic: functionSyntax.IsStatic,
+                        Kind: functionSyntax.DeclaredKind,
+                        IsUnsafe: functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
+                        IsVarargs: isVarargs);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                 }
                 finally
@@ -756,12 +782,10 @@ internal sealed class TypeChecker
                                 constructor.TypeName,
                                 constructor.Parameters.ToArray(),
                                 constructor.IsPrimaryShape,
-                                constructor.BodyKey
-                                ?? (constructorBodyKeys.TryGetValue(
-                                    BuildConstructorSignatureKey(qualifiedName, constructor.Parameters),
-                                    out var bodyKey)
-                                    ? bodyKey
-                                    : null)))
+                                constructor.BodyKey ?? TryResolveImportedConstructorBodyKey(
+                                    constructorBodyKeys,
+                                    qualifiedName,
+                                    constructor.Parameters)))
                             .ToList();
                     }
                 }
@@ -821,9 +845,9 @@ internal sealed class TypeChecker
         PopulateConcreteConstructorShapesForKnownGenericInstantiations();
     }
 
-    private Dictionary<string, string> BuildImportedConstructorBodyKeyLookup(LoadedModuleDocument module)
+    private List<ImportedConstructorBodyKey> BuildImportedConstructorBodyKeyLookup(LoadedModuleDocument module)
     {
-        var constructorBodyKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+        var constructorBodyKeys = new List<ImportedConstructorBodyKey>();
 
         foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
         {
@@ -873,7 +897,7 @@ internal sealed class TypeChecker
     }
 
     private void AddImportedConstructorBodyKeys(
-        Dictionary<string, string> constructorBodyKeys,
+        List<ImportedConstructorBodyKey> constructorBodyKeys,
         LoadedModuleDocument module,
         string qualifiedTypeName,
         string localTypeName,
@@ -888,9 +912,65 @@ internal sealed class TypeChecker
             }
 
             var parameters = BuildTypedParameters(constructor.parameterList().parameter(), genericParameters, module.SyntaxModel.ModuleName);
-            constructorBodyKeys[BuildConstructorSignatureKey(qualifiedTypeName, parameters)] =
-                BuildConstructorBodyKey(qualifiedTypeName, constructor);
+            constructorBodyKeys.Add(new ImportedConstructorBodyKey(
+                qualifiedTypeName,
+                parameters,
+                BuildConstructorSignatureKey(qualifiedTypeName, parameters),
+                BuildConstructorBodyKey(qualifiedTypeName, constructor)));
         }
+    }
+
+    private static string? TryResolveImportedConstructorBodyKey(
+        IReadOnlyList<ImportedConstructorBodyKey> bodyKeys,
+        string qualifiedTypeName,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var signatureKey = BuildConstructorSignatureKey(qualifiedTypeName, parameters);
+        foreach (var bodyKey in bodyKeys)
+        {
+            if (string.Equals(bodyKey.SignatureKey, signatureKey, StringComparison.Ordinal))
+            {
+                return bodyKey.BodyKey;
+            }
+        }
+
+        ImportedConstructorBodyKey? match = null;
+        foreach (var bodyKey in bodyKeys)
+        {
+            if (!string.Equals(bodyKey.QualifiedTypeName, qualifiedTypeName, StringComparison.Ordinal)
+                || bodyKey.Parameters.Count != parameters.Count
+                || !ConstructorParameterTypesAreEquivalent(bodyKey.Parameters, parameters))
+            {
+                continue;
+            }
+
+            if (match is not null)
+            {
+                return null;
+            }
+
+            match = bodyKey;
+        }
+
+        return match?.BodyKey;
+    }
+
+    private static bool ConstructorParameterTypesAreEquivalent(
+        IReadOnlyList<TypedParameterSymbol> left,
+        IReadOnlyList<TypedParameterSymbol> right)
+    {
+        for (var index = 0; index < left.Count; index++)
+        {
+            var leftType = left[index].Type;
+            var rightType = right[index].Type;
+            if (!TypeCompatibilityFacts.CanAssign(leftType, rightType)
+                || !TypeCompatibilityFacts.CanAssign(rightType, leftType))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string BuildConstructorSignatureKey(
@@ -1061,20 +1141,27 @@ internal sealed class TypeChecker
         {
             if (declaration.globalConstantDeclaration() is { } constantDeclaration)
             {
-                var declaredType = ValidateRuntimeValueType(
-                    ResolveType(constantDeclaration.type_()),
-                    constantDeclaration.type_(),
-                    "a global constant type");
-                ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, constantDeclaration.type_(), "a global constant type");
                 foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                 {
-                    CheckVariableInitializer(declarator.variableInitializer(), declaredType, Scope.CreateRoot(_globals));
+                    var declaredType = ResolveConstantDeclarationType(
+                        constantDeclaration.type_(),
+                        constantDeclaration.INTEGER_TYPE()?.Symbol,
+                        declarator,
+                        Scope.CreateRoot(_globals),
+                        "a global constant type");
                     _globals[declarator.Identifier().GetText()] = new VariableSymbol(
                         declarator.Identifier().GetText(),
                         declaredType,
                         IsMutable: false,
                         IsConstant: true,
-                        BindingKind: GlobalBindingKind.Const);
+                        BindingKind: GlobalBindingKind.Const,
+                        ConstantValue: TryEvaluateCompileTimeConstant(
+                            declarator.variableInitializer(),
+                            Scope.CreateRoot(_globals),
+                            declaredType,
+                            out var constantValue)
+                            ? constantValue
+                            : null);
                 }
 
                 continue;
@@ -1091,6 +1178,11 @@ internal sealed class TypeChecker
 
                 foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
                 {
+                    if (declarator.variableStorageCapacity() is { } capacity)
+                    {
+                        ReportStorageCapacityUnsupported(declarator.Identifier().GetText(), "global variable", capacity);
+                    }
+
                     if (declarator.variableInitializer() is null)
                     {
                         ReportError(
@@ -1153,11 +1245,6 @@ internal sealed class TypeChecker
             {
                 if (declaration.globalConstantDeclaration() is { } constantDeclaration)
                 {
-                    var declaredType = ValidateRuntimeValueType(
-                        ResolveType(constantDeclaration.type_(), currentModuleName: module.SyntaxModel.ModuleName),
-                        constantDeclaration.type_(),
-                        "a global constant type");
-                    ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, constantDeclaration.type_(), "a global constant type");
                     var declarationModel = module.SyntaxModel.Declarations.FirstOrDefault(
                         candidate => candidate.Kind == DeclarationKind.GlobalConstant
                                      && string.Equals(candidate.Name, constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText(), StringComparison.Ordinal));
@@ -1169,6 +1256,14 @@ internal sealed class TypeChecker
 
                     foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                     {
+                        var declaredType = ResolveConstantDeclarationType(
+                            constantDeclaration.type_(),
+                            constantDeclaration.INTEGER_TYPE()?.Symbol,
+                            declarator,
+                            Scope.CreateRoot(_globals),
+                            "a global constant type",
+                            currentModuleName: module.SyntaxModel.ModuleName,
+                            validateInitializer: false);
                         _globals[QualifyName(module, declarator.Identifier().GetText())] = new VariableSymbol(
                             QualifyName(module, declarator.Identifier().GetText()),
                             declaredType,
@@ -1276,11 +1371,16 @@ internal sealed class TypeChecker
                 var previousImportedTemplateFieldAccessOrdinals = _currentImportedTemplateFieldAccessOrdinals;
                 var previousImportedTemplateMemberCalls = _currentImportedTemplateMemberCalls;
                 var previousImportedTemplateMemberCallOrdinals = _currentImportedTemplateMemberCallOrdinals;
+                var previousUnsafeDepth = _unsafeDepth;
                 _currentFunctionGenericParameters = signature.IsGeneric
                     ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
                     : null;
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                if (signature.IsUnsafe)
+                {
+                    _unsafeDepth++;
+                }
                 _currentImportedTemplateObjectCreations = hasImportedTemplateSummary ? importedTemplateSummary!.ObjectCreations : null;
                 _currentImportedTemplateObjectCreationOrdinals = hasImportedTemplateSummary && importedTemplateSummary!.ObjectCreations.Count > 0
                     ? CollectTrackedObjectCreationOrdinals(block)
@@ -1374,6 +1474,7 @@ internal sealed class TypeChecker
                     _currentImportedTemplateFieldAccessOrdinals = previousImportedTemplateFieldAccessOrdinals;
                     _currentImportedTemplateMemberCalls = previousImportedTemplateMemberCalls;
                     _currentImportedTemplateMemberCallOrdinals = previousImportedTemplateMemberCallOrdinals;
+                    _unsafeDepth = previousUnsafeDepth;
                 }
             }
         }
@@ -1396,17 +1497,59 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (statement.unsafeStatement() is { } unsafeStatement)
+        {
+            _unsafeDepth++;
+            try
+            {
+                CheckBlock(unsafeStatement.block(), scope, returnType);
+            }
+            finally
+            {
+                _unsafeDepth--;
+            }
+
+            return;
+        }
+
         if (statement.localConstantDeclaration() is { } localConstant)
         {
-            var declaredType = ValidateRuntimeValueType(
-                ResolveLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, localConstant, localConstant.type_()),
-                localConstant.type_(),
-                "a local constant type");
-            RecordLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, declaredType, localConstant);
+            StarkTypeSymbol? recordedDeclarationType = null;
             foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
             {
-                CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
-                scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: false, IsConstant: true));
+                var declaredType = ResolveConstantDeclarationType(
+                    localConstant.type_(),
+                    localConstant.INTEGER_TYPE()?.Symbol,
+                    declarator,
+                    scope,
+                    "a local constant type",
+                    localDeclarationKind: TemplateLocalDeclarationFacts.ConstantKind,
+                    localDeclarationContext: localConstant);
+                if (recordedDeclarationType is null)
+                {
+                    RecordLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, declaredType, localConstant);
+                    recordedDeclarationType = declaredType;
+                }
+                else if (localConstant.type_() is null && recordedDeclarationType != declaredType)
+                {
+                    ReportError(
+                        "STK3002",
+                        "Grouped inferred local constants must infer the same type. Split them into separate const declarations.",
+                        declarator);
+                }
+
+                scope.Declare(new VariableSymbol(
+                    declarator.Identifier().GetText(),
+                    declaredType,
+                    IsMutable: false,
+                    IsConstant: true,
+                    ConstantValue: TryEvaluateCompileTimeConstant(
+                        declarator.variableInitializer(),
+                        scope,
+                        declaredType,
+                        out var constantValue)
+                        ? constantValue
+                        : null));
             }
 
             return;
@@ -3083,18 +3226,585 @@ internal sealed class TypeChecker
             typeContext,
             "a local variable type");
         RecordLocalDeclarationType(declarationKind, declaredType, declarationContext);
+        var storageClass = GetLocalDeclarationStorageClass(declarationContext);
 
         foreach (var declarator in declarators)
         {
+            var hasFixedTextStorage = TryValidateFixedTextStorageCapacity(
+                declarator,
+                declaredType,
+                storageClass,
+                scope,
+                out _);
             if (declarator.variableInitializer() is null)
             {
+                if (hasFixedTextStorage)
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Fixed text buffer '{declarator.Identifier().GetText()}' needs an initializer, for example `left + right`.",
+                        declarator);
+                }
+
                 scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false));
                 continue;
+            }
+
+            if (hasFixedTextStorage
+                && !TryMarkFixedTextStorageInitializer(declarator.variableInitializer(), declaredType))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Fixed text buffer '{declarator.Identifier().GetText()}' needs a text-building initializer such as `left + right` or `$\"Score: {{score}}\"`. For a direct assignment, remove the `[capacity]` part.",
+                    declarator.variableInitializer());
             }
 
             CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
             scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false));
         }
+    }
+
+    private static string GetLocalDeclarationStorageClass(ParserRuleContext declarationContext)
+    {
+        return declarationContext switch
+        {
+            StarkParser.LocalVariableDeclarationContext local => local.storageClass().GetText(),
+            StarkParser.LocalForVariableDeclarationContext localFor => localFor.storageClass().GetText(),
+            _ => string.Empty
+        };
+    }
+
+    private bool TryValidateFixedTextStorageCapacity(
+        StarkParser.VariableDeclaratorContext declarator,
+        StarkTypeSymbol declaredType,
+        string storageClass,
+        Scope scope,
+        out int capacity)
+    {
+        capacity = 0;
+        if (declarator.variableStorageCapacity() is not { } capacityContext)
+        {
+            return false;
+        }
+
+        var name = declarator.Identifier().GetText();
+        var isValid = true;
+        if (!string.Equals(storageClass, "stack", StringComparison.Ordinal))
+        {
+            ReportError(
+                "STK3002",
+                $"Fixed text buffer '{name}' must use stack storage. Write `stack Ascii {name}[4096]` or `stack Unicode {name}[4096]`.",
+                capacityContext);
+            isValid = false;
+        }
+
+        if (!IsTextBufferType(declaredType))
+        {
+            ReportError(
+                "STK3002",
+                $"The `[capacity]` after '{name}' is only for stack Ascii or Unicode text buffers.",
+                capacityContext);
+            isValid = false;
+        }
+
+        if (!CompileTimeExpressionEvaluator.TryEvaluateInteger(
+                capacityContext.expression(),
+                out var capacityValue,
+                CreateCompileTimeEvaluationServices(scope)))
+        {
+            ReportError(
+                "STK3002",
+                $"Text buffer '{name}' needs a capacity Stark can know at compile time, such as `[4096]`.",
+                capacityContext.expression());
+            return false;
+        }
+
+        if (capacityValue <= 0)
+        {
+            ReportError(
+                "STK3002",
+                $"Text buffer '{name}' needs a capacity greater than zero.",
+                capacityContext.expression());
+            return false;
+        }
+
+        if (capacityValue > int.MaxValue)
+        {
+            ReportError(
+                "STK3002",
+                $"Text buffer '{name}' capacity is too large for a single fixed buffer. Use a smaller capacity or an explicit library API.",
+                capacityContext.expression());
+            return false;
+        }
+
+        capacity = (int)capacityValue;
+        return isValid;
+    }
+
+    private bool TryMarkFixedTextStorageInitializer(
+        StarkParser.VariableInitializerContext initializer,
+        StarkTypeSymbol declaredType)
+    {
+        if (!IsTextBufferType(declaredType)
+            || initializer.expression() is not { } expression)
+        {
+            return false;
+        }
+
+        if (TryGetStandaloneInterpolatedTextLiteral(expression) is { } interpolatedLiteral)
+        {
+            _fixedTextStorageInterpolatedLiterals.Add(interpolatedLiteral);
+            return true;
+        }
+
+        if (TryGetStandaloneAdditiveExpression(expression) is not { } additive)
+        {
+            return false;
+        }
+
+        var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(additive);
+        if (operators.Count == 0 || operators.Any(static item => item != "+"))
+        {
+            return false;
+        }
+
+        _fixedTextStorageConcatExpressions.Add(additive);
+        return true;
+    }
+
+    private void ReportStorageCapacityUnsupported(string name, string declarationKind, ParserRuleContext context)
+    {
+        ReportError(
+            "STK3002",
+            $"The `[capacity]` after '{name}' is only for stack Ascii or Unicode local variables right now, not for a {declarationKind}.",
+            context);
+    }
+
+    private StarkTypeSymbol ResolveConstantDeclarationType(
+        StarkParser.Type_Context? typeContext,
+        IToken? explicitConstIntegerTypeToken,
+        StarkParser.ConstantDeclaratorContext declarator,
+        Scope scope,
+        string usage,
+        string? currentModuleName = null,
+        bool validateInitializer = true,
+        string? localDeclarationKind = null,
+        ParserRuleContext? localDeclarationContext = null)
+    {
+        if (explicitConstIntegerTypeToken is not null)
+        {
+            return ResolveExplicitConstIntegerDeclarationType(
+                explicitConstIntegerTypeToken,
+                declarator,
+                scope,
+                usage,
+                validateInitializer);
+        }
+
+        if (typeContext is not null)
+        {
+            if (IsScalarIntegerType(typeContext))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Constant '{declarator.Identifier().GetText()}' already has one exact value, so it does not need an integer range. Write `{BuildUntypedConstSuggestion(declarator)}` to let Stark choose the size, or use a bare width such as `const i32 {declarator.Identifier().GetText()} = {GetInitializerSuggestionText(declarator)};`.",
+                    typeContext);
+            }
+
+            var declaredType = localDeclarationKind is not null && localDeclarationContext is not null
+                ? ResolveLocalDeclarationType(localDeclarationKind, localDeclarationContext, typeContext)
+                : ResolveType(typeContext, currentModuleName: currentModuleName ?? CurrentFunctionModuleName);
+            declaredType = ValidateRuntimeValueType(declaredType, typeContext, usage);
+            ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, typeContext, usage);
+
+            if (validateInitializer)
+            {
+                CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
+            }
+
+            if (TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), out var constantType, out var constant))
+            {
+                if (constantType.Kind is StarkTypeKind.Integer or StarkTypeKind.Float)
+                {
+                    return ResolveExplicitConstNumericStorageType(
+                        declarator,
+                        declaredType,
+                        constantType,
+                        constant,
+                        typeContext,
+                        suppressWarnings: IsScalarIntegerType(typeContext));
+                }
+
+                if (CanAssign(declaredType, constantType))
+                {
+                    return constantType;
+                }
+            }
+
+            return declaredType;
+        }
+
+        var inferredType = InferConstantDeclarationType(declarator, scope, usage);
+        return ValidateRuntimeValueType(inferredType, declarator, usage);
+    }
+
+    private StarkTypeSymbol ResolveExplicitConstIntegerDeclarationType(
+        IToken integerTypeToken,
+        StarkParser.ConstantDeclaratorContext declarator,
+        Scope scope,
+        string usage,
+        bool validateInitializer)
+    {
+        var declaredType = ResolveConstIntegerStorageType(integerTypeToken);
+        if (!TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), out var constantType, out var constant)
+            || constantType.Kind != StarkTypeKind.Integer)
+        {
+            if (validateInitializer)
+            {
+                CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
+            }
+
+            return ValidateRuntimeValueType(declaredType, declarator, usage);
+        }
+
+        if (!CanAssign(declaredType, constantType))
+        {
+            if (declaredType.IsUnsigned
+                && TryGetEffectiveIntegerRange(declaredType, out var declaredMin, out var declaredMax)
+                && constant.IntegerValue >= declaredMin
+                && constant.IntegerValue <= declaredMax)
+            {
+                var unsignedConstantType = InferConstUnsignedIntegerStorageType(constant.IntegerValue);
+                ReportConstIntegerDemotionIfNeeded(declarator, declaredType, unsignedConstantType, integerTypeToken);
+                return ValidateRuntimeValueType(unsignedConstantType, declarator, usage);
+            }
+
+            ReportError(
+                "STK3002",
+                $"Constant '{declarator.Identifier().GetText()}' has value {constant.IntegerValue}, which does not fit in {integerTypeToken.Text}. Use a larger width, or write `{BuildUntypedConstSuggestion(declarator)}` and Stark will choose one.",
+                integerTypeToken);
+            return constantType;
+        }
+
+        var resolvedConstantType = declaredType.IsUnsigned
+            ? InferConstUnsignedIntegerStorageType(constant.IntegerValue)
+            : constantType;
+        ReportConstIntegerDemotionIfNeeded(declarator, declaredType, resolvedConstantType, integerTypeToken);
+        return ValidateRuntimeValueType(resolvedConstantType, declarator, usage);
+    }
+
+    private StarkTypeSymbol ResolveExplicitConstNumericStorageType(
+        StarkParser.ConstantDeclaratorContext declarator,
+        StarkTypeSymbol declaredType,
+        StarkTypeSymbol constantType,
+        CompileTimeConstant constant,
+        ParserRuleContext reportContext,
+        bool suppressWarnings)
+    {
+        if (declaredType.Kind == StarkTypeKind.Integer && constantType.Kind == StarkTypeKind.Integer)
+        {
+            if (!CanAssign(declaredType, constantType))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Constant '{declarator.Identifier().GetText()}' has value {constant.IntegerValue}, which does not fit in {FormatConstStorageName(declaredType)}. Use a larger width, or write `{BuildUntypedConstSuggestion(declarator)}` and Stark will choose one.",
+                    reportContext);
+            }
+
+            if (!suppressWarnings)
+            {
+                ReportConstIntegerDemotionIfNeeded(declarator, declaredType, constantType, reportContext);
+            }
+
+            return constantType;
+        }
+
+        if (declaredType.Kind == StarkTypeKind.Float && constantType.Kind == StarkTypeKind.Float)
+        {
+            return ResolveExplicitConstFloatStorageType(declarator, declaredType, constantType, constant, reportContext, suppressWarnings);
+        }
+
+        return constantType;
+    }
+
+    private StarkTypeSymbol ResolveExplicitConstFloatStorageType(
+        StarkParser.ConstantDeclaratorContext declarator,
+        StarkTypeSymbol declaredType,
+        StarkTypeSymbol constantType,
+        CompileTimeConstant constant,
+        ParserRuleContext reportContext,
+        bool suppressWarnings)
+    {
+        if (declaredType.BitWidth == constantType.BitWidth)
+        {
+            return constantType;
+        }
+
+        if (declaredType.BitWidth == 32 && constantType.BitWidth == 64)
+        {
+            if (!CanRepresentExactlyAsFloat32(constant.FloatValue))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Constant '{declarator.Identifier().GetText()}' is written as f32, but {GetInitializerSuggestionText(declarator)} cannot be stored as f32 without changing it. Use f64, or write `{BuildUntypedConstSuggestion(declarator)}`.",
+                    reportContext);
+                return declaredType;
+            }
+
+            if (!suppressWarnings)
+            {
+                ReportWarning(
+                    "STK3025",
+                    $"Constant '{declarator.Identifier().GetText()}' fits exactly in f32. Stark will store it as f32; add an `f` suffix if you want the number to say that directly.",
+                    reportContext);
+            }
+
+            return declaredType;
+        }
+
+        if (declaredType.BitWidth > constantType.BitWidth)
+        {
+            if (!suppressWarnings)
+            {
+                ReportWarning(
+                    "STK3025",
+                    $"Constant '{declarator.Identifier().GetText()}' is written as {FormatConstStorageName(constantType)}, so Stark will store it as {FormatConstStorageName(constantType)} instead of {FormatConstStorageName(declaredType)}.",
+                    reportContext);
+            }
+
+            return constantType;
+        }
+
+        return constantType;
+    }
+
+    private StarkTypeSymbol InferConstantDeclarationType(
+        StarkParser.ConstantDeclaratorContext declarator,
+        Scope scope,
+        string usage)
+    {
+        var initializer = declarator.variableInitializer();
+        if (TryInferCompileTimeConstantStorageType(initializer, out var constantType))
+        {
+            return constantType;
+        }
+
+        if (initializer.expression() is { } expression)
+        {
+            return EvaluateExpression(expression, scope, allowFunctionReference: false).Type;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Cannot infer {usage} for constant '{declarator.Identifier().GetText()}'. Add an explicit non-scalar type for aggregate or array initializers.",
+            declarator);
+        return StarkTypeSymbols.Error;
+    }
+
+    private static bool TryInferCompileTimeConstantStorageType(
+        StarkParser.VariableInitializerContext initializer,
+        out StarkTypeSymbol type)
+    {
+        return TryInferCompileTimeConstantStorageType(initializer, out type, out _);
+    }
+
+    private static bool TryInferCompileTimeConstantStorageType(
+        StarkParser.VariableInitializerContext initializer,
+        out StarkTypeSymbol type,
+        out CompileTimeConstant constant)
+    {
+        type = StarkTypeSymbols.Error;
+        constant = default;
+
+        if (initializer.expression() is not { } expression
+            || !CompileTimeExpressionEvaluator.TryEvaluate(expression, out constant))
+        {
+            return false;
+        }
+
+        type = constant.Kind switch
+        {
+            CompileTimeConstantKind.Integer => InferConstIntegerStorageType(constant.IntegerValue),
+            CompileTimeConstantKind.Float => constant.Type,
+            CompileTimeConstantKind.Bool => StarkTypeSymbols.Bool,
+            CompileTimeConstantKind.Text => constant.Type,
+            _ => StarkTypeSymbols.Error
+        };
+
+        return type.Kind != StarkTypeKind.Error;
+    }
+
+    private bool TryEvaluateCompileTimeConstant(
+        StarkParser.VariableInitializerContext initializer,
+        Scope scope,
+        StarkTypeSymbol? targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (initializer.expression() is not { } expression
+            || !CompileTimeExpressionEvaluator.TryEvaluate(
+                expression,
+                out constant,
+                CreateCompileTimeEvaluationServices(scope)))
+        {
+            return false;
+        }
+
+        if (targetType is not null
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced))
+        {
+            constant = coerced;
+        }
+
+        return true;
+    }
+
+    private CompileTimeEvaluationServices CreateCompileTimeEvaluationServices(Scope scope)
+    {
+        return new CompileTimeEvaluationServices(
+            TryResolveIdentifier: (string name, out CompileTimeConstant constant) =>
+                TryResolveCompileTimeConstant(scope, name, out constant));
+    }
+
+    private static bool TryResolveCompileTimeConstant(
+        Scope scope,
+        string name,
+        out CompileTimeConstant constant)
+    {
+        if (scope.TryLookup(name, out var symbol)
+            && symbol.BindingKind is null
+            && symbol.ConstantValue is { } value)
+        {
+            constant = value;
+            return true;
+        }
+
+        constant = default;
+        return false;
+    }
+
+    private static StarkTypeSymbol InferConstIntegerStorageType(BigInteger value)
+    {
+        foreach (var width in SupportedIntegerLiteralWidths)
+        {
+            var min = -(BigInteger.One << (width - 1));
+            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
+            if (value >= min && value <= max)
+            {
+                return StarkTypeSymbols.Integer(width, value, value);
+            }
+        }
+
+        return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value);
+    }
+
+    private static StarkTypeSymbol InferConstUnsignedIntegerStorageType(BigInteger value)
+    {
+        foreach (var width in SupportedIntegerLiteralWidths)
+        {
+            var max = (BigInteger.One << width) - BigInteger.One;
+            if (value >= BigInteger.Zero && value <= max)
+            {
+                return StarkTypeSymbols.Integer(width, value, value, isUnsigned: true);
+            }
+        }
+
+        return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value, isUnsigned: true);
+    }
+
+    private static StarkTypeSymbol ResolveConstIntegerStorageType(IToken integerTypeToken)
+    {
+        var text = integerTypeToken.Text;
+        var isUnsigned = text[0] == 'u';
+        var width = int.Parse(text[1..], CultureInfo.InvariantCulture);
+        GetIntegerTypeBounds(width, isUnsigned, out var min, out var max);
+        return StarkTypeSymbols.Integer(width, min, max, isUnsigned);
+    }
+
+    private static void GetIntegerTypeBounds(int width, bool isUnsigned, out BigInteger min, out BigInteger max)
+    {
+        if (isUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << width) - BigInteger.One;
+            return;
+        }
+
+        min = -(BigInteger.One << (width - 1));
+        max = (BigInteger.One << (width - 1)) - BigInteger.One;
+    }
+
+    private static bool IsScalarIntegerType(StarkParser.Type_Context typeContext)
+    {
+        return typeContext.arraySuffix().Length == 0
+            && typeContext.nonArrayType().integerType() is not null;
+    }
+
+    private void ReportConstIntegerDemotionIfNeeded(
+        StarkParser.ConstantDeclaratorContext declarator,
+        StarkTypeSymbol declaredType,
+        StarkTypeSymbol constantType,
+        ParserRuleContext context)
+    {
+        if (declaredType.BitWidth == constantType.BitWidth)
+        {
+            return;
+        }
+
+        ReportWarning(
+            "STK3025",
+            $"Constant '{declarator.Identifier().GetText()}' fits in {FormatConstStorageName(constantType)}, so Stark will store it as {FormatConstStorageName(constantType)} instead of {FormatConstStorageName(declaredType)}. You can write `{BuildUntypedConstSuggestion(declarator)}` to let Stark pick this automatically.",
+            context);
+    }
+
+    private void ReportConstIntegerDemotionIfNeeded(
+        StarkParser.ConstantDeclaratorContext declarator,
+        StarkTypeSymbol declaredType,
+        StarkTypeSymbol constantType,
+        IToken token)
+    {
+        if (declaredType.BitWidth == constantType.BitWidth)
+        {
+            return;
+        }
+
+        ReportWarning(
+            "STK3025",
+            $"Constant '{declarator.Identifier().GetText()}' fits in {FormatConstStorageName(constantType)}, so Stark will store it as {FormatConstStorageName(constantType)} instead of {token.Text}. You can write `{BuildUntypedConstSuggestion(declarator)}` to let Stark pick this automatically.",
+            token);
+    }
+
+    private static bool CanRepresentExactlyAsFloat32(double value)
+    {
+        var single = (float)value;
+        return !float.IsInfinity(single) && (double)single == value;
+    }
+
+    private static string FormatConstStorageName(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.Integer when type.BitWidth is int width => $"{(type.IsUnsigned ? "u" : "i")}{width}",
+            StarkTypeKind.Float when type.BitWidth is int width => $"f{width}",
+            _ => type.DisplayName
+        };
+    }
+
+    private static string BuildUntypedConstSuggestion(StarkParser.ConstantDeclaratorContext declarator)
+    {
+        return $"const {declarator.Identifier().GetText()} = {GetInitializerSuggestionText(declarator)};";
+    }
+
+    private static string GetInitializerSuggestionText(StarkParser.ConstantDeclaratorContext declarator)
+    {
+        var initializer = declarator.variableInitializer();
+        if (initializer.expression() is { } expression)
+        {
+            return expression.GetText();
+        }
+
+        var text = initializer.GetText();
+        return text.StartsWith('=') ? text[1..] : text;
     }
 
     private StarkTypeSymbol ResolveLocalDeclarationType(
@@ -4157,6 +4867,11 @@ internal sealed class TypeChecker
         }
 
         var operands = expressions.Select(item => EvaluateMultiplicativeExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
+        if (operands.Any(static operand => IsTextLikeForConcatenation(operand.Type)))
+        {
+            return EvaluateTextConcatenationChain(operands, operators, expression, expectedType);
+        }
+
         return EvaluateArithmeticChain(operands, operators, expression, "Additive operator");
     }
 
@@ -4199,6 +4914,17 @@ internal sealed class TypeChecker
                     _currentFunctionModuleName);
             EnsureExplicitConversionCompatible(targetType, convertedOperand, expression);
             RecordConversion(targetType, expression);
+            if (convertedOperand.TextLiteral is not null
+                && convertedOperand.TextLiteralKind is not null
+                && CanExplicitlyConvertTextLiteral(targetType, convertedOperand))
+            {
+                return new ExpressionBinding(
+                    targetType,
+                    NamedType: ResolveNamedTypeSymbol(targetType),
+                    TextLiteral: convertedOperand.TextLiteral,
+                    TextLiteralKind: convertedOperand.TextLiteralKind);
+            }
+
             return new ExpressionBinding(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
         }
 
@@ -4309,6 +5035,29 @@ internal sealed class TypeChecker
                 : ApplyMemberAccess(binding, postfixPart.Identifier().GetText(), postfixPart);
         }
 
+        if (expectedType?.Kind == StarkTypeKind.FunctionPointer
+            && binding.Type.Kind != StarkTypeKind.FunctionPointer)
+        {
+            if (binding.Function is { } function)
+            {
+                return ResolveFunctionPointerPromotion(
+                    function.DisplaySourceName,
+                    [function],
+                    expectedType,
+                    expression.Start);
+            }
+
+            if (binding.OverloadSourceName is { } overloadSourceName
+                && TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            {
+                return ResolveFunctionPointerPromotion(
+                    overloadSourceName,
+                    overloads,
+                    expectedType,
+                    expression.Start);
+            }
+        }
+
         return binding;
     }
 
@@ -4320,6 +5069,11 @@ internal sealed class TypeChecker
     {
         if (expression.literal() is { } literal)
         {
+            if (literal.DOLLAR() is not null && literal.StringLiteral() is not null)
+            {
+                return EvaluateInterpolatedTextLiteral(literal, scope, expectedType);
+            }
+
             return EvaluateLiteral(literal);
         }
 
@@ -4347,7 +5101,12 @@ internal sealed class TypeChecker
 
         if (expression.Identifier() is { } identifier)
         {
-            return ResolveValue(identifier.GetText(), identifier.Symbol, scope, allowFunctionReference);
+            return ResolveValue(identifier.GetText(), identifier.Symbol, scope, allowFunctionReference, expectedType);
+        }
+
+        if (expression.lambdaExpression() is { } lambdaExpression)
+        {
+            return EvaluateLambdaExpression(lambdaExpression, scope, expectedType);
         }
 
         if (expression.enumConstructorExpression() is { } enumConstructorExpression)
@@ -4367,7 +5126,7 @@ internal sealed class TypeChecker
 
         if (expression.qualifiedName() is { } qualifiedName)
         {
-            return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, scope, allowFunctionReference);
+            return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, scope, allowFunctionReference, expectedType);
         }
 
         if (expression.objectCreationExpression() is { } objectCreationExpression)
@@ -4486,6 +5245,280 @@ internal sealed class TypeChecker
         }
 
         return expectedType;
+    }
+
+    private ExpressionBinding EvaluateLambdaExpression(
+        StarkParser.LambdaExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        var lambdaLocation = Location(expression);
+        var captureBindings = ValidateLambdaCaptures(expression.captureClause(), scope, lambdaLocation);
+
+        if (expectedType?.Kind != StarkTypeKind.FunctionPointer)
+        {
+            ReportError(
+                "STK3008",
+                "Lambda expressions require an explicit function-pointer target type in this compiler slice.",
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error, DiagnosticName: "lambda");
+        }
+
+        var parameterTypes = expectedType.FunctionPointerParameterTypes ?? [];
+        var returnType = expectedType.FunctionPointerReturnType ?? StarkTypeSymbols.Error;
+        var lambdaScope = Scope.CreateRoot(_globals);
+        foreach (var captureBinding in captureBindings)
+        {
+            var capturedLocal = captureBinding.Symbol;
+            lambdaScope.Declare(new VariableSymbol(
+                capturedLocal.Name,
+                GetLambdaCaptureBodyType(capturedLocal.Type, captureBinding.Mode),
+                IsMutable: CaptureModeExposesWritableBinding(captureBinding.Mode),
+                IsConstant: false));
+        }
+
+        var lambdaParameters = expression.lambdaParameterList().parameter();
+        var parameterNames = new List<string>(lambdaParameters.Length);
+        var parametersExactlyMatchTarget = true;
+
+        if (lambdaParameters.Length != parameterTypes.Count)
+        {
+            ReportError(
+                "STK3009",
+                $"Lambda target '{expectedType.DisplayName}' expects {parameterTypes.Count} parameter{Pluralize(parameterTypes.Count)} but the lambda declares {lambdaParameters.Length}.",
+                expression.lambdaParameterList());
+        }
+
+        for (var index = 0; index < lambdaParameters.Length; index++)
+        {
+            var parameter = lambdaParameters[index];
+            parameterNames.Add(parameter.Identifier().GetText());
+            var parameterType = ResolveType(parameter.type_(), currentModuleName: CurrentFunctionModuleName);
+            ValidateRuntimeValueType(parameterType, parameter.type_(), $"lambda parameter '{parameter.Identifier().GetText()}'");
+            if (index < parameterTypes.Count && !CanAssign(parameterType, parameterTypes[index]))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Lambda parameter {index + 1} expects a type that can accept '{parameterTypes[index].DisplayName}' from target '{expectedType.DisplayName}' but found '{parameterType.DisplayName}'.",
+                    parameter.type_());
+            }
+            else if (index < parameterTypes.Count && !Equals(parameterType, parameterTypes[index]))
+            {
+                parametersExactlyMatchTarget = false;
+            }
+
+            lambdaScope.Declare(new VariableSymbol(parameter.Identifier().GetText(), parameterType, IsMutable: false, IsConstant: false));
+        }
+
+        if (expression.expression() is { } bodyExpression)
+        {
+            var bodyValue = EvaluateExpression(bodyExpression, lambdaScope, allowFunctionReference: false, expectedType: returnType);
+            if (!CanAssign(returnType, bodyValue.Type))
+            {
+                ReportError(
+                    "STK3002",
+                    $"Lambda body expects '{returnType.DisplayName}' but found '{bodyValue.Type.DisplayName}'.{GetExplicitConversionHint(returnType, bodyValue.Type)}",
+                    bodyExpression);
+            }
+        }
+        else if (expression.block() is { } block)
+        {
+            CheckBlock(block, lambdaScope, returnType);
+        }
+
+        if (captureBindings.Count > 0)
+        {
+            ReportError(
+                "STK3008",
+                "Capturing lambdas are parsed and capture-checked, but closure environment lowering is not implemented yet. Use a named function item promoted to 'fnptr<...>' for callable values in this compiler slice.",
+                (ParserRuleContext?)expression.captureClause() ?? expression);
+            return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+        }
+
+        if (TypeContainsOpenCurrentFunctionGenericParameter(expectedType))
+        {
+            ReportError(
+                "STK3008",
+                "Non-capturing lambda lowering for open generic function-pointer targets is not implemented yet. Use a named generic function item for this callable value.",
+                expression);
+            return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+        }
+
+        if (!parametersExactlyMatchTarget)
+        {
+            ReportError(
+                "STK3002",
+                $"Lowered non-capturing lambdas require parameter annotations to exactly match target '{expectedType.DisplayName}' so the generated function pointer has an exact ABI signature.",
+                expression.lambdaParameterList());
+            return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+        }
+
+        if (lambdaParameters.Length == parameterTypes.Count && _currentFunctionName is { } enclosingFunctionName)
+        {
+            var lambda = new LambdaTypingRecord(
+                CallableValueFacts.BuildLambdaFunctionName(enclosingFunctionName, lambdaLocation),
+                expectedType,
+                parameterNames,
+                lambdaLocation,
+                enclosingFunctionName);
+            _lambdas.Add(lambda);
+            _functions.TryAdd(lambda.FunctionName, CallableValueFacts.BuildLambdaSignature(lambda));
+        }
+
+        return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+    }
+
+    private IReadOnlyList<LambdaCaptureBinding> ValidateLambdaCaptures(
+        StarkParser.CaptureClauseContext? captureClause,
+        Scope scope,
+        SourceLocation lambdaLocation)
+    {
+        if (captureClause is null)
+        {
+            return [];
+        }
+
+        if (!string.Equals(captureClause.Identifier().GetText(), "capture", StringComparison.Ordinal))
+        {
+            ReportError("STK3008", $"Unknown lambda capture clause '{captureClause.Identifier().GetText()}'.", captureClause.Identifier().Symbol);
+        }
+
+        var seenCaptures = new HashSet<string>(StringComparer.Ordinal);
+        var capturedLocals = new List<LambdaCaptureBinding>();
+        foreach (var capture in captureClause.captureBinding())
+        {
+            var mode = capture.captureMode().GetText();
+            var name = capture.Identifier().GetText();
+            var hasUnsafeKeyword = capture.UNSAFE() is not null;
+            var isUnsafeMode = string.Equals(mode, "addr", StringComparison.Ordinal)
+                || string.Equals(mode, "shared", StringComparison.Ordinal);
+            var isSafeMode = string.Equals(mode, "copy", StringComparison.Ordinal)
+                || string.Equals(mode, "move", StringComparison.Ordinal)
+                || string.Equals(mode, "read", StringComparison.Ordinal)
+                || string.Equals(mode, "mut", StringComparison.Ordinal)
+                || string.Equals(mode, "out", StringComparison.Ordinal)
+                || string.Equals(mode, "init", StringComparison.Ordinal);
+
+            if (!isSafeMode && !isUnsafeMode)
+            {
+                ReportError("STK3008", $"Unknown lambda capture mode '{mode}'.", capture.captureMode());
+            }
+
+            if (isUnsafeMode && !hasUnsafeKeyword)
+            {
+                ReportError("STK3024", $"Capture mode '{mode}' must be written as 'unsafe {mode}'.", capture.captureMode());
+            }
+
+            if (hasUnsafeKeyword && !isUnsafeMode)
+            {
+                ReportError("STK3024", $"Only 'addr' and 'shared' capture modes may be marked unsafe.", capture);
+            }
+
+            if (hasUnsafeKeyword && _unsafeDepth == 0)
+            {
+                ReportError("STK3024", $"Capture mode 'unsafe {mode}' requires an unsafe context.", capture);
+            }
+
+            if (!seenCaptures.Add(name))
+            {
+                ReportError("STK3006", $"Lambda capture '{name}' is listed more than once.", capture.Identifier().Symbol);
+            }
+
+            if (!scope.TryLookup(name, out var capturedLocal))
+            {
+                ReportError("STK3003", $"Unknown captured local '{name}'.", capture.Identifier().Symbol);
+            }
+            else
+            {
+                if (string.Equals(mode, "copy", StringComparison.Ordinal) && !CanCopyIntoLambdaEnvironment(capturedLocal.Type))
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Capture mode 'copy' cannot copy '{name}' because '{capturedLocal.Type.DisplayName}' is an owned or move-only value. Use 'move' to transfer ownership into the closure, or 'read' to capture read-only access.",
+                        capture);
+                }
+
+                if (RequiresWritableCaptureTarget(mode) && !CanFormMutableAddressFromLocal(capturedLocal))
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Capture mode '{mode}' needs '{name}' to be a writable local, such as a 'mut' local or mutable destination.",
+                        capture);
+                }
+
+                capturedLocals.Add(new LambdaCaptureBinding(capturedLocal, mode));
+                _lambdaCaptures.Add(new LambdaCaptureTypingRecord(
+                    name,
+                    mode,
+                    hasUnsafeKeyword,
+                    capturedLocal.Type,
+                    Location(capture),
+                    lambdaLocation,
+                    _currentFunctionName));
+            }
+        }
+
+        return capturedLocals;
+    }
+
+    private static bool RequiresWritableCaptureTarget(string mode)
+    {
+        return string.Equals(mode, "mut", StringComparison.Ordinal)
+            || string.Equals(mode, "out", StringComparison.Ordinal)
+            || string.Equals(mode, "init", StringComparison.Ordinal);
+    }
+
+    private static bool CaptureModeExposesWritableBinding(string mode)
+    {
+        return RequiresWritableCaptureTarget(mode);
+    }
+
+    private static StarkTypeSymbol GetLambdaCaptureBodyType(StarkTypeSymbol type, string mode)
+    {
+        if (string.Equals(mode, "addr", StringComparison.Ordinal))
+        {
+            return StarkTypeSymbols.RawPointer(StarkTypeSymbols.FreezeAddressPointeeType(type), isMutable: false);
+        }
+
+        if (string.Equals(mode, "shared", StringComparison.Ordinal))
+        {
+            return StarkTypeSymbols.WithQualifiers(type, accessKind: StarkAccessKind.Shared, isMutableView: false);
+        }
+
+        if (string.Equals(mode, "out", StringComparison.Ordinal))
+        {
+            return StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Out);
+        }
+
+        if (string.Equals(mode, "init", StringComparison.Ordinal))
+        {
+            return StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Init);
+        }
+
+        return type;
+    }
+
+    private static bool CanCopyIntoLambdaEnvironment(StarkTypeSymbol type)
+    {
+        if (type.Kind is StarkTypeKind.Error or StarkTypeKind.Void)
+        {
+            return false;
+        }
+
+        if (type.BorrowKind != StarkBorrowKind.None)
+        {
+            return !type.IsMutableView;
+        }
+
+        return type.Kind is
+            StarkTypeKind.Bool or
+            StarkTypeKind.Integer or
+            StarkTypeKind.Float or
+            StarkTypeKind.Ascii or
+            StarkTypeKind.Unicode or
+            StarkTypeKind.RawPointer or
+            StarkTypeKind.FunctionPointer or
+            StarkTypeKind.Null;
     }
 
     private ExpressionBinding EvaluateEnumConstructorExpression(
@@ -4626,6 +5659,11 @@ internal sealed class TypeChecker
             return InvokeEnumConstructor(target, arguments, scope);
         }
 
+        if (target.Function is null && target.Type.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return InvokeIndirectCall(target, arguments, scope);
+        }
+
         StarkTypeSymbol[]? argumentTypes = null;
         ExpressionBinding[]? argumentBindings = null;
 
@@ -4663,6 +5701,14 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
+        if (target.Function.IsUnsafe && _unsafeDepth == 0)
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe function '{target.Function.DisplaySourceName}' requires an unsafe context.",
+                arguments);
+        }
+
         // Record use-site generic calls even when the call target did not flow through
         // overload resolution in this invocation (for example, imported typed-template
         // direct/member call facts that already carry a resolved signature).
@@ -4676,7 +5722,17 @@ internal sealed class TypeChecker
             scope);
         argumentTypes ??= argumentBindings.Select(static argument => argument.Type).ToArray();
 
-        if (explicitParameterCount != arguments.argument().Length)
+        if (target.Function.IsVarargs)
+        {
+            if (arguments.argument().Length < explicitParameterCount)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Function '{target.Function.DisplaySourceName}' expects at least {explicitParameterCount} arguments but received {arguments.argument().Length}.",
+                    arguments);
+            }
+        }
+        else if (explicitParameterCount != arguments.argument().Length)
         {
             ReportError(
                 "STK3009",
@@ -4698,6 +5754,21 @@ internal sealed class TypeChecker
             var parameter = target.Function.Parameters[index + receiverOffset];
             var argument = argumentBindings[index];
             EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter.Type, argument, arguments.argument(index).expression());
+        }
+
+        if (target.Function.IsVarargs)
+        {
+            for (var index = explicitParameterCount; index < argumentTypes.Length; index++)
+            {
+                var argumentType = argumentTypes[index];
+                if (!IsCVarargsStableArgumentType(argumentType))
+                {
+                    ReportError(
+                        "STK3009",
+                        $"Extra argument {index + 1} to '{target.Function.DisplaySourceName}' uses '{argumentType.DisplayName}', which is not safe to pass through C-style varargs as-is. Use i32/u32 or wider integers, f64, raw pointers, or text. Cast f32 to f64 and small integers to i32/u32 before passing them.",
+                        arguments.argument(index).expression());
+                }
+            }
         }
 
         if (target.Receiver is null)
@@ -4724,6 +5795,74 @@ internal sealed class TypeChecker
         }
 
         return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"call to '{target.Function.DisplaySourceName}'");
+    }
+
+    private static bool IsCVarargsStableArgumentType(StarkTypeSymbol type)
+    {
+        type = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        return type.Kind switch
+        {
+            StarkTypeKind.Integer => type.BitWidth >= 32,
+            StarkTypeKind.Float => type.BitWidth == 64,
+            StarkTypeKind.RawPointer => true,
+            StarkTypeKind.Ascii or StarkTypeKind.Unicode => true,
+            _ => false
+        };
+    }
+
+    private ExpressionBinding InvokeIndirectCall(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
+    {
+        if (target.Type.FunctionPointerReturnType is not { } returnType
+            || target.Type.FunctionPointerParameterTypes is not { } parameterTypes)
+        {
+            ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var expectedParameters = parameterTypes
+            .Select((parameterType, index) => new TypedParameterSymbol($"arg{index}", parameterType))
+            .ToArray();
+        var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
+
+        if (parameterTypes.Count != arguments.argument().Length)
+        {
+            ReportError(
+                "STK3009",
+                $"{DescribeExpressionTarget(target)} expects {parameterTypes.Count} arguments but received {arguments.argument().Length}.",
+                arguments);
+        }
+
+        for (var index = 0; index < Math.Min(parameterTypes.Count, argumentBindings.Length); index++)
+        {
+            EnsureCallArgumentCompatible(
+                target.DiagnosticName ?? "function pointer",
+                index + 1,
+                parameterTypes[index],
+                argumentBindings[index],
+                arguments.argument(index).expression());
+        }
+
+        _indirectCalls.Add(new IndirectCallTypingRecord(target.Type, Location(arguments), _currentFunctionName));
+
+        if (returnType.BorrowKind != StarkBorrowKind.None)
+        {
+            var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            var isPointerBacked = StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType);
+            return new ExpressionBinding(
+                valueType,
+                IsAssignable: isPointerBacked && returnType.IsMutableView,
+                NamedType: ResolveNamedTypeSymbol(valueType),
+                DiagnosticName: $"indirect call through {DescribeExpressionTarget(target)}",
+                IsAddressable: true,
+                IsAddressMutable: returnType.IsMutableView);
+        }
+
+        return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"indirect call through {DescribeExpressionTarget(target)}");
     }
 
     private ExpressionBinding InvokeEnumConstructor(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
@@ -5007,6 +6146,11 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
+        if (TryApplyValueTextConversionMemberAccess(target, memberName, context, out var valueTextConversion))
+        {
+            return valueTextConversion;
+        }
+
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
@@ -5118,7 +6262,68 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Error);
     }
 
-    private ExpressionBinding ResolveValue(string name, IToken token, Scope scope, bool allowFunctionReference)
+    private bool TryApplyValueTextConversionMemberAccess(
+        ExpressionBinding target,
+        string memberName,
+        ParserRuleContext context,
+        out ExpressionBinding binding)
+    {
+        binding = default!;
+
+        if (!TryGetValueTextConversionSourceName(memberName, out var sourceName)
+            || !TryGetFunctionOverloads(sourceName, out var overloads))
+        {
+            return false;
+        }
+
+        var candidates = overloads
+            .Where(static overload => !overload.IsStatic)
+            .Where(overload => overload.Parameters.Count != 0
+                && FunctionOverloadFacts.CanBindReceiver(overload.Parameters[0].Type, target.Type, CanAssign))
+            .ToArray();
+        if (candidates.Length == 0)
+        {
+            return false;
+        }
+
+        if (candidates.Length == 1 && !candidates[0].IsGeneric)
+        {
+            var method = candidates[0];
+            binding = new ExpressionBinding(
+                method.ReturnType,
+                NamedType: ResolveNamedTypeSymbol(method.ReturnType),
+                Function: method,
+                DiagnosticName: $"method '{memberName}'",
+                Receiver: target);
+            return true;
+        }
+
+        binding = new ExpressionBinding(
+            StarkTypeSymbols.Error,
+            DiagnosticName: $"method overload group '{sourceName}'",
+            Receiver: target,
+            OverloadSourceName: sourceName);
+        return true;
+    }
+
+    private static bool TryGetValueTextConversionSourceName(string memberName, out string sourceName)
+    {
+        sourceName = memberName switch
+        {
+            "ToAscii" => "System.Text.ToAscii",
+            "ToUnicode" => "System.Text.ToUnicode",
+            _ => string.Empty
+        };
+
+        return sourceName.Length != 0;
+    }
+
+    private ExpressionBinding ResolveValue(
+        string name,
+        IToken token,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
         if (scope.TryLookup(name, out var local))
         {
@@ -5192,6 +6397,11 @@ internal sealed class TypeChecker
             if (!TryFilterDirectCallableTypeMemberFunctions(name, functions, token, out functions))
             {
                 return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (expectedType?.Kind == StarkTypeKind.FunctionPointer)
+            {
+                return ResolveFunctionPointerPromotion(name, functions, expectedType, token);
             }
 
             if (!allowFunctionReference)
@@ -5294,6 +6504,82 @@ internal sealed class TypeChecker
 
         ReportError("STK3003", $"Unknown symbol '{name}'.", token);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private ExpressionBinding ResolveFunctionPointerPromotion(
+        string name,
+        IReadOnlyList<TypedFunctionSignature> functions,
+        StarkTypeSymbol targetType,
+        IToken token)
+    {
+        var matchingCandidates = functions
+            .Where(static function => !function.IsGeneric)
+            .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(targetType, FunctionPointerTypeForSignature(function)))
+            .ToArray();
+        var candidates = matchingCandidates
+            .Where(static function => !function.IsUnsafe)
+            .ToArray();
+
+        if (candidates.Length == 1)
+        {
+            var function = candidates[0];
+            var location = Location(token);
+            _functionPointerPromotions.Add(new FunctionPointerPromotionTypingRecord(
+                function,
+                targetType,
+                location,
+                _currentFunctionName));
+            RecordAddressTakenFunction(function, location);
+            return new ExpressionBinding(
+                targetType,
+                Function: function,
+                DiagnosticName: $"function item '{function.DisplaySourceName}'");
+        }
+
+        if (candidates.Length == 0 && matchingCandidates.Any(static function => function.IsUnsafe))
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe function item '{name}' cannot be promoted to ordinary function pointer '{targetType.DisplayName}' because that pointer type does not carry an unsafe requirement. Call the function directly inside an unsafe block, or wrap it in a safe function that checks the required invariants.",
+                token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (candidates.Length == 0)
+        {
+            ReportError(
+                "STK3002",
+                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.",
+                token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        ReportError(
+            "STK3002",
+            $"Function item '{name}' is ambiguous for target '{targetType.DisplayName}'.",
+            token);
+        return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
+    {
+        return StarkTypeSymbols.FunctionPointer(
+            function.Kind,
+            function.ReturnType,
+            function.Parameters.Select(static parameter => parameter.Type).ToArray());
+    }
+
+    private void RecordAddressTakenFunction(TypedFunctionSignature function, SourceLocation location)
+    {
+        if (!_addressTakenFunctionNames.Add(function.Name))
+        {
+            return;
+        }
+
+        _addressTakenFunctions.Add(new AddressTakenFunctionTypingRecord(
+            function,
+            location,
+            _currentFunctionName));
     }
 
     private bool TryFilterDirectCallableTypeMemberFunctions(
@@ -5494,6 +6780,88 @@ internal sealed class TypeChecker
         return new ExpressionBinding(type, TextLiteral: textLiteral, TextLiteralKind: textLiteralKind);
     }
 
+    private ExpressionBinding EvaluateInterpolatedTextLiteral(
+        StarkParser.LiteralContext literal,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        var stringLiteral = literal.StringLiteral();
+        if (stringLiteral is null)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (!InterpolatedText.TryParse(stringLiteral.GetText(), out var segments, out var diagnostics))
+        {
+            foreach (var diagnostic in diagnostics)
+            {
+                ReportError("STK3002", diagnostic.Message, literal);
+            }
+
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var hasError = false;
+        var isFixedTextStorageInterpolation = expectedType is not null
+            && IsTextBufferType(expectedType)
+            && _fixedTextStorageInterpolatedLiterals.Contains(literal);
+        foreach (var hole in segments.OfType<InterpolatedTextHoleSegment>())
+        {
+            var binding = EvaluateExpression(
+                hole.Expression,
+                scope,
+                allowFunctionReference: false);
+            hasError |= binding.Type.Kind == StarkTypeKind.Error;
+
+            if (isFixedTextStorageInterpolation
+                && binding.Type.Kind != StarkTypeKind.Error
+                && !CanUseFixedTextInterpolationHole(expectedType!, binding.Type, out var diagnostic))
+            {
+                ReportError("STK3002", diagnostic, hole.Expression);
+                hasError = true;
+            }
+        }
+
+        if (hasError)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (isFixedTextStorageInterpolation)
+        {
+            return new ExpressionBinding(
+                expectedType!,
+                NamedType: ResolveNamedTypeSymbol(expectedType!),
+                DiagnosticName: "fixed-capacity interpolated text");
+        }
+
+        if (!InterpolatedText.TryFold(
+                segments,
+                CreateCompileTimeEvaluationServices(scope),
+                out var foldedLiteral,
+                out var foldDiagnostic))
+        {
+            ReportError("STK3002", foldDiagnostic.Message, literal);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var type = InferStringLiteralType(foldedLiteral);
+        _literals.Add(new LiteralTypingRecord(literal.GetText(), type, Location(literal)));
+        var bindingResult = new ExpressionBinding(
+            type,
+            TextLiteral: foldedLiteral,
+            TextLiteralKind: TextLiteralKind.String);
+
+        if (expectedType is not null
+            && IsTextType(expectedType)
+            && CanExplicitlyConvertTextLiteral(expectedType, bindingResult))
+        {
+            return bindingResult with { Type = expectedType };
+        }
+
+        return bindingResult;
+    }
+
     private StarkTypeSymbol ResolveReturnType(StarkParser.ReturnTypeContext returnType, ISet<string>? genericParameters, string? currentModuleName = null)
     {
         return EnsureMonomorphizedType(
@@ -5626,6 +6994,21 @@ internal sealed class TypeChecker
             };
             monomorphizedType = StarkTypeSymbols.WithQualifiers(
                 rebuiltCore,
+                borrowKind: type.BorrowKind,
+                accessKind: type.AccessKind,
+                initializationKind: type.InitializationKind,
+                isMutableView: type.IsMutableView);
+        }
+        else if (strippedType.Kind == StarkTypeKind.FunctionPointer
+            && strippedType.FunctionPointerKind is { } functionKind
+            && strippedType.FunctionPointerReturnType is { } returnType
+            && strippedType.FunctionPointerParameterTypes is { } parameterTypes)
+        {
+            monomorphizedType = StarkTypeSymbols.WithQualifiers(
+                StarkTypeSymbols.FunctionPointer(
+                    functionKind,
+                    EnsureMonomorphizedType(returnType),
+                    parameterTypes.Select(parameter => EnsureMonomorphizedType(parameter)).ToArray()),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -5988,6 +7371,16 @@ internal sealed class TypeChecker
                 };
             }
         }
+        else if (coreType.Kind == StarkTypeKind.FunctionPointer
+            && coreType.FunctionPointerKind is { } functionKind
+            && coreType.FunctionPointerReturnType is { } returnType
+            && coreType.FunctionPointerParameterTypes is { } parameterTypes)
+        {
+            substitutedCore = StarkTypeSymbols.FunctionPointer(
+                functionKind,
+                SubstituteType(returnType, substitution),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray());
+        }
         else
         {
             substitutedCore = coreType;
@@ -6164,6 +7557,103 @@ internal sealed class TypeChecker
 
     private string CurrentFunctionModuleName => _currentFunctionModuleName ?? _syntaxModel.ModuleName;
 
+    private string GetSystemTextFunctionName(string name)
+    {
+        return string.Equals(CurrentFunctionModuleName, "System.Text", StringComparison.Ordinal)
+            ? name
+            : $"System.Text.{name}";
+    }
+
+    private static StarkParser.AdditiveExpressionContext? TryGetStandaloneAdditiveExpression(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        return shift.additiveExpression().Length == 1
+            ? shift.additiveExpression(0)
+            : null;
+    }
+
+    private static StarkParser.LiteralContext? TryGetStandaloneInterpolatedTextLiteral(StarkParser.ExpressionContext expression)
+    {
+        var additive = TryGetStandaloneAdditiveExpression(expression);
+        if (additive is null || additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var unary = multiplicative.unaryExpression(0);
+        if (unary.powerExpression() is not { } power
+            || power.unaryExpression() is not null
+            || power.postfixExpression() is not { } postfix
+            || postfix.postfixPart().Length != 0)
+        {
+            return null;
+        }
+
+        var literal = postfix.primaryExpression().literal();
+        return literal?.DOLLAR() is not null && literal.StringLiteral() is not null
+            ? literal
+            : null;
+    }
+
     private static IReadOnlyList<string> ExtractOperators<TOperand>(ParserRuleContext context)
         where TOperand : ParserRuleContext
     {
@@ -6279,6 +7769,188 @@ internal sealed class TypeChecker
         }
 
         return new ExpressionBinding(currentType);
+    }
+
+    private ExpressionBinding EvaluateTextConcatenationChain(
+        IReadOnlyList<ExpressionBinding> operands,
+        IReadOnlyList<string> operators,
+        ParserRuleContext context,
+        StarkTypeSymbol? expectedType)
+    {
+        var current = operands[0];
+        var isFixedTextStorageConcat = expectedType is not null
+            && IsTextBufferType(expectedType)
+            && context is StarkParser.AdditiveExpressionContext additive
+            && _fixedTextStorageConcatExpressions.Contains(additive);
+        if (current.Type.Kind == StarkTypeKind.Error)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (!IsTextLikeForConcatenation(current.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Text concatenation needs text on both sides of '+', but the left side is '{current.Type.DisplayName}'. Convert the value to text first.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (isFixedTextStorageConcat && !CanUseFixedTextConcatSource(expectedType!, current.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Fixed {expectedType!.DisplayName} text buffers can only join matching text values. The left side is '{current.Type.DisplayName}'.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        for (var index = 1; index < operands.Count; index++)
+        {
+            var operatorText = operators[index - 1];
+            var next = operands[index];
+            if (next.Type.Kind == StarkTypeKind.Error)
+            {
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (operatorText != "+")
+            {
+                ReportError("STK3002", $"Text can be joined with '+', but not with '{operatorText}'.", context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (!IsTextLikeForConcatenation(next.Type))
+            {
+                if (!isFixedTextStorageConcat
+                    && operatorText == "+"
+                    && TryResolveRuntimeTextConcatenation(current, next, context, out var runtimeConcat))
+                {
+                    current = runtimeConcat;
+                    continue;
+                }
+
+                ReportError(
+                    "STK3002",
+                    $"Text concatenation needs text on both sides of '+', but the right side is '{next.Type.DisplayName}'. Convert the value to text first.",
+                    context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (isFixedTextStorageConcat)
+            {
+                if (!CanUseFixedTextConcatSource(expectedType!, next.Type))
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Fixed {expectedType!.DisplayName} text buffers can only join matching text values. The right side is '{next.Type.DisplayName}'.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
+                current = new ExpressionBinding(GetFixedTextConcatViewType(expectedType!));
+                continue;
+            }
+
+            if (current.TextLiteral is null || current.TextLiteralKind is null || next.TextLiteral is null || next.TextLiteralKind is null)
+            {
+                if (IsTextBufferType(current.Type) || IsTextBufferType(next.Type))
+                {
+                    ReportError(
+                        "STK3002",
+                        "Runtime Ascii and Unicode buffers need a destination capacity for '+'. Write a stack buffer such as `stack Ascii combined[4096] = left + right;`, or call System.Text.TryConcatAscii/TryConcatUnicode yourself.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
+                ReportError(
+                    "STK3002",
+                    "Only compile-time text constants can use '+' for now. For runtime text, use System.Text.TryConcatAscii or System.Text.TryConcatUnicode with caller-owned storage.",
+                    context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (!TextLiteralDecoder.TryConcatenateAsStringLiteral(
+                    current.TextLiteral,
+                    current.TextLiteralKind.Value,
+                    next.TextLiteral,
+                    next.TextLiteralKind.Value,
+                    out var literalText))
+            {
+                ReportError("STK3002", "Text concatenation could not decode one of the text constants.", context);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            current = new ExpressionBinding(
+                FindCommonTextType(current.Type, next.Type),
+                TextLiteral: literalText,
+                TextLiteralKind: TextLiteralKind.String);
+        }
+
+        if (isFixedTextStorageConcat)
+        {
+            return new ExpressionBinding(
+                expectedType!,
+                NamedType: ResolveNamedTypeSymbol(expectedType!),
+                DiagnosticName: "fixed-capacity text concatenation");
+        }
+
+        if (expectedType is not null
+            && IsTextType(expectedType)
+            && CanExplicitlyConvertTextLiteral(expectedType, current))
+        {
+            return new ExpressionBinding(
+                expectedType,
+                TextLiteral: current.TextLiteral,
+                TextLiteralKind: current.TextLiteralKind);
+        }
+
+        return current;
+    }
+
+    private bool TryResolveRuntimeTextConcatenation(
+        ExpressionBinding left,
+        ExpressionBinding right,
+        ParserRuleContext context,
+        out ExpressionBinding result)
+    {
+        result = default!;
+
+        if (!IsTextType(left.Type))
+        {
+            return false;
+        }
+
+        if (left.TextLiteral is null || left.TextLiteralKind is null)
+        {
+            return false;
+        }
+
+        var sourceName = GetSystemTextFunctionName(left.Type.Kind == StarkTypeKind.Unicode
+            ? "ConcatUnicode"
+            : "ConcatAscii");
+        if (!TryGetFunctionOverloads(sourceName, out var overloads))
+        {
+            return false;
+        }
+
+        var resolution = FunctionOverloadFacts.Resolve(
+            overloads,
+            receiverType: null,
+            [left.Type, NonNegativeI64Type, right.Type],
+            CanAssign);
+        if (!resolution.Succeeded)
+        {
+            return false;
+        }
+
+        var signature = CacheFunctionInstantiation(resolution.Match!);
+        RecordDirectCall(signature, context);
+        result = new ExpressionBinding(
+            signature.ReturnType,
+            NamedType: ResolveNamedTypeSymbol(signature.ReturnType),
+            DiagnosticName: $"runtime text concatenation");
+        return true;
     }
 
     private ExpressionBinding EnsureBooleanUnary(ExpressionBinding operand, ParserRuleContext context)
@@ -6612,6 +8284,15 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (parameterType.IsMutableView && argument.IsAddressMutable)
+        {
+            var mutableArgumentType = StarkTypeSymbols.WithQualifiers(argumentType, isMutableView: true);
+            if (CanAssign(parameterType, mutableArgumentType))
+            {
+                return;
+            }
+        }
+
         if (parameterType.BorrowKind != StarkBorrowKind.None)
         {
             if (!argument.IsAddressable)
@@ -6872,7 +8553,7 @@ internal sealed class TypeChecker
 
         if (target.Kind == StarkTypeKind.Integer && source.Kind == StarkTypeKind.Integer)
         {
-            if (target.BitWidth is null || source.BitWidth is null || source.BitWidth > target.BitWidth)
+            if (target.BitWidth is null || source.BitWidth is null)
             {
                 return false;
             }
@@ -6928,6 +8609,11 @@ internal sealed class TypeChecker
             return target.ElementType is not null
                 && source.ElementType is not null
                 && CanAssign(target.ElementType, source.ElementType);
+        }
+
+        if (target.Kind == StarkTypeKind.FunctionPointer && source.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(target, source);
         }
 
         return target.Kind == StarkTypeKind.Named
@@ -7069,6 +8755,93 @@ internal sealed class TypeChecker
         return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
     }
 
+    private static bool IsTextBufferType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Named
+            && type.NamedType is StarkTypeSymbols.OwnedAsciiName or StarkTypeSymbols.OwnedUnicodeName;
+    }
+
+    private static bool IsTextLikeForConcatenation(StarkTypeSymbol type)
+    {
+        return IsTextType(type) || IsTextBufferType(type);
+    }
+
+    private static bool IsAsciiConcatSource(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Ascii
+            || type.Kind == StarkTypeKind.Named
+                && string.Equals(type.NamedType, StarkTypeSymbols.OwnedAsciiName, StringComparison.Ordinal);
+    }
+
+    private static bool IsUnicodeConcatSource(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Unicode
+            || type.Kind == StarkTypeKind.Named
+                && string.Equals(type.NamedType, StarkTypeSymbols.OwnedUnicodeName, StringComparison.Ordinal);
+    }
+
+    private static bool CanUseFixedTextConcatSource(StarkTypeSymbol destination, StarkTypeSymbol source)
+    {
+        return destination.NamedType switch
+        {
+            StarkTypeSymbols.OwnedAsciiName => IsAsciiConcatSource(source),
+            StarkTypeSymbols.OwnedUnicodeName => IsUnicodeConcatSource(source),
+            _ => false
+        };
+    }
+
+    private bool CanUseFixedTextInterpolationHole(
+        StarkTypeSymbol destination,
+        StarkTypeSymbol source,
+        out string diagnostic)
+    {
+        diagnostic = string.Empty;
+        if (CanUseFixedTextConcatSource(destination, source))
+        {
+            return true;
+        }
+
+        if (!TextFormattingFacts.TryGetFixedBufferFormatInfo(destination, source, out var formatInfo))
+        {
+            diagnostic = $"Interpolated text does not know how to format '{source.DisplayName}' yet. Convert the value to text first, or use bool, integer, or floating-point values.";
+            return false;
+        }
+
+        var sourceName = GetSystemTextFunctionName(formatInfo.FunctionName);
+        if (!TryGetFunctionOverloads(sourceName, out var overloads))
+        {
+            diagnostic = $"Interpolated text needs '{sourceName}' to format '{source.DisplayName}', but that function is not available.";
+            return false;
+        }
+
+        var resolution = FunctionOverloadFacts.Resolve(
+            overloads,
+            receiverType: null,
+            [StarkTypeSymbols.RawPointer(destination, isMutable: true), source],
+            CanAssign);
+        if (resolution.Succeeded)
+        {
+            return true;
+        }
+
+        diagnostic = $"Interpolated text found '{source.DisplayName}', but it cannot be passed to '{sourceName}'. Use an explicit conversion before putting it inside '{{...}}'.";
+        return false;
+    }
+
+    private static StarkTypeSymbol GetFixedTextConcatViewType(StarkTypeSymbol destination)
+    {
+        return destination.NamedType == StarkTypeSymbols.OwnedUnicodeName
+            ? StarkTypeSymbols.Unicode
+            : StarkTypeSymbols.Ascii;
+    }
+
+    private static StarkTypeSymbol FindCommonTextType(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        return left.Kind == StarkTypeKind.Unicode || right.Kind == StarkTypeKind.Unicode
+            ? StarkTypeSymbols.Unicode
+            : StarkTypeSymbols.Ascii;
+    }
+
     private static bool AreQualifiersAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (!IsBorrowAssignable(target.BorrowKind, source.BorrowKind))
@@ -7208,6 +8981,13 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (type.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return true;
+        }
+
         min = -(BigInteger.One << (bitWidth - 1));
         max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
         return true;
@@ -7227,7 +9007,9 @@ internal sealed class TypeChecker
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
         {
-            return StarkTypeSymbols.Integer(Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0));
+            return StarkTypeSymbols.Integer(
+                Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
+                isUnsigned: left.IsUnsigned && right.IsUnsigned);
         }
 
         if (left.Kind == StarkTypeKind.Float && right.Kind == StarkTypeKind.Float)
@@ -8011,6 +9793,14 @@ internal sealed class TypeChecker
             }
         }
 
+        if (coreType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return coreType.FunctionPointerReturnType is not null
+                && TypeContainsOpenCurrentFunctionGenericParameter(coreType.FunctionPointerReturnType)
+                || coreType.FunctionPointerParameterTypes is { Count: > 0 }
+                && coreType.FunctionPointerParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
+        }
+
         return coreType.ElementType is not null
             && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ElementType);
     }
@@ -8147,6 +9937,16 @@ internal sealed class TypeChecker
         _context.Diagnostics.Error(code, message, "type-check", Location(token));
     }
 
+    private void ReportWarning(string code, string message, ParserRuleContext context)
+    {
+        _context.Diagnostics.Warning(code, message, "type-check", Location(context));
+    }
+
+    private void ReportWarning(string code, string message, IToken token)
+    {
+        _context.Diagnostics.Warning(code, message, "type-check", Location(token));
+    }
+
     private void ReportInfo(string code, string message, ParserRuleContext context)
     {
         _context.Diagnostics.Info(code, message, "type-check", Location(context));
@@ -8187,7 +9987,12 @@ internal sealed class TypeChecker
         StarkTypeSymbol Type,
         bool IsMutable,
         bool IsConstant,
-        GlobalBindingKind? BindingKind = null);
+        GlobalBindingKind? BindingKind = null,
+        CompileTimeConstant? ConstantValue = null);
+
+    private sealed record LambdaCaptureBinding(
+        VariableSymbol Symbol,
+        string Mode);
 
     private sealed record ExpressionBinding(
         StarkTypeSymbol Type,
@@ -8223,6 +10028,12 @@ internal sealed class TypeChecker
                 ? Parameters.Select(static parameter => parameter.Name).ToHashSet(StringComparer.Ordinal)
                 : null;
     }
+
+    private sealed record ImportedConstructorBodyKey(
+        string QualifiedTypeName,
+        IReadOnlyList<TypedParameterSymbol> Parameters,
+        string SignatureKey,
+        string BodyKey);
 
     private static string BuildConstructorBodyKey(string qualifiedTypeName, StarkParser.ConstructorDeclarationContext constructor)
     {

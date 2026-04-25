@@ -14,6 +14,70 @@ public doctrine DictionaryKey<T> {
     finite law u64[0 max] Hash(borrow T value);
 }
 
+internal fn System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
+    i64[0 max] length,
+    i64[0 max] currentCapacity,
+    i64[0 max] additional,
+    i64[1 max] initialCapacity,
+    out i64[0 max] nextCapacity) {
+    nextCapacity = currentCapacity;
+    if (additional == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (additional > 9223372036854775807 - length) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    stack i64[0 max] required = length + additional;
+    if (required <= currentCapacity) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (nextCapacity == 0) {
+        nextCapacity = initialCapacity;
+    }
+
+    while willexit (nextCapacity < required) {
+        if (nextCapacity > 4611686018427387903) {
+            nextCapacity = required;
+        }
+        else {
+            nextCapacity = (i64[0 max])(nextCapacity * 2);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
+    i64[0 max] length,
+    i64[0 max] currentCapacity,
+    i64[0 max] additional,
+    out i64[0 max] nextCapacity) {
+    nextCapacity = currentCapacity;
+    if (additional == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (additional > 9223372036854775807 - length) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    stack i64[0 max] required = length + additional;
+    stack mut i64[0 max] targetCapacity = required;
+    if (targetCapacity <= 4611686018427387903) {
+        targetCapacity = (i64[0 max])(targetCapacity * 2);
+    }
+
+    if (targetCapacity <= currentCapacity) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack i64[0 max] targetAdditional = (i64[0 max])(targetCapacity - length);
+    return ComputeContiguousGrowthCapacity(length, currentCapacity, targetAdditional, 8, nextCapacity);
+}
+
 public struct Dictionary<K, V> {
     internal rawmutptr<K> Keys;
     internal rawmutptr<V> Values;
@@ -112,16 +176,16 @@ public struct Dictionary<K, V> {
     }
 
     fn System.Memory.MemoryStatus Reserve(mut borrow Dictionary<K, V> self, i64[0 max] additional) {
-        if (additional == 0) {
-            return System.Memory.MemoryStatus.Ok;
+        stack mut i64[0 max] nextCapacity = self.StorageCapacity;
+        stack System.Memory.MemoryStatus capacityStatus =
+            ComputeHashStorageGrowthCapacity(self.Length, self.StorageCapacity, additional, nextCapacity);
+        switch (capacityStatus) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
         }
 
-        if (additional > 9223372036854775807 - self.Length) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
-        }
-
-        stack i64[0 max] required = (i64[0 max])(self.Length + additional);
-        if (required <= self.StorageCapacity) {
+        if (nextCapacity <= self.StorageCapacity) {
             return System.Memory.MemoryStatus.Ok;
         }
 
@@ -138,25 +202,6 @@ public struct Dictionary<K, V> {
 
         if (stateSize == 0) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
-        }
-
-        stack mut i64[0 max] targetCapacity = required;
-        if (targetCapacity <= 4611686018427387903) {
-            targetCapacity = (i64[0 max])(targetCapacity * 2);
-        }
-
-        stack mut i64[0 max] nextCapacity = self.StorageCapacity;
-        if (nextCapacity == 0) {
-            nextCapacity = 8;
-        }
-
-        while willexit (nextCapacity < targetCapacity) {
-            if (nextCapacity > 4611686018427387903) {
-                nextCapacity = targetCapacity;
-            }
-            else {
-                nextCapacity = (i64[0 max])(nextCapacity * 2);
-            }
         }
 
         if (nextCapacity > 9223372036854775807 / keySize) {
@@ -497,36 +542,22 @@ public struct List<T> {
     }
 
     fn System.Memory.MemoryStatus Reserve(mut borrow List<T> self, i64[0 max] additional) {
-        if (additional == 0) {
-            return System.Memory.MemoryStatus.Ok;
+        stack mut i64[0 max] nextCapacity = self.StorageCapacity;
+        stack System.Memory.MemoryStatus capacityStatus =
+            ComputeContiguousGrowthCapacity(self.Length, self.StorageCapacity, additional, 4, nextCapacity);
+        switch (capacityStatus) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
         }
 
-        if (additional > 9223372036854775807 - self.Length) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
-        }
-
-        stack i64[0 max] required = self.Length + additional;
-        if (required <= self.StorageCapacity) {
+        if (nextCapacity <= self.StorageCapacity) {
             return System.Memory.MemoryStatus.Ok;
         }
 
         stack i64[0 max] elementSize = sizeof(T);
         if (elementSize == 0) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
-        }
-
-        stack mut i64[0 max] nextCapacity = self.StorageCapacity;
-        if (nextCapacity == 0) {
-            nextCapacity = 4;
-        }
-
-        while willexit (nextCapacity < required) {
-            if (nextCapacity > 4611686018427387903) {
-                nextCapacity = required;
-            }
-            else {
-                nextCapacity = (i64[0 max])(nextCapacity * 2);
-            }
         }
 
         if (nextCapacity > 9223372036854775807 / elementSize) {
@@ -628,11 +659,26 @@ public struct Stack<T> {
     }
 
     fn System.Memory.MemoryStatus Push(mut borrow Stack<T> self, T value) {
-        return self.Items.Push(value);
+        stack System.Memory.MemoryStatus status = self.Reserve(1);
+        switch (status) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        *(&self.Items.Data[self.Items.Length]) = value;
+        self.Items.Length += 1;
+        return System.Memory.MemoryStatus.Ok;
     }
 
     fn bool TryPop(mut borrow Stack<T> self, out T value) {
-        return self.Items.TryPop(value);
+        if (self.Items.Length == 0) {
+            return false;
+        }
+
+        self.Items.Length -= 1;
+        value = *(&self.Items.Data[self.Items.Length]);
+        return true;
     }
 
     law retborrow T Peek(borrow Stack<T> self) {
@@ -640,7 +686,13 @@ public struct Stack<T> {
     }
 
     fn void Clear(mut borrow Stack<T> self) {
-        self.Items.Clear();
+        stack mut i64[0 max] index = 0;
+        while willexit (index < self.Items.Length) {
+            stack T value = *(&self.Items.Data[index]);
+            index += 1;
+        }
+
+        self.Items.Length = 0;
         return;
     }
 }
@@ -707,36 +759,22 @@ public struct Queue<T> {
     }
 
     fn System.Memory.MemoryStatus Reserve(mut borrow Queue<T> self, i64[0 max] additional) {
-        if (additional == 0) {
-            return System.Memory.MemoryStatus.Ok;
+        stack mut i64[0 max] nextCapacity = self.StorageCapacity;
+        stack System.Memory.MemoryStatus capacityStatus =
+            ComputeContiguousGrowthCapacity(self.Length, self.StorageCapacity, additional, 4, nextCapacity);
+        switch (capacityStatus) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
         }
 
-        if (additional > 9223372036854775807 - self.Length) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
-        }
-
-        stack i64[0 max] required = self.Length + additional;
-        if (required <= self.StorageCapacity) {
+        if (nextCapacity <= self.StorageCapacity) {
             return System.Memory.MemoryStatus.Ok;
         }
 
         stack i64[0 max] elementSize = sizeof(T);
         if (elementSize == 0) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
-        }
-
-        stack mut i64[0 max] nextCapacity = self.StorageCapacity;
-        if (nextCapacity == 0) {
-            nextCapacity = 4;
-        }
-
-        while willexit (nextCapacity < required) {
-            if (nextCapacity > 4611686018427387903) {
-                nextCapacity = required;
-            }
-            else {
-                nextCapacity = (i64[0 max])(nextCapacity * 2);
-            }
         }
 
         if (nextCapacity > 9223372036854775807 / elementSize) {

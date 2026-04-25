@@ -1,0 +1,10 @@
+module Book.Negative.FnptrKindMismatch
+
+fn i32[min max] Plain() {
+    return 1;
+}
+
+export ffi fn i32[min max] main() {
+    stack fnptr<finite law i32[min max]()> needsStrongGuarantee = Plain;
+    return needsStrongGuarantee();
+}

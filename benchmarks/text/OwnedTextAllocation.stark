@@ -1,0 +1,51 @@
+import System
+module Benchmarks.Text.OwnedTextAllocation
+
+fn bool AddAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, rawmutptr<i64[min max]> checksum) {
+    switch (result) {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            *checksum += value.Length();
+            return true;
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+    }
+}
+
+fn bool AddUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, rawmutptr<i64[min max]> checksum) {
+    switch (result) {
+        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
+            *checksum += value.Length();
+            return true;
+        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 1000] i = 0; i < 1000; i += 1) {
+        stack i32[min max] value = i;
+        if (!AddAsciiLength(value.ToAscii(), &checksum)) {
+            return 1;
+        }
+
+        if (!AddUnicodeLength(value.ToUnicode(), &checksum)) {
+            return 2;
+        }
+
+        if (!AddAsciiLength("Score: " + value.ToAscii(), &checksum)) {
+            return 3;
+        }
+
+        if (!AddUnicodeLength((unicode)"Score: " + value.ToUnicode(), &checksum)) {
+            return 4;
+        }
+    }
+
+    if (checksum != 25560) {
+        return 5;
+    }
+
+    return 0;
+}

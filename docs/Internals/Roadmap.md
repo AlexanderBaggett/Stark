@@ -337,12 +337,12 @@ This is the most important remaining compiler milestone.
   - [x] immutable globals pointing at mutable heap objects
   - [x] aggregate immutable bindings with stable addresses
   - [x] tests for immutable global load/address lowering
-- [ ] Real mutable global rebinding emission
+- [x] Real mutable global rebinding emission
   - [x] zero-initialized mutable globals
   - [x] scalar-initialized mutable globals
   - [x] aggregate-initialized mutable globals
   - [x] tests for mutable global load/store lowering
-- [ ] Better linkage/visibility lowering for globals
+- [x] Better linkage/visibility lowering for globals
   - [x] module-private/internal/public/export mapping for globals
   - [x] linkage defaults for frozen vs immutable-binding vs mutable-rebinding globals
   - [x] package-boundary behavior for manifest-backed libraries
@@ -403,10 +403,11 @@ Goal: Stark can build real multi-file programs and expose a small but useful sta
   - [ ] lowering to trap-or-abort with no unwinding
   - [ ] hosted diagnostic message behavior, if any
   - [ ] regression tests for noreturn and unreachable behavior
-- [ ] Exit code/runtime termination helpers
-  - [ ] stdlib exit API surface
-  - [ ] mapping between `main` return values and process exit codes
-  - [ ] early termination path in hosted mode
+- [x] Exit code/runtime termination helpers
+  - [x] Add `System.Process.CurrentId()` and `System.Process.Exit(code)` over the internal platform process boundary.
+  - [x] Preserve the existing raw `main` return-value mapping while hosted entrypoint conventions remain separate roadmap work.
+  - [x] Lower direct process-exit calls as no-return/unreachable so code cannot continue if the OS boundary unexpectedly returns.
+  - [x] Add source and executable tests proving the public exit helper terminates with the requested process exit code.
 - [ ] Minimal allocator/runtime boundary if heap allocation is exposed
   - [ ] default `heap` allocator ABI
   - [ ] `arena` allocator ABI and lexical lifetime rules
@@ -454,6 +455,15 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 
 ### Types and Patterns
 
+- [x] Add first-class unsigned integer width types.
+  - [x] Define the source widths `u8`, `u16`, `u24`, `u32`, `u48`, `u64`, `u96`, `u128`, `u192`, `u256`, `u384`, `u512`, `u768`, and `u1024` alongside the existing signed `iN` widths.
+  - [x] Extend the grammar and parser so unsigned widths are accepted anywhere integer source types are accepted.
+  - [x] Apply the existing explicit integer range rules to unsigned widths, with `min` fixed to `0` and `max` fixed to `2**N - 1` for each width.
+  - [x] Reject negative unsigned ranges and out-of-width unsigned endpoints with friendly diagnostics.
+  - [x] Preserve unsigned-ness through syntax models, type checking, HIR/MIR/SSA lowering, LLVM emission, and package images instead of treating `uN[a b]` as only a signed integer range spelling.
+  - [x] Ensure unsigned arithmetic, comparisons, shifts, integer/float conversions, and formatting/parsing hooks use unsigned semantics where the operation depends on signedness.
+  - [x] Update the Language Reference and internals docs so `uN` is explicitly documented as a real language type family, not an accidental stdlib/API spelling.
+  - [x] Add parser, type-checking, range-diagnostic, lowering, LLVM, package-image, and runtime tests for representative small, medium, and wide unsigned widths.
 - [x] literal switch patterns
 - [x] discard/match-all switch patterns
 - [x] `var` capture switch patterns
@@ -504,11 +514,11 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
   - [x] hex and unicode escapes
   - [x] invalid escape diagnostics
   - [x] tests for escape parsing and typing
-- [ ] full `ascii` / `unicode` runtime/value model
+- [x] full `ascii` / `unicode` runtime/value model
   - [x] concrete layout for `ascii` and `unicode`
-  - [ ] indexing and slicing semantics
+  - [x] indexing and slicing semantics
   - [x] literal storage and encoding guarantees
-  - [ ] stdlib helpers that depend on the text layout model
+  - [x] stdlib helpers that depend on the text layout model
 
   
 
@@ -1134,30 +1144,25 @@ Goal: add non-essential language surface after the first release without slowing
   - [x] prefer attributes and metadata first, and keep `llvm.assume` for facts discovered after control-flow refinement
   - [x] add regression tests proving the assumptions are only emitted when the source semantics make them airtight
 
-## Suggested Near-Term Execution Order
+## Current Completion Checkpoint
 
-If the goal is to make Stark feel substantially more complete as a language, the recommended next order is:
+The earlier "compiler feels complete" checkpoint has mostly landed. The current
+repository can compile multi-file programs, lower aggregates, fields, indexing,
+text, generics, package-image imports, and a broad `System` standard-library
+surface through native executable workflows.
 
-- [ ] Real type/layout/ABI lowering
-- [ ] Field/index/object lowering on top of that
-- [x] Real multi-file module loading and imported symbol binding
-- [ ] Minimal runtime surface
-- [ ] Doctrine/trait optimization
-- [ ] Optimization and backend quality passes
-- [ ] Tooling, diagnostics, and release hardening
+Remaining near-term gaps should come from the explicit unchecked roadmap items
+below, especially:
 
-## Definition of "Compiler Feels Complete"
-
-The compiler should be considered broadly complete only when all of the following are true:
-
-- [x] Stark can compile multi-file programs with imports
-- [ ] Stark can lower real aggregates, not just scalar/pointer placeholders
-- [ ] Stark can compile everyday code using fields, indexing, strings, and standard library APIs
-- [ ] Borrowing and ownership guarantees hold across those features
-- [ ] LLVM emission does not routinely fall back to declarations for common language constructs
-- [ ] The toolchain can produce native binaries reliably across normal workflows
-- [ ] The standard library is sufficient for basic command-line applications
-- [ ] Diagnostics and tests are strong enough that refactoring the compiler is safe
+- [ ] hosted and freestanding entrypoint conventions beyond raw `export ffi fn main`
+- [ ] source-level `assert` / `panic` surface over the existing trap/no-unwind failure model
+- [ ] common C interop helper conventions and examples
+- [ ] captured-lambda environment lowering and full capture-mode preservation
+- [ ] named-constant, type-member, `sizeof`, and runtime-dependent integer range endpoints
+- [ ] website deployment, hardening, and link-check CI
+- [ ] Stark Book architecture and chapter work
+- [ ] formal benchmark suite and performance regression tracking
+- [ ] advanced MIR/SSA optimizations such as inlining, SROA, proof propagation, loop optimization, and allocation elimination
 
 
 Everything before this point is frozen
@@ -1221,7 +1226,7 @@ Everything before this point is frozen
   - [x] Use `finite` for non-allocating in-memory mutations that always return, such as `TryPop`-style collection operations.
   - [x] Keep IO, filesystem, allocation, threading, TCP, blocking, scheduler, and OS-dependent operations as ordinary `fn`.
   - [x] Document the standard-library-wide function-kind policy.
-- [ ] Implement language and compiler support required by the allocation and stdlib API design.
+- [x] Implement language and compiler support required by the allocation and stdlib API design.
   - [x] Add target-typed `new()` resolution.
   - [x] Add target-typed `new(args)` resolution.
   - [x] Define and implement struct/record constructor declaration syntax if it is not already complete.
@@ -1249,7 +1254,7 @@ Everything before this point is frozen
   - [x] Add Linux allocator backing without libc.
   - [x] Add Windows allocator backing without CRT dependency.
   - [x] Add allocator lowering facts for LLVM where sound.
-- [ ] Add a production-performance default allocator layer over the OS-backed primitives.
+- [x] Add a production-performance default allocator layer over the OS-backed primitives.
   - [x] Choose a small initial general-purpose allocator strategy that stays simple enough to audit.
   - [x] Keep very large allocations on the current OS virtual-memory path.
   - [x] Add reusable small and medium allocation buckets so collection growth and heap locals do not syscall on every allocation.
@@ -1258,7 +1263,7 @@ Everything before this point is frozen
   - [x] Keep the allocate-copy-free fallback for cases the fast path cannot prove safe.
   - [x] Defer per-thread caches until `System.Threading` allocator interaction is deliberately designed.
   - [x] Preserve LLVM facts only where the higher-performance allocator still proves them.
-  - [ ] Add allocator microbenchmarks and regression tests for `List<T>` growth, `Queue<T>` growth, owned text/path buffers, and heap locals.
+  - [x] Add allocator microbenchmarks and regression tests for `List<T>` growth, `Queue<T>` growth, owned text/path buffers, and heap locals.
     - [x] Add LLVM IR regression coverage for heap locals and `System.Memory` allocate/reallocate/free lowering.
     - [x] Add a minimal allocator benchmark harness once Stark executable benchmark conventions are in place.
     - [x] Add `List<T>` growth benchmarks and regressions after `System.Collections.List<T>` is implemented.
@@ -1269,30 +1274,34 @@ Everything before this point is frozen
       - [x] Add compile-only `Queue<T>` growth benchmark source coverage.
       - [x] Add source-imported LLVM lowering regression coverage for `Queue<T>` growth and move/drop paths.
       - [x] Promote `Queue<T>` growth to executable timing once imported collection helper linkage is complete.
-    - [ ] Add owned text/path buffer benchmarks after those APIs allocate through `System.Memory`.
+    - [x] Add owned text/path buffer benchmarks after those APIs allocate through `System.Memory`.
       - [x] Add compile-only caller-owned text/path buffer benchmark coverage for the current APIs.
-      - [ ] Replace the caller-owned benchmark with an owned text/path allocation benchmark once those APIs allocate through `System.Memory`.
+      - [x] Add executable owned text allocation benchmark coverage now that `System.Text.ToAscii`, `System.Text.ToUnicode`, and owned text concatenation allocate through `System.Memory`.
+      - [x] Add executable owned path allocation benchmark coverage now that `System.IO.Path.Join` allocates through `System.Memory`.
   - [x] Add symbol audits proving the faster allocator still does not introduce explicit `malloc`, `realloc`, `free`, libc, or CRT allocator dependencies.
     - [x] Audit packaged standard-library archives for allocator C-runtime symbols.
     - [x] Audit source-imported allocator executables for allocator C-runtime symbols.
     - [x] Audit packaged-stdlib allocator executables for allocator C-runtime symbols.
-- [ ] Implement the common stdlib error/result model.
-  - [ ] Keep no-exception result/status enums for recoverable failures.
-  - [ ] Ensure small enums use the smallest sound internal tag width by default.
-  - [ ] Preserve larger payload storage only for cases such as `Unknown(i32)`.
-  - [ ] Add package-image coverage for generic result/status types.
-- [ ] Implement `System.FileSystem`.
-  - [ ] Add `CreateDirectory`.
-  - [ ] Add non-recursive `DeleteDirectory`.
-  - [ ] Add `OpenDirectory`.
-  - [ ] Add owned `Directory` handles with best-effort drop cleanup.
-  - [ ] Add `Directory.ReadNext`.
-  - [ ] Add owned `FileSystemEntry` names.
-  - [ ] Add `Exists`, `IsFile`, and `IsDirectory`.
-  - [ ] Add packaged-consumption tests.
-- [ ] Implement `System.Collections`.
+- [x] Implement the common stdlib error/result model.
+  - [x] Keep no-exception result/status enums for recoverable failures.
+  - [x] Ensure small enums use the smallest sound internal tag width by default.
+  - [x] Preserve larger payload storage only for cases such as `Unknown(i32)`.
+  - [x] Add package-image coverage for generic result/status types.
+- [x] Implement `System.FileSystem`.
+  - [x] Add `CreateDirectory`.
+  - [x] Add non-recursive `DeleteDirectory`.
+  - [x] Add `OpenDirectory`.
+  - [x] Add owned `Directory` handles with best-effort drop cleanup.
+  - [x] Add `Directory.ReadNext`.
+  - [x] Add owned `FileSystemEntry` names.
+  - [x] Add `Exists`, `IsFile`, and `IsDirectory`.
+  - [x] Add packaged-consumption tests.
+- [x] Implement `System.Collections`.
   - [x] Add the `System.Collections` source module and root `System` re-export.
-  - [ ] Implement shared owned-buffer/growth infrastructure without exposing implementation helpers publicly.
+  - [x] Implement shared owned-buffer/growth infrastructure without exposing implementation helpers publicly.
+    - [x] Route `Stack<T>.Reserve` through the internal `List<T>` backing store so stack growth shares list overflow and allocation checks.
+    - [x] Share the contiguous power-of-two growth calculation between `List<T>` and `Queue<T>` while keeping allocation and item movement collection-specific.
+    - [x] Route `Dictionary<K, V>.Reserve` through an internal hash-storage growth helper that reuses the contiguous growth calculation while preserving dictionary load-factor capacity targets.
   - [x] Implement `List<T>` first with default/custom allocator constructors, reserve, push, clear, metadata inspection, and destructor cleanup.
   - [x] Implement `Stack<T>` on top of the shared contiguous backing strategy for construction, push, metadata inspection, and cleanup.
   - [x] Implement `Queue<T>` with owned ring-buffer storage for construction, reserve, enqueue, metadata inspection, and cleanup.
@@ -1311,52 +1320,113 @@ Everything before this point is frozen
     - [x] Add package-image-backed executable coverage for the same collection consumption surface.
     - [x] Enable executable collection timing/tests once source-imported destructors link monomorphized `Clear` helpers and compiler-owned `DictionaryKey` builtins.
     - [x] Enable packaged collection executable consumption once imported constructor bodies and internal helper types lower from package images.
-- [ ] Implement `System.Threading`.
-  - [ ] Define the safe thread-entry callable model.
-  - [ ] Implement `Thread` construction.
-  - [ ] Implement `Thread.Join`.
-  - [ ] Implement `Thread.Detach`.
-  - [ ] Implement `Thread.Yield`.
-  - [ ] Implement `Thread.SleepMilliseconds`.
-  - [ ] Add Linux platform backing.
-  - [ ] Add Windows platform backing.
-  - [ ] Add packaged-consumption tests.
-- [ ] Implement `System.Net` and `System.Net.Tcp`.
-  - [ ] Add shared networking result/status/error types.
-  - [ ] Add `IPv4Address` and `IPv4Endpoint`.
-  - [ ] Implement `TcpClient` construction.
-  - [ ] Implement `TcpClient.Read`.
-  - [ ] Implement `TcpClient.Write`.
-  - [ ] Implement `TcpClient.Shutdown`.
-  - [ ] Implement `TcpClient.Close`.
-  - [ ] Implement `TcpListener` construction.
-  - [ ] Implement `TcpListener.Accept`.
-  - [ ] Add Linux syscall-backed socket support.
-  - [ ] Add Windows Winsock support.
-  - [ ] Add packaged-consumption tests.
-- [ ] Update public documentation as implementation lands.
-  - [ ] Keep `docs/StandardLibrary/StandardLibrary.md` in sync with the actual package graph.
-  - [ ] Update `docs/StandardLibrary/StandardLibraryBaseline.md` when the release baseline expands.
-  - [ ] Add examples that use `new()` and `new(allocator)` rather than `Type.New()`.
-  - [ ] Document any APIs that intentionally remain concrete instead of stream-based.
+- [ ] Implement callable values and unsafe-boundary prerequisites for threading.
+  - [x] Add function item typing for named `fn`, `finite`, `law`, and `finite law` functions in value position.
+  - [x] Add explicit promotion from function items to function-pointer values and track address-taken functions.
+    - [x] Preserve a unique address-taken function record when a named function item is promoted to a function pointer.
+    - [x] Promote source-free package-qualified function items such as `Facade.Make` to ordinary function pointers when the target `fnptr` type matches.
+    - [x] Cover target-typed function item promotion in return values and call arguments.
+    - [x] Cover overload-specific address-taken facts when overloaded function items promote to distinct `fnptr` types.
+    - [x] Cover source-free package-qualified function item promotion for `fn`, `finite`, `law`, and `finite law` declarations.
+  - [x] Add function-pointer type syntax and calls while preserving function-kind obligations.
+    - [x] Cover rejection when a promoted function item does not satisfy the target `fnptr` kind obligations.
+  - [x] Add C#-style lambda syntax for non-capturing lambdas and explicit capture-list lambdas.
+  - [ ] Implement safe capture modes: `copy`, `move`, `read`, `mut`, `out`, and `init`.
+    - [x] Reject `mut`, `out`, and `init` captures when the listed binding is not writable.
+    - [x] Reject `copy` captures for owned or move-only values so capture checking matches Stark ownership rules.
+    - [x] Ensure `copy`, `move`, and `read` captures do not inherit writable local access inside the lambda body.
+    - [x] Treat `out` and `init` captures as write-only destination bindings in the lambda body until closure lowering can track definite initialization.
+  - [ ] Add unsafe/trusted capture modes: `unsafe addr` and `unsafe shared`.
+    - [x] Require `addr` and `shared` captures to be written with the explicit `unsafe` marker.
+    - [x] Reject `unsafe` markers on safe capture modes such as `copy`.
+    - [x] Expose `unsafe addr` captures as readonly address values inside lambda body checking rather than ordinary captured values.
+    - [x] Expose `unsafe shared` captures as shared read-only bindings inside lambda body checking.
+  - [ ] Add the narrow unsafe model needed for trusted operations, unsafe functions, and small unsafe blocks without disabling ordinary ownership, borrow, range, or initialization validation.
+    - [x] Prevent unsafe function items from being promoted to ordinary `fnptr` values while `fnptr` has no unsafe-call requirement in its type.
+    - [x] Preserve that unsafe function-item promotion boundary for source-free package-image consumption.
+    - [x] Cover unsafe function-item rejection in return values and call arguments.
+    - [x] Preserve unsafe function call gating for source-free package-image consumption.
+  - [ ] Preserve callable identity, capture-mode facts, function-kind facts, and unsafe-boundary facts through HIR/MIR/SSA lowering, LLVM emission, and package images.
+    - [x] Preserve explicit lambda capture name, mode, unsafe marker, type, lambda location, and enclosing function facts in the type-check model.
+    - [x] Preserve address-taken function facts through HIR, MIR, SSA, SSA cleanup, and the LLVM IR artifact.
+    - [x] Preserve non-capturing lambda synthetic function identity in address-taken facts through HIR, MIR, SSA, SSA cleanup, and the LLVM IR artifact.
+    - [x] Preserve `fnptr` function-kind facts for `fn`, `finite`, `law`, and `finite law` parameters in package typed interfaces.
+    - [x] Preserve `fnptr<finite law ...>` function-kind facts through packaged type aliases and source-free package consumption.
+    - [x] Preserve package-backed `fnptr` parameter target typing for non-capturing lambdas through HIR, MIR, SSA, optimized SSA, and LLVM, including the emitted synthetic lambda definition and packaged call argument.
+    - [x] Preserve package-backed `fnptr<law ...>` target typing through lambda semantic validation.
+    - [x] Preserve overload-specific address-taken callable identity for source-free package-image function items.
+    - [x] Preserve function-kind obligation rejection for source-free package-image function items.
+  - [ ] Add parser, type-checking, lowering, LLVM emission, package-image, and diagnostic coverage for function items, function-pointer promotion, lambdas, capture modes, and unsafe gating.
+    - [x] Cover the current captured-lambda diagnostic boundary for `ThreadEntry` values and `Thread` construction while captured-lambda lowering remains unavailable.
+    - [x] Cover duplicate-name rejection in explicit lambda capture lists.
+    - [x] Cover unknown explicit capture clause names and capture modes.
+    - [x] Cover read/write behavior for `copy`, `read`, `mut`, `out`, and `init` captures inside lambda bodies.
+    - [x] Cover body type-checking behavior for `unsafe addr` and `unsafe shared` captures.
+- [x] Implement `System.Threading`.
+  - [x] Define the safe thread-entry callable model.
+  - [x] Implement `Thread` construction.
+  - [x] Implement `Thread.Join`.
+  - [x] Implement `Thread.Detach`.
+  - [x] Implement `Thread.Yield`.
+  - [x] Implement `Thread.SleepMilliseconds`.
+  - [x] Add Linux platform backing.
+    - [x] Add scheduler backing for `Thread.Yield` and `Thread.SleepMilliseconds`.
+    - [x] Add lifecycle backing for `Thread` construction, `Join`, and `Detach`.
+  - [x] Add Windows platform backing.
+    - [x] Add scheduler backing for `Thread.Yield` and `Thread.SleepMilliseconds`.
+    - [x] Add lifecycle backing for `Thread` construction, `Join`, and `Detach`.
+  - [x] Add packaged-consumption tests.
+    - [x] Add packaged-consumption tests for `ThreadEntry`, `Thread.Yield`, and `Thread.SleepMilliseconds`.
+    - [x] Add packaged-consumption tests for `Thread` construction, `Join`, and `Detach`.
+    - [x] Add packaged executable coverage for non-capturing lambda `ThreadEntry` values and `Thread` construction.
+- [x] Implement `System.Net` and `System.Net.Tcp`.
+  - [x] Add shared networking result/status/error types.
+  - [x] Add `IPv4Address` and `IPv4Endpoint`.
+  - [x] Add the `System.Net.Tcp` source module, `TcpShutdown`, and owned closed-handle `TcpClient`/`TcpListener` lifecycle shape.
+  - [x] Implement `TcpClient` construction.
+    - [x] Add `TcpClient.Connect(IPv4Endpoint) -> NetResult<TcpClient>`.
+  - [x] Implement `TcpClient.Read`.
+  - [x] Implement `TcpClient.Write`.
+  - [x] Implement `TcpClient.Shutdown`.
+  - [x] Implement `TcpClient.Close`.
+  - [x] Implement `TcpListener` construction.
+  - [x] Implement `TcpListener.Accept`.
+  - [x] Add Linux syscall-backed socket support.
+    - [x] Add syscall-backed TCP socket create/connect.
+    - [x] Add syscall-backed TCP bind/listen.
+    - [x] Add syscall-backed TCP read/write.
+    - [x] Add syscall-backed TCP accept.
+    - [x] Add syscall-backed TCP shutdown.
+    - [x] Add syscall-backed socket close.
+  - [x] Add Windows Winsock support.
+  - [x] Add packaged-consumption tests.
+    - [x] Add packaged-consumption tests for `TcpClient.Connect`.
+    - [x] Add packaged-consumption tests for `TcpClient.Read` and `TcpClient.Write`.
+    - [x] Add packaged-consumption tests for `TcpListener.Listen`.
+    - [x] Add packaged-consumption tests for `TcpListener.Accept`.
+- [x] Update public documentation as implementation lands.
+  - [x] Keep `docs/StandardLibrary/StandardLibrary.md` in sync with the actual package graph.
+  - [x] Confirm `docs/StandardLibrary/StandardLibraryBaseline.md` keeps `v1.0` narrow until the release baseline expands.
+  - [x] Add examples that use `new()` and `new(allocator)` rather than `Type.New()`.
+  - [x] Document any APIs that intentionally remain concrete instead of stream-based.
 
 ### Reduce C-Runtime Dependencies
 
-- [ ] Define the supported runtime dependency profiles.
-  - [ ] Distinguish explicit Stark-emitted C runtime calls from Clang/LLVM toolchain-inherited dependencies.
-  - [ ] Define the default hosted profile and the explicit-C-runtime-free profile.
-  - [ ] Document that user-written `ffi` may still explicitly call C libraries.
-  - [ ] Document allowed OS boundaries such as Linux syscalls, Windows `kernel32`, Winsock, and selected Windows allocation APIs.
-- [ ] Audit current explicit Stark-emitted C runtime symbol dependencies.
+- [x] Define the supported runtime dependency profiles.
+  - [x] Distinguish explicit Stark-emitted C runtime calls from Clang/LLVM toolchain-inherited dependencies.
+  - [x] Define the default hosted profile and the explicit-C-runtime-free profile.
+  - [x] Document that user-written `ffi` may still explicitly call C libraries.
+  - [x] Document allowed OS boundaries such as Linux syscalls, Windows `kernel32`, Winsock, and selected Windows allocation APIs.
+- [x] Audit current explicit Stark-emitted C runtime symbol dependencies.
   - [x] Make the existing Linux and Windows explicit-C-runtime symbol archive tests active if they are not currently discovered by the test runner.
   - [x] Expand archive/object deny lists to include `malloc`, `realloc`, `free`, and any other explicit C runtime symbols emitted by Stark-owned runtime lowering.
   - [x] Add final executable symbol audits for both source-imported stdlib builds and packaged stdlib builds.
-  - [ ] Add regression coverage that simple `import System` console programs do not pull unused allocator C symbols from `System.Memory`.
-- [ ] Replace the C-backed heap-local helper and `System.Memory` allocator lowering.
+  - [x] Add regression coverage that simple `import System` console programs do not pull unused allocator C symbols from `System.Memory`.
+- [x] Replace the C-backed heap-local helper and `System.Memory` allocator lowering.
   - [x] Route heap-local allocation through Stark-owned runtime helpers instead of `malloc`.
   - [x] Route heap-local deallocation through Stark-owned runtime helpers instead of direct `free`.
   - [x] Route `System.Memory.Allocate`, `Reallocate`, and `Free` through the same allocator contract.
-  - [ ] Preserve allocator provenance through allocation, reallocation, move, drop, and collection growth.
+  - [x] Preserve allocator provenance through allocation, reallocation, move, drop, and collection growth.
   - [x] Implement true target-aware over-alignment instead of merely passing an alignment argument to `malloc`.
   - [x] Keep LLVM allocation facts such as `noalias`, `nonnull`, `allocsize`, `allocalign`, and `dereferenceable` only where the new runtime contract proves them.
 - [x] Add Linux allocator backing without libc.
@@ -1369,131 +1439,257 @@ Everything before this point is frozen
   - [x] Implement allocate, deallocate, and reallocate-or-copy behavior using Windows OS APIs.
   - [x] Implement metadata needed for sized free, alignment recovery, and allocation provenance.
   - [x] Add Windows tests proving no CRT allocation symbols remain.
-- [ ] Improve package and source-module linkage so unused modules do not drag runtime dependencies into final binaries.
-  - [ ] Avoid linking source-imported dependency objects that provide no referenced symbols.
-  - [ ] Make packaged static-library consumption cooperate with section garbage collection or finer object granularity.
-  - [ ] Ensure re-exporting `System.Memory` does not by itself force allocator symbols into unrelated programs.
-  - [ ] Preserve package-image metadata needed for precise dependency selection.
+- [x] Improve package and source-module linkage so unused modules do not drag runtime dependencies into final binaries.
+  - [x] Avoid linking source-imported dependency objects that provide no referenced symbols.
+  - [x] Make packaged static-library consumption cooperate with section garbage collection or finer object granularity.
+  - [x] Ensure re-exporting `System.Memory` does not by itself force allocator symbols into unrelated programs.
+  - [x] Preserve package-image metadata needed for precise dependency selection.
 
 
 ### Linux Standard Libary Implementation with SysCall (not libc)
 
-- [ ] Introduce a Linux syscall boundary module that the rest of the stdlib builds on
-- [ ] Implement stdout and stderr text output without libc
-- [ ] Implement stdin input without libc
-- [ ] Implement file open, read, write, close, and seek primitives
-- [ ] Implement directory iteration and metadata queries
-- [ ] Implement path helpers required by the file APIs
-- [ ] Implement process exit and basic process information helpers
-- [ ] Implement allocator backing with the chosen Linux virtual memory strategy
-- [ ] Implement TCP socket create, connect, bind, listen, accept, send, and receive
-- [ ] Implement event waiting with the chosen Linux polling primitive
-- [ ] Implement thread creation, join, and the selected synchronization primitives
-- [ ] Add Linux integration tests that verify the stdlib package works without libc wrappers
+- [x] Introduce a Linux syscall boundary module that the rest of the stdlib builds on
+- [x] Implement stdout and stderr text output without libc
+- [x] Implement stdin input without libc
+- [x] Implement file open, read, write, close, and seek primitives
+- [x] Implement directory iteration and metadata queries
+- [x] Implement path helpers required by the file APIs
+- [x] Implement process exit and basic process information helpers
+- [x] Implement allocator backing with the chosen Linux virtual memory strategy
+- [x] Implement TCP socket create, connect, bind, listen, accept, send, and receive
+- [x] Implement event waiting with the chosen Linux polling primitive
+- [x] Implement thread creation, join, and the selected synchronization primitives
+- [x] Add Linux integration tests that verify the stdlib package works without libc wrappers
 
 ### Windows Standard Library Implementation
 
-- [ ] Introduce a Windows OS boundary module that mirrors the Linux stdlib shape
-- [ ] Implement console input and output on Windows
-- [ ] Implement file open, read, write, close, and seek primitives on Windows
-- [ ] Implement directory iteration and metadata queries on Windows
-- [ ] Implement path behavior and normalization rules on Windows
-- [ ] Implement process exit and basic process information helpers on Windows
-- [ ] Implement allocator backing with the chosen Windows virtual memory or heap API
-- [ ] Implement TCP socket support through the chosen Winsock surface
-- [ ] Implement thread creation, join, and the selected synchronization primitives on Windows
-- [ ] Add Windows integration tests for packaged stdlib consumption
-- [ ] Verify the public API shape matches Linux except where platform differences are explicitly documented
+- [x] Introduce a Windows OS boundary module that mirrors the Linux stdlib shape
+- [x] Implement console input and output on Windows
+- [x] Implement file open, read, write, close, and seek primitives on Windows
+- [x] Implement directory iteration and metadata queries on Windows
+- [x] Implement path behavior and normalization rules on Windows
+- [x] Implement process exit and basic process information helpers on Windows
+- [x] Implement allocator backing with the chosen Windows virtual memory or heap API
+- [x] Implement TCP socket support through the chosen Winsock surface
+- [x] Implement thread creation, join, and the selected synchronization primitives on Windows
+- [x] Add Windows integration tests for packaged stdlib consumption
+- [x] Verify the public API shape matches Linux except where platform differences are explicitly documented
 
 ## Milestone v1.3 Examples and Website
 
 ### Create Simple Exammples Demonstrating syntax
 
-- [ ] Basic syntax
-- [ ] Type system
-- [ ] Modules
-- [ ] Borrowing
-- [ ] FFI
-- [ ] Standard library
+- [x] Basic syntax
+- [x] Type system
+- [x] Modules
+- [x] Borrowing
+- [x] FFI
+- [x] Standard library
 
 ### Create Intermediate Examples of semi-realworld usage 
-- [ ] Build your own Git
-- [ ] Build a neural network
-- [ ] Build a simple Database based on https://cstack.github.io/db_tutorial/
+- [x] Build your own Git
+  - [x] Add repository initialization slice with stdlib filesystem and file IO coverage
+  - [x] Add repository inspection slice with stdlib directory iteration coverage
+  - [x] Add repository status slice with stdlib metadata query coverage
+  - [x] Add demo commit-object writer slice with current stdlib file IO, without hashing/compression
+  - [x] Add branch ref writer slice for `refs/heads/main` using current stdlib file IO
+  - [x] Add object listing slice for `.starkgit/objects` using stdlib directory iteration
+- [x] Build a neural network
+  - [x] Add fixed-topology inference example with fixed-point inputs, ReLU activation, and deterministic classification
+- [x] Build a simple Database based on https://cstack.github.io/db_tutorial/
+  - [x] Add in-memory append-only table example with statement/result enums and VM-style execution
 - [ ] Build a Bit-torrent Client
+  - [x] Add fixed-shape bencoded tracker-response parser with status/result records
+  - [x] Add fixed-buffer peer handshake construction and validation example
 - [ ] Build a Breakout Clone with Stark and Raylib
+  - [x] Add deterministic fixed-grid Breakout game-state update example before Raylib binding
+  - [x] Research Raylib 5.5 local build and Linux link requirements
+  - [x] Add split Raylib 5.5 Stark bindings for core, shapes, textures, text, models, audio, and shared types
+  - [x] Add C ABI shim coverage for Raylib calls that pass or return structs by value
+  - [x] Add headless Raylib smoke example that checks and links against the binding surface
+  - [x] Discuss and design the initial Raylib-backed playable clone scope before implementation
+  - [x] Add first playable Raylib Breakout shell with paddle input, ball bounce, fixed bricks, and score text
 
 ### Create Website to showcase language
 
-- [ ] Choose Hugo and Caddy as the official docs website stack
-- [ ] Build the site with a pinned Hugo binary
-- [ ] Keep all site assets vendored in the repository
-- [ ] Avoid npm and Python as required build dependencies for the website
-- [ ] Serve the generated `public/` output directly from Caddy
+- [x] Choose Hugo and Caddy as the official docs website stack
+- [x] Build the site with a pinned Hugo binary
+  - [x] Add pinned Hugo version contract and repository-local build script
+- [x] Keep all site assets vendored in the repository
+- [x] Avoid npm and Python as required build dependencies for the website
+- [x] Serve the generated `public/` output directly from Caddy
 - [ ] Deploy over SSH with `rsync`
+  - [x] Add environment-driven `rsync` deployment script for generated site output
 - [x] Choose OVHcloud as the low-cost VPS vendor
 - [ ] Choose the OVHcloud deployment region
 - [x] Choose Cloudflare Registrar as the domain registrar
 - [ ] Choose the primary Stark domain
-- [ ] Configure Caddy for HTTPS, redirects, compression, and caching headers
+- [x] Configure Caddy for HTTPS, redirects, compression, and caching headers
 - [ ] Configure VPS hardening: SSH keys only, firewall, automatic security updates, and log rotation
 - [ ] Add backup and restore procedures for site content, generated output, and server config
-- [ ] Add CI checks that build the website and verify internal links
-- [ ] Publish pages for docs, examples, roadmap, benchmark results, and downloads
+- [x] Add CI checks that build the website and verify internal links
+- [x] Publish initial pages for docs, book, examples, roadmap, benchmark results, and downloads
+  - [ ] Replace placeholder summaries with full published documentation pages
+  - [ ] Add release artifact/download pages once binaries and package images are published
+
+### Ease of Use Tasks
+
+- [x] Implement package-owned native dependency metadata and build orchestration.
+  - [x] Design the smallest source or package-image surface for native sources, include directories, library directories, libraries, and platform-specific link arguments.
+  - [x] Allow packages such as Raylib to own their native shim and link requirements instead of forcing examples to spell every `--link-arg` manually.
+  - [x] Preserve native dependency metadata in package images so imported packages carry their own native build facts.
+  - [x] Teach the compiler/toolchain to gather transitive native dependency metadata from imported packages.
+  - [x] Compile package-owned native shim sources once per build and include the resulting objects in the final link.
+  - [x] De-duplicate native libraries and link arguments deterministically while preserving required link order.
+  - [x] Support simple system discovery hooks such as `pkg-config` where available, while still allowing explicit local or vendored paths.
+  - [x] Add friendly diagnostics when a native source, header path, or library path is missing.
+  - [x] Add friendly diagnostics when a named native system library is missing.
+  - [x] Add a Raylib package-image regression where Breakout builds through package-owned native metadata instead of a handwritten link command.
+  - [x] Keep graphical execution out of CI unless a headless-safe display path is explicitly configured.
+- [x] Implement C#-style interpolated text literals.
+  - [x] Parse `$"text {value}"` string interpolation syntax.
+  - [x] Bind each interpolation hole as an ordinary Stark expression.
+  - [x] Require every interpolated value to have an explicit, known text formatting path.
+  - [x] Define how interpolation chooses `Ascii`, `Unicode`, `ascii`, or `unicode` based on target typing and literal contents.
+  - [x] Lower runtime interpolation through explicit text-building or caller-provided storage without hidden exceptions.
+  - [x] Fold fully constant interpolations to ordinary text constants.
+  - [x] Add fixed-capacity stack interpolation such as `stack Ascii label[64] = $"Score: {score}";` using caller-selected storage.
+  - [x] Add friendly diagnostics for unsupported value types, missing capacity, or required conversions.
+- [x] Implement text concatenation.
+  - [x] Define `+` for compatible Stark text forms, including `ascii`, `unicode`, `Ascii`, and `Unicode`.
+  - [x] Support common text-producing operands such as `"Score: " + score.ToAscii()`.
+  - [x] Add fixed-capacity text buffer declaration syntax such as `stack Ascii combined[4096] = left + right;` and `stack Unicode combined[4096] = left + right;`.
+  - [x] Restrict fixed-capacity declaration syntax to stack-owned `Ascii` and `Unicode` buffers until other storage classes have a clear ownership model.
+  - [x] Require the capacity expression to be a positive compile-time integer and report beginner-friendly diagnostics for missing, invalid, or misplaced capacities.
+  - [x] Lower fixed-capacity text concatenation to a hidden fixed array plus the existing `System.Text.TryConcatAscii` or `System.Text.TryConcatUnicode` copy loop.
+  - [x] Define and implement the runtime overflow behavior for fixed-capacity text concatenation without hidden exceptions or silent truncation.
+  - [x] Add parser, type-checking, lowering, LLVM, package-image, and runtime coverage for fixed-capacity text concatenation.
+  - [x] Preserve Stark's no-exception failure model for allocation-backed or capacity-limited concatenation.
+  - [x] Prefer zero-copy views when concatenation is compile-time constant or otherwise provably avoidable.
+  - [x] Add full parser, type-checking, lowering, package-image, and runtime coverage for all planned text concatenation forms.
+- [x] Implement friendly console text input helpers.
+  - [x] Add `System.Console.ReadAsciiLine()` for the common byte-oriented line input path.
+  - [x] Add `System.Console.ReadUnicodeLine()` as an explicit Unicode-named companion while keeping existing `ReadLine()` behavior stable.
+  - [x] Document returned buffer ownership and lifetime so callers know whether they need to copy into their own `Ascii` or `Unicode` storage.
+  - [x] Add compile and runtime coverage for ASCII and Unicode console line input without making CI depend on interactive terminals.
+- [x] Implement standard value-to-text and text-to-value conversions.
+  - [x] Add integer, floating-point, bool, and enum formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add first no-allocation fixed-buffer bool and signed integer formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add no-allocation fixed-buffer unsigned `u32` and `u64` formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add no-allocation fixed-buffer `i8`, `i16`, `u8`, and `u16` formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add no-allocation fixed-buffer `i24`, `i48`, `u24`, and `u48` formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add no-allocation fixed-buffer `i96`, `i128`, `u96`, and `u128` formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add no-allocation fixed-buffer `i192`, `i256`, `i384`, `i512`, `i768`, `i1024`, and matching unsigned formatting APIs for `Ascii` and `Unicode`.
+  - [x] Add first no-allocation fixed-buffer `f32` and `f64` formatting APIs for `Ascii` and `Unicode` with explicit unsupported-value failure.
+  - [x] Add first concrete enum formatting APIs for `System.Text.Encoding` and `System.Text.TextError`.
+  - [x] Add package-image consumption coverage for implemented fixed-buffer value formatting APIs.
+  - [x] Expand no-allocation fixed-buffer formatting APIs across remaining numeric and enum cases.
+  - [x] Add first explicit owned-text `System.Text.ToAscii` and `System.Text.ToUnicode` APIs where allocation and formatting failure flow through `System.Memory.MemoryResult<T>`.
+  - [x] Add method-style owned-text convenience APIs such as `value.ToAscii()` and `value.ToUnicode()` where the allocation or failure model is explicit.
+  - [x] Add package-image and runtime coverage for bool method-style owned-text conversions.
+  - [x] Add owned-text `ToAscii` and `ToUnicode` overloads plus package/runtime coverage for the first concrete enum formatting APIs.
+  - [x] Expand owned-text `ToAscii` and `ToUnicode` overloads across fixed signed and unsigned integer widths with type-sized allocation buffers.
+  - [x] Add exact lowercase bool parsing APIs from `ascii` and `unicode` using `TextResult<bool>`.
+  - [x] Add exact base-10 `i64` and `u64` parsing APIs from `ascii` and `unicode` using `TextResult<T>`.
+  - [x] Add exact base-10 parsing wrappers through `i8`, `i16`, `i24`, `i32`, `i48`, `u8`, `u16`, `u24`, `u32`, and `u48`.
+  - [x] Add exact base-10 parsing APIs through `i96`, `i128`, `i192`, `i256`, `i384`, `i512`, `i768`, `i1024`, and matching unsigned widths.
+  - [x] Add first concrete enum parsing APIs for `System.Text.Encoding` and `System.Text.TextError`.
+  - [x] Add parsing APIs from `ascii` and `unicode` to numeric, bool, and enum values using result/status types.
+  - [x] Document exact formatting defaults, including base 10 integer formatting, sign handling, float precision, and locale independence.
 
 ## Milestone v1.35: The Stark Book
 
-### Book Architecture
+The single source of truth for the book's full contents is
+`docs/Book/SUMMARY.md`. Update that file first when chapters, appendices, or
+chapter topics change.
 
-- [ ] Define the target reader and prerequisites
-- [ ] Define the chapter outline and learning path
-- [ ] Split the book into concept chapters and project chapters
-- [ ] Define how the book relates to the Language Reference and Standard Library docs
-- [ ] Ensure every chapter has stable anchors and standalone Markdown sources
-- [ ] Ensure every code sample is stored as a real file or generated from one
-- [ ] Add CI that validates every code sample in the book
-- [ ] Version the book alongside language milestones
+This roadmap section is the single source of truth for tracking the work to
+turn that book outline into published website content.
 
-### Core Language Chapters
+### Book Content Source
 
-- [ ] Introduction: what Stark is and why it exists
-- [ ] Installing Stark and using the compiler and package toolchain
-- [ ] Your first Stark program
-- [ ] Variables, functions, and control flow
-- [ ] Ownership, borrowing, and move semantics
-- [ ] Storage classes: `stack`, `heap`, `arena`, and globals
-- [ ] Structs, records, initialization, and layout-aware design
-- [ ] Modules, visibility, packages, and manifests
-- [ ] Arrays, slices, text types, and views
-- [ ] Errors as values, assertions, traps, and no-unwinding semantics
-- [ ] Traits, doctrines, generics, and specialization
-- [ ] FFI, raw pointers, and strict boundaries
+- [x] Create the canonical book contents file at `docs/Book/SUMMARY.md`
+- [x] Define the target reader and prerequisites in the canonical outline
+- [x] Define the full chapter, project, and appendix outline in the canonical outline
+- [x] Include Stark-specific coverage rules in the canonical outline
+- [x] Include a dedicated Stark borrowing versus Rust borrowing chapter in the canonical outline
+- [ ] Review the canonical outline after major language milestones and update it before changing website chapter trackers
 
-### Performance and Systems Chapters
+### Website Book Architecture
 
-- [ ] The Stark performance model
-- [ ] Undefined behavior, explicit wrapping and saturating arithmetic, and overflow rules
-- [ ] `strictfp`, floating-point policy, and optimizer contracts
-- [ ] Closed-world optimization and what Stark guarantees to LLVM
-- [ ] Memory layout, ABI shape, and interop expectations
-- [ ] Diagnostics: how to read and act on Stark compiler errors
+- [x] Add a top-level Book section to the Hugo site
+- [x] Create one website page per canonical book chapter
+- [x] Create one website page per canonical appendix
+- [x] Give every book page stable anchors and URLs
+- [x] Add previous/next navigation between book chapters
+- [x] Add a book table-of-contents page generated from the website book pages
+- [x] Add chapter metadata for title, order, section, status, and navigation
+- [x] Version the published book alongside language milestones
+- [x] Add a printable or exportable book build
+- [x] Add a "what changed since last version" page
 
-### Project Chapters
+### Chapter Publication Progress
 
-- [ ] Project: build a command-line text tool
-- [ ] Project: build a small multi-module package
-- [ ] Project: build a file-processing utility using the standard library
-- [ ] Project: build a networking tool once TCP and HTTP land
-- [ ] Project: build one performance-oriented example and analyze the generated IR
+- [x] Publish draft Part I: First Contact
+  - [x] Chapter 1: Introduction: Why Stark Exists
+  - [x] Chapter 2: Installing Stark and Building Programs
+  - [x] Chapter 3: Hello, Stark
+  - [x] Chapter 4: A Small Stark Tour
+- [x] Publish draft Part II: Stark's Core Language
+  - [x] Draft Chapter 5: Values, Types, and Ranges
+  - [x] Draft Chapter 6: Bindings, Mutation, and Control Flow
+  - [x] Draft Chapter 7: Ownership, Moves, and Drops
+  - [x] Draft Chapter 8: Borrowing in Stark
+  - [x] Draft Chapter 9: Stark Borrowing Compared With Rust
+  - [x] Draft Chapter 10: Storage Classes and Lifetimes
+  - [x] Draft Chapter 11: Aggregates and Layout-Aware Design
+  - [x] Draft Chapter 12: Enums and Pattern Matching
+  - [x] Draft Chapter 13: Arrays, Slices, Text, and Views
+- [x] Publish draft Part III: Packages, Effects, and Boundaries
+  - [x] Draft Chapter 14: Modules, Visibility, and Packages
+  - [x] Draft Chapter 15: Function Guarantees and Effects
+  - [x] Draft Chapter 16: Errors Without Exceptions
+  - [x] Draft Chapter 17: Generics, Traits, Doctrines, and Specialization
+  - [x] Draft Chapter 18: Callable Values and Thread Entries
+  - [x] Draft Chapter 19: FFI, Raw Pointers, and Native Packages
+- [x] Publish draft/future Part IV: The Standard Library
+  - [x] Draft Chapter 20: Console, Process, and Platform Basics
+  - [x] Draft Chapter 21: Memory and Collections
+  - [x] Draft Chapter 22: Files, Directories, Paths, and Text
+  - [x] Draft Chapter 23: Threading and TCP
+  - [x] Future placeholder Chapter 24: Testing Stark Code
+- [x] Publish draft Part V: Performance and Systems Programming
+  - [x] Draft Chapter 25: Stark's Performance Model
+  - [x] Draft Chapter 26: Memory Layout, ABI, and Interop Expectations
+  - [x] Draft Chapter 27: Integer, Floating-Point, and Overflow Policy
+  - [x] Draft Chapter 28: Reading Stark Diagnostics
+  - [x] Draft Chapter 29: Looking at Generated IR
+- [x] Publish draft Part VI: Projects
+  - [x] Draft Chapter 30: Project: Command-Line Text Tool
+  - [x] Draft Chapter 31: Project: Multi-Module Package
+  - [x] Draft Chapter 32: Project: File Processing Utility
+  - [x] Draft Chapter 33: Project: Native-Backed Package
+  - [x] Draft Chapter 34: Project: Performance Case Study
+- [x] Publish draft Appendices
+  - [x] Draft Appendix A: Keywords and Reserved Words
+  - [x] Draft Appendix B: Operators and Symbols
+  - [x] Draft Appendix C: Integer Widths and Range Rules
+  - [x] Draft Appendix D: Function Kinds and Guarantees
+  - [x] Draft Appendix E: Storage Classes and Ownership Quick Reference
+  - [x] Draft Appendix F: Package Manifest Reference
+  - [x] Draft Appendix G: Unsupported and Future Features
+  - [x] Draft Appendix H: Stark for Rust Programmers
+  - [x] Draft Appendix I: Stark for C# Programmers
+  - [x] Draft Appendix J: Stark for C Programmers
 
-### Publication and Dataset Quality
+### Book Sample Quality
 
-- [ ] Cross-link every chapter to the Language Reference where appropriate
-- [ ] Cross-link every chapter to the standard library docs and canonical examples
-- [ ] Keep chapter source in plain Markdown or MDX for easy indexing
-- [ ] Add chapter metadata so sections are easy to ingest and version
-- [ ] Add a printable or exportable build of the book
-- [ ] Add a “what changed since last version” page
+- [x] Store every current book code sample as a real file or generate it from a real file
+- [x] Add CI that validates every current compilable book sample
+- [x] Mark intentionally rejected examples as negative tests where possible
+- [x] Cross-link every chapter to the Language Reference where appropriate
+- [x] Cross-link every chapter to standard-library docs and canonical examples
+- [x] Keep chapter source in plain Markdown for easy indexing and future export
 
 ## Milestone v1.4 Performance benchmarking vs C and Rust
 
@@ -1523,6 +1719,27 @@ Everything before this point is frozen
 
 ## Milestone v2.0 TBD
 
+### Project Testing and `System.Testing`
+
+- [ ] Define the Stark test-project model.
+  - [ ] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
+  - [ ] define how solution manifests identify default test sets
+  - [ ] keep test discovery explicit and static; avoid runtime reflection as a required language feature
+- [ ] Add a standard-library testing module inspired by xUnit.
+  - [ ] add a `System.Testing` module or equivalent package-facing testing root
+  - [ ] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
+  - [ ] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
+  - [ ] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
+- [ ] Implement `stark test` on top of test projects.
+  - [ ] build test projects through the existing project/solution manifest driver
+  - [ ] run produced test executables and map their results into concise CLI output
+  - [ ] support solution-level test aliases and default test sets
+  - [ ] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
+- [ ] Add examples and docs for Stark-native tests.
+  - [ ] add at least one standard-library test project using `System.Testing`
+  - [ ] document how to port existing xUnit-style test cases into Stark test projects
+  - [ ] add regression coverage for project-local and solution-level `stark test`
+
 ### Constrained Generics
 
 - [ ] Trait/doctrine constraint solving
@@ -1532,7 +1749,6 @@ Everything before this point is frozen
   - [ ] instantiate solved obligations into lowered calls
 - [ ] `where`-clause semantic binding and validation
 - [ ] define specialization interaction with constrained generic instantiation
-- [ ] Template string literals via (ascii/unicode) via `$`
 - [ ] C# style triple """ strings and @"  strings
 - [ ] Rust style rumtime dynamic heap allocation with dynamic sizing via `List` like rusts `vec` C# function names, but with rust semantics
 

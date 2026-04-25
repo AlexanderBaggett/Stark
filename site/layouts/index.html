@@ -1,0 +1,31 @@
+{{ define "main" }}
+<section class="hero">
+    {{ .Content }}
+</section>
+<section class="link-grid" aria-label="Site sections">
+    <a href="{{ "/docs/" | relURL }}">
+        <strong>Docs</strong>
+        <span>Language and standard library references.</span>
+    </a>
+    <a href="{{ "/book/" | relURL }}">
+        <strong>Book</strong>
+        <span>A Stark-first learning path, from first program to performance model.</span>
+    </a>
+    <a href="{{ "/examples/" | relURL }}">
+        <strong>Examples</strong>
+        <span>Runnable Stark programs tracked by tests.</span>
+    </a>
+    <a href="{{ "/roadmap/" | relURL }}">
+        <strong>Roadmap</strong>
+        <span>Active compiler, standard library, and tooling work.</span>
+    </a>
+    <a href="{{ "/benchmarks/" | relURL }}">
+        <strong>Benchmarks</strong>
+        <span>Current benchmark coverage and performance-tracking direction.</span>
+    </a>
+    <a href="{{ "/downloads/" | relURL }}">
+        <strong>Downloads</strong>
+        <span>Current source-build workflow and future release artifacts.</span>
+    </a>
+</section>
+{{ end }}

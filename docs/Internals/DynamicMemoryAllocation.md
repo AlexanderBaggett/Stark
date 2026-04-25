@@ -1,6 +1,6 @@
 # Dynamic Memory Allocation Design
 
-This document defines the planned dynamic-memory model for Stark's `v1.2`
+This document defines the dynamic-memory model implemented for Stark's `v1.2`
 standard-library expansion.
 
 The goal is a usable allocation story that still fits Stark's performance and
@@ -340,15 +340,15 @@ become the default allocation story.
 
 Language and compiler work:
 
-- [ ] Add target-typed `new()` and `new(args)` resolution.
-- [ ] Define constructor declaration syntax and overload resolution for structs
+- [x] Add target-typed `new()` and `new(args)` resolution.
+- [x] Define constructor declaration syntax and overload resolution for structs
       and records.
-- [ ] Support allocator-taking constructors without requiring factory methods.
+- [x] Support allocator-taking constructors without requiring factory methods.
 - [x] Ensure constructor lowering initializes ownership state before user code
       can observe the value.
 - [x] Ensure destructor lowering drops live elements before releasing backing
       storage.
-- [ ] Preserve allocator provenance through moves, field projection, and generic
+- [x] Preserve allocator provenance through moves, field projection, and generic
       instantiation.
 - [x] Diagnose raw-pointer allocation or deallocation attempts outside approved
       low-level modules.
@@ -361,11 +361,11 @@ Runtime and standard-library work:
 - [x] Track allocator provenance in the internal allocation value.
 - [x] Replace the C-backed bootstrap allocator with target-specific runtime
       helpers.
-- [ ] Add allocator-aware owned buffers.
-- [ ] Convert collection APIs to safe owned allocation.
-- [ ] Convert allocation-backed text and path helpers away from caller-owned raw
+- [x] Add allocator-aware owned buffers.
+- [x] Convert collection APIs to safe owned allocation.
+- [x] Convert allocation-backed text and path helpers away from caller-owned raw
       buffers where appropriate.
 - [x] Add Linux allocator backing without libc.
 - [x] Add Windows allocator backing without CRT dependency.
-- [ ] Add tests for construction, move, drop, growth, allocation failure, and
+- [x] Add tests for construction, move, drop, growth, allocation failure, and
       package consumption.

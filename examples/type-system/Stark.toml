@@ -1,0 +1,8 @@
+[project]
+name = "type-system"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "TypeSystem.stark"
+output = "type-system"

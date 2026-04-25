@@ -11,16 +11,26 @@ public finite law ascii PathSeparator();
 public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
 public finite law ascii ParentDirectory();
 public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
 public finite law ascii Extension(ascii path);
 public finite law ascii BaseName(ascii path);
 public finite law ascii DirectoryName(ascii path);
 ```
 
-## Current Values On Linux
+## Current Values
+
+On Linux:
 
 - `DirectorySeparator()` returns `"/"`
 - `AlternateDirectorySeparator()` returns `""`
 - `PathSeparator()` returns `":"`
+- `ParentDirectory()` returns `".."`
+
+On Windows:
+
+- `DirectorySeparator()` returns `"\\"`
+- `AlternateDirectorySeparator()` returns `"/"`
+- `PathSeparator()` returns `";"`
 - `ParentDirectory()` returns `".."`
 
 ## Example
@@ -70,6 +80,8 @@ fn i32 ShowCurrentDirectory() {
 ## Current Status
 
 - Separator and dot-path helpers are implemented.
-- `TryJoin`, `Extension`, `BaseName`, and `DirectoryName` are implemented.
-- `CurrentDirectory(rawmutptr<Ascii>)` is implemented on the current Linux-backed platform path and uses an internal raw Linux `getcwd` syscall shim.
-- The caller-provided `Ascii` buffer must currently leave room for the returned text plus one trailing zero byte reserved for the syscall.
+- `TryJoin`, allocation-visible `Join`, `Extension`, `BaseName`, and `DirectoryName` are implemented.
+- `Join` returns `System.Memory.MemoryResult<System.Text.OwnedAscii>` and allocates exactly enough path storage for the normalized join result. It preserves the same separator normalization rules as `TryJoin`.
+- `CurrentDirectory(rawmutptr<Ascii>)` is implemented on Linux with an internal raw `getcwd` syscall shim and on Windows with `GetCurrentDirectoryW` plus UTF-16LE to UTF-8 conversion.
+- The caller-provided `Ascii` buffer must leave room for the returned text. On Linux it must also leave one trailing zero byte reserved for the raw `getcwd` syscall.
+- Windows platform paths normalize UTF-8 input to UTF-16LE for `W` APIs, convert `/` to `\`, recognize drive-absolute and UNC paths, and add the `\\?\` long-path prefix when needed.

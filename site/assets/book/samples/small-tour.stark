@@ -1,0 +1,21 @@
+module Book.SmallTour
+
+finite law i32[min max] SumTo(i32[0 max] limit) {
+    stack mut i32[min max] index = 0;
+    stack mut i32[min max] total = 0;
+
+    while willexit (index <= limit) {
+        total += index;
+        index += 1;
+    }
+
+    return total;
+}
+
+export ffi fn i32[min max] main() {
+    if (SumTo(4) != 10) {
+        return 1;
+    }
+
+    return 0;
+}

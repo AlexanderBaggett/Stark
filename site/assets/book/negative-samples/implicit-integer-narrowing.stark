@@ -1,0 +1,9 @@
+module Book.Negative.ImplicitIntegerNarrowing
+
+finite law i32[0 10] Narrow(i32[min max] value) {
+    return value;
+}
+
+export ffi fn i32[min max] main() {
+    return Narrow(3);
+}

@@ -1,0 +1,150 @@
+import Raylib.Types
+export import Raylib.Types
+module Raylib.Text
+
+internal ffi fn void stark_raylib_GetFontDefault(rawmutptr<Font> result);
+public fn Font GetFontDefault() {
+    stack mut Font result = DefaultFont();
+    stark_raylib_GetFontDefault(&result);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadFont(rawmutptr<Font> result, ascii fileName);
+public fn Font LoadFont(ascii fileName) {
+    stack mut Font result = DefaultFont();
+    stark_raylib_LoadFont(&result, fileName);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadFontEx(rawmutptr<Font> result, ascii fileName, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount);
+public fn Font LoadFontEx(ascii fileName, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount) {
+    stack mut Font result = DefaultFont();
+    stark_raylib_LoadFontEx(&result, fileName, fontSize, codepoints, codepointCount);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadFontFromImage(rawmutptr<Font> result, rawptr<Image> image, rawptr<Color> key, i32[min max] firstChar);
+public fn Font LoadFontFromImage(Image image, Color key, i32[min max] firstChar) {
+    stack mut Font result = DefaultFont();
+    stark_raylib_LoadFontFromImage(&result, &image, &key, firstChar);
+    return result;
+}
+
+internal ffi fn void stark_raylib_LoadFontFromMemory(rawmutptr<Font> result, ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount);
+public fn Font LoadFontFromMemory(ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount) {
+    stack mut Font result = DefaultFont();
+    stark_raylib_LoadFontFromMemory(&result, fileType, fileData, dataSize, fontSize, codepoints, codepointCount);
+    return result;
+}
+
+internal ffi fn bool stark_raylib_IsFontValid(rawptr<Font> font);
+public fn bool IsFontValid(Font font) {
+    return stark_raylib_IsFontValid(&font);
+}
+
+public ffi fn rawmutptr<GlyphInfo> LoadFontData(rawptr<u8[0 255]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount, i32[min max] type);
+internal ffi fn void stark_raylib_GenImageFontAtlas(rawmutptr<Image> result, rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod);
+public fn Image GenImageFontAtlas(rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod) {
+    stack mut Image result = DefaultImage();
+    stark_raylib_GenImageFontAtlas(&result, glyphs, glyphRecs, glyphCount, fontSize, padding, packMethod);
+    return result;
+}
+
+public ffi fn void UnloadFontData(rawmutptr<GlyphInfo> glyphs, i32[min max] glyphCount);
+internal ffi fn void stark_raylib_UnloadFont(rawptr<Font> font);
+public fn void UnloadFont(Font font) {
+    stark_raylib_UnloadFont(&font);
+    return;
+}
+
+internal ffi fn bool stark_raylib_ExportFontAsCode(rawptr<Font> font, ascii fileName);
+public fn bool ExportFontAsCode(Font font, ascii fileName) {
+    return stark_raylib_ExportFontAsCode(&font, fileName);
+}
+
+public ffi fn void DrawFPS(i32[min max] posX, i32[min max] posY);
+internal ffi fn void stark_raylib_DrawText(ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, rawptr<Color> color);
+public fn void DrawText(ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, Color color) {
+    stark_raylib_DrawText(text, posX, posY, fontSize, &color);
+    return;
+}
+
+internal ffi fn void stark_raylib_DrawTextEx(rawptr<Font> font, ascii text, rawptr<Vector2> position, f32 fontSize, f32 spacing, rawptr<Color> tint);
+public fn void DrawTextEx(Font font, ascii text, Vector2 position, f32 fontSize, f32 spacing, Color tint) {
+    stark_raylib_DrawTextEx(&font, text, &position, fontSize, spacing, &tint);
+    return;
+}
+
+internal ffi fn void stark_raylib_DrawTextPro(rawptr<Font> font, ascii text, rawptr<Vector2> position, rawptr<Vector2> origin, f32 rotation, f32 fontSize, f32 spacing, rawptr<Color> tint);
+public fn void DrawTextPro(Font font, ascii text, Vector2 position, Vector2 origin, f32 rotation, f32 fontSize, f32 spacing, Color tint) {
+    stark_raylib_DrawTextPro(&font, text, &position, &origin, rotation, fontSize, spacing, &tint);
+    return;
+}
+
+internal ffi fn void stark_raylib_DrawTextCodepoint(rawptr<Font> font, i32[min max] codepoint, rawptr<Vector2> position, f32 fontSize, rawptr<Color> tint);
+public fn void DrawTextCodepoint(Font font, i32[min max] codepoint, Vector2 position, f32 fontSize, Color tint) {
+    stark_raylib_DrawTextCodepoint(&font, codepoint, &position, fontSize, &tint);
+    return;
+}
+
+internal ffi fn void stark_raylib_DrawTextCodepoints(rawptr<Font> font, rawptr<i32[min max]> codepoints, i32[min max] codepointCount, rawptr<Vector2> position, f32 fontSize, f32 spacing, rawptr<Color> tint);
+public fn void DrawTextCodepoints(Font font, rawptr<i32[min max]> codepoints, i32[min max] codepointCount, Vector2 position, f32 fontSize, f32 spacing, Color tint) {
+    stark_raylib_DrawTextCodepoints(&font, codepoints, codepointCount, &position, fontSize, spacing, &tint);
+    return;
+}
+
+public ffi fn void SetTextLineSpacing(i32[min max] spacing);
+public ffi fn i32[min max] MeasureText(ascii text, i32[min max] fontSize);
+internal ffi fn void stark_raylib_MeasureTextEx(rawmutptr<Vector2> result, rawptr<Font> font, ascii text, f32 fontSize, f32 spacing);
+public fn Vector2 MeasureTextEx(Font font, ascii text, f32 fontSize, f32 spacing) {
+    stack mut Vector2 result = DefaultVector2();
+    stark_raylib_MeasureTextEx(&result, &font, text, fontSize, spacing);
+    return result;
+}
+
+internal ffi fn i32[min max] stark_raylib_GetGlyphIndex(rawptr<Font> font, i32[min max] codepoint);
+public fn i32[min max] GetGlyphIndex(Font font, i32[min max] codepoint) {
+    return stark_raylib_GetGlyphIndex(&font, codepoint);
+}
+
+internal ffi fn void stark_raylib_GetGlyphInfo(rawmutptr<GlyphInfo> result, rawptr<Font> font, i32[min max] codepoint);
+public fn GlyphInfo GetGlyphInfo(Font font, i32[min max] codepoint) {
+    stack mut GlyphInfo result = DefaultGlyphInfo();
+    stark_raylib_GetGlyphInfo(&result, &font, codepoint);
+    return result;
+}
+
+internal ffi fn void stark_raylib_GetGlyphAtlasRec(rawmutptr<Rectangle> result, rawptr<Font> font, i32[min max] codepoint);
+public fn Rectangle GetGlyphAtlasRec(Font font, i32[min max] codepoint) {
+    stack mut Rectangle result = DefaultRectangle();
+    stark_raylib_GetGlyphAtlasRec(&result, &font, codepoint);
+    return result;
+}
+
+public ffi fn rawmutptr<i8[min max]> LoadUTF8(rawptr<i32[min max]> codepoints, i32[min max] length);
+public ffi fn void UnloadUTF8(rawmutptr<i8[min max]> text);
+public ffi fn rawmutptr<i32[min max]> LoadCodepoints(ascii text, rawmutptr<i32[min max]> count);
+public ffi fn void UnloadCodepoints(rawmutptr<i32[min max]> codepoints);
+public ffi fn i32[min max] GetCodepointCount(ascii text);
+public ffi fn i32[min max] GetCodepoint(ascii text, rawmutptr<i32[min max]> codepointSize);
+public ffi fn i32[min max] GetCodepointNext(ascii text, rawmutptr<i32[min max]> codepointSize);
+public ffi fn i32[min max] GetCodepointPrevious(ascii text, rawmutptr<i32[min max]> codepointSize);
+public ffi fn rawptr<i8[min max]> CodepointToUTF8(i32[min max] codepoint, rawmutptr<i32[min max]> utf8Size);
+public ffi fn i32[min max] TextCopy(rawmutptr<i8[min max]> dst, ascii src);
+public ffi fn bool TextIsEqual(ascii text1, ascii text2);
+public ffi fn u32[0 max] TextLength(ascii text);
+public ffi varargs fn rawptr<i8[min max]> TextFormat(ascii text);
+public ffi fn rawptr<i8[min max]> TextSubtext(ascii text, i32[min max] position, i32[min max] length);
+public ffi fn rawmutptr<i8[min max]> TextReplace(ascii text, ascii replace, ascii by);
+public ffi fn rawmutptr<i8[min max]> TextInsert(ascii text, ascii insert, i32[min max] position);
+public ffi fn rawptr<i8[min max]> TextJoin(rawptr<rawptr<i8[min max]>> textList, i32[min max] count, ascii delimiter);
+public ffi fn rawptr<rawptr<i8[min max]>> TextSplit(ascii text, i8[min max] delimiter, rawmutptr<i32[min max]> count);
+public ffi fn void TextAppend(rawmutptr<i8[min max]> text, ascii append, rawmutptr<i32[min max]> position);
+public ffi fn i32[min max] TextFindIndex(ascii text, ascii find);
+public ffi fn rawptr<i8[min max]> TextToUpper(ascii text);
+public ffi fn rawptr<i8[min max]> TextToLower(ascii text);
+public ffi fn rawptr<i8[min max]> TextToPascal(ascii text);
+public ffi fn rawptr<i8[min max]> TextToSnake(ascii text);
+public ffi fn rawptr<i8[min max]> TextToCamel(ascii text);
+public ffi fn i32[min max] TextToInteger(ascii text);
+public ffi fn f32 TextToFloat(ascii text);

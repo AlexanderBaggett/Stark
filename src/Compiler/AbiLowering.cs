@@ -31,6 +31,7 @@ internal sealed class AbiLowerer
     public AbiModel Lower()
     {
         var functions = new Dictionary<string, AbiFunctionSignature>(StringComparer.Ordinal);
+        var ffiSymbolNames = CollectFfiSymbolNames();
 
         foreach (var function in _typeModel.Functions.Values.OrderBy(static function => function.Name, StringComparer.Ordinal))
         {
@@ -39,7 +40,7 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            functions[function.Name] = LowerFunction(function, effects);
+            functions[function.Name] = LowerFunction(function, effects, ffiSymbolNames);
         }
 
         foreach (var function in _hir.Functions.OrderBy(static function => function.Name, StringComparer.Ordinal))
@@ -49,7 +50,7 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            functions[function.Name] = LowerFunction(function.Signature, function.Effects);
+            functions[function.Name] = LowerFunction(function.Signature, function.Effects, ffiSymbolNames);
         }
 
         foreach (var module in _loadedModules.ImportedModules)
@@ -68,7 +69,10 @@ internal sealed class AbiLowerer
         return new AbiModel(_typeModel.ModuleName, functions);
     }
 
-    private AbiFunctionSignature LowerFunction(TypedFunctionSignature function, FunctionEffectProfile effects)
+    private AbiFunctionSignature LowerFunction(
+        TypedFunctionSignature function,
+        FunctionEffectProfile effects,
+        IReadOnlySet<string> ffiSymbolNames)
     {
         var (moduleName, sourceName, visibility) = ResolveFunctionIdentity(function.Name);
         var parameters = new List<AbiParameterSymbol>();
@@ -76,7 +80,14 @@ internal sealed class AbiLowerer
         var returnsIndirect = !isFfi
             && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
         var isOverloaded = !string.Equals(function.Name, function.DisplaySourceName, StringComparison.Ordinal);
-        var symbolName = ComputeSymbolName(function.Name, moduleName, sourceName, visibility, isFfi, isOverloaded);
+        var symbolName = ComputeSymbolName(
+            function.Name,
+            moduleName,
+            sourceName,
+            visibility,
+            isFfi,
+            isOverloaded,
+            ffiSymbolNames);
 
         if (returnsIndirect)
         {
@@ -114,7 +125,53 @@ internal sealed class AbiLowerer
             parameters,
             isFfi,
             SourceName: function.SourceName,
-            UsesFastCallingConvention: effects.UseFastCallingConvention);
+            UsesFastCallingConvention: effects.UseFastCallingConvention,
+            IsVarargs: effects.IsVarargs);
+    }
+
+    private HashSet<string> CollectFfiSymbolNames()
+    {
+        var symbols = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (functionName, effects) in _effectModel.Functions)
+        {
+            if (!effects.IsFfi)
+            {
+                continue;
+            }
+
+            var (_, sourceName, _) = ResolveFunctionIdentity(functionName);
+            symbols.Add(sourceName);
+        }
+
+        foreach (var function in _hir.Functions)
+        {
+            if (!function.Effects.IsFfi)
+            {
+                continue;
+            }
+
+            var (_, sourceName, _) = ResolveFunctionIdentity(function.Name);
+            symbols.Add(sourceName);
+        }
+
+        foreach (var module in _loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var abiSignature in packageImageFacts.AbiFunctions.Values)
+            {
+                if (abiSignature.IsFfi)
+                {
+                    symbols.Add(abiSignature.SymbolName);
+                }
+            }
+        }
+
+        return symbols;
     }
 
     private static StarkTypeSymbol LowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
@@ -175,7 +232,8 @@ internal sealed class AbiLowerer
         string sourceName,
         StarkVisibility visibility,
         bool isFfi,
-        bool isOverloaded)
+        bool isOverloaded,
+        IReadOnlySet<string> ffiSymbolNames)
     {
         // FFI declarations must keep the external import name even when Stark
         // also declares local overloads with the same source name.
@@ -205,6 +263,13 @@ internal sealed class AbiLowerer
             && !sourceName.Contains('.', StringComparison.Ordinal))
         {
             return sourceName;
+        }
+
+        if (!_options.QualifyModuleSymbols
+            && !qualifiedName.Contains('.', StringComparison.Ordinal)
+            && ffiSymbolNames.Contains(sourceName))
+        {
+            return $"{moduleName}.{sourceName}";
         }
 
         if (_options.QualifyModuleSymbols)

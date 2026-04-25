@@ -3993,6 +3993,38 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
+        if (type.functionPointerType() is { } functionPointerType)
+        {
+            var signature = functionPointerType.functionPointerSignature();
+            StarkPackageTypeReference returnType;
+            if (signature.returnType().VOID() is not null)
+            {
+                returnType = new StarkPackageTypeReference("void");
+            }
+            else if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, signature.returnType().type_(), out returnType))
+            {
+                return false;
+            }
+
+            var parameterTypes = new List<StarkPackageTypeReference>();
+            foreach (var parameter in signature.functionPointerParameterList().type_())
+            {
+                if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, parameter, out var parameterType))
+                {
+                    return false;
+                }
+
+                parameterTypes.Add(parameterType);
+            }
+
+            typeReference = new StarkPackageTypeReference(
+                "functionpointer",
+                FunctionKind: RenderPublishedFunctionPointerKind(signature.functionKind().GetText()),
+                ReturnType: returnType,
+                ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray());
+            return true;
+        }
+
         if (type.integerType() is { } integerType)
         {
             var text = integerType.INTEGER_TYPE().GetText();
@@ -4003,12 +4035,24 @@ internal static partial class PackageImageBuilder
 
             typeReference = new StarkPackageTypeReference(
                 "integer",
-                BitWidth: bitWidth);
+                BitWidth: bitWidth,
+                IsUnsigned: text[0] == 'u' ? true : null);
             return true;
         }
 
         return type.simpleType() is { } simpleType
             && TryBuildPublishedAbiSimpleTypeReferenceFromSyntax(module, simpleType, out typeReference);
+    }
+
+    private static string RenderPublishedFunctionPointerKind(string kind)
+    {
+        return kind switch
+        {
+            "finite" => "finite",
+            "law" => "law",
+            "finitelaw" => "finite law",
+            _ => "fn"
+        };
     }
 
     private static bool TryBuildPublishedAbiSimpleTypeReferenceFromSyntax(

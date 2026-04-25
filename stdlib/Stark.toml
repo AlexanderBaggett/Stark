@@ -1,0 +1,8 @@
+[project]
+name = "stdlib"
+version = "0.1.0"
+kind = "library"
+
+[library]
+root = "src/System.stark"
+output = "System"

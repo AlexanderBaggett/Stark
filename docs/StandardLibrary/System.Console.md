@@ -14,6 +14,8 @@ public fn System.IO.IOStatus WriteError(unicode text);
 public fn System.IO.IOStatus WriteErrorLine(ascii text);
 public fn System.IO.IOStatus WriteErrorLine(unicode text);
 public fn Unicode ReadLine();
+public fn Ascii ReadAsciiLine();
+public fn Unicode ReadUnicodeLine();
 public fn Unicode Read();
 ```
 
@@ -24,9 +26,11 @@ public fn Unicode Read();
 - `WriteLine` and `WriteErrorLine` append `\n`.
 - The current surface returns `System.IO.IOStatus` instead of `void`.
 - `ReadLine` returns the next stdin line as `Unicode` without the trailing newline.
+- `ReadUnicodeLine` is an explicit-name alias for `ReadLine`.
+- `ReadAsciiLine` returns the next stdin line as byte-oriented `Ascii` without the trailing newline.
 - `Read` returns the next stdin code point as a one-element `Unicode`.
-- `ReadLine` and `Read` currently return empty `Unicode` on EOF or input failure.
-- The current input implementation reuses fixed internal `Unicode` backing buffers instead of allocating fresh storage for each call.
+- `ReadLine`, `ReadUnicodeLine`, `ReadAsciiLine`, and `Read` currently return empty text on EOF or input failure.
+- The current input implementation reuses fixed internal backing buffers instead of allocating fresh storage for each call. Copy the returned text into caller-owned storage if it must survive another console read.
 
 ## Error Model
 
@@ -52,6 +56,6 @@ export ffi fn i32 main() {
 ## Current Status
 
 - Output is implemented.
-- Basic `ReadLine` and `Read` input are implemented.
+- Basic `ReadLine`, `ReadUnicodeLine`, `ReadAsciiLine`, and `Read` input are implemented.
 - On Linux, the `ascii` and `unicode` stdout/stderr paths are syscall-backed through the internal platform layer, with `unicode` text encoded as UTF-8 before write.
 - `ReadLine` and `Read` decode UTF-8 stdin through a shared buffered console-input handle.

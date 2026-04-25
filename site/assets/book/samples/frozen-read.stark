@@ -1,0 +1,27 @@
+module Book.FrozenRead
+
+struct Box {
+    i32[min max] Value;
+}
+
+struct Holder {
+    Box Item;
+}
+
+const Holder Current = new Holder() {
+    Item = new Box() {
+        Value = 42
+    }
+};
+
+finite law i32[min max] ReadFrozen(frozen Box box) {
+    return box.Value;
+}
+
+export ffi fn i32[min max] main() {
+    if (ReadFrozen(Current.Item) != 42) {
+        return 1;
+    }
+
+    return 0;
+}

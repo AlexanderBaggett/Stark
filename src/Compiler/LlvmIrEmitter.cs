@@ -343,6 +343,10 @@ internal sealed class LlvmIrEmitter
 
         EmitMaterializedSpecializationDefinitions(builder, handledFunctionNames, resolveCallAbi);
 
+        var syntheticLambdaNames = _typeModel.Lambdas
+            .Select(static lambda => lambda.FunctionName)
+            .ToHashSet(StringComparer.Ordinal);
+
         foreach (var clone in _closedWorldImportedLawClones.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
         {
             var parameterEffects = GetParameterEffects(clone.FunctionName, hasBody: false);
@@ -376,6 +380,26 @@ internal sealed class LlvmIrEmitter
             var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody: false)
                 ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
             var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody: false);
+            var ssaFunction = _ssa.Functions.FirstOrDefault(function => string.Equals(function.Name, abiFunction.Name, StringComparison.Ordinal));
+            if (syntheticLambdaNames.Contains(abiFunction.Name)
+                && ssaFunction is { HasBody: true, SupportsDirectCodeGeneration: true })
+            {
+                builder.AppendLine($"; synthetic definition: {abiFunction.Name}");
+                EmitFunctionDefinition(
+                    builder,
+                    internalize: true,
+                    availableExternally: false,
+                    signature,
+                    abiFunction,
+                    effects,
+                    memoryEffects,
+                    ssaFunction,
+                    parameterEffects,
+                    resolveCallAbi);
+                builder.AppendLine();
+                continue;
+            }
+
             if (_referencedImportedFunctions.Contains(abiFunction.Name)
                 && TryEmitBuiltinFunctionDefinition(
                     builder,
@@ -398,7 +422,7 @@ internal sealed class LlvmIrEmitter
 
         _debugInfo.EmitModuleMetadata(builder);
 
-        return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd());
+        return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd(), _ssa.AddressTakenFunctions);
     }
 
     private static bool IsOpenGenericTemplate(TypedFunctionSignature signature) =>
@@ -579,8 +603,10 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
-            var isFfi = allFunctionEffects.TryGetValue(function.Name, out var effects) && effects.IsFfi;
-            functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi, namedTypes, enumLayouts);
+            allFunctionEffects.TryGetValue(function.Name, out var effects);
+            var isFfi = effects?.IsFfi == true;
+            var isVarargs = effects?.IsVarargs == true || function.IsVarargs;
+            functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi, namedTypes, enumLayouts, isVarargs);
         }
 
         return functions;
@@ -653,9 +679,10 @@ internal sealed class LlvmIrEmitter
         string symbolName,
         bool isFfi,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
-        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        bool isVarargs = false)
     {
-        return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(function, symbolName, isFfi, namedTypes, enumLayouts);
+        return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(function, symbolName, isFfi, namedTypes, enumLayouts, isVarargs);
     }
 
     private int? TryGetGlobalAlignmentBytes(StarkTypeSymbol type)
@@ -1570,6 +1597,7 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Float when type.BitWidth == 80 => "x86_fp80",
             StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
             StarkTypeKind.RawPointer => "ptr",
+            StarkTypeKind.FunctionPointer => "ptr",
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
             StarkTypeKind.Ascii => $"%{AsciiStringTypeName}",
@@ -1837,6 +1865,11 @@ internal sealed class LlvmIrEmitter
 
                 return;
             case StarkParser.LiteralContext parseLiteral:
+                if (parseLiteral.DOLLAR() is not null)
+                {
+                    return;
+                }
+
                 if (parseLiteral.StringLiteral() is { } literalString)
                 {
                     AddStringLiteral(literalString.GetText(), constants, ref index);

@@ -2,108 +2,13 @@ using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-internal sealed class StandardLibraryTestSuite
+/// <summary>
+/// Do not add files heres unless thye concern multiple pieces of the standard library simultaneously
+/// The normal Approach should be to create separate files per module so this file stays relatively lean
+/// </summary>
+
+public class StandardLibraryTestSuite
 {
-    private const string CollectionsGrowthMoveDropProgram = """
-        import System
-        module App
-
-        fn bool Ok(MemoryStatus status) {
-            switch (status) {
-                case MemoryStatus.Ok:
-                    return true;
-                case MemoryStatus.Err(var error):
-                    return false;
-            }
-        }
-
-        fn bool ConsumeList(List<i32[0 max]> values, i64[0 max] expected) {
-            return values.Count() == expected && values.Capacity() >= expected;
-        }
-
-        fn bool ConsumeStack(Stack<i32[0 max]> values, i64[0 max] expected) {
-            return values.Count() == expected && values.Peek() == 79;
-        }
-
-        fn bool ConsumeQueue(Queue<i32[0 max]> values, i64[0 max] expected) {
-            return values.Count() == expected && values.Peek() == 0;
-        }
-
-        fn bool ConsumeLinkedList(LinkedList<i32[0 max]> values, i64[0 max] expected) {
-            return values.Count() == expected;
-        }
-
-        fn bool ConsumeDictionary(Dictionary<i32[0 max], i32[0 max]> values, i64[0 max] expected) {
-            stack i32[0 max] key = 17;
-            stack mut i32[0 max] found = 0;
-            return values.Count() == expected
-                && values.ContainsKey(key)
-                && values.TryGet(key, found)
-                && found == 34;
-        }
-
-        export ffi fn i32[min max] main() {
-            stack mut List<i32[0 max]> list = new();
-            for willexit (stack mut i32[0 96] i = 0; i < 96; i += 1) {
-                if (!Ok(list.Push(i))) {
-                    return 1;
-                }
-            }
-
-            if (!ConsumeList(list, 96)) {
-                return 2;
-            }
-
-            stack mut Stack<i32[0 max]> stackValues = new();
-            for willexit (stack mut i32[0 80] i = 0; i < 80; i += 1) {
-                if (!Ok(stackValues.Push(i))) {
-                    return 3;
-                }
-            }
-
-            if (!ConsumeStack(stackValues, 80)) {
-                return 4;
-            }
-
-            stack mut Queue<i32[0 max]> queue = new();
-            for willexit (stack mut i32[0 96] i = 0; i < 96; i += 1) {
-                if (!Ok(queue.Enqueue(i))) {
-                    return 5;
-                }
-            }
-
-            if (!ConsumeQueue(queue, 96)) {
-                return 6;
-            }
-
-            stack mut LinkedList<i32[0 max]> linked = new();
-            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
-                if (!Ok(linked.AddLast(i))) {
-                    return 7;
-                }
-            }
-
-            if (!ConsumeLinkedList(linked, 48)) {
-                return 8;
-            }
-
-            stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
-            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
-                stack i32[0 max] key = i;
-                stack i32[0 max] value = (i32[0 max])(i * 2);
-                if (!Ok(dictionary.Set(key, value))) {
-                    return 9;
-                }
-            }
-
-            if (!ConsumeDictionary(dictionary, 64)) {
-                return 10;
-            }
-
-            return 0;
-        }
-        """;
-
     public void StdLibSourceGraphIncludesMilestone7ModuleLayout()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -122,12 +27,17 @@ internal sealed class StandardLibraryTestSuite
         Assert.True(moduleGraph.ContainsLoadedModule("System.BitOperations"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Collections"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Console"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.FileSystem"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.File"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.Path"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Math"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Memory"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Net"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Net.Tcp"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Process"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Text"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Threading"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Buffer"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
@@ -137,6 +47,161 @@ internal sealed class StandardLibraryTestSuite
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stdout"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stderr"));
     }
+
+    public void StdLibSourceCommonErrorResultModelUsesCompactEnumLayouts()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibCommonErrorResultModel.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System
+                module Demo
+
+                fn i32[-2147483648 2147483647] ReadIo(System.IO.IOResult<i32[-2147483648 2147483647]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Err(var error):
+                            return 0;
+                    }
+                }
+
+                fn i32[-2147483648 2147483647] ReadMemory(System.Memory.MemoryResult<i32[-2147483648 2147483647]> result) {
+                    switch (result) {
+                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            return value;
+                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Err(var error):
+                            return 0;
+                    }
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "enum-layout"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.EnumLayoutModel, out EnumLayoutModel? enumLayoutModel));
+        Assert.NotNull(enumLayoutModel);
+
+        AssertStdLibCommonErrorResultLayouts(enumLayoutModel.Layouts);
+    }
+
+    public async Task PackagedStdLibCommonErrorResultModelWorksWithoutSource()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-result-model-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+
+        try
+        {
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.Contains("Emitted package image:", stdout.ToString());
+            Assert.Contains($"Package library file: {libraryFileName}", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(manifestPath));
+
+            var appSource =
+                """
+                import System
+                module App
+
+                fn i32[-2147483648 2147483647] ReadIo(System.IO.IOResult<i32[-2147483648 2147483647]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Err(var error):
+                            return 0;
+                    }
+                }
+
+                fn bool IsIoOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i32[-2147483648 2147483647] ReadMemory(System.Memory.MemoryResult<i32[-2147483648 2147483647]> result) {
+                    switch (result) {
+                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            return value;
+                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Err(var error):
+                            return 0;
+                    }
+                }
+
+                fn bool IsMemoryOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i32[-2147483648 2147483647] Run() {
+                    stack System.IO.IOResult<i32[-2147483648 2147483647]> ioResult =
+                        System.IO.IOResult<i32[-2147483648 2147483647]>.Ok(7);
+                    stack System.Memory.MemoryResult<i32[-2147483648 2147483647]> memoryResult =
+                        System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Ok(11);
+
+                    if (!IsIoOk(System.IO.IOStatus.Ok)) {
+                        return 1;
+                    }
+
+                    if (!IsMemoryOk(System.Memory.MemoryStatus.Ok)) {
+                        return 2;
+                    }
+
+                    return ReadIo(ioResult) + ReadMemory(memoryResult);
+                }
+                """;
+            await File.WriteAllTextAsync(appPath, appSource);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(appSource, appPath),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    StopAfterPassId: "enum-layout"));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.EnumLayoutModel, out EnumLayoutModel? enumLayoutModel));
+            Assert.NotNull(enumLayoutModel);
+
+            AssertStdLibCommonErrorResultLayouts(enumLayoutModel.Layouts);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     public async Task StdLibPackageBuildsFromRepositorySources()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -174,24 +239,51 @@ internal sealed class StandardLibraryTestSuite
             Assert.Contains(modules, module => module.ModuleName == "System");
             Assert.Contains(modules, module => module.ModuleName == "System.BitOperations");
             Assert.Contains(modules, module => module.ModuleName == "System.Console");
+            Assert.Contains(modules, module => module.ModuleName == "System.FileSystem");
             Assert.Contains(modules, module => module.ModuleName == "System.IO");
             Assert.Contains(modules, module => module.ModuleName == "System.IO.File");
             Assert.Contains(modules, module => module.ModuleName == "System.IO.Path");
             Assert.Contains(modules, module => module.ModuleName == "System.Math");
             Assert.Contains(modules, module => module.ModuleName == "System.Memory");
+            Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Buffer");
+            Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform");
+            Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
             Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
             Assert.Contains(modules, module => module.ModuleName == "System.Text");
-            Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Buffer");
 
             var rootModule = modules.Single(module => module.ModuleName == "System");
             var reExports = rootModule.EffectiveSourceSurface.ReExports?.Select(static item => item.ModuleName).ToArray() ?? [];
             Assert.Contains("System.BitOperations", reExports);
             Assert.Contains("System.Collections", reExports);
             Assert.Contains("System.Console", reExports);
+            Assert.Contains("System.FileSystem", reExports);
             Assert.Contains("System.IO", reExports);
             Assert.Contains("System.Math", reExports);
             Assert.Contains("System.Memory", reExports);
             Assert.Contains("System.Text", reExports);
+
+            var fileSystemModule = modules.Single(module => module.ModuleName == "System.FileSystem");
+            var fileSystemTypes = fileSystemModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
+            var fileSystemFunctions = fileSystemModule.EffectiveSourceSurface.Functions?.Select(static item => item.Name).ToArray() ?? [];
+            Assert.Contains("Directory", fileSystemTypes);
+            Assert.Contains("DirectoryReadResult", fileSystemTypes);
+            Assert.Contains("FileSystemEntry", fileSystemTypes);
+            Assert.Contains("FileSystemEntryKind", fileSystemTypes);
+            Assert.Contains("CreateDirectory", fileSystemFunctions);
+            Assert.Contains("DeleteDirectory", fileSystemFunctions);
+            Assert.Contains("OpenDirectory", fileSystemFunctions);
+            Assert.Contains("Exists", fileSystemFunctions);
+            Assert.Contains("IsFile", fileSystemFunctions);
+            Assert.Contains("IsDirectory", fileSystemFunctions);
+
+            var threadingModule = modules.Single(module => module.ModuleName == "System.Threading");
+            var threadingTypes = threadingModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
+            var threadingAliases = threadingModule.EffectiveSourceSurface.TypeAliases?.Select(static item => item.Name).ToArray() ?? [];
+            Assert.Contains("Thread", threadingTypes);
+            Assert.Contains("ThreadError", threadingTypes);
+            Assert.Contains("ThreadStatus", threadingTypes);
+            Assert.Contains("ThreadJoinResult", threadingTypes);
+            Assert.Contains("ThreadEntry", threadingAliases);
 
             var ioModule = modules.Single(module => module.ModuleName == "System.IO");
             var ioReExports = ioModule.EffectiveSourceSurface.ReExports?.Select(static item => item.ModuleName).ToArray() ?? [];
@@ -273,247 +365,6 @@ internal sealed class StandardLibraryTestSuite
         }
     }
 
-    public void StdLibSourceMemoryModuleSupportsDefaultAllocatorSurface()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibMemorySurface.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(
-                """
-                import System
-                module Demo
-
-                fn bool UseDefaultAllocator() {
-                    stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
-                    return allocator.IsDefault();
-                }
-                """,
-                appPath),
-            new CompilerOptions(
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-    }
-
-    public void StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibCollectionsSurface.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(
-                """
-                import System
-                module Demo
-
-                fn bool Ok(MemoryStatus status) {
-                    switch (status) {
-                        case MemoryStatus.Ok:
-                            return true;
-                        case MemoryStatus.Err(var error):
-                            return false;
-                    }
-                }
-
-                fn bool UseCollections() {
-                    stack mut List<i32[0 max]> values = new();
-                    if (!Ok(values.Push(10))) {
-                        return false;
-                    }
-                    values.GetMut(0) = 11;
-                    values.AsMutableSlice()[0] = 12;
-                    if (values.Get(0) != 12) {
-                        return false;
-                    }
-                    if (values.AsSlice()[0] != 12) {
-                        return false;
-                    }
-                    stack mut i32[0 max] popped = 0;
-                    if (!values.TryPop(popped) || popped != 12 || values.Count() != 0) {
-                        return false;
-                    }
-
-                    stack mut Stack<i32[0 max]> numbers = new();
-                    if (!Ok(numbers.Push(20))) {
-                        return false;
-                    }
-                    if (numbers.Peek() != 20) {
-                        return false;
-                    }
-                    if (!numbers.TryPop(popped) || popped != 20 || numbers.Count() != 0) {
-                        return false;
-                    }
-
-                    stack mut Queue<i32[0 max]> queue = new();
-                    if (!Ok(queue.Enqueue(30))) {
-                        return false;
-                    }
-                    if (queue.Peek() != 30) {
-                        return false;
-                    }
-                    if (!queue.TryDequeue(popped) || popped != 30 || queue.Count() != 0) {
-                        return false;
-                    }
-
-                    stack mut LinkedList<i32[0 max]> linked = new();
-                    if (!Ok(linked.AddFirst(40))) {
-                        return false;
-                    }
-                    if (!Ok(linked.AddLast(50))) {
-                        return false;
-                    }
-                    if (!linked.TryRemoveFirst(popped) || popped != 40 || linked.Count() != 1) {
-                        return false;
-                    }
-                    if (!linked.TryRemoveLast(popped) || popped != 50 || linked.Count() != 0) {
-                        return false;
-                    }
-
-                    stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
-                    stack i32[0 max] dictionaryKey = 3;
-                    if (!Ok(dictionary.Set(dictionaryKey, 33))) {
-                        return false;
-                    }
-                    if (!dictionary.ContainsKey(dictionaryKey)) {
-                        return false;
-                    }
-                    stack mut i32[0 max] found = 0;
-                    if (!dictionary.TryGet(dictionaryKey, found) || found != 33) {
-                        return false;
-                    }
-                    if (!dictionary.Remove(dictionaryKey) || dictionary.ContainsKey(dictionaryKey) || dictionary.Count() != 0) {
-                        return false;
-                    }
-
-                    return values.Capacity() >= 1;
-                }
-                """,
-                appPath),
-            new CompilerOptions(
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-    }
-
-    public async Task SourceStdLibCollectionsGrowMoveDropExecutableRuns()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-collections-source-");
-        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
-        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
-
-        try
-        {
-            await File.WriteAllTextAsync(appPath, CollectionsGrowthMoveDropProgram);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.True(
-                exitCode == 0,
-                stdout + Environment.NewLine + stderr);
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
-            Assert.Equal(0, execution.ExitCode);
-            Assert.Equal(string.Empty, execution.Stdout);
-            Assert.Equal(string.Empty, execution.Stderr);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-
-    public async Task PackagedStdLibCollectionsGrowMoveDropExecutableRunsWithoutSource()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-collections-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.True(
-                buildExitCode == 0,
-                buildStdout + Environment.NewLine + buildStderr);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(appPath, CollectionsGrowthMoveDropProgram);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.True(
-                exitCode == 0,
-                stdout + Environment.NewLine + stderr);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, string.Empty);
-            Assert.Equal(0, execution.ExitCode);
-            Assert.Equal(string.Empty, execution.Stdout);
-            Assert.Equal(string.Empty, execution.Stderr);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-
     public void StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -556,8 +407,12 @@ internal sealed class StandardLibraryTestSuite
 
                 fn void Use() {
                     stack Unicode line = System.Console.ReadLine();
+                    stack Ascii asciiLine = System.Console.ReadAsciiLine();
+                    stack Unicode unicodeLine = System.Console.ReadUnicodeLine();
                     stack Unicode unit = System.Console.Read();
                     System.Console.WriteLine(System.Text.UnicodeView(line));
+                    System.Console.WriteLine(System.Text.AsciiView(asciiLine));
+                    System.Console.WriteLine(System.Text.UnicodeView(unicodeLine));
                     System.Console.WriteLine(System.Text.UnicodeView(unit));
                     return;
                 }
@@ -592,26 +447,39 @@ internal sealed class StandardLibraryTestSuite
 
                 export ffi fn i32[-2147483648 2147483647] main() {
                     stack Unicode line = System.Console.ReadLine();
+                    stack Ascii asciiLine = System.Console.ReadAsciiLine();
                     stack Unicode unit = System.Console.Read();
 
                     if (line.Length != 5) {
                         return 1;
                     }
 
-                    if (unit.Length != 1) {
+                    if (asciiLine.Length != 5) {
                         return 2;
                     }
 
-                    if (line.Data == null || *line.Data != 104) {
+                    if (unit.Length != 1) {
                         return 3;
                     }
 
-                    if (*(&line.Data[1]) != 101) {
+                    if (line.Data == null || *line.Data != 104) {
                         return 4;
                     }
 
-                    if (unit.Data == null || *unit.Data != 945) {
+                    if (*(&line.Data[1]) != 101) {
                         return 5;
+                    }
+
+                    if (asciiLine.Data == null || *asciiLine.Data != 98) {
+                        return 6;
+                    }
+
+                    if (*(&asciiLine.Data[1]) != 121) {
+                        return 7;
+                    }
+
+                    if (unit.Data == null || *unit.Data != 945) {
+                        return 8;
                     }
 
                     return 0;
@@ -648,60 +516,6 @@ internal sealed class StandardLibraryTestSuite
                 // Best effort cleanup only.
             }
         }
-    }
-    public void StdLibSourceRawFileHandlesSupportAsciiAndUnicodeWriteOverloads()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibFileUnicodeSurface.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(
-                """
-                import System
-                module Demo
-
-                fn void Use() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("demo.txt");
-                    System.IO.File.WriteText(handle, "ascii");
-                    System.IO.File.WriteText(handle, (unicode)"ascii");
-                    System.IO.File.WriteLine(handle, "line");
-                    System.IO.File.WriteLine(handle, (unicode)"line");
-                    System.IO.File.Close(handle);
-                    return;
-                }
-                """,
-                appPath),
-            new CompilerOptions(
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-    }
-    public void StdLibSourceOwnedFileHandlesSupportAsciiAndUnicodeWriteOverloads()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibOwnedFileUnicodeSurface.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(
-                """
-                import System
-                module Demo
-
-                fn void Use() {
-                    stack mut System.IO.File.File file = System.IO.File.Open("demo.txt", System.IO.File.FileMode.Write);
-                    file.WriteText("ascii");
-                    file.WriteText((unicode)"ascii");
-                    file.WriteLine("line");
-                    file.WriteLine((unicode)"line");
-                    file.Close();
-                    return;
-                }
-                """,
-                appPath),
-            new CompilerOptions(
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
     public void StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile()
     {
@@ -861,7 +675,7 @@ internal sealed class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        Assert.Contains("define fastcc i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("inttoptr i8 1 to ptr", llvm, StringComparison.Ordinal);
@@ -883,7 +697,7 @@ internal sealed class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        Assert.Contains("define fastcc i32 @WriteUnicodeToHandle(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @WriteUnicodeToHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fputws(", llvm, StringComparison.Ordinal);
     }
@@ -903,10 +717,10 @@ internal sealed class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        Assert.Contains("define fastcc ptr @OpenFileRead(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc i32 @CloseFile(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc i64 @ReadFile(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc i64 @WriteFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @OpenFileRead(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @CloseFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @ReadFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @WriteFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall4OpenAt(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall1Handle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
@@ -918,32 +732,6 @@ internal sealed class StandardLibraryTestSuite
         Assert.DoesNotContain("@fwrite(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@remove(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@rename(", llvm, StringComparison.Ordinal);
-    }
-    public void StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(
-                File.ReadAllText(filePath),
-                filePath),
-            new CompilerOptions(
-                EmitLlvmIr: true,
-                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        var appendBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc i1 @File_TryAppendBufferedAscii(",
-            "Expected File.TryAppendBufferedAscii definition in emitted LLVM.");
-
-        Assert.Contains("define void @CopyAsciiBytes(", llvm, StringComparison.Ordinal);
-        Assert.Contains("rep movsb", llvm, StringComparison.Ordinal);
-        Assert.Contains("call void @CopyAsciiBytes(", appendBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@llvm.memcpy", appendBody, StringComparison.Ordinal);
     }
     public void StdLibSourceLinuxFileExistsUsesStatSyscallPath()
     {
@@ -965,12 +753,22 @@ internal sealed class StandardLibraryTestSuite
 
         var functionBody = ExtractDefinedFunctionText(
             llvm,
-            "define fastcc i1 @FileExists(",
+            "define fastcc noundef i1 @FileExists(",
             "Expected FileExists definition in emitted LLVM.");
+        var pathExistsBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @PathExists(",
+            "Expected PathExists definition in emitted LLVM.");
+        var helperBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryReadPathMode(",
+            "Expected TryReadPathMode definition in emitted LLVM.");
 
-        Assert.Contains("call i64 @LinuxSyscall4StatAt(", functionBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@OpenFileRead(", functionBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@CloseFile(", functionBody, StringComparison.Ordinal);
+        Assert.Contains("@PathExists(", functionBody, StringComparison.Ordinal);
+        Assert.Contains("@TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall4StatAt(", helperBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@OpenFileRead(", helperBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@CloseFile(", helperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@stat(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fstatat(", llvm, StringComparison.Ordinal);
     }
@@ -991,7 +789,7 @@ internal sealed class StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define i64 @LinuxSyscall3HandleRequestPointer(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc i1 @IsTerminal(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @IsTerminal(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleRequestPointer(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@isatty(", llvm, StringComparison.Ordinal);
     }
@@ -1024,10 +822,10 @@ internal sealed class StandardLibraryTestSuite
         Assert.DoesNotContain("@System_Runtime_Platform_Windows_WriteFile__", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_Windows_ReadFile__", llvm, StringComparison.Ordinal);
 
-        Assert.Contains("define fastcc i32 @WriteStdoutAscii(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc ptr @OpenFileRead(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc i32 @DeleteFile(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc i1 @FileExists(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @WriteStdoutAscii(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @OpenFileRead(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @DeleteFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @FileExists(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @GetStdHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @CreateFileW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
@@ -1059,7 +857,7 @@ internal sealed class StandardLibraryTestSuite
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var copyBody = ExtractDefinedFunctionText(
             llvm,
-            "define fastcc i1 @TryCopyWideRange(",
+            "define fastcc noundef i1 @TryCopyWideRange(",
             "Expected TryCopyWideRange definition in emitted LLVM.");
 
         Assert.Contains("define void @CopyWideUnits(", llvm, StringComparison.Ordinal);
@@ -1168,57 +966,6 @@ internal sealed class StandardLibraryTestSuite
             log => log.Kind == CompilerLogKind.Gap
                 && string.Equals(log.SymbolName, "System.Runtime.Platform.Windows.WriteBufferToHandle", StringComparison.Ordinal)
                 && string.Equals(log.Operation, "EmitAssignmentFromExpression", StringComparison.Ordinal));
-    }
-    public void StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizationRules()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-path-");
-
-        try
-        {
-            var stagedSourceRoot = CreateWindowsStagedStdLibSourceRoot(repositoryRoot, tempDirectory.FullName);
-            var pathModulePath = Path.Combine(stagedSourceRoot, "System", "IO", "Path.stark");
-            var result = DefaultCompilerPipeline.Create().Run(
-                new CompilationInput(
-                    File.ReadAllText(pathModulePath),
-                    pathModulePath),
-                new CompilerOptions(
-                    EmitLlvmIr: true,
-                    TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null),
-                    ModuleResolver: new FileSystemModuleResolver(stagedSourceRoot)));
-
-            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-
-            Assert.Contains("c\"\\5C\\00\"", llvm, StringComparison.Ordinal);
-            Assert.Contains("c\"/\\00\"", llvm, StringComparison.Ordinal);
-            Assert.Contains("c\";\\00\"", llvm, StringComparison.Ordinal);
-
-            var isDirectorySeparatorBody = ExtractDefinedFunctionText(
-                llvm,
-                "define internal fastcc i1 @__stark_law_clone_System_Runtime_Platform_Windows_IsDirectorySeparator(",
-                "Expected staged Windows path build to emit the Windows separator law clone.");
-            Assert.Contains("icmp eq i8", isDirectorySeparatorBody, StringComparison.Ordinal);
-            Assert.Contains(", 47", isDirectorySeparatorBody, StringComparison.Ordinal);
-            Assert.Contains(", 92", isDirectorySeparatorBody, StringComparison.Ordinal);
-
-            var tryJoinBody = ExtractDefinedFunctionText(
-                llvm,
-                "define fastcc i1 @TryJoin(",
-                "Expected TryJoin definition in staged Windows path module.");
-            Assert.Contains("call fastcc i1 @IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
     }
     public void SystemSyscallModuleSelectsExpectedLinuxShimPerArchitecture(string targetTriple, string expectedInlineAsm)
     {
@@ -1841,111 +1588,6 @@ internal sealed class StandardLibraryTestSuite
             }
         }
     }
-    public async Task PackagedStdLibUnicodeConsoleAndRawFileWritesWorkWithoutSource()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-unicode-io-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                """
-                import System
-                module App
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("unicode.txt");
-                    if (handle == null) {
-                        return 1;
-                    }
-
-                    System.IO.File.WriteLine(handle, (unicode)"File \u03B1");
-                    if (System.IO.File.Close(handle) != 0) {
-                        return 2;
-                    }
-
-                    switch (System.Console.WriteLine((unicode)"Console \u03B1")) {
-                        case System.IO.IOStatus.Ok:
-                            return 0;
-                        case System.IO.IOStatus.Err(var error):
-                            return 3;
-                    }
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal("Console α\n", processStdout);
-            Assert.Equal(string.Empty, processStderr);
-            Assert.Equal("File α\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "unicode.txt")));
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
     public async Task PackagedStdLibUnicodeConsoleInputWorksWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -1987,26 +1629,39 @@ internal sealed class StandardLibraryTestSuite
 
                 export ffi fn i32[-2147483648 2147483647] main() {
                     stack Unicode line = System.Console.ReadLine();
+                    stack Ascii asciiLine = System.Console.ReadAsciiLine();
                     stack Unicode unit = System.Console.Read();
 
                     if (line.Length != 5) {
                         return 1;
                     }
 
-                    if (unit.Length != 1) {
+                    if (asciiLine.Length != 5) {
                         return 2;
+                    }
+
+                    if (unit.Length != 1) {
+                        return 3;
                     }
 
                     if (line.Data == null || *line.Data != 104) {
-                        return 3;
+                        return 4;
                     }
 
                     if (*(&line.Data[1]) != 101) {
-                        return 4;
+                        return 5;
+                    }
+
+                    if (asciiLine.Data == null || *asciiLine.Data != 98) {
+                        return 6;
+                    }
+
+                    if (*(&asciiLine.Data[1]) != 121) {
+                        return 7;
                     }
 
                     if (unit.Data == null || *unit.Data != 945) {
-                        return 5;
+                        return 8;
                     }
 
                     return 0;
@@ -2027,744 +1682,10 @@ internal sealed class StandardLibraryTestSuite
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
-            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, "hello\nα");
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, "hello\nbytes\nα");
             Assert.Equal(0, execution.ExitCode);
             Assert.Equal(string.Empty, execution.Stdout);
             Assert.Equal(string.Empty, execution.Stderr);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-owned-file-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                """
-                import System
-                module App
-
-                fn void WriteOwned() {
-                    stack mut System.IO.File.File file = System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write);
-                    file.WriteLine("Owned");
-                    return;
-                }
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    WriteOwned();
-
-                    if (!System.IO.File.Exists("owned-test.txt")) {
-                        return 2;
-                    }
-
-                    if (System.IO.File.Exists("missing-test.txt")) {
-                        return 3;
-                    }
-
-                    stack mut i8[-128 127][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead("owned-test.txt");
-                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
-                    System.IO.File.Close(handle);
-
-                    if (count != 6) {
-                        return 4;
-                    }
-
-                    return 0;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, processStdout);
-            Assert.Equal(string.Empty, processStderr);
-            Assert.Equal("Owned\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "owned-test.txt")));
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSource()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || !OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-unicode-path-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        var workingDirectory = Path.Combine(appDirectory, "unicode-\u03B1-\u65E5");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-        Directory.CreateDirectory(workingDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "System.lib");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app.exe");
-        var currentDirectoryZeros = string.Join(", ", Enumerable.Repeat("0", 512));
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                $$"""
-                import System
-                module App
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][512] cwdStorage = { {{currentDirectoryZeros}} };
-                    stack mut Ascii cwd = new Ascii() {
-                        Data = &cwdStorage[0],
-                        Length = 0,
-                        Capacity = 512
-                    };
-                    stack mut i8[-128 127][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
-                    stack mut Ascii ownedName = new Ascii() {
-                        Data = &ownedNameBytes[0],
-                        Length = 12,
-                        Capacity = 12
-                    };
-                    stack mut i8[-128 127][14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
-                    stack mut Ascii renamedName = new Ascii() {
-                        Data = &renamedNameBytes[0],
-                        Length = 14,
-                        Capacity = 14
-                    };
-                    stack mut i8[-128 127][13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
-                    stack mut Ascii deleteName = new Ascii() {
-                        Data = &deleteNameBytes[0],
-                        Length = 13,
-                        Capacity = 13
-                    };
-
-                    if (!System.IO.Path.CurrentDirectory(&cwd)) {
-                        return 1;
-                    }
-
-                    stack rawptr<i8[-128 127]> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
-                    if (cwdHandle == null) {
-                        return 2;
-                    }
-
-                    System.IO.File.WriteLine(cwdHandle, System.Text.AsciiView(cwd));
-                    if (System.IO.File.Close(cwdHandle) != 0) {
-                        return 3;
-                    }
-
-                    stack mut System.IO.File.File file = System.IO.File.Open(System.Text.AsciiView(ownedName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line);
-                    file.WriteLine((unicode)"Owned");
-                    if (file.Close() != 0) {
-                        return 4;
-                    }
-
-                    ownedName = new Ascii() {
-                        Data = &ownedNameBytes[0],
-                        Length = 12,
-                        Capacity = 12
-                    };
-                    if (!System.IO.File.Exists(System.Text.AsciiView(ownedName))) {
-                        return 5;
-                    }
-
-                    ownedName = new Ascii() {
-                        Data = &ownedNameBytes[0],
-                        Length = 12,
-                        Capacity = 12
-                    };
-                    renamedName = new Ascii() {
-                        Data = &renamedNameBytes[0],
-                        Length = 14,
-                        Capacity = 14
-                    };
-                    if (System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName)) != 0) {
-                        return 6;
-                    }
-
-                    renamedName = new Ascii() {
-                        Data = &renamedNameBytes[0],
-                        Length = 14,
-                        Capacity = 14
-                    };
-                    if (!System.IO.File.Exists(System.Text.AsciiView(renamedName))) {
-                        return 7;
-                    }
-
-                    stack rawptr<i8[-128 127]> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
-                    if (deleteHandle == null) {
-                        return 8;
-                    }
-
-                    System.IO.File.WriteLine(deleteHandle, "Delete");
-                    if (System.IO.File.Close(deleteHandle) != 0) {
-                        return 9;
-                    }
-
-                    deleteName = new Ascii() {
-                        Data = &deleteNameBytes[0],
-                        Length = 13,
-                        Capacity = 13
-                    };
-                    if (System.IO.File.Delete(System.Text.AsciiView(deleteName)) != 0) {
-                        return 10;
-                    }
-
-                    deleteName = new Ascii() {
-                        Data = &deleteNameBytes[0],
-                        Length = 13,
-                        Capacity = 13
-                    };
-                    if (System.IO.File.Exists(System.Text.AsciiView(deleteName))) {
-                        return 11;
-                    }
-
-                    return 0;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, processStdout);
-            Assert.Equal(string.Empty, processStderr);
-            Assert.Equal(
-                workingDirectory + "\n",
-                await File.ReadAllTextAsync(Path.Combine(workingDirectory, "cwd.txt"), System.Text.Encoding.UTF8));
-            Assert.Equal(
-                "Owned\n",
-                await File.ReadAllTextAsync(Path.Combine(workingDirectory, "renamed-\u03B2.txt"), System.Text.Encoding.UTF8));
-            Assert.False(File.Exists(Path.Combine(workingDirectory, "owned-\u03B1.txt")));
-            Assert.False(File.Exists(Path.Combine(workingDirectory, "delete-\u03B3.txt")));
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibFileBufferingModesBehaveAsExpected()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-buffering-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                """
-                import System
-                module App
-
-                fn i64[-9223372036854775808 9223372036854775807] ReadCount(ascii path, i64[-9223372036854775808 9223372036854775807] expected) {
-                    stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead(path);
-                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
-                    System.IO.File.Close(handle);
-                    return count;
-                }
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut System.IO.File.File defaulted = System.IO.File.Open("default.txt", System.IO.File.FileMode.Write);
-                    defaulted.WriteLine("Default");
-                    if (ReadCount("default.txt", 8) != 0) {
-                        return 1;
-                    }
-
-                    if (defaulted.Close() != 0) {
-                        return 2;
-                    }
-
-                    if (ReadCount("default.txt", 8) != 8) {
-                        return 3;
-                    }
-
-                    stack mut System.IO.File.File full = System.IO.File.Open("full.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Full);
-                    full.WriteLine("Full");
-                    if (ReadCount("full.txt", 5) != 0) {
-                        return 4;
-                    }
-
-                    if (full.Flush() != 0) {
-                        return 5;
-                    }
-
-                    if (ReadCount("full.txt", 5) != 5) {
-                        return 6;
-                    }
-
-                    if (full.Close() != 0) {
-                        return 7;
-                    }
-
-                    stack mut System.IO.File.File line = System.IO.File.Open("line.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line);
-                    line.WriteLine("Line");
-                    if (ReadCount("line.txt", 5) != 5) {
-                        return 8;
-                    }
-
-                    if (line.Close() != 0) {
-                        return 9;
-                    }
-
-                    stack mut System.IO.File.File none = System.IO.File.Open("none.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
-                    none.WriteText("None");
-                    if (ReadCount("none.txt", 4) != 4) {
-                        return 10;
-                    }
-
-                    if (none.Close() != 0) {
-                        return 11;
-                    }
-
-                    return 0;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, processStdout);
-            Assert.Equal(string.Empty, processStderr);
-            Assert.Equal("Default\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "default.txt")));
-            Assert.Equal("Full\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "full.txt")));
-            Assert.Equal("Line\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "line.txt")));
-            Assert.Equal("None", await File.ReadAllTextAsync(Path.Combine(appDirectory, "none.txt")));
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibOwnedFileWritesHonorExplicitTextEncodings()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-file-encodings-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                """
-                import System
-                module App
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i32[-2147483648 2147483647][1] gothicBuffer = { 66376 };
-                    stack mut Unicode gothic = new Unicode() {
-                        Data = &gothicBuffer[0],
-                        Length = 1,
-                        Capacity = 1
-                    };
-
-                    stack mut System.IO.File.File utf8 = System.IO.File.Open("utf8.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8);
-                    utf8.WriteText("Hi ");
-                    utf8.WriteLine((unicode)"α");
-                    if (utf8.Close() != 0) {
-                        return 1;
-                    }
-
-                    stack mut System.IO.File.File utf16 = System.IO.File.Open("utf16.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16);
-                    utf16.WriteText("A");
-                    utf16.WriteText(System.Text.UnicodeView(gothic));
-                    utf16.WriteLine((unicode)"β");
-                    if (utf16.Close() != 0) {
-                        return 2;
-                    }
-
-                    gothic = new Unicode() {
-                        Data = &gothicBuffer[0],
-                        Length = 1,
-                        Capacity = 1
-                    };
-
-                    stack mut System.IO.File.File utf32 = System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32);
-                    utf32.WriteText("Z");
-                    utf32.WriteText(System.Text.UnicodeView(gothic));
-                    utf32.WriteLine((unicode)"γ");
-                    if (utf32.Close() != 0) {
-                        return 3;
-                    }
-
-                    return 0;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, processStdout);
-            Assert.Equal(string.Empty, processStderr);
-
-            var gothic = char.ConvertFromUtf32(66376);
-            Assert.Equal(
-                System.Text.Encoding.UTF8.GetBytes("Hi α\n"),
-                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf8.txt")));
-            Assert.Equal(
-                System.Text.Encoding.Unicode.GetBytes("A" + gothic + "β\n"),
-                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16.txt")));
-            Assert.Equal(
-                System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "γ\n"),
-                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf32.txt")));
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibFileMoveDeleteAndExistsRoundTrip()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-move-delete-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                """
-                import System
-                module App
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("before.txt");
-                    if (handle == null) {
-                        return 1;
-                    }
-
-                    System.IO.File.WriteLine(handle, "Move me");
-                    if (System.IO.File.Close(handle) != 0) {
-                        return 2;
-                    }
-
-                    if (!System.IO.File.Exists("before.txt")) {
-                        return 3;
-                    }
-
-                    if (System.IO.File.Move("before.txt", "after.txt") != 0) {
-                        return 4;
-                    }
-
-                    if (System.IO.File.Exists("before.txt")) {
-                        return 5;
-                    }
-
-                    if (!System.IO.File.Exists("after.txt")) {
-                        return 6;
-                    }
-
-                    if (System.IO.File.Delete("after.txt") != 0) {
-                        return 7;
-                    }
-
-                    if (System.IO.File.Exists("after.txt")) {
-                        return 8;
-                    }
-
-                    return 0;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, processStdout);
-            Assert.Equal(string.Empty, processStderr);
-            Assert.False(File.Exists(Path.Combine(appDirectory, "before.txt")));
-            Assert.False(File.Exists(Path.Combine(appDirectory, "after.txt")));
         }
         finally
         {
@@ -2831,307 +1752,6 @@ internal sealed class StandardLibraryTestSuite
             {
                 FileName = outputPath,
                 WorkingDirectory = tempDirectory.FullName,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, processStdout);
-            Assert.Equal(string.Empty, processStderr);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBuffer()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
-            || OperatingSystem.IsWindows()
-            || !targetInfo.Triple.StartsWith("x86_64", StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-current-directory-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-        var zeroBytes = string.Join(", ", Enumerable.Repeat("0", 256));
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                $$"""
-                import System
-                module App
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][256] buffer = { {{zeroBytes}} };
-                    stack mut Ascii owned = new Ascii() {
-                        Data = &buffer[0],
-                        Length = 0,
-                        Capacity = 256
-                    };
-
-                    if (!System.IO.Path.CurrentDirectory(&owned)) {
-                        return 1;
-                    }
-
-                    if (owned.Length <= 0) {
-                        return 2;
-                    }
-
-                    stack System.IO.IOStatus status = System.Console.WriteLine(System.Text.AsciiView(owned));
-                    switch (status) {
-                        case System.IO.IOStatus.Ok:
-                            return 0;
-                        case System.IO.IOStatus.Err(var error):
-                            return 3;
-                    }
-
-                    return 4;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            Assert.NotNull(process);
-            var processStdout = await process!.StandardOutput.ReadToEndAsync();
-            var processStderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            Assert.Equal(0, process.ExitCode);
-            Assert.Equal(appDirectory + "\n", processStdout);
-            Assert.Equal(string.Empty, processStderr);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibPathHelpersWorkWithoutSource()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
-            || OperatingSystem.IsWindows()
-            || !targetInfo.Triple.StartsWith("x86_64", StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-path-helpers-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, "app");
-        var zeroBytes = string.Join(", ", Enumerable.Repeat("0", 64));
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await File.WriteAllTextAsync(
-                appPath,
-                $$"""
-                import System
-                module App
-
-                fn bool IsJoinedPath(ascii value) {
-                    switch (value) {
-                        case "alpha/beta.txt":
-                            return true;
-                        default:
-                            return false;
-                    }
-                }
-
-                fn bool IsTextExtension(ascii value) {
-                    switch (value) {
-                        case ".txt":
-                            return true;
-                        default:
-                            return false;
-                    }
-                }
-
-                fn bool IsBetaBaseName(ascii value) {
-                    switch (value) {
-                        case "beta":
-                            return true;
-                        default:
-                            return false;
-                    }
-                }
-
-                fn bool IsAlphaDirectory(ascii value) {
-                    switch (value) {
-                        case "alpha":
-                            return true;
-                        default:
-                            return false;
-                    }
-                }
-
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][64] buffer = { {{zeroBytes}} };
-                    stack mut Ascii joined = new Ascii() {
-                        Data = &buffer[0],
-                        Length = 0,
-                        Capacity = 64
-                    };
-
-                    if (!System.IO.Path.TryJoin(&joined, "alpha", "beta.txt")) {
-                        return 1;
-                    }
-
-                    stack Ascii joinedPath = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsJoinedPath(System.Text.AsciiView(joinedPath))) {
-                        return 2;
-                    }
-
-                    stack Ascii joinedExtension = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsTextExtension(System.IO.Path.Extension(System.Text.AsciiView(joinedExtension)))) {
-                        return 3;
-                    }
-
-                    stack Ascii joinedBaseName = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsBetaBaseName(System.IO.Path.BaseName(System.Text.AsciiView(joinedBaseName)))) {
-                        return 4;
-                    }
-
-                    stack Ascii joinedDirectory = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsAlphaDirectory(System.IO.Path.DirectoryName(System.Text.AsciiView(joinedDirectory)))) {
-                        return 5;
-                    }
-
-                    if (!System.IO.Path.TryJoin(&joined, "alpha/", "/beta.txt")) {
-                        return 6;
-                    }
-
-                    stack Ascii joinedNormalized = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsJoinedPath(System.Text.AsciiView(joinedNormalized))) {
-                        return 7;
-                    }
-
-                    return 0;
-                }
-                """);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = outputPath,
-                WorkingDirectory = appDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -3230,6 +1850,9 @@ internal sealed class StandardLibraryTestSuite
             Assert.DoesNotContain(" U malloc", nmStdout, StringComparison.Ordinal);
             Assert.DoesNotContain(" U realloc", nmStdout, StringComparison.Ordinal);
             Assert.DoesNotContain(" U free", nmStdout, StringComparison.Ordinal);
+            Assert.DoesNotContain(" U pthread_create", nmStdout, StringComparison.Ordinal);
+            Assert.DoesNotContain(" U pthread_join", nmStdout, StringComparison.Ordinal);
+            Assert.DoesNotContain(" U pthread_detach", nmStdout, StringComparison.Ordinal);
             AssertNoExplicitCAllocatorSymbols(ExtractUndefinedSymbols(nmStdout));
         }
         finally
@@ -3323,124 +1946,6 @@ internal sealed class StandardLibraryTestSuite
             Assert.DoesNotContain("_wgetcwd", undefinedSymbols);
             Assert.DoesNotContain("_getcwd", undefinedSymbols);
             AssertNoExplicitCAllocatorSymbols(undefinedSymbols);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
-        {
-            return;
-        }
-
-        var nmPath = FindFirstAvailableTool(OperatingSystem.IsWindows() ? "llvm-nm" : "nm", OperatingSystem.IsWindows() ? "nm" : "llvm-nm");
-        if (nmPath is null)
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-source-alloc-symbols-");
-        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
-        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
-
-        try
-        {
-            await WriteAllocatorAuditAppAsync(appPath);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            await AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(nmPath, outputPath);
-        }
-        finally
-        {
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-    public async Task PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
-        {
-            return;
-        }
-
-        var nmPath = FindFirstAvailableTool(OperatingSystem.IsWindows() ? "llvm-nm" : "nm", OperatingSystem.IsWindows() ? "nm" : "llvm-nm");
-        if (nmPath is null)
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-package-alloc-symbols-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
-        Directory.CreateDirectory(appDirectory);
-
-        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
-        var appPath = Path.Combine(appDirectory, "App.stark");
-        var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
-
-        try
-        {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            Assert.Contains("Emitted static library:", buildStdout.ToString());
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
-            await WriteAllocatorAuditAppAsync(appPath);
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            await AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(nmPath, outputPath);
         }
         finally
         {
@@ -3676,7 +2181,7 @@ internal sealed class StandardLibraryTestSuite
         }
     }
 
-    private static async Task WriteAllocatorAuditAppAsync(string appPath)
+    protected static async Task WriteAllocatorAuditAppAsync(string appPath)
     {
         await File.WriteAllTextAsync(
             appPath,
@@ -3707,7 +2212,7 @@ internal sealed class StandardLibraryTestSuite
             """);
     }
 
-    private static async Task AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(string nmPath, string binaryPath)
+    protected static async Task AssertBinaryHasNoExplicitCAllocatorSymbolReferencesAsync(string nmPath, string binaryPath)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
@@ -3753,7 +2258,54 @@ internal sealed class StandardLibraryTestSuite
         }
     }
 
-    private static string FindRepositoryRoot()
+    private static void AssertStdLibCommonErrorResultLayouts(IReadOnlyDictionary<string, EnumLayoutSymbol> layouts)
+    {
+        var ioError = layouts["System.IO.IOError"];
+        AssertCompactTag(ioError, bitWidth: 8, maxTagValue: 6);
+        Assert.Equal(["$tag", "$Unknown_0"], ioError.OrderedFields.Select(static field => field.Name).ToArray());
+        Assert.Equal("i32", ioError.OrderedFields[1].Type.DisplayName);
+
+        var ioStatus = layouts["System.IO.IOStatus"];
+        AssertCompactTag(ioStatus, bitWidth: 8, maxTagValue: 1);
+        Assert.Equal(["$tag", "$Err_0"], ioStatus.OrderedFields.Select(static field => field.Name).ToArray());
+        Assert.Equal("System.IO.IOError", ioStatus.OrderedFields[1].Type.DisplayName);
+
+        var ioResult = Assert.Single(
+            layouts,
+            static layout => layout.Key.StartsWith("System.IO.IOResult<", StringComparison.Ordinal)).Value;
+        AssertCompactTag(ioResult, bitWidth: 8, maxTagValue: 1);
+        Assert.Equal(["$tag", "$Ok_0", "$Err_0"], ioResult.OrderedFields.Select(static field => field.Name).ToArray());
+        Assert.Equal("i32", ioResult.OrderedFields[1].Type.DisplayName);
+        Assert.Equal("System.IO.IOError", ioResult.OrderedFields[2].Type.DisplayName);
+
+        var memoryError = layouts["System.Memory.MemoryError"];
+        AssertCompactTag(memoryError, bitWidth: 8, maxTagValue: 3);
+        Assert.Equal(["$tag"], memoryError.OrderedFields.Select(static field => field.Name).ToArray());
+
+        var memoryStatus = layouts["System.Memory.MemoryStatus"];
+        AssertCompactTag(memoryStatus, bitWidth: 8, maxTagValue: 1);
+        Assert.Equal(["$tag", "$Err_0"], memoryStatus.OrderedFields.Select(static field => field.Name).ToArray());
+        Assert.Equal("System.Memory.MemoryError", memoryStatus.OrderedFields[1].Type.DisplayName);
+
+        var memoryResult = Assert.Single(
+            layouts,
+            static layout => layout.Key.StartsWith("System.Memory.MemoryResult<", StringComparison.Ordinal)).Value;
+        AssertCompactTag(memoryResult, bitWidth: 8, maxTagValue: 1);
+        Assert.Equal(["$tag", "$Ok_0", "$Err_0"], memoryResult.OrderedFields.Select(static field => field.Name).ToArray());
+        Assert.Equal("i32", memoryResult.OrderedFields[1].Type.DisplayName);
+        Assert.Equal("System.Memory.MemoryError", memoryResult.OrderedFields[2].Type.DisplayName);
+    }
+
+    private static void AssertCompactTag(EnumLayoutSymbol layout, int bitWidth, int maxTagValue)
+    {
+        Assert.Equal("$tag", layout.TagField.Name);
+        Assert.Equal(StarkTypeKind.Integer, layout.TagField.Type.Kind);
+        Assert.Equal(bitWidth, layout.TagField.Type.BitWidth);
+        Assert.Equal(System.Numerics.BigInteger.Zero, layout.TagField.Type.RangeMin);
+        Assert.Equal(new System.Numerics.BigInteger(maxTagValue), layout.TagField.Type.RangeMax);
+    }
+
+    protected static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
 
@@ -3770,7 +2322,7 @@ internal sealed class StandardLibraryTestSuite
         throw new InvalidOperationException("Unable to locate the Stark repository root for stdlib integration tests.");
     }
 
-    private static string? FindFirstAvailableTool(params string[] toolNames)
+    protected static string? FindFirstAvailableTool(params string[] toolNames)
     {
         var directories = new List<string>();
         var path = Environment.GetEnvironmentVariable("PATH");
@@ -3861,7 +2413,7 @@ internal sealed class StandardLibraryTestSuite
         return symbols;
     }
 
-    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
+    protected static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
     {
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, missingMessage);
@@ -3890,7 +2442,7 @@ internal sealed class StandardLibraryTestSuite
         throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 
-    private static string CreateWindowsStagedStdLibSourceRoot(string repositoryRoot, string stagingDirectory)
+    protected static string CreateWindowsStagedStdLibSourceRoot(string repositoryRoot, string stagingDirectory)
     {
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
         var stagedSourceRoot = Path.Combine(stagingDirectory, "src");
@@ -3919,12 +2471,12 @@ internal sealed class StandardLibraryTestSuite
         }
     }
 
-    private static void AssertCompilerLogsEmitted(string text)
+    protected static void AssertCompilerLogsEmitted(string text)
     {
         Assert.Equal(string.Empty, text);
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessWithUtf8StdinAsync(
+    protected static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessWithUtf8StdinAsync(
         string fileName,
         string workingDirectory,
         string stdinText)

@@ -2121,7 +2121,9 @@ internal sealed partial class MidLevelIrLowerer
             }
             else
             {
-                var resultType = FindCommonType(left.Type, right.Type);
+                var resultType = operatorText is "<<" or ">>"
+                    ? left.Type
+                    : FindCommonType(left.Type, right.Type);
                 if (resultType.Kind == StarkTypeKind.Error)
                 {
                     MarkUnsupported();

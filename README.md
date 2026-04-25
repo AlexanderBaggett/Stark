@@ -18,23 +18,19 @@ The repository currently contains:
 Stark can currently:
 
 - parse and validate a meaningful language subset
-- lower core control flow and scalar expressions to LLVM IR
+- lower core control flow, aggregates, arrays, slices, text, generics, and callable values through MIR, SSA, and LLVM IR
 - compile a native `Hello World`
 - emit MIR, SSA, LLVM IR, or a native executable from the CLI
 - emit a static library plus a package image from the CLI
 - emit object files from the CLI
+- consume package-image-backed Stark libraries without source files
+- build and consume the repository `System` standard-library package
 
 The active implementation checklist lives in [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md).
 
 Known unsupported or partial language, lowering, runtime, and standard-library areas are tracked in [docs/Userfacing/UnsupportedFeatures.md](./docs/Userfacing/UnsupportedFeatures.md).
 
-The current `v1.0` release baseline is defined in [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md).
-
 The current standard-library release baseline is defined in [docs/StandardLibrary/StandardLibraryBaseline.md](./docs/StandardLibrary/StandardLibraryBaseline.md).
-
-Pre-release notes currently live in [docs/ReleaseNotes.md](./docs/ReleaseNotes.md).
-
-Release tagging, changelog, and upgrade-note expectations live in [docs/ReleaseProcess.md](./docs/ReleaseProcess.md).
 
 ## Build
 
@@ -144,8 +140,6 @@ dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
 - [docs/Internals/PackageImage.md](./docs/Internals/PackageImage.md)
 - [docs/StandardLibrary/StandardLibrary.md](./docs/StandardLibrary/StandardLibrary.md)
 - [docs/Userfacing/UnsupportedFeatures.md](./docs/Userfacing/UnsupportedFeatures.md)
-- [docs/V1ReleaseSubset.md](./docs/V1ReleaseSubset.md)
-- [docs/V1LoweringContract.md](./docs/V1LoweringContract.md)
 - [docs/StandardLibrary/StandardLibraryBaseline.md](./docs/StandardLibrary/StandardLibraryBaseline.md)
 - [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md)
 - [samples/README.md](./samples/README.md)
