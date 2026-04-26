@@ -34,7 +34,7 @@ benchmarks/micro/Calls.rs
 Useful environment variables:
 
 - `STARK_BENCH_RUNS`: measured executions per benchmark after one warmup run.
-  Defaults to `3`.
+  Defaults to `50`. Set it lower for quick smoke runs.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark file paths.
 - `STARK_BENCH_LANGUAGES`: comma-separated language list. Defaults to
   `stark,c,rust`.

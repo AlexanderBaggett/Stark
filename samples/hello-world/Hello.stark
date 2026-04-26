@@ -1,7 +1,0 @@
-import System.Console
-module Hello
-
-fn i32[min max] main() {
-    WriteLine("Hello, World!");
-    return 0;
-}

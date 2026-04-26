@@ -71,7 +71,8 @@ benchmark,language,runs,compile_us,min_us,avg_us,max_us
 
 Useful controls:
 
-- `STARK_BENCH_RUNS=10` changes the measured execution count.
+- `STARK_BENCH_RUNS=3` lowers the measured execution count for quick smoke runs.
+  The default is `50`.
 - `STARK_BENCH_FILTER=text` limits the run to paths containing a substring.
 - `STARK_BENCH_LANGUAGES=stark,c,rust` selects which language rows to run.
 - `STARK_TARGET=...` passes an LLVM target triple to the compiler.

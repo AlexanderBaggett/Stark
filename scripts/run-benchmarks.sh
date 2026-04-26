@@ -6,7 +6,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 bench_root="${repo_root}/benchmarks"
 stdlib_root="${repo_root}/stdlib/src"
 
-runs="${STARK_BENCH_RUNS:-3}"
+runs="${STARK_BENCH_RUNS:-50}"
 filter="${STARK_BENCH_FILTER:-}"
 target="${STARK_TARGET:-}"
 extra_args="${STARK_COMPILER_ARGS:-}"
