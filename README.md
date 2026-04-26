@@ -1,14 +1,18 @@
 # Stark
 
-Stark is an experimental, performance-focused programming language targeting
-LLVM. The language is intentionally restrictive: ordinary safe code should make
-ownership, aliasing, allocation, and backend facts explicit enough for the
-compiler to produce predictable native code.
+Stark is a performance-focused programming language targeting LLVM. It is built
+around a simple rule: ordinary safe code should make ownership, aliasing,
+allocation, and backend facts explicit enough for the compiler to produce
+predictable native code.
 
-The syntax is C#-adjacent, but the semantics are closer to a systems language:
+The syntax is C#-adjacent, but the semantics are systems-oriented:
 explicit storage classes, deterministic ownership, no hidden exceptions, no
 hidden allocation, safe borrows, package-image-backed libraries, and a standard
 library designed around visible costs.
+
+This repository contains the compiler, the `System` standard library, a broad
+compiler and standard-library test suite, executable examples, C/Rust benchmark
+counterparts, and the public documentation site.
 
 The active implementation roadmap lives in
 [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md).
@@ -396,7 +400,7 @@ generated parser files are up to date.
 - [deploy/](./deploy): Caddy deployment config.
 - [scripts/](./scripts): build, benchmark, docs, site, and parser helpers.
 
-## Current Status
+## What Works Today
 
 Stark currently has:
 
@@ -407,8 +411,11 @@ Stark currently has:
 - MIR, SSA, and LLVM IR lowering;
 - native object, executable, static library, and package image emission;
 - package-image-backed imports;
-- a source and package-backed `System` standard library;
-- examples, samples, benchmarks, and a Hugo documentation site.
+- a source and package-backed `System` standard library with console, text,
+  memory, collections, file/path, process, threading, math, and TCP APIs;
+- examples and sample projects that compile and run through integration tests;
+- a benchmark harness with Stark, C, and Rust rows for performance work;
+- a Hugo documentation site backed by repository docs and checked examples.
 
-This is still an experimental language and compiler. Treat the docs and tests as
-the source of truth for the implemented surface at any given point in the repo.
+The binary release pipeline is still being finalized. For now, treat the docs,
+tests, and checked examples as the source of truth for the implemented surface.

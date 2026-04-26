@@ -4,8 +4,8 @@ weight = 60
 aliases = ["/downloads/"]
 +++
 
-Stark does not have published compiler binaries yet. Until the release pipeline
-is ready, use the source-build workflow in [Getting Started](/getting-started/).
+Stark compiler binaries are not published yet. Until packaged releases are
+available, use the source-build workflow in [Getting Started](/getting-started/).
 
 The canonical public repository is currently:
 

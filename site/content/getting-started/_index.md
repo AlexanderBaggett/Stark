@@ -3,9 +3,9 @@ title = "Getting Started"
 weight = 10
 +++
 
-Stark is still built from this repository while the release pipeline is being
-finished. This page separates what a future binary release should require from
-what contributors need today.
+Stark is currently built from this repository while the binary release pipeline
+is being finalized. This page separates what packaged compiler releases should
+require from what source builds need today.
 
 ## Future Binary Release
 
