@@ -106,9 +106,46 @@ internal sealed class SemanticValidator
 
             if (declaration.globalVariableDeclaration() is { } variableDeclaration)
             {
+                ValidateGlobalVariableStorageClass(variableDeclaration);
                 var declaredType = ResolveType(variableDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Global, variableDeclaration.type_(), isFfiBoundary: false);
             }
+        }
+    }
+
+    private void ValidateGlobalVariableStorageClass(StarkParser.GlobalVariableDeclarationContext declaration)
+    {
+        var storageClass = declaration.storageClass().GetText();
+        if (storageClass == "static")
+        {
+            return;
+        }
+
+        _context.Diagnostics.Error(
+            "STK4015",
+            $"Top-level global variables must use 'static' storage. Storage class '{storageClass}' is only valid for local variables.",
+            "semantic-validate",
+            Location(declaration.storageClass()));
+    }
+
+    private void ValidateLocalVariableStorageClass(LocalStorageClass storageClass, ParserRuleContext context)
+    {
+        switch (storageClass)
+        {
+            case LocalStorageClass.Arena:
+                _context.Diagnostics.Error(
+                    "STK4017",
+                    "Local 'arena' storage is reserved for allocator-backed region storage, but arena lowering is not implemented yet. Use 'stack' or 'heap' storage for now.",
+                    "semantic-validate",
+                    Location(context));
+                break;
+            case LocalStorageClass.Static:
+                _context.Diagnostics.Error(
+                    "STK4017",
+                    "Function-local 'static' storage is not implemented yet. Use a top-level 'static' global for global lifetime storage, or use 'stack'/'heap' for locals.",
+                    "semantic-validate",
+                    Location(context));
+                break;
         }
     }
 
@@ -650,7 +687,8 @@ internal sealed class SemanticValidator
         if (statement.localVariableDeclaration() is { } localVariable)
         {
             var storageClass = ParseStorageClass(localVariable.storageClass());
-                var declaredType = ResolveType(localVariable.type_());
+            ValidateLocalVariableStorageClass(storageClass, localVariable.storageClass());
+            var declaredType = ResolveType(localVariable.type_());
             ValidateTypeUsage(declaredType, TypeUsage.Local, localVariable.type_(), isFfiBoundary: false);
 
             if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
@@ -762,6 +800,7 @@ internal sealed class SemanticValidator
             if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForDeclaration)
             {
                 var storageClass = ParseStorageClass(localForDeclaration.storageClass());
+                ValidateLocalVariableStorageClass(storageClass, localForDeclaration.storageClass());
                 var declaredType = ResolveType(localForDeclaration.type_());
                 ValidateTypeUsage(declaredType, TypeUsage.Local, localForDeclaration.type_(), isFfiBoundary: false);
 
@@ -885,7 +924,12 @@ internal sealed class SemanticValidator
                 return;
             }
 
-            EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            var value = EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            if (expectedType is not null)
+            {
+                ValidateRegisterStorageBackedUse(value, expectedType, expression);
+            }
+
             return;
         }
 
@@ -1333,7 +1377,7 @@ internal sealed class SemanticValidator
         {
             var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             var targetType = _typeResolver.ResolveConversionType(conversionType, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
-            return CreateConvertedValidationValue(targetType, operand);
+            return CreateConvertedValidationValue(targetType, operand, expression);
         }
 
         var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
@@ -1341,7 +1385,7 @@ internal sealed class SemanticValidator
         if (op == "&")
         {
             var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.WriteTarget);
-            return CreateAddressOfValidationValue(operand);
+            return CreateAddressOfValidationValue(operand, context: expression);
         }
 
         if (op == "*")
@@ -2196,6 +2240,7 @@ internal sealed class SemanticValidator
         if (target.Receiver is not null && target.Function.Parameters.Count != 0)
         {
             var receiverParameter = target.Function.Parameters[0];
+            ValidateRegisterStorageBackedUse(target.Receiver, receiverParameter.Type, arguments);
             ValidateBorrowArgumentFlow(target.Receiver.Type, receiverParameter.Type, target.Function.DisplaySourceName, 0, summary, arguments);
         }
 
@@ -2203,6 +2248,7 @@ internal sealed class SemanticValidator
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
             var argumentValue = argumentValues[index];
+            ValidateRegisterStorageBackedUse(argumentValue, parameter.Type, arguments.argument(index));
             ValidateBorrowArgumentFlow(argumentValue.Type, parameter.Type, target.Function.DisplaySourceName, index + receiverOffset, summary, arguments.argument(index));
         }
     }
@@ -2532,8 +2578,10 @@ internal sealed class SemanticValidator
         return sourceName.Length != 0;
     }
 
-    private ValidationValue CreateConvertedValidationValue(StarkTypeSymbol targetType, ValidationValue operand)
+    private ValidationValue CreateConvertedValidationValue(StarkTypeSymbol targetType, ValidationValue operand, ParserRuleContext context)
     {
+        ValidateRegisterStorageBackedUse(operand, targetType, context);
+
         return PreservesStorageView(targetType, operand.Type)
             ? new ValidationValue(
                 targetType,
@@ -2542,6 +2590,28 @@ internal sealed class SemanticValidator
                 IsIndirectStorageAccess: operand.IsIndirectStorageAccess,
                 UsesFrozenProjectionSemantics: operand.UsesFrozenProjectionSemantics)
             : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
+    }
+
+    private void ValidateRegisterStorageBackedUse(ValidationValue value, StarkTypeSymbol targetType, ParserRuleContext context)
+    {
+        if (value.RootSymbol is not { Origin: SymbolOrigin.Local, StorageClass: LocalStorageClass.Register } registerLocal
+            || !RequiresStableStorage(value.Type, targetType))
+        {
+            return;
+        }
+
+        _context.Diagnostics.Error(
+            "STK4016",
+            $"Register local '{registerLocal.Name}' cannot be used where stable storage is required. Use 'stack' storage when a borrow, out/init destination, or slice view is required.",
+            "semantic-validate",
+            Location(context));
+    }
+
+    private static bool RequiresStableStorage(StarkTypeSymbol sourceType, StarkTypeSymbol targetType)
+    {
+        return targetType.BorrowKind != StarkBorrowKind.None
+            || targetType.InitializationKind != StarkInitializationKind.None
+            || targetType.Kind == StarkTypeKind.Slice && sourceType.Kind == StarkTypeKind.FixedArray;
     }
 
     private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
@@ -2722,10 +2792,21 @@ internal sealed class SemanticValidator
         return false;
     }
 
-    private ValidationValue CreateAddressOfValidationValue(ValidationValue operand)
+    private ValidationValue CreateAddressOfValidationValue(ValidationValue operand, ParserRuleContext context)
     {
         if (operand.RootSymbol is null)
         {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        if (operand.RootSymbol.Origin == SymbolOrigin.Local
+            && operand.RootSymbol.StorageClass == LocalStorageClass.Register)
+        {
+            _context.Diagnostics.Error(
+                "STK4016",
+                $"Register local '{operand.RootSymbol.Name}' cannot be addressed. Use 'stack' storage when a stable address or raw pointer is required.",
+                "semantic-validate",
+                Location(context));
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 

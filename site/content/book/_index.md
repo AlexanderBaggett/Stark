@@ -1,8 +1,7 @@
 +++
 title = "Book"
+weight = 30
 +++
-
-# The Stark Book
 
 The Stark Book is planned as a Rust Book-sized learning path, but focused on
 Stark's own language shape rather than copying Rust chapter-for-chapter.

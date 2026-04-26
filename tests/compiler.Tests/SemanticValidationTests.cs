@@ -36,6 +36,146 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void TopLevelRegisterStorageIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            register i32[-2147483648 2147483647] Value = 1;
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4015"
+                && diagnostic.Message.Contains("Top-level global variables must use 'static' storage", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("'register'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RegisterLocalsCannotBeAddressed()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                register mut i32[-2147483648 2147483647] value = 1;
+                stack rawmutptr<i32[-2147483648 2147483647]> pointer = &value;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4016"
+                && diagnostic.Message.Contains("Register local 'value' cannot be addressed", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Use 'stack' storage", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RegisterLocalsCannotBePassedToBorrowParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn i32[-2147483648 2147483647] Read(borrow Box box) {
+                return box.Value;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                register Box box = new Box() { Value = 1 };
+                return Read(box);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4016"
+                && diagnostic.Message.Contains("Register local 'box' cannot be used where stable storage is required", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("borrow", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RegisterFixedArraysCannotFormSliceViews()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                register i32[-2147483648 2147483647][2] values = { 1, 2 };
+                stack i32[-2147483648 2147483647][] view = values;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4016"
+                && diagnostic.Message.Contains("Register local 'values' cannot be used where stable storage is required", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("slice view", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ArenaLocalStorageIsRejectedUntilArenaLoweringExists()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run() {
+                arena i32[-2147483648 2147483647] value = 1;
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4017"
+                && diagnostic.Message.Contains("Local 'arena' storage", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("arena lowering is not implemented yet", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FunctionLocalStaticStorageIsRejectedUntilStaticLocalSemanticsExist()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run() {
+                static mut i32[-2147483648 2147483647] value = 1;
+                value = value + 1;
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4017"
+                && diagnostic.Message.Contains("Function-local 'static' storage", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("not implemented yet", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void NestedRawPointersAreRejectedOutsideFfiBoundaries()
     {
         var result = Compile(

@@ -8,11 +8,11 @@ next = "/book/14-modules-visibility-packages/"
 
 [[language_refs]]
 title = "Language Reference"
-href = "/reference/docs/Userfacing/LanguageReference.md"
+href = "/reference/language/LanguageReference/"
 
 [[stdlib_refs]]
 title = "System.Text"
-href = "/reference/docs/StandardLibrary/System.Text.md"
+href = "/reference/standard-library/System.Text/"
 
 [[example_refs]]
 title = "Type System Examples"

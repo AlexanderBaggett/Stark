@@ -1,33 +1,40 @@
 +++
 title = "Docs"
+weight = 20
 +++
 
-# Docs
-
 Start here for the language and standard library surface that programmers write
-against.
+against. These pages are rendered from the repository docs so code blocks,
+anchors, and navigation stay inside the website.
 
 ## Language
 
-- [Language reference](/reference/docs/Userfacing/LanguageReference.md)
-- [Borrower system](/reference/docs/Userfacing/BorrowerSystem.md)
-- [Modules and visibility](/reference/docs/Userfacing/ModulesAndVisibility.md)
-- [Projects and solutions](/reference/docs/Userfacing/ProjectsAndSolutions.md)
-- [Unsupported and future features](/reference/docs/Userfacing/UnsupportedFeatures.md)
+- [Language reference](/reference/language/LanguageReference/)
+- [Borrower system](/reference/language/BorrowerSystem/)
+- [Modules and visibility](/reference/language/ModulesAndVisibility/)
+- [Projects and solutions](/reference/language/ProjectsAndSolutions/)
+- [General idea](/reference/language/general-idea/)
 
 ## Standard Library
 
-- [`System`](/reference/docs/StandardLibrary/System.md)
-- [`System.Console`](/reference/docs/StandardLibrary/System.Console.md)
-- [`System.Text`](/reference/docs/StandardLibrary/System.Text.md)
-- [`System.IO`](/reference/docs/StandardLibrary/System.IO.md)
-- [`System.FileSystem`](/reference/docs/StandardLibrary/System.FileSystem.md)
-- [`System.Memory`](/reference/docs/StandardLibrary/System.Memory.md)
-- [`System.Collections`](/reference/docs/StandardLibrary/System.Collections.md)
-- [`System.Threading`](/reference/docs/StandardLibrary/System.Threading.md)
-- [`System.Net`](/reference/docs/StandardLibrary/System.Net.md)
+- [Standard library overview](/reference/standard-library/StandardLibrary/)
+- [`System`](/reference/standard-library/System/)
+- [`System.BitOperations`](/reference/standard-library/System.BitOperations/)
+- [`System.Console`](/reference/standard-library/System.Console/)
+- [`System.Text`](/reference/standard-library/System.Text/)
+- [`System.IO`](/reference/standard-library/System.IO/)
+- [`System.IO.File`](/reference/standard-library/System.IO.File/)
+- [`System.IO.Path`](/reference/standard-library/System.IO.Path/)
+- [`System.FileSystem`](/reference/standard-library/System.FileSystem/)
+- [`System.Memory`](/reference/standard-library/System.Memory/)
+- [`System.Collections`](/reference/standard-library/System.Collections/)
+- [`System.Threading`](/reference/standard-library/System.Threading/)
+- [`System.Net`](/reference/standard-library/System.Net/)
+- [`System.Net.Tcp`](/reference/standard-library/System.Net.Tcp/)
+- [`System.Math`](/reference/standard-library/System.Math/)
+- [`System.Process`](/reference/standard-library/System.Process/)
 
 ## Examples
 
-- [Examples overview](/reference/examples/README.md)
+- [Examples catalog](/examples/)
 - [Examples solution manifest](/reference/examples/Stark.solution.toml)

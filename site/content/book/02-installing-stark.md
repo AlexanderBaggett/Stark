@@ -12,6 +12,9 @@ next = "/book/03-hello-stark/"
 Stark is currently built from this repository. The compiler, standard library,
 examples, website, and tests live together while the language is still moving.
 
+The website [Getting Started](/getting-started/) page tracks current
+prerequisites and first-run checks outside the book narrative.
+
 ## Build The Compiler
 
 From the repository root:

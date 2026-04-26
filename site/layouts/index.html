@@ -1,31 +1,79 @@
 {{ define "main" }}
-<section class="hero">
-    {{ .Content }}
-</section>
-<section class="link-grid" aria-label="Site sections">
-    <a href="{{ "/docs/" | relURL }}">
-        <strong>Docs</strong>
-        <span>Language and standard library references.</span>
-    </a>
-    <a href="{{ "/book/" | relURL }}">
-        <strong>Book</strong>
-        <span>A Stark-first learning path, from first program to performance model.</span>
-    </a>
-    <a href="{{ "/examples/" | relURL }}">
-        <strong>Examples</strong>
-        <span>Runnable Stark programs tracked by tests.</span>
-    </a>
-    <a href="{{ "/roadmap/" | relURL }}">
-        <strong>Roadmap</strong>
-        <span>Active compiler, standard library, and tooling work.</span>
-    </a>
-    <a href="{{ "/benchmarks/" | relURL }}">
-        <strong>Benchmarks</strong>
-        <span>Current benchmark coverage and performance-tracking direction.</span>
-    </a>
-    <a href="{{ "/downloads/" | relURL }}">
-        <strong>Downloads</strong>
-        <span>Current source-build workflow and future release artifacts.</span>
-    </a>
-</section>
+<article class="stark-home" id="main-content" tabindex="-1">
+    <section class="stark-hero">
+        <div class="stark-hero__copy">
+            <p class="stark-eyebrow">Systems programming for predictable LLVM output</p>
+            <h1>Stark</h1>
+            {{ .Content }}
+            <div class="stark-actions" aria-label="Primary actions">
+                <a class="stark-button stark-button--primary" href="{{ "/getting-started/" | relURL }}">Get Started</a>
+                <a class="stark-button" href="{{ "/book/" | relURL }}">Read The Book</a>
+                <a class="stark-button" href="{{ "/examples/" | relURL }}">Browse Examples</a>
+            </div>
+        </div>
+        <div class="stark-hero__code" aria-label="Stark sample">
+            <div class="stark-code-window">
+                <div class="stark-code-window__bar">
+                    <span>hello.stark</span>
+                    <span>no GC · no exceptions · explicit ABI</span>
+                </div>
+                <pre><code>import System
+module Hello
+
+export ffi fn i32 main() {
+    System.Console.WriteLine("Hello");
+    return 0;
+}</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <section class="stark-signal-grid" aria-label="Stark language goals">
+        <div>
+            <strong>No Hidden Work</strong>
+            <span>Allocation, ownership, error flow, and native boundaries are explicit in the source.</span>
+        </div>
+        <div>
+            <strong>LLVM-Friendly Semantics</strong>
+            <span>Restrictions are chosen to preserve aliasing, layout, range, and control-flow facts.</span>
+        </div>
+        <div>
+            <strong>Native Package Flow</strong>
+            <span>Static libraries, package images, and native-backed packages are part of the compiler workflow.</span>
+        </div>
+    </section>
+
+    <section class="stark-section">
+        <div class="stark-section__header">
+            <p class="stark-eyebrow">Documentation Map</p>
+            <h2>Use the surface that matches your job.</h2>
+        </div>
+        <div class="stark-card-grid">
+            <a href="{{ "/getting-started/" | relURL }}">
+                <strong>Getting Started</strong>
+                <span>Install requirements, build the compiler today, and run your first Stark program.</span>
+            </a>
+            <a href="{{ "/docs/" | relURL }}">
+                <strong>Reference Docs</strong>
+                <span>Language rules, project manifests, modules, ownership, and the standard library.</span>
+            </a>
+            <a href="{{ "/book/" | relURL }}">
+                <strong>The Stark Book</strong>
+                <span>A guided path from first program to performance model and systems projects.</span>
+            </a>
+            <a href="{{ "/examples/" | relURL }}">
+                <strong>Examples</strong>
+                <span>Checked-in Stark programs, manifests, native bindings, and project slices.</span>
+            </a>
+            <a href="{{ "/releases/" | relURL }}">
+                <strong>Releases</strong>
+                <span>Current source workflow and the future home for compiler binaries and checksums.</span>
+            </a>
+            <a href="{{ "/benchmarks/" | relURL }}">
+                <strong>Benchmarks</strong>
+                <span>Performance tracking plans for Stark against C and Rust baselines.</span>
+            </a>
+        </div>
+    </section>
+</article>
 {{ end }}

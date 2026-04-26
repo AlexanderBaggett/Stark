@@ -8,11 +8,11 @@ next = "/book/19-ffi-raw-pointers-native-packages/"
 
 [[language_refs]]
 title = "Language Reference"
-href = "/reference/docs/Userfacing/LanguageReference.md"
+href = "/reference/language/LanguageReference/"
 
 [[stdlib_refs]]
 title = "System.Threading"
-href = "/reference/docs/StandardLibrary/System.Threading.md"
+href = "/reference/standard-library/System.Threading/"
 
 [[example_refs]]
 title = "Standard Library Examples"

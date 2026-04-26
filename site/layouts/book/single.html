@@ -1,5 +1,6 @@
 {{ define "main" }}
-<article class="page book-page">
+{{ partial "page-header" . }}
+<article class="gdoc-markdown gdoc-markdown__align--left book-page" id="main-content" tabindex="-1">
     <p class="book-kicker">
         {{ with .Params.book_part }}{{ . }}{{ end }}
         {{ with .Params.book_status }}<span>{{ . }}</span>{{ end }}
@@ -8,11 +9,11 @@
     {{ .Content }}
     {{ $languageRefs := .Params.language_refs }}
     {{ if not $languageRefs }}
-        {{ $languageRefs = slice (dict "title" "Language Reference" "href" "/reference/docs/Userfacing/LanguageReference.md") }}
+        {{ $languageRefs = slice (dict "title" "Language Reference" "href" "/reference/language/LanguageReference/") }}
     {{ end }}
     {{ $stdlibRefs := .Params.stdlib_refs }}
     {{ if not $stdlibRefs }}
-        {{ $stdlibRefs = slice (dict "title" "Standard Library Overview" "href" "/reference/docs/StandardLibrary/StandardLibrary.md") }}
+        {{ $stdlibRefs = slice (dict "title" "Standard Library Overview" "href" "/reference/standard-library/StandardLibrary/") }}
     {{ end }}
     {{ $exampleRefs := .Params.example_refs }}
     {{ if not $exampleRefs }}

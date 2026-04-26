@@ -8,15 +8,15 @@ next = "/book/21-memory-collections/"
 
 [[stdlib_refs]]
 title = "System.Console"
-href = "/reference/docs/StandardLibrary/System.Console.md"
+href = "/reference/standard-library/System.Console/"
 
 [[stdlib_refs]]
 title = "System.Process"
-href = "/reference/docs/StandardLibrary/System.Process.md"
+href = "/reference/standard-library/System.Process/"
 
 [[stdlib_refs]]
 title = "System.IO"
-href = "/reference/docs/StandardLibrary/System.IO.md"
+href = "/reference/standard-library/System.IO/"
 
 [[example_refs]]
 title = "Standard Library Examples"

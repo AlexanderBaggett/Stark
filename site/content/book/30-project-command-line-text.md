@@ -8,11 +8,11 @@ next = "/book/31-project-multi-module-package/"
 
 [[stdlib_refs]]
 title = "System.Console"
-href = "/reference/docs/StandardLibrary/System.Console.md"
+href = "/reference/standard-library/System.Console/"
 
 [[stdlib_refs]]
 title = "System.Text"
-href = "/reference/docs/StandardLibrary/System.Text.md"
+href = "/reference/standard-library/System.Text/"
 
 [[example_refs]]
 title = "Standard Library Examples"

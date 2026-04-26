@@ -17,6 +17,7 @@ resolve_target() {
     local source_file="$1"
     local url="$2"
     local path="${url%%#*}"
+    path="${path%%\?*}"
 
     if [[ -z "${path}" ]]; then
         return 0
@@ -24,6 +25,9 @@ resolve_target() {
 
     case "${path}" in
         http://*|https://*|mailto:*|tel:*)
+            return 0
+            ;;
+        /livereload.js)
             return 0
             ;;
     esac
@@ -56,6 +60,18 @@ while IFS= read -r -d '' file; do
         url="${url%\"}"
         resolve_target "${file}" "${url}"
     done < <(grep -Eo '(href|src)="[^"]+"' "${file}" || true)
+done < <(find "${PUBLIC_DIR}" -name '*.html' -print0)
+
+while IFS= read -r -d '' file; do
+    if grep -Eq '&amp;#(34|39);' "${file}"; then
+        echo "Escaped quote entity leaked into site output: ${file#${REPOSITORY_ROOT}/}" >&2
+        status=1
+    fi
+
+    if grep -Eq '<pre><code class="language-(stark|toml)">&#39;</code></pre>' "${file}"; then
+        echo "Embedded code sample collapsed to a lone quote: ${file#${REPOSITORY_ROOT}/}" >&2
+        status=1
+    fi
 done < <(find "${PUBLIC_DIR}" -name '*.html' -print0)
 
 exit "${status}"

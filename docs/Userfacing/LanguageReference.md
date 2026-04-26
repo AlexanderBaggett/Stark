@@ -749,12 +749,23 @@ The storage classes are:
 - `static`
 - `arena`
 
+`register` is a local-only value-style storage class. A `register` local has no
+stable source-visible address: safe code may not take `&local`, form a slice view
+from it, or otherwise require storage-backed identity. It is not a promise that a
+hardware register will be allocated; it is a request for Stark's ordinary
+non-addressable SSA/value lowering path. Use `stack` when a stable address is
+required.
+
+Function-local `static` storage is reserved until Stark defines and implements
+static-duration local initialization, identity, and teardown semantics. Use a
+top-level `static` global for global-lifetime storage.
+
 The standardized allocation-backed storage classes are:
 
 - `heap`
   Uses the default global general-purpose allocator. Safe Stark code does not manually free `heap` values; ownership and scope still govern destruction.
 - `arena`
-  Uses a region allocator intended for fast bump-style allocation with bulk reclamation when the lexical arena region ends.
+  Reserved for a region allocator intended for fast bump-style allocation with bulk reclamation when the lexical arena region ends. The current compiler rejects `arena` locals until arena lowering is implemented.
 
 Mutability remains opt-in:
 

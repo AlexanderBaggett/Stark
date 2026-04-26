@@ -46,6 +46,7 @@ artifacts/
 site/public/
 site/resources/
 site/.hugo_build.lock
+site/content/reference/
 site/static/book/stark-book.md
 site/static/reference/
 tools/hugo/hugo

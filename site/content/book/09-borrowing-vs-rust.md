@@ -8,11 +8,11 @@ next = "/book/10-storage-classes/"
 
 [[language_refs]]
 title = "Borrower System"
-href = "/reference/docs/Userfacing/BorrowerSystem.md"
+href = "/reference/language/BorrowerSystem/"
 
 [[language_refs]]
 title = "Language Reference"
-href = "/reference/docs/Userfacing/LanguageReference.md"
+href = "/reference/language/LanguageReference/"
 
 [[example_refs]]
 title = "Ownership Moves"

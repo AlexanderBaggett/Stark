@@ -8,7 +8,7 @@ next = "/book/34-project-performance-case-study/"
 
 [[language_refs]]
 title = "Projects and Solutions"
-href = "/reference/docs/Userfacing/ProjectsAndSolutions.md"
+href = "/reference/language/ProjectsAndSolutions/"
 
 [[example_refs]]
 title = "FFI Example"

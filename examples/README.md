@@ -22,6 +22,7 @@ dotnet run --project ../src -- build hello
 dotnet run --project ../src -- build build-your-own-git
 dotnet run --project ../src -- build raylib
 dotnet run --project ../src -- build breakout
+dotnet run --project ../src -- build http-get
 ```
 
 The `standard-library` manifest is present, but the current example still hits
@@ -131,6 +132,22 @@ dotnet run --project src -- examples/standard-library/StandardLibrary.stark --ch
 
 The packaged build path is temporarily blocked by a packaged
 `System.BitOperations` lookup gap.
+
+## `http-get/HttpGet.stark`
+
+Minimal HTTPS GET client for `https://www.google.com/`. Stark builds and sends
+the HTTP request and streams the response, while `HttpsNative.c` supplies the TLS
+transport through OpenSSL because the standard library currently only ships TCP.
+
+This example requires OpenSSL development headers and libraries discoverable via
+`pkg-config openssl` or the platform fallback library names.
+
+Build and run it from the examples solution:
+
+```bash
+dotnet run --project ../src -- build http-get
+./.stark/build/dev/http-get/http-get
+```
 
 ## `build-your-own-git/`
 

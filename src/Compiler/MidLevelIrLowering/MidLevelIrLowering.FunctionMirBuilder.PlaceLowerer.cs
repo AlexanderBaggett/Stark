@@ -48,7 +48,8 @@ internal sealed partial class MidLevelIrLowerer
                 return TryResolveAssignmentTargetCore(groupedUnary, out target);
             }
 
-            if (TryResolveCallBackedAssignmentTarget(postfixExpression, out target))
+            var hasCallPostfix = postfixExpression.postfixPart().Any(static part => part.argumentList() is not null);
+            if (hasCallPostfix && TryResolveCallBackedAssignmentTarget(postfixExpression, out target))
             {
                 return true;
             }
@@ -223,7 +224,8 @@ internal sealed partial class MidLevelIrLowerer
                 currentType = rootProjectionType;
             }
 
-            if (IsBorrowParameterRoot(root))
+            if (IsBorrowParameterRoot(root)
+                || ShouldUseHeapProjectionAddressModel(root, path))
             {
                 usesAddressModel = true;
             }
@@ -386,9 +388,11 @@ internal sealed partial class MidLevelIrLowerer
                     currentPlace = currentPlace is not null && TryAppendFieldPlaceTarget(currentPlace, memberName, out var fieldPlace)
                         ? fieldPlace
                         : null;
-                    currentValue = TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
-                        ? publishedFieldAccess
-                        : LowerFieldAccess(currentValue, memberName);
+                    currentValue = currentPlace is { UsesAddressModel: true }
+                        ? ReadPlace(currentPlace)
+                        : TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
+                            ? publishedFieldAccess
+                            : LowerFieldAccess(currentValue, memberName);
                     if (currentValue is null)
                     {
                         return false;

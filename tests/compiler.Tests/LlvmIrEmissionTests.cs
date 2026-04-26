@@ -1129,7 +1129,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("!\"stark.noalias.Sum\"", llvm);
         Assert.Matches(@"store i32 .* ptr %v\d+, !tbaa !\d+, !alias\.scope !\d+, !noalias !\d+", llvm);
-        Assert.Matches(@"load %Box, ptr %v\d+, !alias\.scope !\d+, !noalias !\d+", llvm);
+        Assert.Matches(@"load i32, ptr %v\d+, .* !alias\.scope !\d+, !noalias !\d+", llvm);
         Assert.Matches(@"!\d+ = distinct !\{!\d+, !""stark\.noalias\.Sum""\}", llvm);
         Assert.Matches(@"!\d+ = distinct !\{!\d+, !\d+, !""stark\.noalias\.Sum\.param\.left""\}", llvm);
         Assert.Matches(@"!\d+ = distinct !\{!\d+, !\d+, !""stark\.noalias\.Sum\.param\.right""\}", llvm);
@@ -3533,6 +3533,39 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains(", i64 noundef 4)", llvm);
         Assert.Contains("call void @__stark_heap_free(ptr %slot_box)", llvm);
         Assert.DoesNotContain("alloca %Box", llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void HeapFieldInitializationDoesNotReadUninitializedAggregateStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
+            }
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                heap mut Pair pair;
+                pair.Left = left;
+                pair.Right = right;
+                return pair.Left + pair.Right;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null), OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(8) ptr @__stark_heap_alloc", llvm);
+        Assert.Contains("store i32 %arg_left", llvm);
+        Assert.Contains("store i32 %arg_right", llvm);
+        Assert.DoesNotContain("load %Pair, ptr %slot_pair", llvm);
+        Assert.DoesNotContain("insertvalue %Pair", llvm);
+        Assert.Contains("call void @__stark_heap_free(ptr %slot_pair)", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
     }
 

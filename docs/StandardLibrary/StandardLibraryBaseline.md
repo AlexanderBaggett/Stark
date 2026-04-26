@@ -4,7 +4,8 @@ This document defines the versioned Stark standard-library baseline for the firs
 
 It is intentionally narrower than every internal stdlib source file present in the repository. Only the public baseline below is part of the first release promise.
 
-For the language-side release cut line, use the language reference and the active roadmap. For unsupported or incomplete areas, see [UnsupportedFeatures.md](../Userfacing/UnsupportedFeatures.md).
+For the language-side release cut line, use the language reference, the active
+roadmap, and release notes for the selected compiler version.
 
 ## Versioning Scheme
 
@@ -76,7 +77,7 @@ Within the `v1.0.x` line, Stark promises the following for the baseline modules 
 The first release baseline does not promise stability for:
 
 - undocumented internal modules
-- unsupported features listed in [UnsupportedFeatures.md](../Userfacing/UnsupportedFeatures.md)
+- exclusions or incomplete areas called out in release notes and the active roadmap
 - ABI behavior for surfaces explicitly excluded from `v1.0`, such as Stark enums across `ffi` or `export` boundaries
 - future post-`v1.0` expansions that are not part of the baseline module list above
 

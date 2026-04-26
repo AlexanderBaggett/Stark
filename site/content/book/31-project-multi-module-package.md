@@ -8,11 +8,11 @@ next = "/book/32-project-file-processing/"
 
 [[language_refs]]
 title = "Modules and Visibility"
-href = "/reference/docs/Userfacing/ModulesAndVisibility.md"
+href = "/reference/language/ModulesAndVisibility/"
 
 [[language_refs]]
 title = "Projects and Solutions"
-href = "/reference/docs/Userfacing/ProjectsAndSolutions.md"
+href = "/reference/language/ProjectsAndSolutions/"
 
 [[example_refs]]
 title = "Modules Example"

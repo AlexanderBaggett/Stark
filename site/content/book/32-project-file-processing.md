@@ -8,15 +8,15 @@ next = "/book/33-project-native-package/"
 
 [[stdlib_refs]]
 title = "System.FileSystem"
-href = "/reference/docs/StandardLibrary/System.FileSystem.md"
+href = "/reference/standard-library/System.FileSystem/"
 
 [[stdlib_refs]]
 title = "System.IO.File"
-href = "/reference/docs/StandardLibrary/System.IO.File.md"
+href = "/reference/standard-library/System.IO.File/"
 
 [[stdlib_refs]]
 title = "System.IO.Path"
-href = "/reference/docs/StandardLibrary/System.IO.Path.md"
+href = "/reference/standard-library/System.IO.Path/"
 
 [[example_refs]]
 title = "Build Your Own Git"

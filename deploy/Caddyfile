@@ -5,10 +5,18 @@
 {$STARK_SITE_DOMAIN} {
     root * {$STARK_SITE_ROOT:/var/www/stark/public}
     encode zstd gzip
+    log {
+        output file {$STARK_SITE_ACCESS_LOG:/var/log/caddy/stark-access.log} {
+            roll_size 10MiB
+            roll_keep 10
+            roll_keep_for 720h
+        }
+    }
 
     header {
         X-Content-Type-Options nosniff
         Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000"
         X-Frame-Options DENY
     }
 

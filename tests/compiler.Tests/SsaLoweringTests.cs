@@ -322,6 +322,66 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void HeapFieldInitializationUsesAddressStoresWithoutAggregateLoads()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Pair {
+                i32[-2147483648 2147483647] Left;
+                i32[-2147483648 2147483647] Right;
+            }
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                heap mut Pair pair;
+                pair.Left = left;
+                pair.Right = right;
+                return pair.Left + pair.Right;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "pair", StorageClass: "heap" });
+        Assert.Equal(2, instructions.Count(static instruction => instruction is SsaStoreIndirectInstruction));
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaFieldAddressRValue { FieldName: "Left" } });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaFieldAddressRValue { FieldName: "Right" } });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "pair" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaLoadLocalRValue { LocalName: "pair" } });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaInsertFieldRValue });
+    }
+
+    [Fact]
+    public void HeapFixedArrayElementInitializationUsesAddressStores()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                heap mut i32[-2147483648 2147483647][2] values;
+                values[0] = left;
+                values[1] = right;
+                return values[0] + values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetSsa(result).Functions);
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaAllocateLocalInstruction { LocalName: "values", StorageClass: "heap" });
+        Assert.Equal(2, instructions.Count(static instruction => instruction is SsaStoreIndirectInstruction));
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaElementAddressRValue { ConstantIndex: 0 } });
+        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaElementAddressRValue { ConstantIndex: 1 } });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaStoreLocalInstruction { LocalName: "values" });
+        Assert.DoesNotContain(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaInsertIndexRValue });
+    }
+
+    [Fact]
     public void AddressableAggregateAssignmentLowersToMemoryCopy()
     {
         var result = Compile(

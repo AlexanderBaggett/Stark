@@ -8,15 +8,15 @@ next = "/book/24-testing-stark-code/"
 
 [[stdlib_refs]]
 title = "System.Threading"
-href = "/reference/docs/StandardLibrary/System.Threading.md"
+href = "/reference/standard-library/System.Threading/"
 
 [[stdlib_refs]]
 title = "System.Net"
-href = "/reference/docs/StandardLibrary/System.Net.md"
+href = "/reference/standard-library/System.Net/"
 
 [[stdlib_refs]]
 title = "System.Net.Tcp"
-href = "/reference/docs/StandardLibrary/System.Net.Tcp.md"
+href = "/reference/standard-library/System.Net.Tcp/"
 
 [[example_refs]]
 title = "Standard Library Examples"

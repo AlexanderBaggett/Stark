@@ -8,6 +8,7 @@ members = [
   "borrowing",
   "ffi",
   "standard-library",
+  "http-get",
   "build-your-own-git",
   "neural-network",
   "simple-database",
@@ -48,6 +49,7 @@ borrowing = "borrowing"
 ffi = "ffi"
 standard-library = "standard-library"
 stdlib-demo = "standard-library"
+http-get = "http-get"
 build-your-own-git = "build-your-own-git"
 git-init = "build-your-own-git"
 neural-network = "neural-network"

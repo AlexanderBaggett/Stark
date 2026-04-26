@@ -3,7 +3,7 @@ title = "Appendix H: Stark for Rust Programmers"
 weight = 420
 book_part = "Appendices"
 book_status = "draft"
-prev = "/book/appendix-g-unsupported/"
+prev = "/book/appendix-g-current-boundaries/"
 next = "/book/appendix-i-csharp-programmers/"
 +++
 

@@ -8,11 +8,11 @@ next = "/book/22-files-directories-paths-text/"
 
 [[stdlib_refs]]
 title = "System.Memory"
-href = "/reference/docs/StandardLibrary/System.Memory.md"
+href = "/reference/standard-library/System.Memory/"
 
 [[stdlib_refs]]
 title = "System.Collections"
-href = "/reference/docs/StandardLibrary/System.Collections.md"
+href = "/reference/standard-library/System.Collections/"
 
 [[example_refs]]
 title = "Standard Library Examples"

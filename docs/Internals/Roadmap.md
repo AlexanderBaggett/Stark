@@ -1520,17 +1520,20 @@ Everything before this point is frozen
 - [x] Serve the generated `public/` output directly from Caddy
 - [ ] Deploy over SSH with `rsync`
   - [x] Add environment-driven `rsync` deployment script for generated site output
+  - [x] Document the environment-driven SSH deployment flow and remote directory expectations
 - [x] Choose OVHcloud as the low-cost VPS vendor
 - [ ] Choose the OVHcloud deployment region
 - [x] Choose Cloudflare Registrar as the domain registrar
 - [ ] Choose the primary Stark domain
 - [x] Configure Caddy for HTTPS, redirects, compression, and caching headers
 - [ ] Configure VPS hardening: SSH keys only, firewall, automatic security updates, and log rotation
-- [ ] Add backup and restore procedures for site content, generated output, and server config
+  - [x] Document the SSH, firewall, update, service-user, and log-retention baseline
+  - [x] Add rotating Caddy access-log settings to the deployment Caddyfile
+- [x] Add backup and restore procedures for site content, generated output, and server config
 - [x] Add CI checks that build the website and verify internal links
-- [x] Publish initial pages for docs, book, examples, roadmap, benchmark results, and downloads
-  - [ ] Replace placeholder summaries with full published documentation pages
-  - [ ] Add release artifact/download pages once binaries and package images are published
+- [x] Publish initial pages for docs, book, examples, roadmap, benchmark results, and releases
+  - [x] Replace placeholder summaries with full published documentation pages
+  - [ ] Add release artifact pages once binaries and package images are published
 
 ### Ease of Use Tasks
 
@@ -1627,6 +1630,68 @@ turn that book outline into published website content.
 - [x] Version the published book alongside language milestones
 - [x] Add a printable or exportable book build
 - [x] Add a "what changed since last version" page
+
+### Website Navigation and Publication Polish
+
+- [x] Define a professional visual design system for the Stark website.
+  - [x] Establish a programming-language-site information architecture with clear paths for learning, reference, examples, releases, roadmap, and benchmarks.
+  - [x] Define Stark-specific brand primitives: logo usage, color palette, typography scale, spacing scale, page widths, borders, shadows, code colors, and responsive breakpoints.
+  - [x] Design page templates for home, docs/reference, book chapters, examples, releases, roadmap, benchmarks, and generated Markdown pages.
+  - [x] Create reusable website components for callouts, feature summaries, code previews, command blocks, status badges, example cards, release links, and benchmark/result summaries.
+  - [x] Make the homepage communicate Stark's performance-oriented language identity in the first viewport, not just a generic documentation landing page.
+  - [x] Avoid a sparse "Hello World" look by adding purposeful hierarchy, dense-but-readable documentation surfaces, code-forward visuals, and clear section affordances.
+  - [x] Verify desktop and mobile layouts with screenshots before considering the design pass complete.
+- [x] Add a clear Getting Started / prerequisites section for first-time Stark users.
+  - [x] Document the expected installation path once compiler binaries are published.
+  - [x] Identify every non-Stark dependency required to compile and run basic Stark programs on supported platforms.
+  - [x] Separate the minimal "run hello world" requirements from optional native, graphical, networking, benchmark, or source-build requirements.
+  - [x] Document how LLVM/toolchain dependencies are handled for binary releases versus source builds.
+  - [x] Include platform-specific notes for Linux and Windows, including linker, C toolchain, shell, and PATH expectations where applicable.
+  - [x] Add a first-run verification flow: install, check `stark --version`, compile a tiny program, run it, and inspect failure diagnostics if setup is incomplete.
+  - [x] Link the Getting Started page from the homepage, Book install chapter, Releases page, and examples catalog.
+- [x] Integrate the Geekdocs Hugo theme as the site documentation theme.
+  - [x] Vendor a pinned prebuilt Geekdocs release bundle under the repository-local site tree.
+  - [x] Configure `site/hugo.toml` to use Geekdocs while preserving the pinned Hugo binary and no-npm/no-Python website build.
+  - [x] Remove or replace local layout overrides that would prevent Geekdocs layouts from taking effect.
+  - [x] Preserve Stark-specific shortcodes for rendering checked-in book and example source files.
+  - [x] Add Stark branding, favicon, and minimal `custom.css` overrides instead of editing generated Geekdocs assets directly.
+  - [x] Verify `scripts/build-site.sh`, `scripts/check-site-links.sh`, and local `hugo server` still work with the vendored theme.
+- [x] Apply the Stark design system on top of Geekdocs without forking generated theme assets.
+  - [x] Use Geekdocs for documentation structure, sidebar behavior, search, dark mode, and code/documentation ergonomics.
+  - [x] Add Stark-specific layout overrides only where the base theme cannot express the needed programming-language site polish.
+  - [x] Keep custom styling in a small, reviewed `custom.css` layer with named design tokens instead of one-off page styling.
+  - [x] Ensure generated docs, book pages, examples, roadmap, benchmarks, and releases all feel like one coherent site.
+- [x] Add a left-side book navigation bar similar to Geekdocs or the Rust Book.
+  - [x] Show all book chapters and appendices in a stable reading order.
+  - [x] Highlight the active page and keep the existing previous/next chapter flow.
+  - [x] Keep the navigation usable on mobile with a collapsible drawer or equivalent compact control.
+  - [x] Preserve the repository-local, vendored Hugo build with no npm or Python requirement.
+- [x] Publish repository documentation as rendered website pages instead of raw Markdown downloads.
+  - [x] Keep the source Markdown under `docs/` as the source of truth.
+  - [x] Generate or mount user-facing language and standard-library docs into the Hugo content tree during the site build.
+  - [x] Render doc links with the same site header, sidebar, typography, code blocks, and link checker coverage as book pages.
+  - [x] Prefer native Hugo rendering over iframe embedding; use an iframe only if preserving navigation around generated Markdown proves materially simpler.
+  - [x] Rewrite website links that currently target `/reference/docs/*.md` so readers stay inside the rendered documentation site.
+- [x] Investigate and fix HTML entity escaping in rendered Markdown/code samples.
+  - [x] Reproduce the `&#34;` escaping issue in TOML examples on the generated site.
+  - [x] Identify whether the escaping comes from Hugo shortcode rendering, generated Markdown exports, Goldmark configuration, syntax highlighting, or manual escaping in source content.
+  - [x] Ensure TOML, Stark, C, args, and shell snippets render literal quotes and punctuation inside code blocks.
+  - [x] Add a site build or link/check test that catches escaped quote regressions in rendered code blocks.
+  - [x] Audit existing published pages for similar entity leakage after the fix.
+- [x] Plan and implement the examples section as a real example catalog.
+  - [x] Decide the display model before implementation: one page per example, grouped by basics, standard-library usage, intermediate projects, and native-backed or graphical examples.
+  - [x] For each example page, show the purpose, source files, build/run command, expected output where applicable, and test/CI status.
+  - [x] Render source code from checked-in example files rather than duplicating snippets by hand.
+  - [x] Mark examples that require native dependencies, networking, graphics, or manual execution.
+  - [x] Link examples back to relevant book chapters and reference docs.
+- [x] Remove the public Unsupported Features documentation from the website.
+  - [x] Remove the `UnsupportedFeatures.md` link from public docs navigation.
+  - [x] Remove or replace the book's unsupported-features appendix so readers are not sent through a long page that mostly says current functionality is working.
+  - [x] Keep real gaps tracked in this roadmap and in targeted diagnostics rather than in a broad public "unsupported" page.
+- [x] Rename the Downloads section to Releases.
+  - [x] Change navigation, page title, and content from Downloads to Releases.
+  - [x] Point the initial Releases page at the canonical public repository and future release artifacts.
+  - [x] Keep a redirect or compatibility path from `/downloads/` to `/releases/` if existing links already point there.
 
 ### Chapter Publication Progress
 

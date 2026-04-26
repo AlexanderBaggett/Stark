@@ -1,12 +1,30 @@
 baseURL = "https://stark-lang.invalid/"
 languageCode = "en-us"
 title = "Stark"
-disableKinds = ["taxonomy", "term"]
+theme = "hugo-geekdoc"
+pluralizeListTitles = false
+disablePathToLower = true
+enableRobotsTXT = true
+
+[taxonomies]
+  tag = "tags"
 
 [markup]
   [markup.highlight]
     noClasses = false
+  [markup.goldmark.renderer]
+    unsafe = true
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 4
 
 [params]
   description = "Stark is a restrictive, performance-focused language targeting LLVM."
   bookVersion = "v1.35 draft"
+  geekdocSubtitle = "Restrictive systems programming for LLVM."
+  geekdocToC = 3
+  geekdocSearch = true
+  geekdocNextPrev = true
+  geekdocCollapseAllSections = true
+  geekdocLogo = "brand.svg"
+  geekdocBreadcrumb = true

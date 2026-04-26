@@ -24,4 +24,4 @@ fi
 
 "${SCRIPT_DIR}/export-reference-sources.sh"
 "${SCRIPT_DIR}/export-book.sh"
-"${HUGO}" --source "${SITE_DIR}" --destination "${OUTPUT_DIR}" --cleanDestinationDir --minify
+"${HUGO}" --source "${SITE_DIR}" --destination "${OUTPUT_DIR}" --cleanDestinationDir

@@ -2582,9 +2582,11 @@ internal sealed partial class MidLevelIrLowerer
                     currentPlace = currentPlace is not null && TryAppendFieldPlaceTarget(currentPlace, memberName, out var fieldPlace)
                         ? fieldPlace
                         : null;
-                    currentValue = TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
-                        ? publishedFieldAccess
-                        : LowerFieldAccess(currentValue, memberName);
+                    currentValue = currentPlace is { UsesAddressModel: true }
+                        ? ReadPlace(currentPlace)
+                        : TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
+                            ? publishedFieldAccess
+                            : LowerFieldAccess(currentValue, memberName);
                     if (currentValue is null)
                     {
                         return false;
@@ -4369,7 +4371,9 @@ internal sealed partial class MidLevelIrLowerer
             updated = target with
             {
                 Type = fieldType,
-                Path = path
+                Path = path,
+                UsesAddressModel = target.UsesAddressModel
+                    || ShouldUseHeapProjectionAddressModel(target.RootName, path)
             };
             return true;
         }
@@ -6668,6 +6672,25 @@ internal sealed partial class MidLevelIrLowerer
         private bool IsAddressableLocal(string name)
         {
             return _localsByName.TryGetValue(name, out var local) && local.IsAddressable;
+        }
+
+        private bool ShouldUseHeapProjectionAddressModel(MidLevelIrOperand? root, IReadOnlyList<PlacePathSegment> path)
+        {
+            return path.Count > 0
+                && root is MidLevelIrLocalOperand local
+                && IsHeapLocal(local.Name);
+        }
+
+        private bool ShouldUseHeapProjectionAddressModel(string? rootName, IReadOnlyList<PlacePathSegment> path)
+        {
+            return path.Count > 0 && IsHeapLocal(rootName);
+        }
+
+        private bool IsHeapLocal(string? name)
+        {
+            return name is not null
+                && _localsByName.TryGetValue(name, out var local)
+                && string.Equals(local.StorageClass, "heap", StringComparison.Ordinal);
         }
 
         private static bool SupportsAddressModel(MidLevelIrOperand? operand)

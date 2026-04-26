@@ -268,7 +268,7 @@ C. Integer Widths and Range Rules
 D. Function Kinds and Guarantees
 E. Storage Classes and Ownership Quick Reference
 F. Package Manifest Reference
-G. Unsupported and Future Features
+G. Current Boundaries
 H. Stark for Rust Programmers
 I. Stark for C# Programmers
 J. Stark for C Programmers

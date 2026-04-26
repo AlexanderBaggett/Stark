@@ -1,5 +1,6 @@
 {{ define "main" }}
-<section class="page book-index">
+{{ partial "page-header" . }}
+<article class="gdoc-markdown gdoc-markdown__align--left book-index" id="main-content" tabindex="-1">
     {{ .Content }}
     <section class="book-toc" aria-label="Book table of contents">
         {{ $parts := slice "Book Metadata" "Part I: First Contact" "Part II: Stark's Core Language" "Part III: Packages, Effects, and Boundaries" "Part IV: The Standard Library" "Part V: Performance and Systems Programming" "Part VI: Projects" "Appendices" }}
@@ -19,5 +20,5 @@
             {{ end }}
         {{ end }}
     </section>
-</section>
+</article>
 {{ end }}
