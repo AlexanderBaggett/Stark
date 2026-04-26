@@ -115,6 +115,7 @@ write_doc_page() {
 rm -rf "${OUTPUT_DIR}" "${CONTENT_DIR}"
 
 copy_tree "${REPOSITORY_ROOT}/examples" "${OUTPUT_DIR}/examples"
+copy_tree "${REPOSITORY_ROOT}/benchmarks" "${OUTPUT_DIR}/benchmarks"
 
 write_index \
     "${CONTENT_DIR}/_index.md" \
