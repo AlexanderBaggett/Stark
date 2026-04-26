@@ -1872,7 +1872,7 @@ are written as assignable implementation work. Each optimizer task must include
 SSA or pipeline regression tests, LLVM emission checks when LLVM output changes,
 and at least one executable benchmark or microbenchmark when the transform is
 expected to affect runtime speed. Optimizations must preserve `-O0` and `-Og`
-debuggability unless a task explicitly says otherwise.
+debuggability unless a task explicitly says otherwise. 
 
 - [ ] Add an SSA value-fact model artifact
   - [ ] introduce a compiler artifact for per-function SSA facts, such as `SsaValueFactModel` or equivalent

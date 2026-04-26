@@ -20,7 +20,8 @@ public sealed record CompilerOptions(
     string? StopAfterPassId = null,
     LlvmTargetInfo? TargetInfo = null,
     bool QualifyModuleSymbols = false,
-    CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3);
+    CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3,
+    bool InternalizeModulePrivate = false);
 
 public readonly record struct ArtifactKey<T>(string Name);
 

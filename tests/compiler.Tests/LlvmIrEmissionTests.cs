@@ -417,6 +417,34 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocal()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            noinline fn i32[-2147483648 2147483647] Helper(i32[-2147483648 2147483647] value) {
+                return value + 1;
+            }
+
+            export ffi fn i32[-2147483648 2147483647] main(i32[-2147483648 2147483647] value) {
+                return Helper(value);
+            }
+            """,
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                InternalizeModulePrivate: true));
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("define internal dso_local fastcc noundef i32 @Helper(i32 noundef %arg_value)", llvm);
+        Assert.Contains("define i32 @main(i32 %arg_value)", llvm);
+        Assert.Contains("call fastcc i32 @Helper(i32 %arg_value)", llvm);
+        Assert.DoesNotContain("define internal dso_local i32 @main", llvm);
+    }
+
+    [Fact]
     public void RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImport()
     {
         var result = Compile(

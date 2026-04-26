@@ -3367,7 +3367,7 @@ public static class DefaultCompilerPipeline
                 abiModel,
                 ssa,
                 context.Options.TargetInfo,
-                internalizeModulePrivate: context.Options.QualifyModuleSymbols,
+                internalizeModulePrivate: context.Options.InternalizeModulePrivate || context.Options.QualifyModuleSymbols,
                 isOptimizedBuild: context.Options.OptimizationLevel != CompilerOptimizationLevel.O0,
                 semanticValidation: validationModel,
                 closedWorldModel: closedWorldModel,

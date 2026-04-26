@@ -425,7 +425,8 @@ internal static class CompilerCli
             StopAfterPassId: ResolveStopAfterPassId(mode),
             ModuleResolver: moduleResolver,
             QualifyModuleSymbols: mode == CliMode.EmitLibrary,
-            OptimizationLevel: optimizationLevel);
+            OptimizationLevel: optimizationLevel,
+            InternalizeModulePrivate: mode == CliMode.EmitExecutable);
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
             nativeIncludeDirectories,
