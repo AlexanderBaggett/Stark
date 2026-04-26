@@ -22,8 +22,8 @@ public struct TcpClient {
     TcpClient();
     static fn System.Net.NetResult<TcpClient> Connect(System.Net.IPv4Endpoint endpoint);
     finite law bool IsOpen(self);
-    fn System.Net.NetResult<i64[0 max]> Read(mut self, mut i8[] destination);
-    fn System.Net.NetResult<i64[0 max]> Write(mut self, i8[] source);
+    fn System.Net.NetResult<i64[0 max]> Read(mut self, mut borrow i8[] destination);
+    fn System.Net.NetResult<i64[0 max]> Write(mut self, borrow i8[] source);
     fn System.Net.NetStatus Shutdown(mut self, TcpShutdown how);
     fn System.Net.NetStatus Close(mut self);
 }

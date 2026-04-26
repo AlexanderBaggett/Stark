@@ -36,7 +36,7 @@ through a local native path configured in `Stark.user.toml` or
 
 ## `hello.stark`
 
-Minimal executable that prints with `System.Console.WriteLine`.
+Minimal executable that imports `System.Console` and calls `WriteLine`.
 
 Build the standard library package first, then compile and run it:
 
@@ -111,7 +111,9 @@ dotnet run --project src -- examples/borrowing/OutParameters.stark --emit-exe -o
 
 ## `ffi/Ffi.stark`
 
-Minimal hosted FFI sample that imports the C ABI `abs` function and calls it from Stark code.
+Second-step interop sample that imports the C ABI `abs` function and calls it
+from Stark code. This is intentionally separate from hello world so the first
+language example stays focused on ordinary Stark plus the standard library.
 
 Build and run it directly:
 

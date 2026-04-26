@@ -3,8 +3,8 @@ title = "Hello"
 weight = 10
 +++
 
-The hello example is the smallest standard-library-backed executable. It prints
-through `System.Console.WriteLine` and exits with status `0`.
+The hello example is the smallest standard-library-backed executable. It imports
+`System.Console` and calls `WriteLine`.
 
 ## Build And Run
 
@@ -17,7 +17,7 @@ dotnet run --project src -- examples/hello.stark --emit-exe -I stdlib/dist -o ex
 Expected output:
 
 ```text
-Hello, world!
+Hello, World!
 ```
 
 Status: covered by `ExamplesCompileRunTests.HelloExampleCompilesAndRunsWithStdlibPackage`.

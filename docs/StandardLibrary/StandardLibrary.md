@@ -653,6 +653,8 @@ public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
 public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
+public struct PathFacts;
+public finite law PathFacts GetFacts(ascii path);
 public finite law ascii Extension(borrow ascii path);
 public finite law ascii BaseName(borrow ascii path);
 public finite law ascii DirectoryName(borrow ascii path);
@@ -663,6 +665,8 @@ public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
 `DirectorySeparator` returns `"/"` on Linux and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux. `PathSeparator` returns `":"` on Linux and `";"` on Windows.
 
 `Extension`, `BaseName`, and `DirectoryName` are `finite law` because they are pure, have no side effects, and always return.
+
+`GetFacts` computes the reusable component ranges for callers that need several pieces of the same path. `PathFacts` exposes view and length helpers for the full path, extension, base name, and directory name without rescanning.
 
 `TryJoin` uses a caller-provided `Ascii` destination rather than allocating hidden storage. It returns `false` if the destination buffer is too small.
 

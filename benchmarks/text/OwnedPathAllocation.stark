@@ -4,10 +4,11 @@ module Benchmarks.Text.OwnedPathAllocation
 fn bool AddPathFacts(System.Memory.MemoryResult<System.Text.OwnedAscii> result, rawmutptr<i64[min max]> checksum) {
     switch (result) {
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
-            *checksum += value.Length();
-            *checksum += System.Text.AsciiLength(System.IO.Path.Extension(value.View()));
-            *checksum += System.Text.AsciiLength(System.IO.Path.BaseName(value.View()));
-            *checksum += System.Text.AsciiLength(System.IO.Path.DirectoryName(value.View()));
+            stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(value.View());
+            *checksum += facts.PathLength();
+            *checksum += facts.ExtensionLength();
+            *checksum += facts.BaseNameLength();
+            *checksum += facts.DirectoryNameLength();
             return true;
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
             return false;

@@ -33,7 +33,7 @@ public sealed class ExamplesCompileRunTests
             var processResult = await RunNativeExecutableAsync(helloOutput);
 
             Assert.Equal(0, processResult.ExitCode);
-            Assert.Equal("Hello, world!\n", processResult.StandardOutput);
+            Assert.Equal("Hello, World!\n", processResult.StandardOutput);
             Assert.Equal(string.Empty, processResult.StandardError);
         }
         finally

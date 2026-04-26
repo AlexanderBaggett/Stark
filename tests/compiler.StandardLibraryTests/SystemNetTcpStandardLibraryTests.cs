@@ -462,6 +462,12 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i64 @LinuxSyscall4HandlePointersInteger(", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxAccept4SyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxSocketCloseOnExecFlag", llvm, StringComparison.Ordinal);
+        var acceptBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef ptr @AcceptSocket(",
+            "Expected Linux AcceptSocket definition.");
+        Assert.DoesNotContain("@LinuxCloseSyscallNumber", acceptBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call i64 @LinuxSyscall1Handle(", acceptBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@accept(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@accept4(", llvm, StringComparison.Ordinal);
     }

@@ -12,6 +12,8 @@ public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
 public finite law ascii ParentDirectory();
 public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
+public struct PathFacts;
+public finite law PathFacts GetFacts(ascii path);
 public finite law ascii Extension(ascii path);
 public finite law ascii BaseName(ascii path);
 public finite law ascii DirectoryName(ascii path);
@@ -82,6 +84,7 @@ fn i32 ShowCurrentDirectory() {
 - Separator and dot-path helpers are implemented.
 - `TryJoin`, allocation-visible `Join`, `Extension`, `BaseName`, and `DirectoryName` are implemented.
 - `Join` returns `System.Memory.MemoryResult<System.Text.OwnedAscii>` and allocates exactly enough path storage for the normalized join result. It preserves the same separator normalization rules as `TryJoin`.
+- `GetFacts` computes the path length, trimmed end, extension, base-name, and directory-name ranges in one pass. Use it when a hot path needs more than one path component.
 - `CurrentDirectory(rawmutptr<Ascii>)` is implemented on Linux with an internal raw `getcwd` syscall shim and on Windows with `GetCurrentDirectoryW` plus UTF-16LE to UTF-8 conversion.
 - The caller-provided `Ascii` buffer must leave room for the returned text. On Linux it must also leave one trailing zero byte reserved for the raw `getcwd` syscall.
 - Windows platform paths normalize UTF-8 input to UTF-16LE for `W` APIs, convert `/` to `\`, recognize drive-absolute and UNC paths, and add the `\\?\` long-path prefix when needed.

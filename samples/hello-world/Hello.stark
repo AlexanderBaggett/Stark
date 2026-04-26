@@ -1,7 +1,7 @@
-import System
+import System.Console
 module Hello
 
-export ffi fn i32 main() {
-    System.Console.WriteLine("Hello from samples/hello-world!");
+fn i32[min max] main() {
+    WriteLine("Hello, World!");
     return 0;
 }

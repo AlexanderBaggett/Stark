@@ -12,5 +12,5 @@ internal struct MutableByteSliceParts {
     i64[0 max] Length;
 }
 
-internal finite law ByteSliceParts GetByteSliceParts(i8[-128 127][] source);
-internal finite law MutableByteSliceParts GetMutableByteSliceParts(mut i8[-128 127][] source);
+internal finite law ByteSliceParts GetByteSliceParts(borrow i8[-128 127][] source);
+internal finite law MutableByteSliceParts GetMutableByteSliceParts(mut borrow i8[-128 127][] source);

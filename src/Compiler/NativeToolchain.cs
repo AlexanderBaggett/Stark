@@ -101,9 +101,10 @@ internal static class NativeToolchain
         string outputPath,
         string? preservedLlvmOutputPath = null,
         LlvmTargetInfo? targetInfo = null,
-        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
+        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
+        bool enableLto = false)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo, optimizationLevel);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo, optimizationLevel, enableLto);
     }
 
     public static NativeToolchainResult EmitNativeObject(
@@ -111,7 +112,8 @@ internal static class NativeToolchain
         string outputPath,
         IEnumerable<string>? includeDirectories = null,
         LlvmTargetInfo? targetInfo = null,
-        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
+        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
+        bool enableLto = false)
     {
         var fullSourcePath = Path.GetFullPath(sourcePath);
         var fullOutputPath = Path.GetFullPath(outputPath);
@@ -130,6 +132,7 @@ internal static class NativeToolchain
         startInfo.ArgumentList.Add("-ffunction-sections");
         startInfo.ArgumentList.Add("-fdata-sections");
         AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+        AppendCompileLtoArguments(startInfo.ArgumentList, enableLto);
         AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly: true);
 
         foreach (var includeDirectory in includeDirectories ?? [])
@@ -166,7 +169,7 @@ internal static class NativeToolchain
         LlvmTargetInfo? targetInfo = null,
         CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo, optimizationLevel);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo, optimizationLevel, enableLto: false);
     }
 
     public static NativeToolchainResult LinkExecutable(
@@ -175,11 +178,13 @@ internal static class NativeToolchain
         string? linkerTool = null,
         IEnumerable<string>? librarySearchPaths = null,
         IEnumerable<string>? extraArguments = null,
-        LlvmTargetInfo? targetInfo = null)
+        LlvmTargetInfo? targetInfo = null,
+        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
+        bool enableLto = false)
     {
         return RunTool(
             string.IsNullOrWhiteSpace(linkerTool) ? "clang" : linkerTool,
-            BuildLinkExecutableArguments(objectPaths, outputPath, librarySearchPaths, extraArguments, targetInfo),
+            BuildLinkExecutableArguments(objectPaths, outputPath, librarySearchPaths, extraArguments, targetInfo, optimizationLevel, enableLto),
             outputPath);
     }
 
@@ -247,7 +252,8 @@ internal static class NativeToolchain
         bool compileOnly,
         string? preservedLlvmOutputPath,
         LlvmTargetInfo? targetInfo,
-        CompilerOptimizationLevel optimizationLevel)
+        CompilerOptimizationLevel optimizationLevel,
+        bool enableLto)
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Environment.CurrentDirectory);
@@ -279,6 +285,7 @@ internal static class NativeToolchain
             }
 
             AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+            AppendCompileLtoArguments(startInfo.ArgumentList, compileOnly && enableLto);
             AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
@@ -314,12 +321,32 @@ internal static class NativeToolchain
         string outputPath,
         IEnumerable<string>? librarySearchPaths,
         IEnumerable<string>? extraArguments,
-        LlvmTargetInfo? targetInfo)
+        LlvmTargetInfo? targetInfo,
+        CompilerOptimizationLevel optimizationLevel,
+        bool enableLto)
     {
         if (targetInfo is not null && !string.IsNullOrWhiteSpace(targetInfo.Triple))
         {
             yield return "-target";
             yield return targetInfo.Triple;
+        }
+
+        if (enableLto)
+        {
+            yield return "-flto=thin";
+            yield return optimizationLevel switch
+            {
+                CompilerOptimizationLevel.O0 => "-O0",
+                CompilerOptimizationLevel.Og => "-Og",
+                CompilerOptimizationLevel.O1 => "-O1",
+                CompilerOptimizationLevel.O2 => "-O2",
+                _ => "-O3"
+            };
+
+            if (!OperatingSystem.IsWindows() && CommandExists("ld.lld"))
+            {
+                yield return "-fuse-ld=lld";
+            }
         }
 
         foreach (var objectPath in objectPaths)
@@ -546,5 +573,33 @@ internal static class NativeToolchain
             CompilerOptimizationLevel.O2 => "-O2",
             _ => "-O3"
         });
+    }
+
+    private static void AppendCompileLtoArguments(ICollection<string> arguments, bool enableLto)
+    {
+        if (enableLto)
+        {
+            arguments.Add("-flto=thin");
+        }
+    }
+
+    private static bool CommandExists(string commandName)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var candidate = Path.Combine(directory, commandName);
+            if (File.Exists(candidate))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

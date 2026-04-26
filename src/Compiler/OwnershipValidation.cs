@@ -2059,7 +2059,7 @@ internal sealed class OwnershipValidator
                 state,
                 _signatures[summary.Name],
                 summary,
-                ValueUse.ConsumeTemporary,
+                ValueUse.Read,
                 allowFunctionReference: false))
             .ToArray();
 
@@ -2092,6 +2092,20 @@ internal sealed class OwnershipValidator
         {
             if (target.Type.Kind == StarkTypeKind.FunctionPointer)
             {
+                var parameterTypes = target.Type.FunctionPointerParameterTypes ?? [];
+                for (var index = 0; index < argumentValues.Length; index++)
+                {
+                    var parameterType = index < parameterTypes.Count
+                        ? parameterTypes[index]
+                        : argumentValues[index].Type;
+                    ApplyUse(
+                        argumentValues[index],
+                        state,
+                        summary,
+                        ValueUse.ForCallArgument(parameterType),
+                        arguments.argument(index));
+                }
+
                 return ApplyUse(
                     new ExpressionInfo(target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error),
                     state,
@@ -2125,10 +2139,16 @@ internal sealed class OwnershipValidator
                     ? argumentValues[index].Type
                     : StarkTypeSymbols.Error;
             var argumentValue = argumentValues[index];
+            var usedArgument = ApplyUse(
+                argumentValue,
+                state,
+                summary,
+                ValueUse.ForCallArgument(parameterType),
+                arguments.argument(index));
 
             if (parameterType.BorrowKind != StarkBorrowKind.None)
             {
-                borrowArguments.Add(argumentValue.BorrowLifetime);
+                borrowArguments.Add(usedArgument.BorrowLifetime);
             }
         }
 
@@ -3310,6 +3330,8 @@ internal sealed class OwnershipValidator
         public static ValueUse ForAssignment(StarkTypeSymbol targetType) =>
             targetType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: targetType)
+                : targetType.Kind == StarkTypeKind.Slice
+                ? new(ValueUseKind.Read, TargetType: targetType)
                 : IsMoveOnly(targetType) ? new(ValueUseKind.Consume, TargetType: targetType) : new(ValueUseKind.Read, TargetType: targetType);
 
         public static ValueUse ForCallArgument(StarkTypeSymbol parameterType) =>

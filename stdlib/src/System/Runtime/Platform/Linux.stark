@@ -1847,15 +1847,6 @@ internal fn rawptr<i8[-128 127]> AcceptSocket(
         return null;
     }
 
-    if (acceptResult == 0) {
-        LinuxSyscall1Handle(LinuxCloseSyscallNumber, null);
-        if (status != null) {
-            *status = -1;
-        }
-
-        return null;
-    }
-
     return (rawptr<i8[-128 127]>)acceptResult;
 }
 

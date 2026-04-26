@@ -101,6 +101,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             || usesSystemMemoryAllocate
             || usesSystemMemoryReallocate
             || usesSystemMemoryFree;
+        var usesTextConcatBuiltin = UsesSystemTextConcatBuiltin(signatures);
 
         foreach (var binary in _enumerateBinaryOperations()
                      .Where(static binary => binary.Operator == SsaBinaryOperator.Exponent && binary.Type.Kind == StarkTypeKind.Float))
@@ -159,7 +160,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add("declare i32 @HeapFree(ptr, i32, ptr) nounwind");
         }
 
-        if (usesRuntimeAllocator)
+        if (usesRuntimeAllocator || usesTextConcatBuiltin)
         {
             declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
         }
@@ -309,16 +310,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitRuntimeAllocatorGlobalDefinitions(StringBuilder builder)
     {
         var pointerSizeBytes = GetTargetPointerSizeBytes();
-        builder.AppendLine($"@{RuntimeAllocatorLockName} = internal global i32 0, align 4");
+        builder.AppendLine($"@{RuntimeAllocatorLockName} = weak_odr hidden global i32 0, align 4");
         foreach (var bucketSize in RuntimeAllocatorBucketSizes)
         {
-            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = internal global ptr null, align {pointerSizeBytes}");
+            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = weak_odr hidden thread_local(localexec) global ptr null, align {pointerSizeBytes}");
         }
     }
 
     private static void EmitRuntimeAllocatorLockHelperDefinitions(StringBuilder builder)
     {
-        builder.AppendLine($"define internal dso_local void @{RuntimeAllocatorLockAcquireHelperName}() unnamed_addr nounwind {{");
+        builder.AppendLine($"define weak_odr hidden void @{RuntimeAllocatorLockAcquireHelperName}() unnamed_addr nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  br label %try_lock");
         builder.AppendLine();
@@ -331,7 +332,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret void");
         builder.AppendLine("}");
         builder.AppendLine();
-        builder.AppendLine($"define internal dso_local void @{RuntimeAllocatorLockReleaseHelperName}() unnamed_addr nounwind {{");
+        builder.AppendLine($"define weak_odr hidden void @{RuntimeAllocatorLockReleaseHelperName}() unnamed_addr nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  store atomic i32 0, ptr @{RuntimeAllocatorLockName} release, align 4");
         builder.AppendLine("  ret void");
@@ -364,7 +365,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
 
         builder.AppendLine(
-            $"define internal dso_local noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind {{");
+            $"define weak_odr hidden noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %size_is_zero = icmp eq {AllocatorSizeType} %size, 0");
         builder.AppendLine($"  %requested_size = select i1 %size_is_zero, {AllocatorSizeType} 1, {AllocatorSizeType} %size");
@@ -406,7 +407,6 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             var bucketGlobalName = GetRuntimeAllocatorBucketGlobalName(bucketSize);
             builder.AppendLine($"bucket_{bucketSize}:");
-            builder.AppendLine($"  call void @{RuntimeAllocatorLockAcquireHelperName}()");
             builder.AppendLine($"  %bucket_head_{bucketSize} = load ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
             builder.AppendLine($"  %bucket_has_node_{bucketSize} = icmp ne ptr %bucket_head_{bucketSize}, null");
             builder.AppendLine($"  br i1 %bucket_has_node_{bucketSize}, label %bucket_{bucketSize}_pop, label %bucket_{bucketSize}_empty");
@@ -414,11 +414,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             builder.AppendLine($"bucket_{bucketSize}_pop:");
             builder.AppendLine($"  %bucket_next_{bucketSize} = load ptr, ptr %bucket_head_{bucketSize}, align {bucketAlignmentBytes}");
             builder.AppendLine($"  store ptr %bucket_next_{bucketSize}, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
-            builder.AppendLine($"  call void @{RuntimeAllocatorLockReleaseHelperName}()");
             builder.AppendLine($"  ret ptr %bucket_head_{bucketSize}");
             builder.AppendLine();
             builder.AppendLine($"bucket_{bucketSize}_empty:");
-            builder.AppendLine($"  call void @{RuntimeAllocatorLockReleaseHelperName}()");
             builder.AppendLine($"  br label %bucket_{bucketSize}_allocate");
             builder.AppendLine();
             builder.AppendLine($"bucket_{bucketSize}_allocate:");
@@ -480,7 +478,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%copy_length_i64";
 
         builder.AppendLine(
-            $"define internal dso_local nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind {{");
+            $"define weak_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
         builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
@@ -539,7 +537,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
         var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
 
-        builder.AppendLine($"define internal dso_local void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
+        builder.AppendLine($"define weak_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %is_null = icmp eq ptr %ptr, null");
         builder.AppendLine("  br i1 %is_null, label %done, label %free");
@@ -568,11 +566,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             var bucketGlobalName = GetRuntimeAllocatorBucketGlobalName(bucketSize);
             builder.AppendLine($"bucket_{bucketSize}_push:");
-            builder.AppendLine($"  call void @{RuntimeAllocatorLockAcquireHelperName}()");
             builder.AppendLine($"  %bucket_head_{bucketSize} = load ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
             builder.AppendLine($"  store ptr %bucket_head_{bucketSize}, ptr %ptr, align {bucketAlignmentBytes}");
             builder.AppendLine($"  store ptr %ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
-            builder.AppendLine($"  call void @{RuntimeAllocatorLockReleaseHelperName}()");
             builder.AppendLine("  br label %done");
             builder.AppendLine();
         }
@@ -2036,7 +2032,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         if (!string.Equals(CurrentModuleName, "System.Text", StringComparison.Ordinal)
-            && builtinKind is SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode)
+            && builtinKind is SystemTextBuiltinKind.TryConcatAscii
+                or SystemTextBuiltinKind.TryConcatUnicode
+                or SystemTextBuiltinKind.TryConvertAsciiToUnicode)
         {
             return false;
         }
@@ -2063,6 +2061,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                 break;
             case SystemTextBuiltinKind.TryConcatUnicode:
                 EmitOwnedTextConcatBuiltin(builder, abiFunction, StarkTypeSymbols.Integer(32), StarkTypeSymbols.Unicode);
+                break;
+            case SystemTextBuiltinKind.TryConvertAsciiToUnicode:
+                EmitAsciiToUnicodeConversionBuiltin(builder, abiFunction);
                 break;
             default:
                 throw new InvalidOperationException($"Unsupported System.Text builtin '{builtinKind}'.");
@@ -3010,34 +3011,268 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret i1 false");
         builder.AppendLine("concat_copy_left_check:");
         builder.AppendLine("  %concat_left_nonempty = icmp ne i64 %concat_left_length, 0");
-        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left_loop, label %concat_after_left");
-        builder.AppendLine("concat_copy_left_loop:");
-        builder.AppendLine("  %concat_left_index = phi i64 [ 0, %concat_copy_left_check ], [ %concat_left_next, %concat_copy_left_loop ]");
-        builder.AppendLine($"  %concat_left_src = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_left_data, i64 %concat_left_index");
-        builder.AppendLine($"  %concat_left_dst = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_data, i64 %concat_left_index");
-        builder.AppendLine($"  %concat_left_unit = load {unitLlvmType}, ptr %concat_left_src");
-        builder.AppendLine($"  store {unitLlvmType} %concat_left_unit, ptr %concat_left_dst");
-        builder.AppendLine("  %concat_left_next = add i64 %concat_left_index, 1");
-        builder.AppendLine("  %concat_left_more = icmp ult i64 %concat_left_next, %concat_left_length");
-        builder.AppendLine("  br i1 %concat_left_more, label %concat_copy_left_loop, label %concat_after_left");
+        builder.AppendLine("  br i1 %concat_left_nonempty, label %concat_copy_left, label %concat_after_left");
+        builder.AppendLine("concat_copy_left:");
+        if (unitType.BitWidth == 8)
+        {
+            builder.AppendLine("  %concat_left_bytes = add i64 %concat_left_length, 0");
+        }
+        else
+        {
+            builder.AppendLine($"  %concat_left_bytes = mul i64 %concat_left_length, {unitType.BitWidth / 8}");
+        }
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)");
+        builder.AppendLine("  br label %concat_after_left");
         builder.AppendLine("concat_after_left:");
         builder.AppendLine("  %concat_right_nonempty = icmp ne i64 %concat_right_length, 0");
-        builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right_prepare, label %concat_finish");
-        builder.AppendLine("concat_copy_right_prepare:");
+        builder.AppendLine("  br i1 %concat_right_nonempty, label %concat_copy_right, label %concat_finish");
+        builder.AppendLine("concat_copy_right:");
         builder.AppendLine($"  %concat_right_dest = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_data, i64 %concat_left_length");
-        builder.AppendLine("  br label %concat_copy_right_loop");
-        builder.AppendLine("concat_copy_right_loop:");
-        builder.AppendLine("  %concat_right_index = phi i64 [ 0, %concat_copy_right_prepare ], [ %concat_right_next, %concat_copy_right_loop ]");
-        builder.AppendLine($"  %concat_right_src = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_right_data, i64 %concat_right_index");
-        builder.AppendLine($"  %concat_right_dst = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %concat_right_dest, i64 %concat_right_index");
-        builder.AppendLine($"  %concat_right_unit = load {unitLlvmType}, ptr %concat_right_src");
-        builder.AppendLine($"  store {unitLlvmType} %concat_right_unit, ptr %concat_right_dst");
-        builder.AppendLine("  %concat_right_next = add i64 %concat_right_index, 1");
-        builder.AppendLine("  %concat_right_more = icmp ult i64 %concat_right_next, %concat_right_length");
-        builder.AppendLine("  br i1 %concat_right_more, label %concat_copy_right_loop, label %concat_finish");
+        if (unitType.BitWidth == 8)
+        {
+            builder.AppendLine("  %concat_right_bytes = add i64 %concat_right_length, 0");
+        }
+        else
+        {
+            builder.AppendLine($"  %concat_right_bytes = mul i64 %concat_right_length, {unitType.BitWidth / 8}");
+        }
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)");
+        builder.AppendLine("  br label %concat_finish");
         builder.AppendLine("concat_finish:");
         builder.AppendLine("  store i64 %concat_required, ptr %concat_length_addr");
         builder.AppendLine("  ret i1 true");
+    }
+
+    private void EmitAsciiToUnicodeConversionBuiltin(
+        StringBuilder builder,
+        AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UserParameters.Count != 2)
+        {
+            throw new InvalidOperationException($"System.Text ASCII-to-Unicode conversion builtin '{abiFunction.Name}' expects exactly two user parameters.");
+        }
+
+        var destinationParameter = abiFunction.UserParameters[0];
+        var sourceParameter = abiFunction.UserParameters[1];
+        var aggregateType = destinationParameter.SourceType.ElementType is not null
+            ? MapType(destinationParameter.SourceType.ElementType)
+            : throw new InvalidOperationException($"System.Text ASCII-to-Unicode conversion builtin '{abiFunction.Name}' requires a raw pointer destination to a Unicode aggregate.");
+        var viewLlvmType = MapType(sourceParameter.SourceType);
+        var destinationPointer = $"%{EscapeIdentifier(destinationParameter.LlvmName)}";
+
+        builder.AppendLine("entry:");
+        var sourceValue = MaterializeAggregateBuiltinParameterValue(builder, sourceParameter, "convert_source_view");
+        builder.AppendLine($"  %convert_destination_is_null = icmp eq ptr {destinationPointer}, null");
+        builder.AppendLine("  br i1 %convert_destination_is_null, label %convert_destination_null, label %convert_destination_ready");
+        builder.AppendLine("convert_destination_null:");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine("convert_destination_ready:");
+        builder.AppendLine($"  %convert_data_addr = getelementptr{GetProvenInObjectGepFlags()} {aggregateType}, ptr {destinationPointer}, i32 0, i32 0");
+        builder.AppendLine($"  %convert_length_addr = getelementptr{GetProvenInObjectGepFlags()} {aggregateType}, ptr {destinationPointer}, i32 0, i32 1");
+        builder.AppendLine($"  %convert_capacity_addr = getelementptr{GetProvenInObjectGepFlags()} {aggregateType}, ptr {destinationPointer}, i32 0, i32 2");
+        builder.AppendLine("  %convert_data = load ptr, ptr %convert_data_addr");
+        builder.AppendLine("  %convert_capacity = load i64, ptr %convert_capacity_addr");
+        builder.AppendLine($"  %convert_source_data = extractvalue {viewLlvmType} {sourceValue}, 0");
+        builder.AppendLine($"  %convert_source_length = extractvalue {viewLlvmType} {sourceValue}, 1");
+        builder.AppendLine("  %convert_capacity_nonnegative = icmp sge i64 %convert_capacity, 0");
+        builder.AppendLine("  %convert_source_length_nonnegative = icmp sge i64 %convert_source_length, 0");
+        builder.AppendLine("  %convert_lengths_valid = and i1 %convert_capacity_nonnegative, %convert_source_length_nonnegative");
+        builder.AppendLine("  br i1 %convert_lengths_valid, label %convert_check_storage, label %convert_fail");
+        builder.AppendLine("convert_check_storage:");
+        builder.AppendLine("  %convert_source_nonempty = icmp sgt i64 %convert_source_length, 0");
+        builder.AppendLine("  %convert_has_destination_data = icmp ne ptr %convert_data, null");
+        builder.AppendLine("  %convert_has_source_data = icmp ne ptr %convert_source_data, null");
+        builder.AppendLine("  %convert_has_both_data = and i1 %convert_has_destination_data, %convert_has_source_data");
+        builder.AppendLine("  %convert_storage_ready = select i1 %convert_source_nonempty, i1 %convert_has_both_data, i1 true");
+        builder.AppendLine("  br i1 %convert_storage_ready, label %convert_fast_entry, label %convert_fail");
+        builder.AppendLine("convert_fail:");
+        builder.AppendLine("  store i64 0, ptr %convert_length_addr");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine("convert_fast_entry:");
+        builder.AppendLine("  %convert_fits_as_unicode = icmp sle i64 %convert_source_length, %convert_capacity");
+        builder.AppendLine("  br i1 %convert_fits_as_unicode, label %convert_fast_loop, label %convert_fallback_entry");
+        builder.AppendLine("convert_fast_loop:");
+        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_entry ], [ %convert_fast_next, %convert_fast_store ]");
+        builder.AppendLine("  %convert_fast_done = icmp eq i64 %convert_fast_index, %convert_source_length");
+        builder.AppendLine("  br i1 %convert_fast_done, label %convert_success_source_length, label %convert_fast_load");
+        builder.AppendLine("convert_fast_load:");
+        builder.AppendLine("  %convert_fast_source_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_fast_index");
+        builder.AppendLine("  %convert_fast_unit = load i8, ptr %convert_fast_source_ptr");
+        builder.AppendLine("  %convert_fast_non_ascii = icmp slt i8 %convert_fast_unit, 0");
+        builder.AppendLine("  br i1 %convert_fast_non_ascii, label %convert_fallback_entry, label %convert_fast_store");
+        builder.AppendLine("convert_fast_store:");
+        builder.AppendLine("  %convert_fast_dest_ptr = getelementptr i32, ptr %convert_data, i64 %convert_fast_index");
+        builder.AppendLine("  %convert_fast_wide = zext i8 %convert_fast_unit to i32");
+        builder.AppendLine("  store i32 %convert_fast_wide, ptr %convert_fast_dest_ptr");
+        builder.AppendLine("  %convert_fast_next = add i64 %convert_fast_index, 1");
+        builder.AppendLine("  br label %convert_fast_loop");
+        builder.AppendLine("convert_success_source_length:");
+        builder.AppendLine("  store i64 %convert_source_length, ptr %convert_length_addr");
+        builder.AppendLine("  ret i1 true");
+        builder.AppendLine("convert_fallback_entry:");
+        builder.AppendLine("  br label %convert_fallback_loop");
+        builder.AppendLine("convert_fallback_loop:");
+        builder.AppendLine("  %convert_read_index = phi i64 [ 0, %convert_fallback_entry ], [ %convert_next_read, %convert_store_decoded ]");
+        builder.AppendLine("  %convert_write_index = phi i64 [ 0, %convert_fallback_entry ], [ %convert_next_write, %convert_store_decoded ]");
+        builder.AppendLine("  %convert_fallback_has_input = icmp slt i64 %convert_read_index, %convert_source_length");
+        builder.AppendLine("  br i1 %convert_fallback_has_input, label %convert_fallback_capacity, label %convert_fallback_success");
+        builder.AppendLine("convert_fallback_capacity:");
+        builder.AppendLine("  %convert_fallback_has_capacity = icmp slt i64 %convert_write_index, %convert_capacity");
+        builder.AppendLine("  br i1 %convert_fallback_has_capacity, label %convert_decode_first, label %convert_fail");
+        builder.AppendLine("convert_fallback_success:");
+        builder.AppendLine("  store i64 %convert_write_index, ptr %convert_length_addr");
+        builder.AppendLine("  ret i1 true");
+        builder.AppendLine("convert_decode_first:");
+        builder.AppendLine("  %convert_remaining = sub i64 %convert_source_length, %convert_read_index");
+        builder.AppendLine("  %convert_first_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_read_index");
+        builder.AppendLine("  %convert_first_raw = load i8, ptr %convert_first_ptr");
+        builder.AppendLine("  %convert_first = zext i8 %convert_first_raw to i32");
+        builder.AppendLine("  %convert_first_is_ascii = icmp ule i32 %convert_first, 127");
+        builder.AppendLine("  br i1 %convert_first_is_ascii, label %convert_decoded_ascii, label %convert_decode_two_check");
+        builder.AppendLine("convert_decoded_ascii:");
+        builder.AppendLine("  %convert_ascii_next_read = add i64 %convert_read_index, 1");
+        builder.AppendLine("  br label %convert_store_decoded");
+        builder.AppendLine("convert_decode_two_check:");
+        builder.AppendLine("  %convert_first_ge_194 = icmp uge i32 %convert_first, 194");
+        builder.AppendLine("  %convert_first_le_223 = icmp ule i32 %convert_first, 223");
+        builder.AppendLine("  %convert_is_two_byte = and i1 %convert_first_ge_194, %convert_first_le_223");
+        builder.AppendLine("  br i1 %convert_is_two_byte, label %convert_decode_two_length, label %convert_decode_three_check");
+        builder.AppendLine("convert_decode_two_length:");
+        builder.AppendLine("  %convert_has_two_bytes = icmp sge i64 %convert_remaining, 2");
+        builder.AppendLine("  br i1 %convert_has_two_bytes, label %convert_decode_two_continuation, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_two_continuation:");
+        builder.AppendLine("  %convert_two_index_1 = add i64 %convert_read_index, 1");
+        builder.AppendLine("  %convert_second_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_two_index_1");
+        builder.AppendLine("  %convert_second_raw = load i8, ptr %convert_second_ptr");
+        builder.AppendLine("  %convert_second = zext i8 %convert_second_raw to i32");
+        builder.AppendLine("  %convert_second_ge_128 = icmp uge i32 %convert_second, 128");
+        builder.AppendLine("  %convert_second_le_191 = icmp ule i32 %convert_second, 191");
+        builder.AppendLine("  %convert_second_valid = and i1 %convert_second_ge_128, %convert_second_le_191");
+        builder.AppendLine("  br i1 %convert_second_valid, label %convert_decode_two_accept, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_two_accept:");
+        builder.AppendLine("  %convert_two_first_bits = and i32 %convert_first, 31");
+        builder.AppendLine("  %convert_two_first_shifted = shl i32 %convert_two_first_bits, 6");
+        builder.AppendLine("  %convert_two_second_bits = and i32 %convert_second, 63");
+        builder.AppendLine("  %convert_two_code_point = or i32 %convert_two_first_shifted, %convert_two_second_bits");
+        builder.AppendLine("  %convert_two_next_read = add i64 %convert_read_index, 2");
+        builder.AppendLine("  br label %convert_store_decoded");
+        builder.AppendLine("convert_decode_three_check:");
+        builder.AppendLine("  %convert_first_ge_224 = icmp uge i32 %convert_first, 224");
+        builder.AppendLine("  %convert_first_le_239 = icmp ule i32 %convert_first, 239");
+        builder.AppendLine("  %convert_is_three_byte = and i1 %convert_first_ge_224, %convert_first_le_239");
+        builder.AppendLine("  br i1 %convert_is_three_byte, label %convert_decode_three_length, label %convert_decode_four_check");
+        builder.AppendLine("convert_decode_three_length:");
+        builder.AppendLine("  %convert_has_three_bytes = icmp sge i64 %convert_remaining, 3");
+        builder.AppendLine("  br i1 %convert_has_three_bytes, label %convert_decode_three_continuations, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_three_continuations:");
+        builder.AppendLine("  %convert_three_index_1 = add i64 %convert_read_index, 1");
+        builder.AppendLine("  %convert_three_index_2 = add i64 %convert_read_index, 2");
+        builder.AppendLine("  %convert_three_second_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_three_index_1");
+        builder.AppendLine("  %convert_three_third_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_three_index_2");
+        builder.AppendLine("  %convert_three_second_raw = load i8, ptr %convert_three_second_ptr");
+        builder.AppendLine("  %convert_three_third_raw = load i8, ptr %convert_three_third_ptr");
+        builder.AppendLine("  %convert_three_second = zext i8 %convert_three_second_raw to i32");
+        builder.AppendLine("  %convert_three_third = zext i8 %convert_three_third_raw to i32");
+        builder.AppendLine("  %convert_three_second_ge_128 = icmp uge i32 %convert_three_second, 128");
+        builder.AppendLine("  %convert_three_second_le_191 = icmp ule i32 %convert_three_second, 191");
+        builder.AppendLine("  %convert_three_second_valid = and i1 %convert_three_second_ge_128, %convert_three_second_le_191");
+        builder.AppendLine("  %convert_three_third_ge_128 = icmp uge i32 %convert_three_third, 128");
+        builder.AppendLine("  %convert_three_third_le_191 = icmp ule i32 %convert_three_third, 191");
+        builder.AppendLine("  %convert_three_third_valid = and i1 %convert_three_third_ge_128, %convert_three_third_le_191");
+        builder.AppendLine("  %convert_three_continuations_valid = and i1 %convert_three_second_valid, %convert_three_third_valid");
+        builder.AppendLine("  %convert_three_is_e0 = icmp eq i32 %convert_first, 224");
+        builder.AppendLine("  %convert_three_second_under_160 = icmp ult i32 %convert_three_second, 160");
+        builder.AppendLine("  %convert_three_overlong = and i1 %convert_three_is_e0, %convert_three_second_under_160");
+        builder.AppendLine("  %convert_three_is_ed = icmp eq i32 %convert_first, 237");
+        builder.AppendLine("  %convert_three_second_at_or_after_160 = icmp uge i32 %convert_three_second, 160");
+        builder.AppendLine("  %convert_three_surrogate = and i1 %convert_three_is_ed, %convert_three_second_at_or_after_160");
+        builder.AppendLine("  %convert_three_range_invalid = or i1 %convert_three_overlong, %convert_three_surrogate");
+        builder.AppendLine("  %convert_three_range_valid = xor i1 %convert_three_range_invalid, true");
+        builder.AppendLine("  %convert_three_valid = and i1 %convert_three_continuations_valid, %convert_three_range_valid");
+        builder.AppendLine("  br i1 %convert_three_valid, label %convert_decode_three_accept, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_three_accept:");
+        builder.AppendLine("  %convert_three_first_bits = and i32 %convert_first, 15");
+        builder.AppendLine("  %convert_three_first_shifted = shl i32 %convert_three_first_bits, 12");
+        builder.AppendLine("  %convert_three_second_bits = and i32 %convert_three_second, 63");
+        builder.AppendLine("  %convert_three_second_shifted = shl i32 %convert_three_second_bits, 6");
+        builder.AppendLine("  %convert_three_partial = or i32 %convert_three_first_shifted, %convert_three_second_shifted");
+        builder.AppendLine("  %convert_three_third_bits = and i32 %convert_three_third, 63");
+        builder.AppendLine("  %convert_three_code_point = or i32 %convert_three_partial, %convert_three_third_bits");
+        builder.AppendLine("  %convert_three_next_read = add i64 %convert_read_index, 3");
+        builder.AppendLine("  br label %convert_store_decoded");
+        builder.AppendLine("convert_decode_four_check:");
+        builder.AppendLine("  %convert_first_ge_240 = icmp uge i32 %convert_first, 240");
+        builder.AppendLine("  %convert_first_le_244 = icmp ule i32 %convert_first, 244");
+        builder.AppendLine("  %convert_is_four_byte = and i1 %convert_first_ge_240, %convert_first_le_244");
+        builder.AppendLine("  br i1 %convert_is_four_byte, label %convert_decode_four_length, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_four_length:");
+        builder.AppendLine("  %convert_has_four_bytes = icmp sge i64 %convert_remaining, 4");
+        builder.AppendLine("  br i1 %convert_has_four_bytes, label %convert_decode_four_continuations, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_four_continuations:");
+        builder.AppendLine("  %convert_four_index_1 = add i64 %convert_read_index, 1");
+        builder.AppendLine("  %convert_four_index_2 = add i64 %convert_read_index, 2");
+        builder.AppendLine("  %convert_four_index_3 = add i64 %convert_read_index, 3");
+        builder.AppendLine("  %convert_four_second_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_four_index_1");
+        builder.AppendLine("  %convert_four_third_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_four_index_2");
+        builder.AppendLine("  %convert_four_fourth_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_four_index_3");
+        builder.AppendLine("  %convert_four_second_raw = load i8, ptr %convert_four_second_ptr");
+        builder.AppendLine("  %convert_four_third_raw = load i8, ptr %convert_four_third_ptr");
+        builder.AppendLine("  %convert_four_fourth_raw = load i8, ptr %convert_four_fourth_ptr");
+        builder.AppendLine("  %convert_four_second = zext i8 %convert_four_second_raw to i32");
+        builder.AppendLine("  %convert_four_third = zext i8 %convert_four_third_raw to i32");
+        builder.AppendLine("  %convert_four_fourth = zext i8 %convert_four_fourth_raw to i32");
+        builder.AppendLine("  %convert_four_second_ge_128 = icmp uge i32 %convert_four_second, 128");
+        builder.AppendLine("  %convert_four_second_le_191 = icmp ule i32 %convert_four_second, 191");
+        builder.AppendLine("  %convert_four_second_valid = and i1 %convert_four_second_ge_128, %convert_four_second_le_191");
+        builder.AppendLine("  %convert_four_third_ge_128 = icmp uge i32 %convert_four_third, 128");
+        builder.AppendLine("  %convert_four_third_le_191 = icmp ule i32 %convert_four_third, 191");
+        builder.AppendLine("  %convert_four_third_valid = and i1 %convert_four_third_ge_128, %convert_four_third_le_191");
+        builder.AppendLine("  %convert_four_fourth_ge_128 = icmp uge i32 %convert_four_fourth, 128");
+        builder.AppendLine("  %convert_four_fourth_le_191 = icmp ule i32 %convert_four_fourth, 191");
+        builder.AppendLine("  %convert_four_fourth_valid = and i1 %convert_four_fourth_ge_128, %convert_four_fourth_le_191");
+        builder.AppendLine("  %convert_four_first_pair_valid = and i1 %convert_four_second_valid, %convert_four_third_valid");
+        builder.AppendLine("  %convert_four_continuations_valid = and i1 %convert_four_first_pair_valid, %convert_four_fourth_valid");
+        builder.AppendLine("  %convert_four_is_f0 = icmp eq i32 %convert_first, 240");
+        builder.AppendLine("  %convert_four_second_under_144 = icmp ult i32 %convert_four_second, 144");
+        builder.AppendLine("  %convert_four_overlong = and i1 %convert_four_is_f0, %convert_four_second_under_144");
+        builder.AppendLine("  %convert_four_is_f4 = icmp eq i32 %convert_first, 244");
+        builder.AppendLine("  %convert_four_second_after_143 = icmp ugt i32 %convert_four_second, 143");
+        builder.AppendLine("  %convert_four_too_large = and i1 %convert_four_is_f4, %convert_four_second_after_143");
+        builder.AppendLine("  %convert_four_range_invalid = or i1 %convert_four_overlong, %convert_four_too_large");
+        builder.AppendLine("  %convert_four_range_valid = xor i1 %convert_four_range_invalid, true");
+        builder.AppendLine("  %convert_four_valid = and i1 %convert_four_continuations_valid, %convert_four_range_valid");
+        builder.AppendLine("  br i1 %convert_four_valid, label %convert_decode_four_accept, label %convert_decode_invalid");
+        builder.AppendLine("convert_decode_four_accept:");
+        builder.AppendLine("  %convert_four_first_bits = and i32 %convert_first, 7");
+        builder.AppendLine("  %convert_four_first_shifted = shl i32 %convert_four_first_bits, 18");
+        builder.AppendLine("  %convert_four_second_bits = and i32 %convert_four_second, 63");
+        builder.AppendLine("  %convert_four_second_shifted = shl i32 %convert_four_second_bits, 12");
+        builder.AppendLine("  %convert_four_third_bits = and i32 %convert_four_third, 63");
+        builder.AppendLine("  %convert_four_third_shifted = shl i32 %convert_four_third_bits, 6");
+        builder.AppendLine("  %convert_four_partial_0 = or i32 %convert_four_first_shifted, %convert_four_second_shifted");
+        builder.AppendLine("  %convert_four_partial_1 = or i32 %convert_four_partial_0, %convert_four_third_shifted");
+        builder.AppendLine("  %convert_four_fourth_bits = and i32 %convert_four_fourth, 63");
+        builder.AppendLine("  %convert_four_code_point = or i32 %convert_four_partial_1, %convert_four_fourth_bits");
+        builder.AppendLine("  %convert_four_next_read = add i64 %convert_read_index, 4");
+        builder.AppendLine("  br label %convert_store_decoded");
+        builder.AppendLine("convert_decode_invalid:");
+        builder.AppendLine("  %convert_invalid_next_read = add i64 %convert_read_index, 1");
+        builder.AppendLine("  br label %convert_store_decoded");
+        builder.AppendLine("convert_store_decoded:");
+        builder.AppendLine("  %convert_code_point = phi i32 [ %convert_first, %convert_decoded_ascii ], [ %convert_two_code_point, %convert_decode_two_accept ], [ %convert_three_code_point, %convert_decode_three_accept ], [ %convert_four_code_point, %convert_decode_four_accept ], [ 65533, %convert_decode_invalid ]");
+        builder.AppendLine("  %convert_next_read = phi i64 [ %convert_ascii_next_read, %convert_decoded_ascii ], [ %convert_two_next_read, %convert_decode_two_accept ], [ %convert_three_next_read, %convert_decode_three_accept ], [ %convert_four_next_read, %convert_decode_four_accept ], [ %convert_invalid_next_read, %convert_decode_invalid ]");
+        builder.AppendLine("  %convert_fallback_dest_ptr = getelementptr i32, ptr %convert_data, i64 %convert_write_index");
+        builder.AppendLine("  store i32 %convert_code_point, ptr %convert_fallback_dest_ptr");
+        builder.AppendLine("  %convert_next_write = add i64 %convert_write_index, 1");
+        builder.AppendLine("  br label %convert_fallback_loop");
+    }
+
+    private bool UsesSystemTextConcatBuiltin(IEnumerable<TypedFunctionSignature> signatures)
+    {
+        return string.Equals(CurrentModuleName, "System.Text", StringComparison.Ordinal)
+            && signatures.Any(static signature =>
+                string.Equals(signature.Name, "TryConcatAscii", StringComparison.Ordinal)
+                || string.Equals(signature.Name, "TryConcatUnicode", StringComparison.Ordinal));
     }
 
     private string MaterializeAggregateBuiltinParameterValue(
@@ -3174,6 +3409,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                         CaptureKind: ParameterCaptureKind.None),
                     StringComparer.Ordinal),
             SystemTextBuiltinKind.TryConcatAscii or SystemTextBuiltinKind.TryConcatUnicode
+                or SystemTextBuiltinKind.TryConvertAsciiToUnicode
                 => function.Parameters.ToDictionary(
                     static parameter => parameter.Name,
                     static parameter => new ParameterMemoryEffectSummary(
@@ -3280,6 +3516,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             "UnicodeLength" => SystemTextBuiltinKind.UnicodeLength,
             "TryConcatAscii" => SystemTextBuiltinKind.TryConcatAscii,
             "TryConcatUnicode" => SystemTextBuiltinKind.TryConcatUnicode,
+            "TryConvertAsciiToUnicode" => SystemTextBuiltinKind.TryConvertAsciiToUnicode,
             _ => default
         };
 
@@ -3287,7 +3524,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             "AsciiView" or "UnicodeView"
             or "AsciiData" or "UnicodeData"
             or "AsciiLength" or "UnicodeLength"
-            or "TryConcatAscii" or "TryConcatUnicode";
+            or "TryConcatAscii" or "TryConcatUnicode"
+            or "TryConvertAsciiToUnicode";
     }
 
     private static bool TryGetSystemMathBuiltin(
@@ -3952,7 +4190,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         AsciiLength,
         UnicodeLength,
         TryConcatAscii,
-        TryConcatUnicode
+        TryConcatUnicode,
+        TryConvertAsciiToUnicode
     }
 
     private enum SystemMathBuiltinKind

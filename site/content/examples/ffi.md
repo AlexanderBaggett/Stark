@@ -3,8 +3,10 @@ title = "FFI"
 weight = 100
 +++
 
-The FFI example imports the C ABI `abs` function and calls it from Stark code.
-It is intentionally small so the ABI boundary is visible.
+The FFI example is the second step after hello world. It imports the C ABI
+`abs` function and calls it from Stark code. It is intentionally small so the
+ABI boundary is visible without making native interop the first language
+example.
 
 ## Build And Run
 

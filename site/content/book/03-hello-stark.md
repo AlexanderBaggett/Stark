@@ -9,49 +9,46 @@ next = "/book/04-small-tour/"
 
 # Hello, Stark
 
-The smallest executable Stark program returns a process exit code.
+The smallest useful Stark program uses the standard library console API:
 
-{{< stark-sample "assets/book/samples/hello-return-code.stark" >}}
+{{< stark-sample "assets/book/stdlib-samples/hello-console.stark" >}}
 
-The `export ffi fn main` spelling is the current raw entrypoint convention.
-Later hosted entrypoint forms are tracked separately on the roadmap.
+This is the hello-world baseline for the language: import the module you need,
+call the function by its short name, and return a process status.
 
-## Reading The Signature
+## Reading The Program
+
+`import System.Console` brings the public console functions into scope. That is
+why the body can call `WriteLine("Hello, World!")` instead of spelling the full
+module path.
 
 The return type is `i32[min max]`: a 32-bit signed integer with the full range
-for that width.
+for that width. Returning `0` reports success to the shell.
 
-The `export` marker means the function is visible as an ABI symbol. Ordinary
-Stark APIs should prefer `public`; `export` is for entrypoints, FFI, and other
-stable binary boundaries.
+Even this small example teaches the intended shape:
 
-The `ffi fn` part is also deliberate. The current entrypoint is the raw native
-boundary shape: the operating system calls a symbol with a C-compatible calling
-convention, and Stark code returns a process status. There is no hidden hosted
-runtime wrapper in this first program.
-
-That makes the example plain, but it also teaches three Stark habits early:
-
-- boundary functions are marked as boundaries
-- return codes are ordinary values
-- the source says which facts downstream tools may rely on
+- imports are explicit
+- IO is an ordinary standard-library call
+- process status is an ordinary value
 
 ## Build It
 
 ```bash
-dotnet run --project src -- site/assets/book/samples/hello-return-code.stark --emit-exe -o /tmp/stark-book-hello
+dotnet run --project src -- site/assets/book/stdlib-samples/hello-console.stark --emit-exe -I stdlib/src -o /tmp/stark-book-hello
 /tmp/stark-book-hello
 ```
 
-The program prints nothing and exits with code `0`.
+The program prints:
 
-For now, a non-zero return from `main` is the simplest way for a tiny Stark
-program to report failure to a shell script or CI step. Later chapters use that
-same convention for checked book samples.
+```text
+Hello, World!
+```
 
-## Console Output
+and exits with code `0`.
 
-The repository also has a standard-library-backed hello example at
-`examples/hello.stark`. That sample imports `System` and uses
-`System.Console.WriteLine`, which makes allocation, IO status, and package
-consumption part of the example instead of hiding them in the language.
+## Next: Native Interop
+
+The FFI example is deliberately separate from hello world. See
+`examples/ffi/Ffi.stark` when you want to see Stark call a C ABI function. Hello
+world should start with ordinary Stark plus the standard library, not native
+interop.

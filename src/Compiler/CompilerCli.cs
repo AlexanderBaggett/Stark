@@ -501,6 +501,7 @@ internal static class CompilerCli
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
+        var enableExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel);
 
         try
         {
@@ -511,7 +512,8 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                optimizationLevel: compilerOptions.OptimizationLevel);
+                optimizationLevel: compilerOptions.OptimizationLevel,
+                enableLto: enableExecutableLto);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -549,7 +551,8 @@ internal static class CompilerCli
                     llvmModule.Text,
                     compilerOptions,
                     intermediateDirectory,
-                    preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
+                    preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
+                    enableLto: enableExecutableLto);
                 if (!sourceDependencyResult.Success)
                 {
                     await WriteDiagnosticsAsync(stderr, sourceDependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -604,7 +607,9 @@ internal static class CompilerCli
                 toolchainOptions.LinkerTool,
                 combinedLibrarySearchDirectories,
                 linkArguments,
-                compilerOptions.TargetInfo);
+                compilerOptions.TargetInfo,
+                compilerOptions.OptimizationLevel,
+                enableExecutableLto);
             if (!toolchainResult.Succeeded)
             {
                 await WriteDiagnosticsAsync(
@@ -1751,7 +1756,8 @@ internal static class CompilerCli
         string rootLlvmText,
         CompilerOptions rootOptions,
         string intermediateDirectory,
-        bool preserveTemps)
+        bool preserveTemps,
+        bool enableLto)
     {
         var compiledModules = new List<DependencyLlvmCompileResult>(modules.Count);
         foreach (var module in modules)
@@ -1802,7 +1808,7 @@ internal static class CompilerCli
                     continue;
                 }
 
-                var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps);
+                var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
                 if (!toolchainResult.Succeeded)
                 {
                     return new SourceDependencyLinkResult(
@@ -1903,7 +1909,8 @@ internal static class CompilerCli
         DependencyLlvmCompileResult dependencyResult,
         CompilerOptions rootOptions,
         string intermediateDirectory,
-        bool preserveTemps)
+        bool preserveTemps,
+        bool enableLto = false)
     {
         if (dependencyResult.LlvmText is null)
         {
@@ -1926,7 +1933,13 @@ internal static class CompilerCli
             objectPath,
             preservedLlvmOutputPath: llvmPath,
             targetInfo: rootOptions.TargetInfo,
-            optimizationLevel: rootOptions.OptimizationLevel);
+            optimizationLevel: rootOptions.OptimizationLevel,
+            enableLto: enableLto);
+    }
+
+    private static bool ShouldEnableExecutableLto(CompilerOptimizationLevel optimizationLevel)
+    {
+        return optimizationLevel is CompilerOptimizationLevel.O2 or CompilerOptimizationLevel.O3;
     }
 
     private static LlvmSymbolSummary SummarizeLlvmSymbols(string llvmText)

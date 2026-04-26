@@ -88,6 +88,62 @@ public struct OwnedUnicode {
     }
 }
 
+internal fn void ReleaseOwnedAsciiStorage(rawmutptr<OwnedAscii> value) {
+    if (value == null) {
+        return;
+    }
+
+    if ((*value).Allocation.Pointer != null) {
+        stack System.Memory.Allocation allocation = new System.Memory.Allocation() {
+            Pointer = (*value).Allocation.Pointer,
+            ByteLength = (*value).Allocation.ByteLength,
+            Alignment = (*value).Allocation.Alignment,
+            Allocator = System.Memory.Allocator.Default()
+        };
+        System.Memory.Free(allocation);
+    }
+
+    (*value).Text = new Ascii() {
+        Data = null,
+        Length = 0,
+        Capacity = 0
+    };
+    (*value).Allocation = new System.Memory.Allocation() {
+        Pointer = null,
+        ByteLength = 0,
+        Alignment = 1,
+        Allocator = System.Memory.Allocator.Default()
+    };
+}
+
+internal fn void ReleaseOwnedUnicodeStorage(rawmutptr<OwnedUnicode> value) {
+    if (value == null) {
+        return;
+    }
+
+    if ((*value).Allocation.Pointer != null) {
+        stack System.Memory.Allocation allocation = new System.Memory.Allocation() {
+            Pointer = (*value).Allocation.Pointer,
+            ByteLength = (*value).Allocation.ByteLength,
+            Alignment = (*value).Allocation.Alignment,
+            Allocator = System.Memory.Allocator.Default()
+        };
+        System.Memory.Free(allocation);
+    }
+
+    (*value).Text = new Unicode() {
+        Data = null,
+        Length = 0,
+        Capacity = 0
+    };
+    (*value).Allocation = new System.Memory.Allocation() {
+        Pointer = null,
+        ByteLength = 0,
+        Alignment = alignof(i32[-2147483648 2147483647]),
+        Allocator = System.Memory.Allocator.Default()
+    };
+}
+
 fn i32[-2147483648 2147483647] UnsignedByte(i8[-128 127] value) {
     if (value < 0) {
         return ((i32[-2147483648 2147483647])value) + 256;
@@ -2242,22 +2298,74 @@ public finite bool TryFormatTextErrorUnicode(rawmutptr<Unicode> destination, Tex
     }
 }
 
-public fn bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i64[-9223372036854775808 9223372036854775807] value) {
-    stack mut i8[-128 127][20] buffer = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    };
-    stack mut Ascii asciiText = new Ascii() {
-        Data = &buffer[0],
-        Length = 0,
-        Capacity = 20
-    };
-
-    if (!TryFormatI64Ascii(&asciiText, value)) {
+public finite bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i64[-9223372036854775808 9223372036854775807] value) {
+    if (destination == null) {
         return false;
     }
 
-    return TryConvertAsciiToUnicode(destination, AsciiView(asciiText));
+    if (value == -9223372036854775808) {
+        return TryConcatUnicode(destination, (unicode)"", (unicode)"-9223372036854775808");
+    }
+
+    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
+    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    if (capacity < 0) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] signedValue = value;
+    stack bool negative = signedValue < 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] magnitude = signedValue;
+    if (negative) {
+        magnitude = 0 - signedValue;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[-9223372036854775808 9223372036854775807] scan = magnitude;
+    while willexit (scan >= 10) {
+        scan = scan / 10;
+        digitCount += 1;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    if (negative) {
+        required += 1;
+    }
+
+    if (required > capacity || data == null) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
+    stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+    while willexit (remaining >= 10) {
+        stack i64[-9223372036854775808 9223372036854775807] digit = remaining % 10;
+        *(&data[writeIndex]) = 48 + (i32[-2147483648 2147483647])digit;
+        remaining = remaining / 10;
+        writeIndex -= 1;
+    }
+
+    *(&data[writeIndex]) = 48 + (i32[-2147483648 2147483647])remaining;
+    if (negative) {
+        *(&data[0]) = 45;
+    }
+
+    *destination = new Unicode() {
+        Data = data,
+        Length = required,
+        Capacity = capacity
+    };
+    return true;
 }
 
 public fn bool TryFormatI1024Unicode(rawmutptr<Unicode> destination, i1024[min max] value) {
@@ -2319,42 +2427,78 @@ public fn bool TryFormatI96Unicode(rawmutptr<Unicode> destination, i96[min max] 
     return TryFormatI128Unicode(destination, (i128[min max])value);
 }
 
-public fn bool TryFormatI48Unicode(rawmutptr<Unicode> destination, i48[-140737488355328 140737488355327] value) {
+public finite bool TryFormatI48Unicode(rawmutptr<Unicode> destination, i48[-140737488355328 140737488355327] value) {
     return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
 }
 
-public fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value) {
+public finite bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value) {
     return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
 }
 
-public fn bool TryFormatI24Unicode(rawmutptr<Unicode> destination, i24[-8388608 8388607] value) {
+public finite bool TryFormatI24Unicode(rawmutptr<Unicode> destination, i24[-8388608 8388607] value) {
     return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
 }
 
-public fn bool TryFormatI16Unicode(rawmutptr<Unicode> destination, i16[-32768 32767] value) {
+public finite bool TryFormatI16Unicode(rawmutptr<Unicode> destination, i16[-32768 32767] value) {
     return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
 }
 
-public fn bool TryFormatI8Unicode(rawmutptr<Unicode> destination, i8[-128 127] value) {
+public finite bool TryFormatI8Unicode(rawmutptr<Unicode> destination, i8[-128 127] value) {
     return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
 }
 
-public fn bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u64[0 max] value) {
-    stack mut i8[-128 127][20] buffer = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    };
-    stack mut Ascii asciiText = new Ascii() {
-        Data = &buffer[0],
-        Length = 0,
-        Capacity = 20
-    };
-
-    if (!TryFormatU64Ascii(&asciiText, value)) {
+public finite bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u64[0 max] value) {
+    if (destination == null) {
         return false;
     }
 
-    return TryConvertAsciiToUnicode(destination, AsciiView(asciiText));
+    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
+    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    if (capacity < 0) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut u64[0 max] scan = value;
+    while willexit (scan >= (u64[0 max])10) {
+        scan = scan / (u64[0 max])10;
+        digitCount += 1;
+    }
+
+    if (digitCount > capacity || data == null) {
+        *destination = new Unicode() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = digitCount - 1;
+    stack mut u64[0 max] remaining = value;
+    while willexit (remaining >= (u64[0 max])10) {
+        stack u64[0 9] digit = (u64[0 9])(remaining % (u64[0 max])10);
+        stack i32[-2147483648 2147483647] digitValue = (i32[-2147483648 2147483647])digit;
+        *(&data[writeIndex]) = 48 + digitValue;
+        remaining = remaining / (u64[0 max])10;
+        writeIndex -= 1;
+    }
+
+    stack u64[0 9] finalDigit = (u64[0 9])remaining;
+    stack i32[-2147483648 2147483647] finalDigitValue = (i32[-2147483648 2147483647])finalDigit;
+    *(&data[writeIndex]) = 48 + finalDigitValue;
+
+    *destination = new Unicode() {
+        Data = data,
+        Length = digitCount,
+        Capacity = capacity
+    };
+    return true;
 }
 
 public fn bool TryFormatU1024Unicode(rawmutptr<Unicode> destination, u1024[0 max] value) {
@@ -2416,23 +2560,23 @@ public fn bool TryFormatU96Unicode(rawmutptr<Unicode> destination, u96[0 max] va
     return TryFormatU128Unicode(destination, (u128[0 max])value);
 }
 
-public fn bool TryFormatU48Unicode(rawmutptr<Unicode> destination, u48[0 max] value) {
+public finite bool TryFormatU48Unicode(rawmutptr<Unicode> destination, u48[0 max] value) {
     return TryFormatU64Unicode(destination, (u64[0 max])value);
 }
 
-public fn bool TryFormatU32Unicode(rawmutptr<Unicode> destination, u32[0 max] value) {
+public finite bool TryFormatU32Unicode(rawmutptr<Unicode> destination, u32[0 max] value) {
     return TryFormatU64Unicode(destination, (u64[0 max])value);
 }
 
-public fn bool TryFormatU24Unicode(rawmutptr<Unicode> destination, u24[0 max] value) {
+public finite bool TryFormatU24Unicode(rawmutptr<Unicode> destination, u24[0 max] value) {
     return TryFormatU64Unicode(destination, (u64[0 max])value);
 }
 
-public fn bool TryFormatU16Unicode(rawmutptr<Unicode> destination, u16[0 max] value) {
+public finite bool TryFormatU16Unicode(rawmutptr<Unicode> destination, u16[0 max] value) {
     return TryFormatU64Unicode(destination, (u64[0 max])value);
 }
 
-public fn bool TryFormatU8Unicode(rawmutptr<Unicode> destination, u8[0 max] value) {
+public finite bool TryFormatU8Unicode(rawmutptr<Unicode> destination, u8[0 max] value) {
     return TryFormatU64Unicode(destination, (u64[0 max])value);
 }
 
@@ -2481,6 +2625,37 @@ fn System.Memory.MemoryResult<OwnedUnicode> FinishOwnedUnicode(rawmutptr<i8[-128
     return System.Memory.MemoryResult<OwnedUnicode>.Ok(owned);
 }
 
+finite law i64[0 max] DecimalLengthI64(i64[-9223372036854775808 9223372036854775807] value) {
+    if (value == -9223372036854775808) {
+        return 20;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] magnitude = value;
+    stack mut i64[0 max] length = 1;
+    if (magnitude < 0) {
+        magnitude = 0 - magnitude;
+        length += 1;
+    }
+
+    while willexit (magnitude >= 10) {
+        magnitude = magnitude / 10;
+        length += 1;
+    }
+
+    return length;
+}
+
+finite law i64[0 max] DecimalLengthU64(u64[0 max] value) {
+    stack mut u64[0 max] remaining = value;
+    stack mut i64[0 max] length = 1;
+    while willexit (remaining >= (u64[0 max])10) {
+        remaining = remaining / (u64[0 max])10;
+        length += 1;
+    }
+
+    return length;
+}
+
 public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(bool value) {
     stack mut System.Memory.Allocation allocation = new System.Memory.Allocation() {
         Pointer = null,
@@ -2508,13 +2683,18 @@ public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(bool value) {
 }
 
 fn System.Memory.MemoryResult<OwnedAscii> ToAsciiI64WithCapacity(i64[-9223372036854775808 9223372036854775807] value, i64[0 max] capacity) {
+    stack i64[0 max] required = DecimalLengthI64(value);
+    if (required > capacity) {
+        return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+    }
+
     stack mut System.Memory.Allocation allocation = new System.Memory.Allocation() {
         Pointer = null,
         ByteLength = 0,
         Alignment = 1,
         Allocator = System.Memory.Allocator.Default()
     };
-    allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), capacity, 1);
+    allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), required, 1);
     if (allocation.Pointer == null) {
         return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.OutOfMemory);
     }
@@ -2523,24 +2703,59 @@ fn System.Memory.MemoryResult<OwnedAscii> ToAsciiI64WithCapacity(i64[-9223372036
     stack mut Ascii text = new Ascii() {
         Data = pointer,
         Length = 0,
-        Capacity = capacity
+        Capacity = required
     };
-    if (!TryFormatI64Ascii(&text, value)) {
-        System.Memory.Free(allocation);
-        return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+
+    if (value == -9223372036854775808) {
+        if (!TryFormatI64Ascii(&text, value)) {
+            System.Memory.Free(allocation);
+            return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        return FinishOwnedAscii(pointer, required, text);
     }
 
-    return FinishOwnedAscii(pointer, capacity, text);
+    stack bool negative = value < 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] magnitude = value;
+    if (negative) {
+        magnitude = 0 - value;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = (i64[-9223372036854775808 9223372036854775807])required - 1;
+    stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+    while willexit (remaining >= 10) {
+        stack i64[-9223372036854775808 9223372036854775807] digit = remaining % 10;
+        *(&pointer[writeIndex]) = (i8[-128 127])(48 + digit);
+        remaining = remaining / 10;
+        writeIndex -= 1;
+    }
+
+    *(&pointer[writeIndex]) = (i8[-128 127])(48 + remaining);
+    if (negative) {
+        *pointer = (i8[-128 127])45;
+    }
+
+    text = new Ascii() {
+        Data = pointer,
+        Length = required,
+        Capacity = required
+    };
+    return FinishOwnedAscii(pointer, required, text);
 }
 
 fn System.Memory.MemoryResult<OwnedAscii> ToAsciiU64WithCapacity(u64[0 max] value, i64[0 max] capacity) {
+    stack i64[0 max] required = DecimalLengthU64(value);
+    if (required > capacity) {
+        return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+    }
+
     stack mut System.Memory.Allocation allocation = new System.Memory.Allocation() {
         Pointer = null,
         ByteLength = 0,
         Alignment = 1,
         Allocator = System.Memory.Allocator.Default()
     };
-    allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), capacity, 1);
+    allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), required, 1);
     if (allocation.Pointer == null) {
         return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.OutOfMemory);
     }
@@ -2549,14 +2764,29 @@ fn System.Memory.MemoryResult<OwnedAscii> ToAsciiU64WithCapacity(u64[0 max] valu
     stack mut Ascii text = new Ascii() {
         Data = pointer,
         Length = 0,
-        Capacity = capacity
+        Capacity = required
     };
-    if (!TryFormatU64Ascii(&text, value)) {
-        System.Memory.Free(allocation);
-        return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = (i64[-9223372036854775808 9223372036854775807])required - 1;
+    stack mut u64[0 max] remaining = value;
+    while willexit (remaining >= (u64[0 max])10) {
+        stack u64[0 9] digit = (u64[0 9])(remaining % (u64[0 max])10);
+        stack i64[-9223372036854775808 9223372036854775807] digitValue = (i64[-9223372036854775808 9223372036854775807])digit;
+        *(&pointer[writeIndex]) = (i8[-128 127])(48 + digitValue);
+        remaining = remaining / (u64[0 max])10;
+        writeIndex -= 1;
     }
 
-    return FinishOwnedAscii(pointer, capacity, text);
+    stack u64[0 9] finalDigit = (u64[0 9])remaining;
+    stack i64[-9223372036854775808 9223372036854775807] finalDigitValue = (i64[-9223372036854775808 9223372036854775807])finalDigit;
+    *(&pointer[writeIndex]) = (i8[-128 127])(48 + finalDigitValue);
+
+    text = new Ascii() {
+        Data = pointer,
+        Length = required,
+        Capacity = required
+    };
+    return FinishOwnedAscii(pointer, required, text);
 }
 
 fn System.Memory.MemoryResult<OwnedAscii> ToAsciiI1024WithCapacity(i1024[min max] value, i64[0 max] capacity) {
@@ -2808,8 +3038,10 @@ public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(TextError value) {
 public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right) {
     switch (right) {
         case System.Memory.MemoryResult<OwnedAscii>.Ok(var value):
-            stack i64[-9223372036854775808 9223372036854775807] rightLength = value.Length();
+            stack mut OwnedAscii owned = value;
+            stack i64[-9223372036854775808 9223372036854775807] rightLength = owned.Text.Length;
             if (leftLength < 0 || rightLength < 0 || leftLength > 9223372036854775807 - rightLength) {
+                ReleaseOwnedAsciiStorage(&owned);
                 return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
             }
 
@@ -2822,6 +3054,7 @@ public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 m
             };
             allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), totalLength, 1);
             if (allocation.Pointer == null) {
+                ReleaseOwnedAsciiStorage(&owned);
                 return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.OutOfMemory);
             }
 
@@ -2831,11 +3064,14 @@ public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 m
                 Length = 0,
                 Capacity = totalLength
             };
-            if (!TryConcatAscii(&text, left, value.View())) {
+            stack ascii rightView = AsciiView(owned.Text);
+            if (!TryConcatAscii(&text, left, rightView)) {
                 System.Memory.Free(allocation);
+                ReleaseOwnedAsciiStorage(&owned);
                 return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
             }
 
+            ReleaseOwnedAsciiStorage(&owned);
             return FinishOwnedAscii(pointer, totalLength, text);
         case System.Memory.MemoryResult<OwnedAscii>.Err(var error):
             return System.Memory.MemoryResult<OwnedAscii>.Err(error);
@@ -2873,7 +3109,12 @@ fn System.Memory.MemoryResult<OwnedUnicode> ToUnicodeI64WithCapacity(i64[-922337
         return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
     }
 
-    stack i64[0 max] byteLength = (i64[0 max])(capacity * 4);
+    stack i64[0 max] required = DecimalLengthI64(value);
+    if (required > capacity) {
+        return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    stack i64[0 max] byteLength = (i64[0 max])(required * 4);
     stack mut System.Memory.Allocation allocation = new System.Memory.Allocation() {
         Pointer = null,
         ByteLength = 0,
@@ -2886,16 +3127,47 @@ fn System.Memory.MemoryResult<OwnedUnicode> ToUnicodeI64WithCapacity(i64[-922337
     }
 
     stack rawmutptr<i8[-128 127]> pointer = allocation.Pointer;
+    stack rawmutptr<i32[-2147483648 2147483647]> data = (rawmutptr<i32[-2147483648 2147483647]>)pointer;
     stack mut Unicode text = new Unicode() {
-        Data = (rawmutptr<i32[-2147483648 2147483647]>)pointer,
+        Data = data,
         Length = 0,
-        Capacity = capacity
+        Capacity = required
     };
-    if (!TryFormatI64Unicode(&text, value)) {
-        System.Memory.Free(allocation);
-        return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
+
+    if (value == -9223372036854775808) {
+        if (!TryFormatI64Unicode(&text, value)) {
+            System.Memory.Free(allocation);
+            return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        return FinishOwnedUnicode(pointer, byteLength, text);
     }
 
+    stack bool negative = value < 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] magnitude = value;
+    if (negative) {
+        magnitude = 0 - value;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = (i64[-9223372036854775808 9223372036854775807])required - 1;
+    stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+    while willexit (remaining >= 10) {
+        stack i64[-9223372036854775808 9223372036854775807] digit = remaining % 10;
+        *(&data[writeIndex]) = 48 + (i32[-2147483648 2147483647])digit;
+        remaining = remaining / 10;
+        writeIndex -= 1;
+    }
+
+    *(&data[writeIndex]) = 48 + (i32[-2147483648 2147483647])remaining;
+    if (negative) {
+        *data = 45;
+    }
+
+    text = new Unicode() {
+        Data = data,
+        Length = required,
+        Capacity = required
+    };
     return FinishOwnedUnicode(pointer, byteLength, text);
 }
 
@@ -2904,7 +3176,12 @@ fn System.Memory.MemoryResult<OwnedUnicode> ToUnicodeU64WithCapacity(u64[0 max] 
         return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
     }
 
-    stack i64[0 max] byteLength = (i64[0 max])(capacity * 4);
+    stack i64[0 max] required = DecimalLengthU64(value);
+    if (required > capacity) {
+        return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    stack i64[0 max] byteLength = (i64[0 max])(required * 4);
     stack mut System.Memory.Allocation allocation = new System.Memory.Allocation() {
         Pointer = null,
         ByteLength = 0,
@@ -2917,16 +3194,32 @@ fn System.Memory.MemoryResult<OwnedUnicode> ToUnicodeU64WithCapacity(u64[0 max] 
     }
 
     stack rawmutptr<i8[-128 127]> pointer = allocation.Pointer;
+    stack rawmutptr<i32[-2147483648 2147483647]> data = (rawmutptr<i32[-2147483648 2147483647]>)pointer;
     stack mut Unicode text = new Unicode() {
-        Data = (rawmutptr<i32[-2147483648 2147483647]>)pointer,
+        Data = data,
         Length = 0,
-        Capacity = capacity
+        Capacity = required
     };
-    if (!TryFormatU64Unicode(&text, value)) {
-        System.Memory.Free(allocation);
-        return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
+
+    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = (i64[-9223372036854775808 9223372036854775807])required - 1;
+    stack mut u64[0 max] remaining = value;
+    while willexit (remaining >= (u64[0 max])10) {
+        stack u64[0 9] digit = (u64[0 9])(remaining % (u64[0 max])10);
+        stack i32[-2147483648 2147483647] digitValue = (i32[-2147483648 2147483647])digit;
+        *(&data[writeIndex]) = 48 + digitValue;
+        remaining = remaining / (u64[0 max])10;
+        writeIndex -= 1;
     }
 
+    stack u64[0 9] finalDigit = (u64[0 9])remaining;
+    stack i32[-2147483648 2147483647] finalDigitValue = (i32[-2147483648 2147483647])finalDigit;
+    *(&data[writeIndex]) = 48 + finalDigitValue;
+
+    text = new Unicode() {
+        Data = data,
+        Length = required,
+        Capacity = required
+    };
     return FinishOwnedUnicode(pointer, byteLength, text);
 }
 
@@ -3189,13 +3482,16 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value) {
 public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedUnicode> right) {
     switch (right) {
         case System.Memory.MemoryResult<OwnedUnicode>.Ok(var value):
-            stack i64[-9223372036854775808 9223372036854775807] rightLength = value.Length();
+            stack mut OwnedUnicode owned = value;
+            stack i64[-9223372036854775808 9223372036854775807] rightLength = owned.Text.Length;
             if (leftLength < 0 || rightLength < 0 || leftLength > 9223372036854775807 - rightLength) {
+                ReleaseOwnedUnicodeStorage(&owned);
                 return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
             }
 
             stack i64[0 max] totalLength = (i64[0 max])(leftLength + rightLength);
             if (totalLength > 2305843009213693951) {
+                ReleaseOwnedUnicodeStorage(&owned);
                 return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
             }
 
@@ -3208,6 +3504,7 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, i
             };
             allocation = System.Memory.Allocate(System.Memory.Allocator.Default(), byteLength, alignof(i32[-2147483648 2147483647]));
             if (allocation.Pointer == null) {
+                ReleaseOwnedUnicodeStorage(&owned);
                 return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.OutOfMemory);
             }
 
@@ -3217,83 +3514,21 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, i
                 Length = 0,
                 Capacity = totalLength
             };
-            if (!TryConcatUnicode(&text, left, value.View())) {
+            stack unicode rightView = UnicodeView(owned.Text);
+            if (!TryConcatUnicode(&text, left, rightView)) {
                 System.Memory.Free(allocation);
+                ReleaseOwnedUnicodeStorage(&owned);
                 return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
             }
 
+            ReleaseOwnedUnicodeStorage(&owned);
             return FinishOwnedUnicode(pointer, byteLength, text);
         case System.Memory.MemoryResult<OwnedUnicode>.Err(var error):
             return System.Memory.MemoryResult<OwnedUnicode>.Err(error);
     }
 }
 
-public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source) {
-    if (destination == null) {
-        return false;
-    }
-
-    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
-    if (capacity < 0) {
-        *destination = new Unicode() {
-            Data = data,
-            Length = 0,
-            Capacity = capacity
-        };
-        return false;
-    }
-
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = AsciiLength(source);
-    if (sourceLength < 0) {
-        *destination = new Unicode() {
-            Data = data,
-            Length = 0,
-            Capacity = capacity
-        };
-        return false;
-    }
-
-    stack ascii view = source[0, sourceLength];
-    if (sourceLength > 0 && data == null) {
-        *destination = new Unicode() {
-            Data = data,
-            Length = 0,
-            Capacity = capacity
-        };
-        return false;
-    }
-
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
-    while willexit (readIndex < sourceLength) {
-        if (writeIndex >= capacity) {
-            *destination = new Unicode() {
-                Data = data,
-                Length = 0,
-                Capacity = capacity
-            };
-            return false;
-        }
-
-        stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-        stack mut i32[-2147483648 2147483647] codePoint = 65533;
-        stack rawptr<i8[-128 127]> sourceData = AsciiData(view);
-        if (!TryDecodeUtf8CodePoint(sourceData, sourceLength, &readIndex, &codePoint)) {
-            readIndex = start + 1;
-        }
-
-        *(&data[writeIndex]) = NormalizeUnicodeCodePoint(codePoint);
-        writeIndex += 1;
-    }
-
-    *destination = new Unicode() {
-        Data = data,
-        Length = writeIndex,
-        Capacity = capacity
-    };
-    return true;
-}
+public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
 public fn bool TryConvertAsciiToUtf16(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, ascii source, rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength) {
     if (writtenLength == null) {

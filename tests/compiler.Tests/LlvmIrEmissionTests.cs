@@ -2124,14 +2124,50 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%concat_right_nonnegative = icmp sge i64 %concat_right_length, 0", llvm);
         Assert.Contains("%concat_capacity_nonnegative = icmp sge i64 %concat_capacity, 0", llvm);
         Assert.Contains("%concat_no_length_overflow = icmp sle i64 %concat_right_length, %concat_max_after_left", llvm);
-        Assert.Contains("%concat_left_index = phi i64", llvm);
-        Assert.Contains("load i8, ptr %concat_left_src", llvm);
-        Assert.Contains("store i32 %concat_right_unit, ptr %concat_right_dst", llvm);
-        Assert.DoesNotContain("@llvm.memcpy", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)", llvm);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
+        Assert.DoesNotContain("%concat_left_index = phi i64", llvm);
         Assert.Contains("getelementptr inbounds nuw i32, ptr %concat_data, i64 %concat_left_length", llvm);
         Assert.Contains("call fastcc %stark_unicode @UnicodeView(", llvm);
         Assert.DoesNotContain("declare fastcc i1 @TryConcatAscii(", llvm);
         Assert.DoesNotContain("declare fastcc i1 @TryConcatUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoop()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+        Assert.Contains("alwaysinline", llvm);
+        Assert.Contains("%convert_source_data = extractvalue %stark_ascii %arg_source, 0", llvm);
+        Assert.Contains("%convert_fast_wide = zext i8 %convert_fast_unit to i32", llvm);
+        Assert.Contains("convert_fallback_loop:", llvm);
+        Assert.DoesNotContain("call fastcc i64 @AsciiLength(", llvm);
+        Assert.DoesNotContain("call fastcc ptr @AsciiData(", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryDecodeUtf8CodePoint(", llvm);
+        Assert.DoesNotContain("call fastcc i32 @NormalizeUnicodeCodePoint(", llvm);
+        Assert.DoesNotContain("declare fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
     [Fact]
@@ -3503,14 +3539,16 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@free(", llvm);
         Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
         Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr nounwind", llvm);
-        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
+        Assert.Contains("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
         Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm);
-        Assert.Contains("@__stark_alloc_lock = internal global i32 0, align 4", llvm);
-        Assert.Contains("@__stark_alloc_bucket_16 = internal global ptr null, align 8", llvm);
-        Assert.Contains("@__stark_alloc_bucket_4096 = internal global ptr null, align 8", llvm);
-        Assert.Contains("define internal dso_local void @__stark_alloc_lock_acquire() unnamed_addr nounwind", llvm);
+        Assert.Contains("@__stark_alloc_lock = weak_odr hidden global i32 0, align 4", llvm);
+        Assert.Contains("@__stark_alloc_bucket_16 = weak_odr hidden thread_local(localexec) global ptr null, align 8", llvm);
+        Assert.Contains("@__stark_alloc_bucket_4096 = weak_odr hidden thread_local(localexec) global ptr null, align 8", llvm);
+        Assert.Contains("define weak_odr hidden void @__stark_alloc_lock_acquire() unnamed_addr nounwind", llvm);
         Assert.Contains("atomicrmw xchg ptr @__stark_alloc_lock, i32 1 acquire, align 4", llvm);
         Assert.Contains("store atomic i32 0, ptr @__stark_alloc_lock release, align 4", llvm);
+        Assert.DoesNotContain("call void @__stark_alloc_lock_acquire()", llvm);
+        Assert.DoesNotContain("call void @__stark_alloc_lock_release()", llvm);
         Assert.Contains("%bucket_alignment_ok = icmp ule i64 %effective_alignment, 16", llvm);
         Assert.Contains("%bucket_size_ok = icmp ule i64 %requested_size, 4096", llvm);
         Assert.Contains("br i1 %can_bucket, label %bucket_select_16, label %large_allocate", llvm);
@@ -3618,10 +3656,10 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
-        Assert.Contains("define internal dso_local nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind", llvm);
-        Assert.DoesNotContain("define internal dso_local noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
-        Assert.Contains("define internal dso_local void @__stark_runtime_free(ptr %ptr) unnamed_addr nounwind", llvm);
+        Assert.Contains("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
+        Assert.Contains("define weak_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind", llvm);
+        Assert.DoesNotContain("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
+        Assert.Contains("define weak_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr nounwind", llvm);
         Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm);
         Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
         Assert.Contains("@Allocate(", llvm);
@@ -7054,6 +7092,40 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_values, i32 0, i32 0", llvm);
         Assert.Contains("insertvalue { ptr, i64 } zeroinitializer, ptr", llvm);
         Assert.Contains("call fastcc i32 @Read({ ptr, i64 }", llvm);
+    }
+
+    [Fact]
+    public void BorrowedSliceParametersAcceptReusableSliceViews()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Fill(borrow mut i32[-2147483648 2147483647][] view) {
+                view[0] = 9;
+                return;
+            }
+
+            fn i32[-2147483648 2147483647] Read(borrow i32[-2147483648 2147483647][] view) {
+                return view[0];
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+                stack mut i32[-2147483648 2147483647][] view = values;
+                Fill(view);
+                Fill(values);
+                return Read(view);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define fastcc void @Fill(ptr", llvm);
+        Assert.Contains("define fastcc i32 @Read(ptr", llvm);
+        Assert.Contains("call fastcc void @Fill(ptr", llvm);
+        Assert.Contains("call fastcc i32 @Read(ptr", llvm);
     }
 
     [Fact]

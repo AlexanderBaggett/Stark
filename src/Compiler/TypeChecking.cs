@@ -8319,6 +8319,13 @@ internal sealed class TypeChecker
             var argumentStorageType = StarkTypeSymbols.WithQualifiers(
                 argumentType,
                 borrowKind: StarkBorrowKind.None);
+            if (parameterType.IsMutableView && argument.IsAddressMutable)
+            {
+                argumentStorageType = StarkTypeSymbols.WithQualifiers(
+                    argumentStorageType,
+                    isMutableView: true);
+            }
+
             if (CanAssign(parameterStorageType, argumentStorageType))
             {
                 return;

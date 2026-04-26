@@ -1,7 +1,7 @@
 import System
 module Benchmarks.Collections.QueueGrowth
 
-fn bool Ok(MemoryStatus status) {
+finite law bool Ok(MemoryStatus status) {
     switch (status) {
         case MemoryStatus.Ok:
             return true;

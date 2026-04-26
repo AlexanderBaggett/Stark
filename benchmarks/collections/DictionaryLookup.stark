@@ -1,0 +1,40 @@
+import System
+module Benchmarks.Collections.DictionaryLookup
+
+finite law bool Ok(MemoryStatus status) {
+    switch (status) {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut Dictionary<i32[0 max], i32[0 max]> values = new();
+
+    for willexit (stack mut i32[0 2048] i = 0; i < 2048; i += 1) {
+        stack i32[0 max] key = i;
+        stack i32[0 max] value = (i32[0 max])(i * 3);
+        if (!Ok(values.Set(key, value))) {
+            return 1;
+        }
+    }
+
+    stack mut i64[min max] checksum = 0;
+    stack mut i32[0 max] found = 0;
+    for willexit (stack mut i32[0 100000] i = 0; i < 100000; i += 1) {
+        stack i32[0 max] key = (i32[0 max])(i % 2048);
+        if (!values.TryGet(key, found)) {
+            return 2;
+        }
+
+        checksum += (i64[min max])found;
+    }
+
+    if (checksum != 306154512) {
+        return 3;
+    }
+
+    return 0;
+}

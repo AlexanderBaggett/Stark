@@ -255,6 +255,28 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 5;
                     }
 
+                    stack Ascii joinedFacts = new Ascii() {
+                        Data = joined.Data,
+                        Length = joined.Length,
+                        Capacity = joined.Capacity
+                    };
+                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(System.Text.AsciiView(joinedFacts));
+                    if (!IsTextExtension(facts.Extension())) {
+                        return 10;
+                    }
+
+                    if (!IsBetaBaseName(facts.BaseName())) {
+                        return 11;
+                    }
+
+                    if (!IsAlphaDirectory(facts.DirectoryName())) {
+                        return 12;
+                    }
+
+                    if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5) {
+                        return 13;
+                    }
+
                     if (!System.IO.Path.TryJoin(&joined, "alpha/", "/beta.txt")) {
                         return 6;
                     }
@@ -571,7 +593,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 llvm,
                 "define fastcc noundef i1 @TryJoin(",
                 "Expected TryJoin definition in staged Windows path module.");
-            Assert.Contains("call fastcc i1 @IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
+            Assert.Contains("call fastcc i1 @IsDirectorySeparatorUnit(", tryJoinBody, StringComparison.Ordinal);
         }
         finally
         {

@@ -50,6 +50,7 @@ site/content/reference/
 site/static/book/stark-book.md
 site/static/reference/
 tools/hugo/hugo
+benchmarks/results/
 
 # OS noise
 .DS_Store

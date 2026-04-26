@@ -47,7 +47,7 @@ public struct TcpClient {
         return self.Handle != null && !self.Closed;
     }
 
-    fn System.Net.NetResult<i64[0 max]> Read(mut borrow TcpClient self, mut i8[-128 127][] destination) {
+    fn System.Net.NetResult<i64[0 max]> Read(mut borrow TcpClient self, mut borrow i8[-128 127][] destination) {
         if (self.Closed || self.Handle == null) {
             return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
         }
@@ -64,7 +64,7 @@ public struct TcpClient {
         return ByteCountFromPlatformResult(System.Runtime.Platform.ReadSocket(self.Handle, destinationParts.Data, destinationParts.Length));
     }
 
-    fn System.Net.NetResult<i64[0 max]> Write(mut borrow TcpClient self, i8[-128 127][] source) {
+    fn System.Net.NetResult<i64[0 max]> Write(mut borrow TcpClient self, borrow i8[-128 127][] source) {
         if (self.Closed || self.Handle == null) {
             return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
         }

@@ -124,7 +124,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
-    public void OwnedAsciiConcatenationUsesExplicitCopyLoopAndViewProjection()
+    public void OwnedAsciiConcatenationUsesMemcpyAndViewProjection()
     {
         var llvm = CompileToLlvm(
             """
@@ -151,9 +151,10 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
         Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
         Assert.Contains("define fastcc noundef i1 @TryConcatAscii(", llvm);
         Assert.Contains("define fastcc noundef %stark_ascii @AsciiView(", llvm);
-        Assert.Contains("%concat_left_index = phi i64", llvm);
-        Assert.Contains("load i8, ptr %concat_left_src", llvm);
-        Assert.DoesNotContain("@llvm.memcpy", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)", llvm);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
+        Assert.DoesNotContain("%concat_left_index = phi i64", llvm);
         Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
         Assert.Contains("call fastcc %stark_ascii @AsciiView(", llvm);
     }
