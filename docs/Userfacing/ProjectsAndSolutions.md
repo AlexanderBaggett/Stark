@@ -1,112 +1,74 @@
 # Stark Projects and Solutions
 
-This document describes the initial user-facing project, solution, and package
-workflow for Stark, plus the intended shape for the parts that are still
-growing.
-
-It is intentionally about ease of use first:
-
-- normal builds should not require long command lines
-- native dependency setup should belong to the project or package
-- users should be able to type `stark build` and `stark run`; `stark test`
-  remains an intended follow-up workflow
-- machine-local native paths should live in user config, not in checked-in
-  project files
-
-The repository includes an initial project driver for building projects and
-running solution defaults. The lower-level compiler CLI remains available for
-direct compilation and advanced workflows.
+Projects, solutions, and packages in Stark.
 
 ## Goals
 
-The design should make these cases simple:
+Normal builds should not need long command lines.
 
-- build a single Stark project from its directory
-- build a whole solution from its root
-- run an executable project with one short command
-- consume a native-backed package such as Raylib without repeating linker flags
-- keep local machine setup separate from shared project files
+* `stark build` and `stark run` should just work
+* native dependencies belong to the package, not to every project that uses it
+* machine specific paths belong in user config, not in checked in files
+* `stark test` is planned but not implemented yet
 
-## Core Files
+Stark ships with a project driver for builds and runs. The lower level compiler CLI is still available for advanced workflows.
 
-The proposal uses three TOML files.
+## Cases That Should Be Simple
+
+* build a single Stark project from its directory
+* build a whole solution from its root
+* run an executable project
+* use a native backed package such as Raylib without repeating linker flags
+* keep local machine setup separate from shared project files
+
+## The Three Files
 
 ### `Stark.toml`
 
-This is the project manifest.
+Project manifest. Lives in a project directory. Describes:
 
-It lives in a project directory and describes:
-
-- the project name
-- whether the project is a library or executable
-- the root Stark file
-- dependencies
-- native package metadata
-- build profiles
+* project name
+* library or executable
+* root Stark file
+* dependencies
+* native package metadata
+* build profiles
 
 ### `Stark.solution.toml`
 
-This is the solution-level manifest.
+Solution manifest. Lives at the root of a multi project repo. Describes:
 
-It lives at the root of a multi-project repository or solution and describes:
+* member projects
+* default build and run targets
+* aliases
+* shared profile defaults
 
-- which projects belong to the solution
-- default build and run targets
-- aliases
-- shared profile defaults
-
-The solution file is optional for a single standalone project.
+Optional for a single standalone project.
 
 ### User Config
 
-Machine-local configuration should live outside the shared project files.
+Machine local config lives outside shared project files. Locations:
 
-Recommended locations:
+* `~/.config/stark/config.toml`
+* a repo local ignored file such as `Stark.user.toml`
 
-- `~/.config/stark/config.toml`
-- optionally a repo-local ignored file such as `Stark.user.toml`
-
-User config is where local native paths should go.
-
-Examples:
-
-- the path to a local Raylib `src` directory
-- custom tool locations
-- local SDK or system library overrides
+Use it for local native paths, custom tool locations, and local SDK or system library overrides.
 
 ## Command Behavior
 
-The command behavior should be simple and predictable.
-
 ### Manifest Discovery
 
-The `stark` command should search upward from the current working directory.
+The `stark` command searches upward from the current directory. The nearest manifest wins.
 
-The nearest matching manifest wins:
-
-- if the nearest manifest is `Stark.toml`, treat the current directory tree as a
-  project
-- if the nearest manifest is `Stark.solution.toml`, treat the current directory
-  tree as a solution
-
-This means:
-
-- inside a project directory, `stark build` builds that project
-- inside a solution directory, `stark build` builds that solution
+* `Stark.toml` nearest: project mode
+* `Stark.solution.toml` nearest: solution mode
 
 ### `stark build`
 
-`stark build` should behave like this:
+* in a project directory: builds that project
+* in a solution directory: builds that solution
 
-- in a project directory: build the current project
-- in a solution directory: build the current solution
-
-When run from a solution directory:
-
-- if the solution declares a default build set, build that
-- otherwise build all buildable member projects
-
-Examples:
+When run from a solution, the declared default build set is used. If none is declared, every buildable member is built.
 
 ```bash
 stark build
@@ -116,16 +78,10 @@ stark build raylib --release
 
 ### `stark run`
 
-`stark run` should behave like this:
+* in an executable project directory: builds and runs that project
+* in a solution directory: builds and runs the solution default run target
 
-- in an executable project directory: build and run that project
-- in a solution directory: build and run the solution default run target
-
-If a solution contains multiple runnable projects and no default run target is
-set, `stark run` should stop with a friendly message and ask the user to choose
-one by name.
-
-Examples:
+If a solution has multiple runnable projects and no default, `stark run` stops with a message asking for a name.
 
 ```bash
 stark run
@@ -135,27 +91,19 @@ stark run --release
 
 ### `stark test`
 
-`stark test` is the intended project-test workflow, but it is not implemented
-yet. It depends on the v2.0 test-project model and a Stark-native
-standard-library testing module, likely `System.Testing`, that ports the useful
-parts of the current xUnit-style test vocabulary into Stark.
+Planned. Not implemented yet. Depends on the v2.0 test project model and a Stark native testing module, likely `System.Testing`.
 
-When implemented, it should behave like this:
+When implemented:
 
-- in a project directory: run tests for that project
-- in a solution directory: run tests for the solution test set, or all test
-  projects if no test set is declared
-
-Examples:
+* in a project directory: runs that project's tests
+* in a solution directory: runs the declared test set, or every test project if none is declared
 
 ```bash
 stark test
 stark test compiler.IntegrationTests
 ```
 
-## Project Manifest Shape
-
-This is the proposed shape of `Stark.toml`.
+## `Stark.toml`
 
 ```toml
 [project]
@@ -178,7 +126,7 @@ opt = 0
 opt = 3
 ```
 
-For a library:
+Library form:
 
 ```toml
 [project]
@@ -191,9 +139,7 @@ root = "Raylib.stark"
 output = "RaylibStark"
 ```
 
-## Solution Manifest Shape
-
-This is the proposed shape of `Stark.solution.toml`.
+## `Stark.solution.toml`
 
 ```toml
 [solution]
@@ -220,20 +166,16 @@ opt = 0
 opt = 3
 ```
 
-The solution file should stay small.
+The solution file stays small. It answers four questions:
 
-It is there to answer:
-
-- what projects belong to this solution
-- what should build by default
-- what should run by default
-- what short names should work from the solution root
+* what projects belong to this solution
+* what builds by default
+* what runs by default
+* what short names work from the root
 
 ## Dependencies
 
-The initial dependency model should stay simple.
-
-Path dependencies are enough for the first version:
+Path dependencies cover v1:
 
 ```toml
 [dependencies]
@@ -241,26 +183,17 @@ raylib = { path = "../raylib" }
 stdlib = { path = "../../stdlib" }
 ```
 
-That covers:
-
-- examples
-- standard library development
-- multi-project repositories
-- native-backed packages inside the same solution
-
-Registry and versioned dependencies can come later.
+That handles examples, standard library work, multi project repos, and native backed packages inside the same solution. Versioned and registry dependencies come later.
 
 ## Native Packages
 
-Native dependency metadata should belong to the package that owns it.
+Native dependency metadata belongs to the package that needs it.
 
-For Raylib, the package manifest should declare:
+A package manifest declares its own:
 
-- package-owned native shim sources
-- package-owned discovery names such as `pkg-config`
-- fallback native metadata for systems where discovery is unavailable
-
-Example:
+* native shim sources
+* discovery names such as `pkg-config`
+* fallback metadata for systems where discovery fails
 
 ```toml
 [project]
@@ -282,42 +215,34 @@ library-dirs = ["${native.paths.raylib-src}"]
 libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"]
 ```
 
-Then user-local config can supply the machine path:
+User config supplies the machine path:
 
 ```toml
 [native.paths]
 raylib-src = "/tmp/stark-raylib-research/raylib-5.5/src"
 ```
 
-That makes the normal user command short:
+The everyday command stays short:
 
 ```bash
 stark run breakout
 ```
 
-No repeated `--native-library`, `--native-include-dir`, or shell script
-maintenance should be required for routine use.
+No `--native-library`, `--native-include-dir`, or shell scripts.
 
-## Friendly Native Resolution Rules
+## Native Resolution Order
 
-For a native-backed dependency, the build driver should use a simple order:
+For a native backed dependency, the build driver tries:
 
-1. try package-declared discovery such as `pkg-config`
-2. if that fails, try user-local native path overrides
-3. if that still fails, stop early with a friendly message
+1. package declared discovery (`pkg-config` and similar)
+2. user local native path overrides
+3. stop with a friendly message
 
-The error should say what the user can do next in plain English:
-
-- install the native package
-- set a config value such as `native.paths.raylib-src`
-- or choose a different local path
+The error names the next step in plain English: install the native package, set a config value such as `native.paths.raylib-src`, or pick a different local path.
 
 ## Output Layout
 
-Build artifacts should live under a tool-owned directory instead of cluttering
-source folders.
-
-Suggested layout:
+Build artifacts live under a tool owned directory:
 
 ```text
 .stark/
@@ -328,16 +253,9 @@ Suggested layout:
   packages/
 ```
 
-That gives:
-
-- stable output locations
-- fewer stray binaries in source directories
-- room for package images, cached metadata, and temp objects
+Stable output locations, no stray binaries in source folders, room for package images and cached metadata.
 
 ## Example: Breakout and Raylib
-
-With this project system, the Raylib and Breakout examples should look like
-this.
 
 ### `examples/raylib/Stark.toml`
 
@@ -378,7 +296,7 @@ raylib = { path = "../raylib" }
 stdlib = { path = "../../stdlib" }
 ```
 
-### Solution Root `Stark.solution.toml`
+### `Stark.solution.toml`
 
 ```toml
 [solution]
@@ -397,44 +315,30 @@ breakout = "examples/breakout"
 raylib = "examples/raylib"
 ```
 
-Then the user experience becomes:
+From the solution root:
 
 ```bash
 stark build
 stark run
 ```
 
-Or:
+Or by name:
 
 ```bash
 stark run breakout
 ```
 
-## Low-Level Escape Hatch
+## Low Level Escape Hatch
 
-The low-level compiler CLI should still exist for advanced use.
+The lower level compiler CLI is still available. The split:
 
-A good split would be:
-
-- `stark` for project, solution, dependency, build, and run workflows today,
-  with test workflows added later
-- `starkc` for direct low-level compilation
-
-That keeps advanced workflows available without forcing ordinary users to think
-in terms of linker flags and manual package assembly.
+* `stark`: projects, solutions, dependencies, builds, runs (and tests, eventually)
+* `starkc`: direct low level compilation
 
 ## Summary
 
-This proposal aims to make Stark feel easy to build and run without weakening
-its performance-focused design.
-
-The core idea is:
-
-- `Stark.toml` describes a project
-- `Stark.solution.toml` describes a solution
-- user config holds machine-local native paths
-- `stark build` and `stark run` are the normal implemented workflow today;
-  `stark test` remains future work
-
-That should remove most shell scripts, repeated flags, and fragile local command
-lines from everyday Stark development.
+* `Stark.toml` describes a project
+* `Stark.solution.toml` describes a solution
+* user config holds machine local native paths
+* `stark build` and `stark run` are the everyday commands
+* `stark test` is planned
