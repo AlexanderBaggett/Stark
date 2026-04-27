@@ -7,6 +7,60 @@ namespace compiler.PipelineTests;
 public sealed class CompilerPipelineLoadModulesTests
 {
     [Fact]
+    public void LoadModulesReusesSourceParsesDiscoveredByModuleGraph()
+    {
+        var resolver = new CountingSourceModuleResolver(
+            (
+                "Facade",
+                """
+                import Bits
+                module Facade
+
+                public fn void Touch() {
+                    return;
+                }
+                """),
+            (
+                "Bits",
+                """
+                module Bits
+
+                public fn void Mark() {
+                    return;
+                }
+                """));
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Facade
+                module Demo
+
+                fn void Run() {
+                    return;
+                }
+                """),
+            new CompilerOptions(
+                ModuleResolver: resolver,
+                StopAfterPassId: "load-modules"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.Equal(1, resolver.GetSourceLoadCount("Facade"));
+        Assert.Equal(1, resolver.GetSourceLoadCount("Bits"));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SourceModuleParseCache, out SourceModuleParseCache? cache));
+        Assert.NotNull(cache);
+        Assert.True(cache.TryGet("Facade", out _));
+        Assert.True(cache.TryGet("Bits", out _));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+        Assert.NotNull(loadedModules);
+        Assert.True(loadedModules.TryGet("Facade", out var facadeModule));
+        Assert.NotNull(facadeModule);
+        Assert.True(loadedModules.TryGet("Bits", out var bitsModule));
+        Assert.NotNull(bitsModule);
+    }
+
+    [Fact]
     public void ManifestBackedModulesPreservePublishedSemanticFactsFromCompilerFactSections()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-semantics-pipeline-");
@@ -715,6 +769,58 @@ public sealed class CompilerPipelineLoadModulesTests
             {
                 // Best effort cleanup only.
             }
+        }
+    }
+
+    private sealed class CountingSourceModuleResolver : IModuleSourceResolver
+    {
+        private readonly Dictionary<string, (ResolvedModuleReference Reference, string SourceText)> _modules;
+        private readonly Dictionary<string, int> _sourceLoadCounts = new(StringComparer.Ordinal);
+
+        public CountingSourceModuleResolver(params (string ModuleName, string SourceText)[] modules)
+        {
+            _modules = modules.ToDictionary(
+                static module => module.ModuleName,
+                static module =>
+                {
+                    var filePath = Path.Combine("/virtual", module.ModuleName.Replace('.', Path.DirectorySeparatorChar) + ".stark");
+                    return (
+                        new ResolvedModuleReference(module.ModuleName, filePath, IsExternal: false),
+                        module.SourceText);
+                },
+                StringComparer.Ordinal);
+        }
+
+        public int GetSourceLoadCount(string moduleName)
+        {
+            return _sourceLoadCounts.TryGetValue(moduleName, out var count) ? count : 0;
+        }
+
+        public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
+        {
+            if (_modules.TryGetValue(moduleName, out var entry))
+            {
+                module = entry.Reference;
+                return true;
+            }
+
+            module = default!;
+            return false;
+        }
+
+        public bool TryLoadModuleSource(ResolvedModuleReference module, out string sourceText, out string? filePath)
+        {
+            if (_modules.TryGetValue(module.ModuleName, out var entry))
+            {
+                _sourceLoadCounts[module.ModuleName] = GetSourceLoadCount(module.ModuleName) + 1;
+                sourceText = entry.SourceText;
+                filePath = entry.Reference.FilePath;
+                return true;
+            }
+
+            sourceText = string.Empty;
+            filePath = null;
+            return false;
         }
     }
 }

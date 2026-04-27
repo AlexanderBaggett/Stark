@@ -9,6 +9,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<SyntaxModel> SyntaxModel = new("syntax.model");
     public static readonly ArtifactKey<DeclarationIndex> DeclarationIndex = new("declarations.index");
     public static readonly ArtifactKey<ModuleGraph> ModuleGraph = new("modules.graph");
+    public static readonly ArtifactKey<SourceModuleParseCache> SourceModuleParseCache = new("modules.source-parse-cache");
     public static readonly ArtifactKey<LoadedModuleSet> LoadedModules = new("modules.loaded");
     public static readonly ArtifactKey<SymbolCatalog> SymbolCatalog = new("symbols.catalog");
     public static readonly ArtifactKey<FunctionEffectModel> FunctionEffects = new("semantics.function-effects");
@@ -363,6 +364,17 @@ public sealed record ModuleGraph(
     }
 
     public bool ContainsLoadedModule(string moduleName) => Modules.ContainsKey(moduleName);
+}
+
+public sealed record SourceModuleParse(
+    ResolvedModuleReference Reference,
+    ParseResult ParseResult,
+    SyntaxModel SyntaxModel);
+
+public sealed record SourceModuleParseCache(
+    IReadOnlyDictionary<string, SourceModuleParse> Modules)
+{
+    public bool TryGet(string moduleName, out SourceModuleParse? module) => Modules.TryGetValue(moduleName, out module);
 }
 
 public sealed record LoadedModuleDocument(
