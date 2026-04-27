@@ -15,6 +15,12 @@ metadata.
 scripts/run-benchmarks.sh
 ```
 
+On Windows, use:
+
+```powershell
+scripts\run-benchmarks.ps1
+```
+
 The runner compiles executable Stark, C, and Rust benchmarks, performs one
 warmup execution per binary, and prints CSV rows:
 
@@ -63,6 +69,11 @@ Benchmarks marked with `// stark-bench: compile-only` are compiler/codegen
 regression sources rather than executable timing benchmarks. The executable
 runner skips them, while `BenchmarkSourceTests` still verifies that they lower
 successfully.
+
+C counterparts marked with `// stark-bench: skip-c-windows` are skipped by the
+Windows PowerShell runner when C rows are enabled. Use this only for C baselines
+that are currently POSIX-specific; the Stark and Rust rows for the benchmark
+still run normally.
 
 Each run writes:
 

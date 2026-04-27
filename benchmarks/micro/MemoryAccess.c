@@ -1,3 +1,4 @@
+// stark-bench: skip-c-windows
 #include <stdint.h>
 #include <unistd.h>
 

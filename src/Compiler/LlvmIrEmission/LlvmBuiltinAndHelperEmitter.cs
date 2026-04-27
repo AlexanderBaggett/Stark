@@ -310,10 +310,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitRuntimeAllocatorGlobalDefinitions(StringBuilder builder)
     {
         var pointerSizeBytes = GetTargetPointerSizeBytes();
+        var bucketThreadLocalStorage = IsWindowsTarget()
+            ? "thread_local"
+            : "thread_local(localexec)";
+
         builder.AppendLine($"@{RuntimeAllocatorLockName} = weak_odr hidden global i32 0, align 4");
         foreach (var bucketSize in RuntimeAllocatorBucketSizes)
         {
-            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = weak_odr hidden thread_local(localexec) global ptr null, align {pointerSizeBytes}");
+            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = weak_odr hidden {bucketThreadLocalStorage} global ptr null, align {pointerSizeBytes}");
         }
     }
 

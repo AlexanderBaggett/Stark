@@ -1,3 +1,4 @@
+// stark-bench: skip-c-windows
 #include <arpa/inet.h>
 #include <stdint.h>
 #include <string.h>

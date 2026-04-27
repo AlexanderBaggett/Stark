@@ -52,6 +52,8 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @HeapAlloc(ptr %heap, i32 0, i64 %size)", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)", llvm, StringComparison.Ordinal);
+        Assert.Contains("@__stark_alloc_bucket_16 = weak_odr hidden thread_local global ptr null, align 8", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("thread_local(localexec)", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@malloc(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@free(", llvm, StringComparison.Ordinal);
