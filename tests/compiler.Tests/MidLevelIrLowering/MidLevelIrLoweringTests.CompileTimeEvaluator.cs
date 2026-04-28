@@ -57,6 +57,30 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void BackendOpaqueLawCallsDoNotFoldToMirConstants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Backend(Opaque)]
+            finite law i32[-2147483648 2147483647] Adjust(i32[-2147483648 2147483647] value) {
+                return value + 3;
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                return Adjust(4);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(block.Statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Adjust" });
+    }
+
+    [Fact]
     public void FixedArrayArithmeticIndexStillLowersToAggregateIndexOperations()
     {
         var result = Compile(

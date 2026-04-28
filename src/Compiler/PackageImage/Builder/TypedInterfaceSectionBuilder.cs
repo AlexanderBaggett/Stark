@@ -47,7 +47,8 @@ internal static partial class PackageImageBuilder
             InlinePreference: RenderInlinePreference(declarationFunction.Modifiers.InlinePreference),
             HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference,
             IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
-            IsVarargs: effects.IsVarargs);
+            IsVarargs: effects.IsVarargs,
+            BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode));
         return true;
     }
 
@@ -88,7 +89,8 @@ internal static partial class PackageImageBuilder
             InlinePreference: manifest.InlinePreference,
             HasExplicitInlinePreference: manifest.HasExplicitInlinePreference,
             IsUnsafe: manifest.IsUnsafe,
-            IsVarargs: manifest.IsVarargs);
+            IsVarargs: manifest.IsVarargs,
+            BackendOptimizationMode: manifest.BackendOptimizationMode);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -133,7 +135,8 @@ internal static partial class PackageImageBuilder
                 : BuildTypeMethodManifests(module, declaration.Name, typeModel, abiModel, effectModel),
             Destructor: declaration.Kind == DeclarationKind.Enum
                 ? null
-                : BuildTypeDestructorManifest(module, declaration.Name));
+                : BuildTypeDestructorManifest(module, declaration.Name),
+            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode));
     }
 
     private static StarkPackageTypedTypeManifest BuildTypedTypeManifest(
@@ -182,7 +185,8 @@ internal static partial class PackageImageBuilder
                 : BuildTypeDestructorManifest(module, declaration.Name),
             Constructors: declaration.Kind is DeclarationKind.Struct or DeclarationKind.Record
                 ? BuildTypedTypeConstructors(module, declaration.Name, namedType, typeModel, moduleGraph)
-                : null);
+                : null,
+            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode));
     }
 
     private static IReadOnlyList<StarkPackageParameterManifest>? BuildTypePrimaryConstructorParameters(
@@ -382,7 +386,8 @@ internal static partial class PackageImageBuilder
                     IsStatic: declaration.Function.IsStatic,
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
-                    Visibility: declaration.Visibility.ToString().ToLowerInvariant());
+                    Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
+                    BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -443,7 +448,8 @@ internal static partial class PackageImageBuilder
                     IsStatic: declaration.Function.IsStatic,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
-                    IsVarargs: effects.IsVarargs);
+                    IsVarargs: effects.IsVarargs,
+                    BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()

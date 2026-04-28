@@ -233,7 +233,8 @@ internal static partial class PackageImageBuilder
                         ConcreteLayouts: concreteLayouts,
                         EnumLayouts: enumLayouts,
                         FunctionSemantics: functionSemantics,
-                        Linkage: BuildLinkageManifest(module, abiModel, abiFunctions, functionSemantics)),
+                        Linkage: BuildLinkageManifest(module, abiModel, abiFunctions, functionSemantics),
+                        BackendOptimizationMode: RenderBackendOptimizationMode(module.SyntaxModel.BackendOptimizationMode)),
                     GenericTemplates: genericTemplates.Count == 0
                         ? null
                         : new StarkPackageGenericTemplateSection(genericTemplates))));
@@ -310,6 +311,11 @@ internal static partial class PackageImageBuilder
     private static bool ShouldIncludeInPackageImageSurface(StarkVisibility visibility)
     {
         return visibility is StarkVisibility.Internal or StarkVisibility.Public or StarkVisibility.Export;
+    }
+
+    private static string? RenderBackendOptimizationMode(ModuleBackendOptimizationMode mode)
+    {
+        return mode == ModuleBackendOptimizationMode.Opaque ? "opaque" : null;
     }
 
     private static StarkPackageLinkageManifest BuildLinkageManifest(

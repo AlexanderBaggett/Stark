@@ -1,4 +1,5 @@
 import System.Memory
+[Backend(Opaque)]
 module System.Collections
 
 public trait Equatable<T> {
@@ -65,9 +66,17 @@ internal fn System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
     }
 
     stack i64[0 max] required = length + additional;
+    if (required > 4611686018427387904) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    // Hash storage capacities stay powers of two so bucket selection can use a mask.
     stack mut i64[0 max] targetCapacity = required;
-    if (targetCapacity <= 4611686018427387903) {
+    if (targetCapacity <= 2305843009213693952) {
         targetCapacity = (i64[0 max])(targetCapacity * 2);
+    }
+    else {
+        targetCapacity = 4611686018427387904;
     }
 
     if (targetCapacity <= currentCapacity) {
@@ -252,7 +261,9 @@ public struct Dictionary<K, V> {
             if (*(&self.States[oldIndex]) == 1) {
                 stack K movedKey = *(&self.Keys[oldIndex]);
                 stack V movedValue = *(&self.Values[oldIndex]);
-                stack mut i64[0 max] nextIndex = (i64[0 max])(DictionaryKey.Hash(movedKey) % nextCapacity);
+                stack i64[0 max] nextMask = (i64[0 max])(nextCapacity - 1);
+                stack mut i64[0 max] nextIndex =
+                    (i64[0 max])(DictionaryKey.Hash(movedKey) & (u64[0 max])nextMask);
                 stack mut i64[0 max] probe = 0;
                 while willexit (probe < nextCapacity) {
                     if (*(&nextStates[nextIndex]) == 0) {
@@ -322,7 +333,9 @@ public struct Dictionary<K, V> {
             }
         }
 
-        stack mut i64[0 max] index = (i64[0 max])(DictionaryKey.Hash(key) % self.StorageCapacity);
+        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
+        stack mut i64[0 max] index =
+            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
         stack mut i64[0 max] firstDeleted = self.StorageCapacity;
         stack mut i64[0 max] probe = 0;
         while willexit (probe < self.StorageCapacity) {
@@ -373,7 +386,9 @@ public struct Dictionary<K, V> {
             return false;
         }
 
-        stack mut i64[0 max] index = (i64[0 max])(DictionaryKey.Hash(key) % self.StorageCapacity);
+        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
+        stack mut i64[0 max] index =
+            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
         stack mut i64[0 max] probe = 0;
         while willexit (probe < self.StorageCapacity) {
             stack u8[0 2] state = *(&self.States[index]);
@@ -401,7 +416,9 @@ public struct Dictionary<K, V> {
             return false;
         }
 
-        stack mut i64[0 max] index = (i64[0 max])(DictionaryKey.Hash(key) % self.StorageCapacity);
+        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
+        stack mut i64[0 max] index =
+            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
         stack mut i64[0 max] probe = 0;
         while willexit (probe < self.StorageCapacity) {
             stack u8[0 2] state = *(&self.States[index]);
@@ -430,7 +447,9 @@ public struct Dictionary<K, V> {
             return false;
         }
 
-        stack mut i64[0 max] index = (i64[0 max])(DictionaryKey.Hash(key) % self.StorageCapacity);
+        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
+        stack mut i64[0 max] index =
+            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
         stack mut i64[0 max] probe = 0;
         while willexit (probe < self.StorageCapacity) {
             stack u8[0 2] state = *(&self.States[index]);

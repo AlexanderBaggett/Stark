@@ -21,6 +21,7 @@ Inspect generated IR when you need to answer a performance question:
 - did this fixed array lower without hidden allocation?
 - did this range fact survive into the backend?
 - did an FFI boundary stay small and explicit?
+- did a `[Backend(Opaque)]` module remain a real compiled call boundary?
 
 Do not use IR as the first way to learn ordinary Stark. Source semantics come
 first. IR is a debugging and performance tool.
@@ -61,6 +62,17 @@ include:
 
 The point is not to memorize generated names. The point is to connect a
 specific source promise to a specific output question.
+
+## Opaque Modules In IR Work
+
+When a module is marked `[Backend(Opaque)]`, optimized callers should still see
+its declarations, but they should not see through its implementation for
+ThinLTO-style backend import. In generated IR or saved toolchain temporaries,
+that usually means calls into the module remain calls across an object or
+library boundary instead of becoming inlined caller code.
+
+Use that as a boundary check, not as a general performance goal. Ordinary Stark
+modules are normally better when the compiler can optimize through them.
 
 ## Keep IR Out Of Normal API Docs
 

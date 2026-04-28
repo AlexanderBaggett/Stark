@@ -540,12 +540,16 @@ public static class DefaultCompilerPipeline
                     IsHot: false,
                     IsCold: false,
                     InlinePreference: InlinePreference.InlineHint,
-                    IsStrictFp: false);
+                    IsStrictFp: false,
+                    BackendOptimizationMode: function.BackendOptimizationMode);
             }
 
             var isLaw = function.Kind is StarkFunctionKind.Law or StarkFunctionKind.FiniteLaw;
             var isFinite = function.Kind is StarkFunctionKind.Finite or StarkFunctionKind.FiniteLaw;
             var readsArgumentMemory = isLaw && function.Parameters.Any(static parameter => IsMemoryBackedType(parameter.TypeText));
+            var inlinePreference = function.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque
+                ? InlinePreference.NoInline
+                : function.Modifiers.InlinePreference;
 
             return new FunctionEffectProfile(
                 Name: name,
@@ -562,8 +566,9 @@ public static class DefaultCompilerPipeline
                 IsVarargs: function.Modifiers.IsVarargs,
                 IsHot: function.Modifiers.IsHot,
                 IsCold: function.Modifiers.IsCold,
-                InlinePreference: function.Modifiers.InlinePreference,
-                IsStrictFp: function.Modifiers.IsStrictFp);
+                InlinePreference: inlinePreference,
+                IsStrictFp: function.Modifiers.IsStrictFp,
+                BackendOptimizationMode: function.BackendOptimizationMode);
         }
 
         private static bool IsMemoryBackedType(string typeText)
@@ -1542,7 +1547,8 @@ public static class DefaultCompilerPipeline
             InlinePreference InlinePreference,
             int? TopLevelStatementCount,
             int? EstimatedBodyCost,
-            FunctionOptimizationSummary? OptimizationSummary);
+            FunctionOptimizationSummary? OptimizationSummary,
+            ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
 
         public string Id => "monomorphization-plan";
 
@@ -1690,7 +1696,8 @@ public static class DefaultCompilerPipeline
                         InlinePreference: effects?.InlinePreference ?? InlinePreference.InlineHint,
                         TopLevelStatementCount: template.TopLevelStatementCount,
                         EstimatedBodyCost: template.EstimatedBodyCost,
-                        OptimizationSummary: template.OptimizationSummary);
+                        OptimizationSummary: template.OptimizationSummary,
+                        BackendOptimizationMode: effects?.BackendOptimizationMode ?? template.BackendOptimizationMode);
                 }
             }
 
@@ -1731,7 +1738,8 @@ public static class DefaultCompilerPipeline
                                 HasBody = declaration.Function.HasBody || importedExisting.HasBody,
                                 IsHot = declaration.Function.Modifiers.IsHot,
                                 IsCold = declaration.Function.Modifiers.IsCold,
-                                InlinePreference = declaration.Function.Modifiers.InlinePreference
+                                InlinePreference = declaration.Function.Modifiers.InlinePreference,
+                                BackendOptimizationMode = declaration.Function.BackendOptimizationMode
                             };
                         }
 
@@ -1747,7 +1755,8 @@ public static class DefaultCompilerPipeline
                             declaration.Function.Modifiers.InlinePreference,
                             functionSyntax.Body.block()?.statement().Length,
                             GenericTemplateBodyComplexityEstimator.Estimate(functionSyntax.Body),
-                            FunctionOptimizationSummaryBuilder.Build(functionSyntax.Body)));
+                            FunctionOptimizationSummaryBuilder.Build(functionSyntax.Body),
+                            declaration.Function.BackendOptimizationMode));
 
                     if (infos.TryGetValue(resolvedName, out var existing))
                     {
@@ -1766,7 +1775,8 @@ public static class DefaultCompilerPipeline
                             InlinePreference: declaration.Function.Modifiers.InlinePreference,
                             TopLevelStatementCount: syntaxTopLevelStatementCount ?? existing.TopLevelStatementCount,
                             EstimatedBodyCost: syntaxEstimatedBodyComplexity ?? existing.EstimatedBodyCost,
-                            OptimizationSummary: syntaxOptimizationSummary ?? existing.OptimizationSummary);
+                            OptimizationSummary: syntaxOptimizationSummary ?? existing.OptimizationSummary,
+                            BackendOptimizationMode: declaration.Function.BackendOptimizationMode);
                     }
                 }
             }
@@ -1783,7 +1793,9 @@ public static class DefaultCompilerPipeline
                 return MonomorphizationCodeSizeHeuristic.DeclarationOnly;
             }
 
-            if (info.IsCold || info.InlinePreference == InlinePreference.NoInline)
+            if (info.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque
+                || info.IsCold
+                || info.InlinePreference == InlinePreference.NoInline)
             {
                 return MonomorphizationCodeSizeHeuristic.ReduceCodeSize;
             }
@@ -2387,10 +2399,15 @@ public static class DefaultCompilerPipeline
             ISet<string> importedRecursiveLawFunctions,
             ISet<string> importedRecursiveFunctions)
         {
+            if (existing.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+            {
+                return InlinePreference.NoInline;
+            }
+
             if (summary is not null
                 && rootDeclarations.TryGetValue(functionName, out var wrapperRootDeclaration)
                 && wrapperRootDeclaration.Function is { HasBody: true } wrapperRootFunction
-                && wrapperRootDeclaration.Visibility == StarkVisibility.Module
+                && wrapperRootDeclaration.Visibility != StarkVisibility.Export
                 && !wrapperRootFunction.Modifiers.HasExplicitInlinePreference
                 && existing.InlinePreference == InlinePreference.InlineHint
                 && !existing.IsFfi
@@ -2664,9 +2681,12 @@ public static class DefaultCompilerPipeline
         {
             return declaration.Function is { HasBody: true } sourceFunction
                 && declaration.Visibility != StarkVisibility.Export
+                && function.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+                && sourceFunction.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
                 && !sourceFunction.Modifiers.IsFfi
                 && !sourceFunction.Modifiers.IsCold
                 && sourceFunction.Modifiers.InlinePreference != InlinePreference.NoInline
+                && function.InlinePreference != InlinePreference.NoInline
                 && (!sourceFunction.Modifiers.HasExplicitInlinePreference || sourceFunction.Modifiers.InlinePreference == InlinePreference.Inline)
                 && FunctionKindFacts.IsLaw(function.Kind)
                 && !function.IsFfi

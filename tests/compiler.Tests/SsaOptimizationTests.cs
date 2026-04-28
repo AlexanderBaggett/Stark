@@ -171,6 +171,799 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void CleanupRemovesIntegerModuloByOne()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Modulo,
+                                        new SsaValueReference("arg_value", valueType),
+                                        new SsaIntegerConstant(BigInteger.One, valueType),
+                                        valueType,
+                                        "%"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Empty(block.Instructions);
+        var returnValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(BigInteger.Zero, returnValue.Value);
+    }
+
+    [Fact]
+    public void CleanupRemovesSameOperandDivisionAndModuloWhenRangeExcludesZero()
+    {
+        var resultType = StarkTypeSymbols.Integer(32);
+        var nonZeroType = StarkTypeSymbols.Integer(32, BigInteger.One, new BigInteger(100));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    resultType,
+                    [new TypedParameterSymbol("value", nonZeroType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Divide,
+                                        new SsaValueReference("arg_value", nonZeroType),
+                                        new SsaValueReference("arg_value", nonZeroType),
+                                        resultType,
+                                        "/")),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Modulo,
+                                        new SsaValueReference("arg_value", nonZeroType),
+                                        new SsaValueReference("arg_value", nonZeroType),
+                                        resultType,
+                                        "%")),
+                                new SsaValueInstruction(
+                                    "v2",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Add,
+                                        new SsaValueReference("v0", resultType),
+                                        new SsaValueReference("v1", resultType),
+                                        resultType,
+                                        "+"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v2", resultType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.DoesNotContain(
+            function.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator is SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo);
+    }
+
+    [Fact]
+    public void CleanupRemovesSameOperandIntegerComparisons()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    boolType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                CreateComparison("v0", SsaBinaryOperator.Equal),
+                                CreateComparison("v1", SsaBinaryOperator.NotEqual),
+                                CreateComparison("v2", SsaBinaryOperator.LessThan),
+                                CreateComparison("v3", SsaBinaryOperator.LessThanOrEqual),
+                                CreateComparison("v4", SsaBinaryOperator.GreaterThan),
+                                CreateComparison("v5", SsaBinaryOperator.GreaterThanOrEqual)
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", boolType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.DoesNotContain(
+            function.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator is SsaBinaryOperator.Equal
+                or SsaBinaryOperator.NotEqual
+                or SsaBinaryOperator.LessThan
+                or SsaBinaryOperator.LessThanOrEqual
+                or SsaBinaryOperator.GreaterThan
+                or SsaBinaryOperator.GreaterThanOrEqual);
+
+        var block = Assert.Single(function.Blocks);
+        var returnValue = Assert.IsType<SsaBoolConstant>(block.Terminator.Value);
+        Assert.True(returnValue.Value);
+
+        SsaValueInstruction CreateComparison(string resultName, SsaBinaryOperator op)
+        {
+            return new SsaValueInstruction(
+                resultName,
+                new SsaBinaryRValue(
+                    op,
+                    new SsaValueReference("arg_value", valueType),
+                    new SsaValueReference("arg_value", valueType),
+                    boolType,
+                    op.ToString()));
+        }
+    }
+
+    [Fact]
+    public void CleanupRemovesModuloAndDivisionWhenStaticRangeIsBelowPositiveDivisor()
+    {
+        var resultType = StarkTypeSymbols.Integer(32);
+        var slotType = StarkTypeSymbols.Integer(32, BigInteger.Zero, new BigInteger(7));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    resultType,
+                    [new TypedParameterSymbol("slot", slotType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Modulo,
+                                        new SsaValueReference("arg_slot", slotType),
+                                        new SsaIntegerConstant(new BigInteger(8), resultType),
+                                        resultType,
+                                        "%")),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Divide,
+                                        new SsaValueReference("arg_slot", slotType),
+                                        new SsaIntegerConstant(new BigInteger(8), resultType),
+                                        resultType,
+                                        "/")),
+                                new SsaValueInstruction(
+                                    "v2",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Add,
+                                        new SsaValueReference("v0", resultType),
+                                        new SsaValueReference("v1", resultType),
+                                        resultType,
+                                        "+"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v2", resultType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.DoesNotContain(
+            function.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator is SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo);
+    }
+
+    [Fact]
+    public void CleanupForwardsAggregateFieldThroughPhiWhenIncomingFieldsMatch()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("flag", boolType),
+                        new TypedParameterSymbol("value", valueType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_left",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "left_value",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        aggregateType,
+                                        "left.Value")),
+                                new SsaValueInstruction(
+                                    "left_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaValueReference("left_value", aggregateType),
+                                        "Count",
+                                        1,
+                                        new SsaIntegerConstant(BigInteger.One, valueType),
+                                        aggregateType,
+                                        "left.Count"))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_right",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "right_value",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        aggregateType,
+                                        "right.Value")),
+                                new SsaValueInstruction(
+                                    "right_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaValueReference("right_value", aggregateType),
+                                        "Count",
+                                        1,
+                                        new SsaIntegerConstant(new BigInteger(2), valueType),
+                                        aggregateType,
+                                        "right.Count"))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [
+                                new SsaPhi(
+                                    "pair_phi",
+                                    "pair",
+                                    aggregateType,
+                                    [
+                                        new SsaPhiIncoming(1, new SsaValueReference("left_pair", aggregateType)),
+                                        new SsaPhiIncoming(2, new SsaValueReference("right_pair", aggregateType))
+                                    ])
+                            ],
+                            [
+                                new SsaValueInstruction(
+                                    "result",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("pair_phi", aggregateType),
+                                        "Value",
+                                        0,
+                                        valueType,
+                                        "pair.Value"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var returnBlock = Assert.Single(optimized.Functions)
+            .Blocks.Single(static block => block.Terminator.Kind == SsaTerminatorKind.Return);
+
+        Assert.DoesNotContain(
+            optimized.Functions.SelectMany(static function => function.Blocks)
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaExtractFieldRValue);
+        var returnValue = Assert.IsType<SsaValueReference>(returnBlock.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void CleanupKeepsAggregateFieldExtractThroughPhiWhenIncomingFieldsDiffer()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("flag", boolType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_left",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "left_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaIntegerConstant(BigInteger.One, valueType),
+                                        aggregateType,
+                                        "left.Value"))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_right",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "right_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaIntegerConstant(new BigInteger(2), valueType),
+                                        aggregateType,
+                                        "right.Value"))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [
+                                new SsaPhi(
+                                    "pair_phi",
+                                    "pair",
+                                    aggregateType,
+                                    [
+                                        new SsaPhiIncoming(1, new SsaValueReference("left_pair", aggregateType)),
+                                        new SsaPhiIncoming(2, new SsaValueReference("right_pair", aggregateType))
+                                    ])
+                            ],
+                            [
+                                new SsaValueInstruction(
+                                    "result",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("pair_phi", aggregateType),
+                                        "Value",
+                                        0,
+                                        valueType,
+                                        "pair.Value"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+
+        Assert.Contains(
+            optimized.Functions.SelectMany(static function => function.Blocks)
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaExtractFieldRValue);
+    }
+
+    [Fact]
+    public void CleanupForwardsAggregateIndexThroughPhiWhenIncomingElementsMatch()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var arrayType = StarkTypeSymbols.FixedArray(valueType, 2);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("flag", boolType),
+                        new TypedParameterSymbol("value", valueType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_left",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "left_array",
+                                    new SsaInsertIndexRValue(
+                                        new SsaZeroInitializerValue(arrayType),
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        arrayType,
+                                        "left[0]"))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_right",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "right_array",
+                                    new SsaInsertIndexRValue(
+                                        new SsaZeroInitializerValue(arrayType),
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        arrayType,
+                                        "right[0]"))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [
+                                new SsaPhi(
+                                    "array_phi",
+                                    "values",
+                                    arrayType,
+                                    [
+                                        new SsaPhiIncoming(1, new SsaValueReference("left_array", arrayType)),
+                                        new SsaPhiIncoming(2, new SsaValueReference("right_array", arrayType))
+                                    ])
+                            ],
+                            [
+                                new SsaValueInstruction(
+                                    "result",
+                                    new SsaExtractIndexRValue(
+                                        new SsaValueReference("array_phi", arrayType),
+                                        0,
+                                        valueType,
+                                        "values[0]"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var returnBlock = Assert.Single(optimized.Functions)
+            .Blocks.Single(static block => block.Terminator.Kind == SsaTerminatorKind.Return);
+
+        Assert.DoesNotContain(
+            optimized.Functions.SelectMany(static function => function.Blocks)
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaExtractIndexRValue);
+        var returnValue = Assert.IsType<SsaValueReference>(returnBlock.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void CleanupForwardsAggregateFieldThroughSelectWhenSelectedFieldsMatch()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("flag", boolType),
+                        new TypedParameterSymbol("value", valueType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "left_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        aggregateType,
+                                        "left.Value")),
+                                new SsaValueInstruction(
+                                    "right_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        aggregateType,
+                                        "right.Value")),
+                                new SsaValueInstruction(
+                                    "selected_pair",
+                                    new SsaSelectRValue(
+                                        new SsaValueReference("arg_flag", boolType),
+                                        new SsaValueReference("left_pair", aggregateType),
+                                        new SsaValueReference("right_pair", aggregateType),
+                                        aggregateType,
+                                        "flag ? left : right")),
+                                new SsaValueInstruction(
+                                    "result",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("selected_pair", aggregateType),
+                                        "Value",
+                                        0,
+                                        valueType,
+                                        "pair.Value"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var block = Assert.Single(Assert.Single(optimized.Functions).Blocks);
+
+        Assert.Empty(block.Instructions);
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void CleanupKeepsAggregateFieldExtractThroughSelectWhenSelectedFieldsDiffer()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("flag", boolType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "left_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaIntegerConstant(BigInteger.One, valueType),
+                                        aggregateType,
+                                        "left.Value")),
+                                new SsaValueInstruction(
+                                    "right_pair",
+                                    new SsaInsertFieldRValue(
+                                        new SsaZeroInitializerValue(aggregateType),
+                                        "Value",
+                                        0,
+                                        new SsaIntegerConstant(new BigInteger(2), valueType),
+                                        aggregateType,
+                                        "right.Value")),
+                                new SsaValueInstruction(
+                                    "selected_pair",
+                                    new SsaSelectRValue(
+                                        new SsaValueReference("arg_flag", boolType),
+                                        new SsaValueReference("left_pair", aggregateType),
+                                        new SsaValueReference("right_pair", aggregateType),
+                                        aggregateType,
+                                        "flag ? left : right")),
+                                new SsaValueInstruction(
+                                    "result",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("selected_pair", aggregateType),
+                                        "Value",
+                                        0,
+                                        valueType,
+                                        "pair.Value"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+
+        Assert.Contains(
+            optimized.Functions.SelectMany(static function => function.Blocks)
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaExtractFieldRValue);
+    }
+
+    [Fact]
+    public void CleanupForwardsAggregateIndexThroughSelectWhenSelectedElementsMatch()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var arrayType = StarkTypeSymbols.FixedArray(valueType, 2);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("flag", boolType),
+                        new TypedParameterSymbol("value", valueType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "left_array",
+                                    new SsaInsertIndexRValue(
+                                        new SsaZeroInitializerValue(arrayType),
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        arrayType,
+                                        "left[0]")),
+                                new SsaValueInstruction(
+                                    "right_array",
+                                    new SsaInsertIndexRValue(
+                                        new SsaZeroInitializerValue(arrayType),
+                                        0,
+                                        new SsaValueReference("arg_value", valueType),
+                                        arrayType,
+                                        "right[0]")),
+                                new SsaValueInstruction(
+                                    "selected_array",
+                                    new SsaSelectRValue(
+                                        new SsaValueReference("arg_flag", boolType),
+                                        new SsaValueReference("left_array", arrayType),
+                                        new SsaValueReference("right_array", arrayType),
+                                        arrayType,
+                                        "flag ? left : right")),
+                                new SsaValueInstruction(
+                                    "result",
+                                    new SsaExtractIndexRValue(
+                                        new SsaValueReference("selected_array", arrayType),
+                                        0,
+                                        valueType,
+                                        "values[0]"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var block = Assert.Single(Assert.Single(optimized.Functions).Blocks);
+
+        Assert.Empty(block.Instructions);
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
     public void CleanupRemovesIdentityPhiNodes()
     {
         var boolType = StarkTypeSymbols.Bool;
@@ -1778,6 +2571,943 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStoredStackFieldLoadsWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+        Assert.Contains(
+            block.Instructions.OfType<SsaStoreIndirectInstruction>(),
+            static instruction => instruction.Value is SsaValueReference { Name: "arg_value" });
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossUnknownIndirectStores()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("value", valueType),
+                        new TypedParameterSymbol("other", fieldPointerType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("arg_other", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(9, valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v0", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var innerType = StarkTypeSymbols.Named("Inner");
+        var outerType = StarkTypeSymbols.Named("Outer");
+        var outerPointerType = StarkTypeSymbols.RawPointer(outerType, isMutable: true);
+        var innerPointerType = StarkTypeSymbols.RawPointer(innerType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("outer", outerType),
+                                new SsaValueInstruction(
+                                    "outer_addr",
+                                    new SsaAddressOfLocalRValue("outer", outerType, outerPointerType, "&outer")),
+                                new SsaValueInstruction(
+                                    "inner_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("outer_addr", outerPointerType),
+                                        outerType,
+                                        "Inner",
+                                        0,
+                                        innerPointerType,
+                                        "&outer.Inner")),
+                                new SsaValueInstruction(
+                                    "value_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("inner_addr", innerPointerType),
+                                        innerType,
+                                        "Value",
+                                        0,
+                                        fieldPointerType,
+                                        "&outer.Inner.Value")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("value_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("value_addr", fieldPointerType),
+                                        valueType,
+                                        "outer.Inner.Value:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsSiblingNestedStackFieldPathsSeparate()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var innerType = StarkTypeSymbols.Named("Inner");
+        var outerType = StarkTypeSymbols.Named("Outer");
+        var outerPointerType = StarkTypeSymbols.RawPointer(outerType, isMutable: true);
+        var innerPointerType = StarkTypeSymbols.RawPointer(innerType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("outer", outerType),
+                                new SsaValueInstruction(
+                                    "outer_addr",
+                                    new SsaAddressOfLocalRValue("outer", outerType, outerPointerType, "&outer")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("outer_addr", outerPointerType),
+                                        outerType,
+                                        "Left",
+                                        0,
+                                        innerPointerType,
+                                        "&outer.Left")),
+                                new SsaValueInstruction(
+                                    "right_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("outer_addr", outerPointerType),
+                                        outerType,
+                                        "Right",
+                                        1,
+                                        innerPointerType,
+                                        "&outer.Right")),
+                                new SsaValueInstruction(
+                                    "left_value_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("left_addr", innerPointerType),
+                                        innerType,
+                                        "Value",
+                                        0,
+                                        fieldPointerType,
+                                        "&outer.Left.Value")),
+                                new SsaValueInstruction(
+                                    "right_value_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("right_addr", innerPointerType),
+                                        innerType,
+                                        "Value",
+                                        0,
+                                        fieldPointerType,
+                                        "&outer.Right.Value")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_value_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("right_value_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_value_addr", fieldPointerType),
+                                        valueType,
+                                        "outer.Left.Value:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(1, returnValue.Value);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var store = Assert.Single(block.Instructions.OfType<SsaStoreIndirectInstruction>());
+
+        Assert.IsType<SsaValueReference>(store.Address);
+        Assert.Equal("arg_value", Assert.IsType<SsaValueReference>(store.Value).Name);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossUnknownIndirectStores()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("value", valueType),
+                        new TypedParameterSymbol("other", fieldPointerType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("arg_other", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(9, valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(11, valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var stores = block.Instructions.OfType<SsaStoreIndirectInstruction>().ToArray();
+
+        Assert.Equal(3, stores.Length);
+        Assert.Equal(
+            2,
+            stores.Count(static store => store.Address is SsaValueReference { Name: "left_addr" }));
+
+        var returnValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(11, returnValue.Value);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossPureScalarCalls()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue(
+                                        "Touch",
+                                        [new SsaValueReference("arg_value", valueType)],
+                                        valueType,
+                                        "Touch(value)")),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureEffect("Touch"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaCallRValue { FunctionName: "Touch" });
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossImpureCalls()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue("Touch", [], valueType, "Touch()")),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v0", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresAcrossReadonlyScalarCalls()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue(
+                                        "Touch",
+                                        [new SsaValueReference("arg_value", valueType)],
+                                        valueType,
+                                        "Touch(value)")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureReadArgumentEffect("Touch"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var store = Assert.Single(block.Instructions.OfType<SsaStoreIndirectInstruction>());
+
+        Assert.Equal("arg_value", Assert.IsType<SsaValueReference>(store.Value).Name);
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossReadonlyLocalMemoryCalls()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue(
+                                        "Touch",
+                                        [new SsaValueReference("left_addr", fieldPointerType)],
+                                        valueType,
+                                        "Touch(&pair.Left)")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(11, valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureReadArgumentEffect("Touch"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var stores = block.Instructions.OfType<SsaStoreIndirectInstruction>().ToArray();
+
+        Assert.Equal(2, stores.Length);
+        var returnValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(11, returnValue.Value);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossSinglePredecessorBlocks()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [1])),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_return",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var returnBlock = Assert.Single(function.Blocks, static block => block.Id == 1);
+
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+        var returnValue = Assert.IsType<SsaValueReference>(returnBlock.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackFieldLoadsAtJoinBlocks()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var aggregateType = StarkTypeSymbols.Named("Pair");
+        var aggregatePointerType = StarkTypeSymbols.RawPointer(aggregateType, isMutable: true);
+        var fieldPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("flag", boolType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("pair", aggregateType),
+                                new SsaValueInstruction(
+                                    "pair_addr",
+                                    new SsaAddressOfLocalRValue("pair", aggregateType, aggregatePointerType, "&pair")),
+                                new SsaValueInstruction(
+                                    "left_addr",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("pair_addr", aggregatePointerType),
+                                        aggregateType,
+                                        "Left",
+                                        0,
+                                        fieldPointerType,
+                                        "&pair.Left"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_then",
+                            [],
+                            [
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_else",
+                            [],
+                            [
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("left_addr", fieldPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(2, valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("left_addr", fieldPointerType),
+                                        valueType,
+                                        "pair.Left:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+    }
+
+    [Fact]
     public void AliasAwareMemoryOptimizationRemovesOverwrittenStackScalarStoresWithinBlock()
     {
         var valueType = StarkTypeSymbols.Integer(32);
@@ -2085,6 +3815,60 @@ public sealed class SsaOptimizationTests
                                 new SsaValueInstruction(
                                     "ignored",
                                     new SsaCallRValue("Touch", [], valueType, "Touch()")),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v1", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Equal(
+            2,
+            block.Instructions
+                .OfType<SsaValueInstruction>()
+                .Count(static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" }));
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v1", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossUnknownIndirectStores()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var pointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("other", pointerType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("arg_other", pointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(9, valueType)),
                                 new SsaValueInstruction(
                                     "v1",
                                     new SsaLoadGlobalRValue("Demo.Value", valueType))

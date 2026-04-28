@@ -26,6 +26,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
     private const int RuntimeAllocatorBucketAlignmentBytes = 16;
+    private const int RuntimeAllocatorSlabTargetBytes = 4096;
+    private const int RuntimeAllocatorMinimumSlabBlockCount = 2;
     private static readonly int[] RuntimeAllocatorBucketSizes = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
     private readonly LlvmEmissionContext _context;
@@ -421,10 +423,20 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             builder.AppendLine($"  ret ptr %bucket_head_{bucketSize}");
             builder.AppendLine();
             builder.AppendLine($"bucket_{bucketSize}_empty:");
-            builder.AppendLine($"  br label %bucket_{bucketSize}_allocate");
+            builder.AppendLine($"  br label %bucket_{bucketSize}_refill");
             builder.AppendLine();
-            builder.AppendLine($"bucket_{bucketSize}_allocate:");
-            builder.AppendLine("  br label %os_allocate");
+        }
+
+        foreach (var bucketSize in RuntimeAllocatorBucketSizes)
+        {
+            EmitRuntimeAllocatorBucketRefillBlock(
+                builder,
+                bucketSize,
+                pointerSizeBytes,
+                bucketAlignmentBytes,
+                headerBytes,
+                bucketSizeSlotOffset,
+                allocationFailureProfile);
             builder.AppendLine();
         }
 
@@ -432,12 +444,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  br label %os_allocate");
         builder.AppendLine();
         builder.AppendLine("os_allocate:");
-        builder.AppendLine($"  %payload_size = phi {AllocatorSizeType} {BuildRuntimeAllocatorBucketSizePhiIncoming("%requested_size")}");
-        builder.AppendLine($"  %block_alignment = phi {AllocatorSizeType} {BuildRuntimeAllocatorBucketConstantPhiIncoming("%effective_alignment", bucketAlignmentBytes)}");
-        builder.AppendLine($"  %bucket_size = phi {AllocatorSizeType} {BuildRuntimeAllocatorBucketSizePhiIncoming("0")}");
-        builder.AppendLine($"  %with_header = add {AllocatorSizeType} %payload_size, {headerBytes}");
-        builder.AppendLine($"  %overflow_header = icmp ult {AllocatorSizeType} %with_header, %payload_size");
-        builder.AppendLine($"  %total = add {AllocatorSizeType} %with_header, %block_alignment");
+        builder.AppendLine($"  %with_header = add {AllocatorSizeType} %requested_size, {headerBytes}");
+        builder.AppendLine($"  %overflow_header = icmp ult {AllocatorSizeType} %with_header, %requested_size");
+        builder.AppendLine($"  %total = add {AllocatorSizeType} %with_header, %effective_alignment");
         builder.AppendLine($"  %overflow_alignment = icmp ult {AllocatorSizeType} %total, %with_header");
         builder.AppendLine("  %size_overflow = or i1 %overflow_header, %overflow_alignment");
         builder.AppendLine("  br i1 %size_overflow, label %oom, label %allocate_os");
@@ -454,9 +463,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("ok:");
         builder.AppendLine($"  %base_int = ptrtoint ptr %base to {AllocatorSizeType}");
         builder.AppendLine($"  %data_start = add {AllocatorSizeType} %base_int, {headerBytes}");
-        builder.AppendLine($"  %block_alignment_minus_one = sub {AllocatorSizeType} %block_alignment, 1");
+        builder.AppendLine($"  %block_alignment_minus_one = sub {AllocatorSizeType} %effective_alignment, 1");
         builder.AppendLine($"  %data_with_mask = add {AllocatorSizeType} %data_start, %block_alignment_minus_one");
-        builder.AppendLine($"  %negative_alignment = sub {AllocatorSizeType} 0, %block_alignment");
+        builder.AppendLine($"  %negative_alignment = sub {AllocatorSizeType} 0, %effective_alignment");
         builder.AppendLine($"  %aligned_int = and {AllocatorSizeType} %data_with_mask, %negative_alignment");
         builder.AppendLine($"  %header_int = sub {AllocatorSizeType} %aligned_int, {headerBytes}");
         builder.AppendLine("  %result = inttoptr " + AllocatorSizeType + " %aligned_int to ptr");
@@ -465,9 +474,97 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"  %length_slot = getelementptr i8, ptr %header, i64 {pointerSizeBytes}");
         builder.AppendLine($"  store {AllocatorSizeType} %total, ptr %length_slot, align {pointerSizeBytes}");
         builder.AppendLine($"  %bucket_size_slot = getelementptr i8, ptr %header, i64 {bucketSizeSlotOffset}");
-        builder.AppendLine($"  store {AllocatorSizeType} %bucket_size, ptr %bucket_size_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  store {AllocatorSizeType} 0, ptr %bucket_size_slot, align {pointerSizeBytes}");
         builder.AppendLine("  ret ptr %result");
         builder.AppendLine("}");
+    }
+
+    private void EmitRuntimeAllocatorBucketRefillBlock(
+        StringBuilder builder,
+        int bucketSize,
+        int pointerSizeBytes,
+        int bucketAlignmentBytes,
+        int headerBytes,
+        int bucketSizeSlotOffset,
+        string allocationFailureProfile)
+    {
+        var bucketGlobalName = GetRuntimeAllocatorBucketGlobalName(bucketSize);
+        var strideBytes = GetRuntimeAllocatorBucketStrideBytes(bucketSize, headerBytes, bucketAlignmentBytes);
+        var slabBlockCount = GetRuntimeAllocatorSlabBlockCount(bucketSize, headerBytes, bucketAlignmentBytes, strideBytes);
+        var slabTotalBytes = GetRuntimeAllocatorSlabTotalBytes(bucketSize, headerBytes, bucketAlignmentBytes, strideBytes, slabBlockCount);
+        var alignmentMask = bucketAlignmentBytes - 1;
+        var negativeAlignment = -bucketAlignmentBytes;
+
+        builder.AppendLine($"bucket_{bucketSize}_refill:");
+        builder.AppendLine($"  %bucket_{bucketSize}_slab_base = call ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef {slabTotalBytes})");
+        builder.AppendLine($"  %bucket_{bucketSize}_slab_is_null = icmp eq ptr %bucket_{bucketSize}_slab_base, null");
+        builder.AppendLine($"  br i1 %bucket_{bucketSize}_slab_is_null, label %oom, label %bucket_{bucketSize}_slab_ok, !prof {allocationFailureProfile}");
+        builder.AppendLine();
+        builder.AppendLine($"bucket_{bucketSize}_slab_ok:");
+        builder.AppendLine($"  %bucket_{bucketSize}_base_int = ptrtoint ptr %bucket_{bucketSize}_slab_base to {AllocatorSizeType}");
+        builder.AppendLine($"  %bucket_{bucketSize}_data_start = add {AllocatorSizeType} %bucket_{bucketSize}_base_int, {headerBytes}");
+        builder.AppendLine($"  %bucket_{bucketSize}_data_with_mask = add {AllocatorSizeType} %bucket_{bucketSize}_data_start, {alignmentMask}");
+        builder.AppendLine($"  %bucket_{bucketSize}_first_int = and {AllocatorSizeType} %bucket_{bucketSize}_data_with_mask, {negativeAlignment}");
+        builder.AppendLine($"  %bucket_{bucketSize}_first = inttoptr {AllocatorSizeType} %bucket_{bucketSize}_first_int to ptr");
+        EmitRuntimeAllocatorBucketHeaderStores(
+            builder,
+            bucketSize,
+            "first",
+            $"%bucket_{bucketSize}_slab_base",
+            $"%bucket_{bucketSize}_first_int",
+            slabTotalBytes,
+            pointerSizeBytes,
+            headerBytes,
+            bucketSizeSlotOffset);
+        builder.AppendLine($"  br label %bucket_{bucketSize}_refill_loop");
+        builder.AppendLine();
+        builder.AppendLine($"bucket_{bucketSize}_refill_loop:");
+        builder.AppendLine($"  %bucket_{bucketSize}_refill_index = phi {AllocatorSizeType} [1, %bucket_{bucketSize}_slab_ok], [%bucket_{bucketSize}_refill_next, %bucket_{bucketSize}_refill_body]");
+        builder.AppendLine($"  %bucket_{bucketSize}_refill_done = icmp eq {AllocatorSizeType} %bucket_{bucketSize}_refill_index, {slabBlockCount}");
+        builder.AppendLine($"  br i1 %bucket_{bucketSize}_refill_done, label %bucket_{bucketSize}_refill_done_block, label %bucket_{bucketSize}_refill_body");
+        builder.AppendLine();
+        builder.AppendLine($"bucket_{bucketSize}_refill_body:");
+        builder.AppendLine($"  %bucket_{bucketSize}_refill_offset = mul {AllocatorSizeType} %bucket_{bucketSize}_refill_index, {strideBytes}");
+        builder.AppendLine($"  %bucket_{bucketSize}_block_int = add {AllocatorSizeType} %bucket_{bucketSize}_first_int, %bucket_{bucketSize}_refill_offset");
+        builder.AppendLine($"  %bucket_{bucketSize}_block = inttoptr {AllocatorSizeType} %bucket_{bucketSize}_block_int to ptr");
+        EmitRuntimeAllocatorBucketHeaderStores(
+            builder,
+            bucketSize,
+            "block",
+            $"%bucket_{bucketSize}_slab_base",
+            $"%bucket_{bucketSize}_block_int",
+            slabTotalBytes,
+            pointerSizeBytes,
+            headerBytes,
+            bucketSizeSlotOffset);
+        builder.AppendLine($"  %bucket_{bucketSize}_old_head = load ptr, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
+        builder.AppendLine($"  store ptr %bucket_{bucketSize}_old_head, ptr %bucket_{bucketSize}_block, align {bucketAlignmentBytes}");
+        builder.AppendLine($"  store ptr %bucket_{bucketSize}_block, ptr @{bucketGlobalName}, align {pointerSizeBytes}");
+        builder.AppendLine($"  %bucket_{bucketSize}_refill_next = add {AllocatorSizeType} %bucket_{bucketSize}_refill_index, 1");
+        builder.AppendLine($"  br label %bucket_{bucketSize}_refill_loop");
+        builder.AppendLine();
+        builder.AppendLine($"bucket_{bucketSize}_refill_done_block:");
+        builder.AppendLine($"  ret ptr %bucket_{bucketSize}_first");
+    }
+
+    private void EmitRuntimeAllocatorBucketHeaderStores(
+        StringBuilder builder,
+        int bucketSize,
+        string localPrefix,
+        string slabBase,
+        string blockDataInt,
+        int slabTotalBytes,
+        int pointerSizeBytes,
+        int headerBytes,
+        int bucketSizeSlotOffset)
+    {
+        builder.AppendLine($"  %bucket_{bucketSize}_{localPrefix}_header_int = sub {AllocatorSizeType} {blockDataInt}, {headerBytes}");
+        builder.AppendLine($"  %bucket_{bucketSize}_{localPrefix}_header = inttoptr {AllocatorSizeType} %bucket_{bucketSize}_{localPrefix}_header_int to ptr");
+        builder.AppendLine($"  store ptr {slabBase}, ptr %bucket_{bucketSize}_{localPrefix}_header, align {pointerSizeBytes}");
+        builder.AppendLine($"  %bucket_{bucketSize}_{localPrefix}_length_slot = getelementptr i8, ptr %bucket_{bucketSize}_{localPrefix}_header, i64 {pointerSizeBytes}");
+        builder.AppendLine($"  store {AllocatorSizeType} {slabTotalBytes}, ptr %bucket_{bucketSize}_{localPrefix}_length_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %bucket_{bucketSize}_{localPrefix}_bucket_size_slot = getelementptr i8, ptr %bucket_{bucketSize}_{localPrefix}_header, i64 {bucketSizeSlotOffset}");
+        builder.AppendLine($"  store {AllocatorSizeType} {bucketSize}, ptr %bucket_{bucketSize}_{localPrefix}_bucket_size_slot, align {pointerSizeBytes}");
     }
 
     private void EmitRuntimeReallocateHelperDefinition(StringBuilder builder)
@@ -839,6 +936,45 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private static int GetRuntimeAllocatorBucketAlignmentBytes(int pointerSizeBytes)
     {
         return Math.Max(pointerSizeBytes, RuntimeAllocatorBucketAlignmentBytes);
+    }
+
+    private static int GetRuntimeAllocatorBucketStrideBytes(int bucketSize, int headerBytes, int bucketAlignmentBytes)
+    {
+        return AlignUp(checked(headerBytes + bucketSize), bucketAlignmentBytes);
+    }
+
+    private static int GetRuntimeAllocatorSlabBlockCount(
+        int bucketSize,
+        int headerBytes,
+        int bucketAlignmentBytes,
+        int strideBytes)
+    {
+        var fixedBytes = checked(headerBytes + (bucketAlignmentBytes - 1) + bucketSize);
+        if (fixedBytes >= RuntimeAllocatorSlabTargetBytes)
+        {
+            return RuntimeAllocatorMinimumSlabBlockCount;
+        }
+
+        var pageFitBlockCount = 1 + ((RuntimeAllocatorSlabTargetBytes - fixedBytes) / strideBytes);
+        return Math.Max(RuntimeAllocatorMinimumSlabBlockCount, pageFitBlockCount);
+    }
+
+    private static int GetRuntimeAllocatorSlabTotalBytes(
+        int bucketSize,
+        int headerBytes,
+        int bucketAlignmentBytes,
+        int strideBytes,
+        int slabBlockCount)
+    {
+        return checked(headerBytes
+            + (bucketAlignmentBytes - 1)
+            + ((slabBlockCount - 1) * strideBytes)
+            + bucketSize);
+    }
+
+    private static int AlignUp(int value, int alignment)
+    {
+        return checked(((value + alignment - 1) / alignment) * alignment);
     }
 
     private static string GetRuntimeAllocatorBucketGlobalName(int bucketSize)

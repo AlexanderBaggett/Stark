@@ -200,7 +200,8 @@ internal static partial class PackageImageBuilder
                     Conversions: BuildPublishedTemplateConversions(module, function.Body, conversions),
                     DirectCalls: BuildPublishedTemplateDirectCalls(module, function.Body, directCalls),
                     FieldAccesses: BuildPublishedTemplateFieldAccesses(module, function.Body, fieldAccesses),
-                    MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls));
+                    MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls),
+                    BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode));
             })
             .Where(static template => template is not null)
             .Cast<StarkPackageFunctionTemplateManifest>()

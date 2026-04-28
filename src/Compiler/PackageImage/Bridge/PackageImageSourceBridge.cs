@@ -40,6 +40,12 @@ internal static partial class PackageImageLoader
             builder.AppendLine();
         }
 
+        if (module.Module.EffectiveCompilerFacts?.BackendOptimizationMode is { } backendOptimizationMode
+            && string.Equals(backendOptimizationMode, "opaque", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.AppendLine("[Backend(Opaque)]");
+        }
+
         builder.Append("module ");
         builder.AppendLine(module.Module.ModuleName);
         builder.AppendLine();
@@ -68,6 +74,7 @@ internal static partial class PackageImageLoader
 
         foreach (var type in types.OrderBy(static item => item.Name, StringComparer.Ordinal))
         {
+            EmitBackendAttribute(builder, string.Empty, type.BackendOptimizationMode);
             builder.Append(type.Visibility);
             builder.Append(' ');
             builder.Append(type.Kind);
@@ -182,6 +189,7 @@ internal static partial class PackageImageLoader
                         method.SymbolName,
                         method.Parameters,
                         out var methodBodyText);
+                    EmitBackendAttribute(builder, "    ", method.BackendOptimizationMode);
                     builder.Append("    ");
                     if (supportsMemberVisibility && !string.IsNullOrWhiteSpace(method.Visibility))
                     {
@@ -473,6 +481,7 @@ internal static partial class PackageImageLoader
 
     private static void EmitFunction(StringBuilder builder, StarkPackageFunctionManifest function, string? bodyText = null)
     {
+        EmitBackendAttribute(builder, string.Empty, function.BackendOptimizationMode);
         builder.Append(function.Visibility);
         builder.Append(' ');
         if (function.IsStrictFp)
@@ -616,7 +625,8 @@ internal static partial class PackageImageLoader
         bool hasBody = false,
         bool isStatic = false,
         string? publishedOverloadKey = null,
-        bool isUnsafe = false)
+        bool isUnsafe = false,
+        ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
@@ -639,7 +649,18 @@ internal static partial class PackageImageLoader
             Asm: CreateAsmModel(asm),
             GenericParameterNames: genericParameters ?? [],
             PublishedOverloadKey: publishedOverloadKey,
-            IsStatic: isStatic);
+            IsStatic: isStatic,
+            Attributes: BuildBackendAttributes(backendOptimizationMode),
+            BackendOptimizationMode: backendOptimizationMode);
+    }
+
+    private static void EmitBackendAttribute(StringBuilder builder, string indent, string? backendOptimizationMode)
+    {
+        if (string.Equals(backendOptimizationMode, "opaque", StringComparison.Ordinal))
+        {
+            builder.Append(indent);
+            builder.AppendLine("[Backend(Opaque)]");
+        }
     }
 
     private static InlinePreference ParseInlinePreferenceOrDefault(string inlinePreference)
@@ -1933,7 +1954,8 @@ internal static partial class PackageImageLoader
             function.InlinePreference,
             function.HasExplicitInlinePreference,
             function.IsUnsafe,
-            function.IsVarargs);
+            function.IsVarargs,
+            function.BackendOptimizationMode);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -1978,9 +2000,11 @@ internal static partial class PackageImageLoader
                 method.IsStatic,
                 method.Visibility,
                 method.IsUnsafe,
-                method.IsVarargs))
+                method.IsVarargs,
+                method.BackendOptimizationMode))
                 .ToArray(),
-            type.Destructor);
+            type.Destructor,
+            BackendOptimizationMode: type.BackendOptimizationMode);
     }
 
     private static StarkPackageGlobalManifest ConvertGlobalManifest(StarkPackageTypedGlobalManifest global)

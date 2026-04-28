@@ -18,11 +18,17 @@ internal static partial class PackageImageLoader
         var loadedFunctionSemantics = new Dictionary<string, ImportedFunctionSemanticSummary>(StringComparer.Ordinal);
         var loadedFunctionTemplates = new Dictionary<string, ImportedFunctionTemplateSummary>(StringComparer.Ordinal);
         PackageImageLinkageFacts? loadedLinkage = null;
+        var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var localNamedTypes = CollectLocalNamedTypes(module);
 
         foreach (var function in module.Module.EffectiveTypedInterface?.Functions ?? [])
         {
             var qualifiedResolvedName = function.QualifiedResolvedName ?? function.QualifiedName;
+            if (!TryParseBackendOptimizationMode(function.BackendOptimizationMode, out var functionBackendOptimizationMode))
+            {
+                return false;
+            }
+
             _ = TryParseFunctionKind(function.Kind, out var functionKind);
             loadedFunctionSignatures[qualifiedResolvedName] = new TypedFunctionSignature(
                 qualifiedResolvedName,
@@ -36,17 +42,33 @@ internal static partial class PackageImageLoader
                 GenericParameterNames: function.GenericParameters?.Count > 0 ? function.GenericParameters.ToArray() : null,
                 Kind: functionKind,
                 IsUnsafe: function.IsUnsafe,
-                IsVarargs: function.IsVarargs);
+                IsVarargs: function.IsVarargs,
+                BackendOptimizationMode: functionBackendOptimizationMode);
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
         {
+            if (!TryParseBackendOptimizationMode(type.BackendOptimizationMode, out var typeBackendOptimizationMode))
+            {
+                return false;
+            }
+
             foreach (var method in type.Methods ?? [])
             {
                 var qualifiedResolvedName = method.QualifiedResolvedName ?? method.QualifiedName;
                 var genericParameterNames = FunctionGenericParameterFacts.CombineGenericParameterNames(
                     type.GenericParameters,
                     method.GenericParameters);
+                if (!TryParseBackendOptimizationMode(method.BackendOptimizationMode, out var methodBackendOptimizationMode))
+                {
+                    return false;
+                }
+
+                if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
+                {
+                    methodBackendOptimizationMode = typeBackendOptimizationMode;
+                }
+
                 _ = TryParseFunctionKind(method.Kind, out var methodKind);
                 loadedFunctionSignatures[qualifiedResolvedName] = new TypedFunctionSignature(
                     qualifiedResolvedName,
@@ -61,7 +83,8 @@ internal static partial class PackageImageLoader
                     IsStatic: method.IsStatic,
                     Kind: methodKind,
                     IsUnsafe: method.IsUnsafe,
-                    IsVarargs: method.IsVarargs);
+                    IsVarargs: method.IsVarargs,
+                    BackendOptimizationMode: methodBackendOptimizationMode);
             }
         }
 
@@ -192,12 +215,23 @@ internal static partial class PackageImageLoader
 
         if (module.Module.EffectiveCompilerFacts is { } compilerFacts)
         {
+            if (!TryParseBackendOptimizationMode(compilerFacts.BackendOptimizationMode, out backendOptimizationMode))
+            {
+                return false;
+            }
+
             foreach (var functionEffect in compilerFacts.FunctionEffects)
             {
                 if (!TryParseFunctionKind(functionEffect.Kind, out var kind)
-                    || !TryParseInlinePreference(functionEffect.InlinePreference, out var inlinePreference))
+                    || !TryParseInlinePreference(functionEffect.InlinePreference, out var inlinePreference)
+                    || !TryParseBackendOptimizationMode(functionEffect.BackendOptimizationMode, out var functionBackendOptimizationMode))
                 {
                     return false;
+                }
+
+                if (functionBackendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+                {
+                    inlinePreference = InlinePreference.NoInline;
                 }
 
                 loadedFunctionEffects[functionEffect.QualifiedResolvedName] = new FunctionEffectProfile(
@@ -216,7 +250,8 @@ internal static partial class PackageImageLoader
                     IsHot: functionEffect.IsHot,
                     IsCold: functionEffect.IsCold,
                     InlinePreference: inlinePreference,
-                    IsStrictFp: functionEffect.IsStrictFp);
+                    IsStrictFp: functionEffect.IsStrictFp,
+                    BackendOptimizationMode: functionBackendOptimizationMode);
             }
 
             foreach (var abiFunction in compilerFacts.AbiFunctions ?? [])
@@ -267,6 +302,11 @@ internal static partial class PackageImageLoader
 
         foreach (var functionTemplate in module.Module.EffectiveGenericTemplates?.Functions ?? [])
         {
+            if (!TryParseBackendOptimizationMode(functionTemplate.BackendOptimizationMode, out var templateBackendOptimizationMode))
+            {
+                return false;
+            }
+
             ImportedFunctionSemanticSummary? templateSemantics = null;
             if (functionTemplate.Semantics is not null)
             {
@@ -404,7 +444,8 @@ internal static partial class PackageImageLoader
                             SourceName: memberCall.QualifiedSourceName,
                             TemplateName: memberCall.QualifiedTemplateName,
                             TypeArguments: memberCall.TypeArguments?.Select(BuildTypeSymbol).ToArray())))
-                    .ToArray());
+                    .ToArray(),
+                BackendOptimizationMode: templateBackendOptimizationMode);
         }
 
         if (loadedFunctionEffects.Count == 0
@@ -439,8 +480,28 @@ internal static partial class PackageImageLoader
             loadedEnumLayouts,
             loadedFunctionSemantics,
             loadedFunctionTemplates,
-            loadedLinkage);
+            loadedLinkage,
+            backendOptimizationMode);
         return true;
+    }
+
+    private static bool TryParseBackendOptimizationMode(
+        string? value,
+        out ModuleBackendOptimizationMode mode)
+    {
+        mode = ModuleBackendOptimizationMode.Default;
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(value, "opaque", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = ModuleBackendOptimizationMode.Opaque;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryBuildPackageImageLinkageFacts(

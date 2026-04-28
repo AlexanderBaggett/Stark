@@ -51,6 +51,36 @@ module Vectors
 
 Imports first, then `module`, then the rest of the file.
 
+## Module Attributes
+
+Stark uses C#-style attributes for compiler metadata. The current attribute
+surface is intentionally small. The supported backend optimization boundary
+form is:
+
+```stark
+[Backend(Opaque)]
+module System.Memory
+
+[Backend(Opaque)]
+finite law i32[0 max] Hash(i32[0 max] value) {
+    return value;
+}
+```
+
+`[Backend(Opaque)]` does not change source visibility. Code can still import
+the module and use visible declarations according to the normal `internal`,
+`public`, and `export` rules.
+
+On a module, it makes the whole module a backend optimization boundary. On a
+function, method, `struct`, `record`, or `doctrine`, it marks only that narrower
+surface. In practice, calls across an opaque boundary stay real calls instead
+of being imported into callers for ThinLTO, cross-module inlining, backend
+cloning, or backend specialization.
+
+Use this only for runtime/platform/interop code or for a documented backend
+correctness boundary. Most modules should omit the attribute and let the
+compiler choose the fastest safe optimization mode.
+
 ## Imports
 
 Imports are explicit and module based:

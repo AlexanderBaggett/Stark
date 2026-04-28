@@ -166,10 +166,14 @@ The locked default flags are:
   `System.Memory.Reallocate` in-place reuse.
 - `allocator/SystemMemoryFallbackReallocate.stark` exercises the conservative
   allocate-copy-free fallback when a reallocation no longer fits the old bucket.
-- `collections/ListGrowth.stark` and `collections/QueueGrowth.stark` are
-  executable growth benchmarks for the first owned collections.
-- `collections/ListIteration.stark` and `collections/DictionaryLookup.stark`
-  exercise indexed list iteration and integer-key hash-table lookup.
+- `collections/ListGrowth.stark`, `collections/StackGrowth.stark`, and
+  `collections/QueueGrowth.stark` are executable growth benchmarks for the
+  contiguous owned collections.
+- `collections/ListIteration.stark`, `collections/LinkedListPush.stark`, and
+  `collections/DictionaryLookup.stark` exercise indexed list iteration,
+  linked-list node allocation/removal, and integer-key hash-table lookup.
+  `DictionaryLookup` pre-reserves the Stark dictionary so setup matches the C
+  fixed-capacity table and Rust `HashMap::with_capacity` baseline.
 - `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-
   visible owned `ToAscii`/`ToUnicode` conversion and literal-prefix
   concatenation through `System.Memory`.

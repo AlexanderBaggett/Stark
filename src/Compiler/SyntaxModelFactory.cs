@@ -19,13 +19,15 @@ internal static class SyntaxModelFactory
     {
         var root = parseResult.Root;
         var declarations = new List<TopLevelDeclarationModel>();
+        var diagnostics = new List<SyntaxModelDiagnostic>();
+        var moduleAttributes = CreateModuleAttributes(root.moduleDeclaration());
+        var backendOptimizationMode = ResolveBackendOptimizationMode(root.moduleDeclaration(), moduleAttributes, diagnostics);
 
         foreach (var declaration in root.topLevelDeclaration())
         {
-            AddDeclarationModels(declarations, declaration);
+            AddDeclarationModels(declarations, declaration, diagnostics);
         }
 
-        var diagnostics = new List<SyntaxModelDiagnostic>();
         declarations = ApplyAsmSelection(
             root.topLevelDeclaration(),
             declarations,
@@ -36,8 +38,82 @@ internal static class SyntaxModelFactory
             new SyntaxModel(
                 ModuleName: root.moduleDeclaration().qualifiedName().GetText(),
                 Imports: root.importDeclaration().Select(CreateImportModel).ToArray(),
-                Declarations: declarations),
+                Declarations: declarations,
+                ModuleAttributes: moduleAttributes,
+                BackendOptimizationMode: backendOptimizationMode),
             diagnostics);
+    }
+
+    private static IReadOnlyList<ModuleAttributeModel> CreateModuleAttributes(
+        StarkParser.ModuleDeclarationContext moduleDeclaration)
+    {
+        var attributes = new List<ModuleAttributeModel>();
+        foreach (var attributeList in moduleDeclaration.attributeList())
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var name = attribute.qualifiedName().GetText();
+                var arguments = attribute.attributeArgument()
+                    .Select(static argument => argument.GetText())
+                    .ToArray();
+                attributes.Add(new ModuleAttributeModel(name, arguments));
+            }
+        }
+
+        return attributes;
+    }
+
+    private static ModuleBackendOptimizationMode ResolveBackendOptimizationMode(
+        StarkParser.ModuleDeclarationContext moduleDeclaration,
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
+        var backendAttributeCount = 0;
+        var attributeContexts = moduleDeclaration.attributeList()
+            .SelectMany(static attributeList => attributeList.attribute())
+            .ToArray();
+
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            var attributeContext = attributeContexts[index];
+            if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported module attribute '[{attribute.Name}]'. v1 module attributes only support '[Backend(Opaque)]'.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            backendAttributeCount++;
+            if (backendAttributeCount > 1)
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2111",
+                    "Module attribute '[Backend(...)]' can only be specified once.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            if (attribute.Arguments.Count != 1
+                || !string.Equals(attribute.Arguments[0], "Opaque", StringComparison.Ordinal))
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2112",
+                    "Unsupported Backend attribute argument. Use '[Backend(Opaque)]' to mark a module as a backend optimization boundary.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            backendOptimizationMode = ModuleBackendOptimizationMode.Opaque;
+        }
+
+        return backendOptimizationMode;
     }
 
     private static List<TopLevelDeclarationModel> ApplyAsmSelection(
@@ -591,12 +667,111 @@ internal static class SyntaxModelFactory
             importDeclaration.EXPORT() is not null);
     }
 
-    private static void AddDeclarationModels(List<TopLevelDeclarationModel> declarations, StarkParser.TopLevelDeclarationContext declaration)
+    private static IReadOnlyList<ModuleAttributeModel> CreateAttributes(IEnumerable<StarkParser.AttributeListContext> attributeLists)
+    {
+        var attributes = new List<ModuleAttributeModel>();
+        foreach (var attributeList in attributeLists)
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var name = attribute.qualifiedName().GetText();
+                var arguments = attribute.attributeArgument()
+                    .Select(static argument => argument.GetText())
+                    .ToArray();
+                attributes.Add(new ModuleAttributeModel(name, arguments));
+            }
+        }
+
+        return attributes;
+    }
+
+    private static ModuleBackendOptimizationMode ResolveBackendOptimizationMode(
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
+        var backendAttributeCount = 0;
+
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            var attributeContext = attributeContexts[index];
+            if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes only support '[Backend(Opaque)]'.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            backendAttributeCount++;
+            if (backendAttributeCount > 1)
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2111",
+                    $"Attribute '[Backend(...)]' can only be specified once on {targetDescription}.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            if (attribute.Arguments.Count != 1
+                || !string.Equals(attribute.Arguments[0], "Opaque", StringComparison.Ordinal))
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2112",
+                    "Unsupported Backend attribute argument. Use '[Backend(Opaque)]' to mark a backend optimization boundary.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            backendOptimizationMode = ModuleBackendOptimizationMode.Opaque;
+        }
+
+        return backendOptimizationMode;
+    }
+
+    private static void AddUnsupportedAttributeDiagnostics(
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            var attributeContext = attributeContexts[index];
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK2110",
+                $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes only support modules, callables, structs, records, and doctrines.",
+                attributeContext.Start.Line,
+                attributeContext.Start.Column + 1));
+        }
+    }
+
+    private static void AddDeclarationModels(
+        List<TopLevelDeclarationModel> declarations,
+        StarkParser.TopLevelDeclarationContext declaration,
+        List<SyntaxModelDiagnostic> diagnostics)
     {
         var visibility = ParseVisibility(declaration.visibilityModifier());
+        var declarationAttributes = CreateAttributes(declaration.attributeList());
+        var declarationAttributeContexts = declaration.attributeList()
+            .SelectMany(static attributeList => attributeList.attribute())
+            .ToArray();
 
         if (declaration.functionDeclaration() is { } function)
         {
+            var backendOptimizationMode = ResolveBackendOptimizationMode(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"function '{function.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
@@ -610,12 +785,23 @@ internal static class SyntaxModelFactory
                     function.asmSpecifier(),
                     function.asmClauseList(),
                     function.functionModifier(),
-                    function.functionBody())));
+                    function.functionBody(),
+                    declarationAttributes,
+                    backendOptimizationMode,
+                    $"function '{function.Identifier().GetText()}'",
+                    diagnostics),
+                Attributes: declarationAttributes,
+                BackendOptimizationMode: backendOptimizationMode));
             return;
         }
 
         if (declaration.structDeclaration() is { } structDeclaration)
         {
+            var backendOptimizationMode = ResolveBackendOptimizationMode(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"struct '{structDeclaration.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
@@ -623,13 +809,35 @@ internal static class SyntaxModelFactory
                 null,
                 Destructor: CreateDestructorModel(
                     structDeclaration.structBody().structMember()
-                        .Select(static member => member.destructorDeclaration())
-                        .FirstOrDefault(static destructor => destructor is not null))));
+                        .FirstOrDefault(static member => member.destructorDeclaration() is not null),
+                    backendOptimizationMode,
+                    diagnostics),
+                Attributes: declarationAttributes,
+                BackendOptimizationMode: backendOptimizationMode));
 
-            foreach (var method in structDeclaration.structBody().structMember()
-                         .Select(static member => member.methodDeclaration())
-                         .Where(static method => method is not null)!)
+            foreach (var member in structDeclaration.structBody().structMember())
             {
+                var method = member.methodDeclaration();
+                if (method is null)
+                {
+                    ValidateNonMethodMemberAttributes(member, diagnostics);
+                    continue;
+                }
+
+                var memberAttributes = CreateAttributes(member.attributeList());
+                var memberAttributeContexts = member.attributeList()
+                    .SelectMany(static attributeList => attributeList.attribute())
+                    .ToArray();
+                var methodBackendOptimizationMode = ResolveBackendOptimizationMode(
+                    memberAttributes,
+                    memberAttributeContexts,
+                    $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                    diagnostics);
+                if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
+                {
+                    methodBackendOptimizationMode = backendOptimizationMode;
+                }
+
                 var methodVisibility = ResolveMemberVisibility(visibility, method.visibilityModifier());
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
@@ -644,7 +852,13 @@ internal static class SyntaxModelFactory
                         null,
                         null,
                         method.functionModifier(),
-                        method.functionBody())));
+                        method.functionBody(),
+                        memberAttributes,
+                        methodBackendOptimizationMode,
+                        $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                        diagnostics),
+                    Attributes: memberAttributes,
+                    BackendOptimizationMode: methodBackendOptimizationMode));
             }
 
             return;
@@ -652,6 +866,11 @@ internal static class SyntaxModelFactory
 
         if (declaration.recordDeclaration() is { } recordDeclaration)
         {
+            var backendOptimizationMode = ResolveBackendOptimizationMode(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"record '{recordDeclaration.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 recordDeclaration.Identifier().GetText(),
                 DeclarationKind.Record,
@@ -659,13 +878,35 @@ internal static class SyntaxModelFactory
                 null,
                 Destructor: CreateDestructorModel(
                     recordDeclaration.recordBody().recordMember()
-                        .Select(static member => member.destructorDeclaration())
-                        .FirstOrDefault(static destructor => destructor is not null))));
+                        .FirstOrDefault(static member => member.destructorDeclaration() is not null),
+                    backendOptimizationMode,
+                    diagnostics),
+                Attributes: declarationAttributes,
+                BackendOptimizationMode: backendOptimizationMode));
 
-            foreach (var method in recordDeclaration.recordBody().recordMember()
-                         .Select(static member => member.methodDeclaration())
-                         .Where(static method => method is not null)!)
+            foreach (var member in recordDeclaration.recordBody().recordMember())
             {
+                var method = member.methodDeclaration();
+                if (method is null)
+                {
+                    ValidateNonMethodMemberAttributes(member, diagnostics);
+                    continue;
+                }
+
+                var memberAttributes = CreateAttributes(member.attributeList());
+                var memberAttributeContexts = member.attributeList()
+                    .SelectMany(static attributeList => attributeList.attribute())
+                    .ToArray();
+                var methodBackendOptimizationMode = ResolveBackendOptimizationMode(
+                    memberAttributes,
+                    memberAttributeContexts,
+                    $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                    diagnostics);
+                if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
+                {
+                    methodBackendOptimizationMode = backendOptimizationMode;
+                }
+
                 var methodVisibility = ResolveMemberVisibility(visibility, method.visibilityModifier());
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
@@ -680,7 +921,13 @@ internal static class SyntaxModelFactory
                         null,
                         null,
                         method.functionModifier(),
-                        method.functionBody())));
+                        method.functionBody(),
+                        memberAttributes,
+                        methodBackendOptimizationMode,
+                        $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                        diagnostics),
+                    Attributes: memberAttributes,
+                    BackendOptimizationMode: methodBackendOptimizationMode));
             }
 
             return;
@@ -688,6 +935,11 @@ internal static class SyntaxModelFactory
 
         if (declaration.enumDeclaration() is { } enumDeclaration)
         {
+            AddUnsupportedAttributeDiagnostics(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"enum '{enumDeclaration.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 enumDeclaration.Identifier().GetText(),
                 DeclarationKind.Enum,
@@ -698,16 +950,29 @@ internal static class SyntaxModelFactory
 
         if (declaration.traitDeclaration() is { } traitDeclaration)
         {
+            AddUnsupportedAttributeDiagnostics(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"trait '{traitDeclaration.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 traitDeclaration.Identifier().GetText(),
                 DeclarationKind.Trait,
                 visibility,
                 null));
 
-            foreach (var method in traitDeclaration.traitBody().traitMember()
-                         .Select(static member => member.traitMethodDeclaration())
-                         .Where(static method => method is not null)!)
+            foreach (var member in traitDeclaration.traitBody().traitMember())
             {
+                var method = member.traitMethodDeclaration();
+                var memberAttributes = CreateAttributes(member.attributeList());
+                var memberAttributeContexts = member.attributeList()
+                    .SelectMany(static attributeList => attributeList.attribute())
+                    .ToArray();
+                var methodBackendOptimizationMode = ResolveBackendOptimizationMode(
+                    memberAttributes,
+                    memberAttributeContexts,
+                    $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                    diagnostics);
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                     DeclarationKind.Function,
@@ -721,7 +986,13 @@ internal static class SyntaxModelFactory
                         null,
                         null,
                         method.functionModifier(),
-                        method.functionBody())));
+                        method.functionBody(),
+                        memberAttributes,
+                        methodBackendOptimizationMode,
+                        $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                        diagnostics),
+                    Attributes: memberAttributes,
+                    BackendOptimizationMode: methodBackendOptimizationMode));
             }
 
             return;
@@ -729,16 +1000,36 @@ internal static class SyntaxModelFactory
 
         if (declaration.doctrineDeclaration() is { } doctrineDeclaration)
         {
+            var backendOptimizationMode = ResolveBackendOptimizationMode(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"doctrine '{doctrineDeclaration.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 doctrineDeclaration.Identifier().GetText(),
                 DeclarationKind.Doctrine,
                 visibility,
-                null));
+                null,
+                Attributes: declarationAttributes,
+                BackendOptimizationMode: backendOptimizationMode));
 
-            foreach (var method in doctrineDeclaration.doctrineBody().doctrineMember()
-                         .Select(static member => member.doctrineMethodDeclaration())
-                         .Where(static method => method is not null)!)
+            foreach (var member in doctrineDeclaration.doctrineBody().doctrineMember())
             {
+                var method = member.doctrineMethodDeclaration();
+                var memberAttributes = CreateAttributes(member.attributeList());
+                var memberAttributeContexts = member.attributeList()
+                    .SelectMany(static attributeList => attributeList.attribute())
+                    .ToArray();
+                var methodBackendOptimizationMode = ResolveBackendOptimizationMode(
+                    memberAttributes,
+                    memberAttributeContexts,
+                    $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                    diagnostics);
+                if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
+                {
+                    methodBackendOptimizationMode = backendOptimizationMode;
+                }
+
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                     DeclarationKind.Function,
@@ -752,7 +1043,13 @@ internal static class SyntaxModelFactory
                         null,
                         null,
                         method.functionModifier(),
-                        method.functionBody())));
+                        method.functionBody(),
+                        memberAttributes,
+                        methodBackendOptimizationMode,
+                        $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
+                        diagnostics),
+                    Attributes: memberAttributes,
+                    BackendOptimizationMode: methodBackendOptimizationMode));
             }
 
             return;
@@ -760,6 +1057,11 @@ internal static class SyntaxModelFactory
 
         if (declaration.typeAliasDeclaration() is { } typeAliasDeclaration)
         {
+            AddUnsupportedAttributeDiagnostics(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"type alias '{typeAliasDeclaration.Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 typeAliasDeclaration.Identifier().GetText(),
                 DeclarationKind.TypeAlias,
@@ -771,6 +1073,11 @@ internal static class SyntaxModelFactory
 
         if (declaration.globalConstantDeclaration() is { } constantDeclaration)
         {
+            AddUnsupportedAttributeDiagnostics(
+                declarationAttributes,
+                declarationAttributeContexts,
+                $"global constant '{constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText()}'",
+                diagnostics);
             declarations.Add(new TopLevelDeclarationModel(
                 constantDeclaration.constantDeclarators().constantDeclarator(0).Identifier().GetText(),
                 DeclarationKind.GlobalConstant,
@@ -782,11 +1089,58 @@ internal static class SyntaxModelFactory
         var variableDeclaration = declaration.globalVariableDeclaration()
             ?? throw new InvalidOperationException("Unsupported top-level declaration shape.");
 
+        AddUnsupportedAttributeDiagnostics(
+            declarationAttributes,
+            declarationAttributeContexts,
+            $"global variable '{variableDeclaration.variableDeclarators().variableDeclarator(0).Identifier().GetText()}'",
+            diagnostics);
         declarations.Add(new TopLevelDeclarationModel(
             variableDeclaration.variableDeclarators().variableDeclarator(0).Identifier().GetText(),
             DeclarationKind.GlobalVariable,
             visibility,
             null));
+    }
+
+    private static void ValidateNonMethodMemberAttributes(
+        StarkParser.StructMemberContext member,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var attributes = CreateAttributes(member.attributeList());
+        var attributeContexts = member.attributeList()
+            .SelectMany(static attributeList => attributeList.attribute())
+            .ToArray();
+        if (member.destructorDeclaration() is { } destructor)
+        {
+            _ = ResolveBackendOptimizationMode(
+                attributes,
+                attributeContexts,
+                destructor.MUT() is null ? "destructor" : "mutable destructor",
+                diagnostics);
+            return;
+        }
+
+        AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "struct member", diagnostics);
+    }
+
+    private static void ValidateNonMethodMemberAttributes(
+        StarkParser.RecordMemberContext member,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var attributes = CreateAttributes(member.attributeList());
+        var attributeContexts = member.attributeList()
+            .SelectMany(static attributeList => attributeList.attribute())
+            .ToArray();
+        if (member.destructorDeclaration() is { } destructor)
+        {
+            _ = ResolveBackendOptimizationMode(
+                attributes,
+                attributeContexts,
+                destructor.MUT() is null ? "destructor" : "mutable destructor",
+                diagnostics);
+            return;
+        }
+
+        AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "record member", diagnostics);
     }
 
     private static TypeAliasDeclarationModel CreateTypeAliasModel(StarkParser.TypeAliasDeclarationContext typeAliasDeclaration)
@@ -812,9 +1166,18 @@ internal static class SyntaxModelFactory
         StarkParser.AsmSpecifierContext? asmSpecifier,
         StarkParser.AsmClauseListContext? asmClauseList,
         IReadOnlyList<StarkParser.FunctionModifierContext> modifiersList,
-        StarkParser.FunctionBodyContext functionBody)
+        StarkParser.FunctionBodyContext functionBody,
+        IReadOnlyList<ModuleAttributeModel>? attributes = null,
+        ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
+        string? targetDescription = null,
+        List<SyntaxModelDiagnostic>? diagnostics = null)
     {
         var modifiers = modifiersList.Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
+        AddBackendOpaqueModifierDiagnostics(
+            backendOptimizationMode,
+            modifiersList,
+            targetDescription ?? $"function '{name}'",
+            diagnostics);
         var hasExplicitInlinePreference = modifiers.Contains("inline")
             || modifiers.Contains("noinline")
             || modifiers.Contains("inlinehint");
@@ -850,15 +1213,112 @@ internal static class SyntaxModelFactory
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody),
             GenericParameterNames: genericParameters,
-            IsStatic: modifiers.Contains("static"));
+            IsStatic: modifiers.Contains("static"),
+            Attributes: attributes,
+            BackendOptimizationMode: backendOptimizationMode);
+    }
+
+    private static void AddBackendOpaqueModifierDiagnostics(
+        ModuleBackendOptimizationMode backendOptimizationMode,
+        IReadOnlyList<StarkParser.FunctionModifierContext> modifiers,
+        string targetDescription,
+        List<SyntaxModelDiagnostic>? diagnostics)
+    {
+        if (backendOptimizationMode != ModuleBackendOptimizationMode.Opaque || diagnostics is null)
+        {
+            return;
+        }
+
+        foreach (var modifier in modifiers)
+        {
+            var modifierText = modifier.GetText();
+            var message = modifierText switch
+            {
+                "inline" or "inlinehint" =>
+                    $"[Backend(Opaque)] conflicts with '{modifierText}' on {targetDescription}; opaque callables are backend boundaries and are forced noinline.",
+                "hot" =>
+                    $"[Backend(Opaque)] conflicts with 'hot' on {targetDescription}; opaque callables emit an unoptimized backend boundary, so hot-path optimization cannot apply.",
+                "ffi" =>
+                    $"[Backend(Opaque)] conflicts with 'ffi' on {targetDescription}; FFI callables are ABI boundaries rather than source bodies for backend optimization containment.",
+                _ => null
+            };
+
+            if (message is null)
+            {
+                continue;
+            }
+
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK2113",
+                message,
+                modifier.Start.Line,
+                modifier.Start.Column + 1));
+        }
     }
 
     private static DestructorDeclarationModel? CreateDestructorModel(
-        StarkParser.DestructorDeclarationContext? destructor)
+        StarkParser.StructMemberContext? member,
+        ModuleBackendOptimizationMode containingBackendOptimizationMode,
+        List<SyntaxModelDiagnostic> diagnostics)
     {
-        return destructor is null
-            ? null
-            : new DestructorDeclarationModel(destructor.MUT() is not null);
+        var destructor = member?.destructorDeclaration();
+        if (destructor is null)
+        {
+            return null;
+        }
+
+        return CreateDestructorModel(
+            destructor,
+            CreateAttributes(member!.attributeList()),
+            member.attributeList()
+                .SelectMany(static attributeList => attributeList.attribute())
+                .ToArray(),
+            containingBackendOptimizationMode,
+            diagnostics);
+    }
+
+    private static DestructorDeclarationModel? CreateDestructorModel(
+        StarkParser.RecordMemberContext? member,
+        ModuleBackendOptimizationMode containingBackendOptimizationMode,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var destructor = member?.destructorDeclaration();
+        if (destructor is null)
+        {
+            return null;
+        }
+
+        return CreateDestructorModel(
+            destructor,
+            CreateAttributes(member!.attributeList()),
+            member.attributeList()
+                .SelectMany(static attributeList => attributeList.attribute())
+                .ToArray(),
+            containingBackendOptimizationMode,
+            diagnostics);
+    }
+
+    private static DestructorDeclarationModel CreateDestructorModel(
+        StarkParser.DestructorDeclarationContext destructor,
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        ModuleBackendOptimizationMode containingBackendOptimizationMode,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var backendOptimizationMode = ResolveBackendOptimizationMode(
+            attributes,
+            attributeContexts,
+            destructor.MUT() is null ? "destructor" : "mutable destructor",
+            diagnostics);
+        if (backendOptimizationMode == ModuleBackendOptimizationMode.Default)
+        {
+            backendOptimizationMode = containingBackendOptimizationMode;
+        }
+
+        return new DestructorDeclarationModel(
+            destructor.MUT() is not null,
+            attributes,
+            backendOptimizationMode);
     }
 
     private static AsmFunctionModel? CreateAsmModel(

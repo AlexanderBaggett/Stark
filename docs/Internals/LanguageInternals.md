@@ -13,6 +13,84 @@ Stark is intentionally stricter than mainstream systems languages in a number of
 The current implementation targets LLVM.
 That does not make LLVM details part of the language surface, but it does explain why some Stark rules were chosen to make aliasing, control flow, effects, purity, and floating-point behavior easier to communicate precisely to the backend.
 
+### 1.1 Backend Optimization Boundaries
+
+Stark's default compilation bias is transparent and closed-world: when source
+or package-image bodies are available, the compiler should normally be free to
+inline, specialize, clone, internalize, and otherwise optimize through module
+boundaries.
+
+Some modules need a deliberate backend boundary. Runtime allocation code,
+platform code, FFI-heavy shims, or modules that expose a temporary backend
+correctness issue may still be ordinary Stark modules at the source level while
+being opaque to whole-program backend optimization.
+
+The source form is a C#-style attribute on the declaration that needs the
+backend boundary:
+
+```stark
+[Backend(Opaque)]
+module System.Memory
+
+[Backend(Opaque)]
+finite law i32[0 max] Hash(i32[0 max] value) {
+    return value;
+}
+
+[Backend(Opaque)]
+struct RuntimeHandle {
+    rawptr<void> Value;
+}
+```
+
+`[Backend(Opaque)]` means:
+
+- parse, type-check, validate, and compile the module normally
+- keep the module's public Stark API visible to importers
+- allow local optimization inside the module
+- do not let backend whole-program optimization look through the marked module,
+  callable, type, or contract boundary from callers
+- do not import the affected function bodies into callers for ThinLTO,
+  cross-module inlining, backend cloning, or backend specialization
+- continue to emit ABI attributes and Stark-owned semantic summaries that are
+  safe to expose across a compiled call boundary
+
+Module-level opacity applies to the entire module. Function-level opacity is a
+finer boundary: the marked callable remains a real backend call while unrelated
+declarations in the same module can still participate in whole-program
+optimization. Type and doctrine opacity propagate to their owned methods so
+standard-library code can isolate fragile runtime or collection internals
+without making the whole module opaque.
+
+Opaque does not mean source-hidden, abstract, private, or unavailable. It is
+not a visibility modifier. It is an optimization-boundary request for the
+compiler backend.
+
+The default module behavior remains automatic:
+
+```stark
+module System.Text
+```
+
+With no backend attribute, the compiler chooses the fastest safe optimization
+mode for the module and the current output kind. That policy may still keep a
+module native-only if the compiler has recorded a backend-safety reason, but
+ordinary source code should not need to mention ThinLTO or LLVM pass details.
+
+The implementation should model backend optimization mode as metadata on the
+module, package image, and toolchain plan rather than as source visibility. A
+future policy can independently choose:
+
+- whether the root executable module emits ThinLTO bitcode
+- whether each dependency module emits ThinLTO bitcode
+- whether normal LLVM optimization passes are allowed for a given module
+- whether link-time optimization is enabled for the final executable
+- which reason code explains each inclusion or exclusion
+
+This keeps Stark's performance-first default while still giving the standard
+library and advanced package authors a precise escape hatch for backend
+boundaries.
+
 ## 2. Borrowing and Emitted Facts
 
 The borrower system is one of Stark's main sources of optimizer-facing information.

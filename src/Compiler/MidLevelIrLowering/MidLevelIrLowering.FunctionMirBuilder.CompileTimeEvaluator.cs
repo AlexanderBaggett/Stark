@@ -148,6 +148,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 if (arguments.argument().Length != signature.Parameters.Count
+                    || signature.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque
                     || !_builder._functionsByName.TryGetValue(signature.Name, out var functionContext)
                     || functionContext.ParsedDeclaration is not { } parsedFunction
                     || !parsedFunction.HasBody

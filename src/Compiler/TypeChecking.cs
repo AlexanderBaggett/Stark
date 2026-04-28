@@ -706,7 +706,8 @@ internal sealed class TypeChecker
                         IsStatic: functionSyntax.IsStatic,
                         Kind: functionSyntax.DeclaredKind,
                         IsUnsafe: functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
-                        IsVarargs: isVarargs);
+                        IsVarargs: isVarargs,
+                        BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                 }
                 finally

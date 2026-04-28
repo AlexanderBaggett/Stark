@@ -128,7 +128,15 @@ internal sealed class LlvmFunctionAttributeBuilder
             attributes.Add("strictfp");
         }
 
-        attributes.Add(effects.InlinePreference switch
+        var inlinePreference = effects.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque
+            ? InlinePreference.NoInline
+            : effects.InlinePreference;
+        if (effects.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+        {
+            attributes.Add("optnone");
+        }
+
+        attributes.Add(inlinePreference switch
         {
             InlinePreference.Inline => "alwaysinline",
             InlinePreference.NoInline => "noinline",

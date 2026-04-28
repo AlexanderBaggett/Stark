@@ -312,7 +312,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     stack i64[-9223372036854775808 9223372036854775807] multiply = add * 1;
                     stack i64[-9223372036854775808 9223372036854775807] masked = multiply & -1;
                     stack i64[-9223372036854775808 9223372036854775807] shifted = masked << 0;
-                    return shifted ^ 0;
+                    stack i64[-9223372036854775808 9223372036854775807] divided = shifted / 1;
+                    stack i64[-9223372036854775808 9223372036854775807] rightShifted = divided >> 0;
+                    return rightShifted ^ 0;
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "cleanup-ssa"));
@@ -332,6 +334,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 or SsaBinaryOperator.Multiply
                 or SsaBinaryOperator.BitwiseAnd
                 or SsaBinaryOperator.ShiftLeft
+                or SsaBinaryOperator.Divide
+                or SsaBinaryOperator.ShiftRight
                 or SsaBinaryOperator.BitwiseXor);
     }
 
@@ -351,8 +355,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     stack i64[-9223372036854775808 9223372036854775807] zeroAnd = value & 0;
                     stack i64[-9223372036854775808 9223372036854775807] zeroMultiply = value * 0;
                     stack i64[-9223372036854775808 9223372036854775807] zeroSubtract = value - value;
+                    stack i64[-9223372036854775808 9223372036854775807] zeroModulo = value % 1;
                     stack i64[-9223372036854775808 9223372036854775807] allOnes = value | -1;
-                    return zeroXor + zeroAnd + zeroMultiply + zeroSubtract + (allOnes & 1);
+                    return zeroXor + zeroAnd + zeroMultiply + zeroSubtract + zeroModulo + (allOnes & 1);
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "cleanup-ssa"));
@@ -369,6 +374,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 .Select(static instruction => instruction.Value)
                 .OfType<SsaBinaryRValue>(),
             static binary => binary.Operator is SsaBinaryOperator.Subtract
+                or SsaBinaryOperator.Modulo
                 or SsaBinaryOperator.Multiply
                 or SsaBinaryOperator.BitwiseAnd
                 or SsaBinaryOperator.BitwiseOr
@@ -377,6 +383,177 @@ public sealed class CompilerPipelineOptimizeSsaTests
         var block = Assert.Single(run.Blocks);
         var resultValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
         Assert.Equal(new System.Numerics.BigInteger(1), resultValue.Value);
+    }
+
+    [Fact]
+    public void CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhi()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Pair {
+                    i32[-2147483648 2147483647] Value;
+                    i32[-2147483648 2147483647] Tag;
+                }
+
+                fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] value) {
+                    stack Pair pair = flag
+                        ? new Pair() { Value = value, Tag = 1 }
+                        : new Pair() { Value = value, Tag = 2 };
+                    return pair.Value;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cleanup-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaExtractFieldRValue>(),
+            static extract => string.Equals(extract.FieldName, "Value", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OptimizeSsaRemovesStaticRangeModuloAndDivisionIdentities()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Run(i32[0 7] slot) {
+                    stack i32[-2147483648 2147483647] modulo = slot % 8;
+                    stack i32[-2147483648 2147483647] divided = slot / 8;
+                    return modulo + divided;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "optimize-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator is SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo);
+    }
+
+    [Fact]
+    public void CleanupSsaRemovesSameOperandDivisionAndModuloWhenSourceRangeExcludesZero()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Run(i32[1 100] value) {
+                    stack i32[-2147483648 2147483647] divided = value / value;
+                    stack i32[-2147483648 2147483647] modulo = value % value;
+                    return divided + modulo;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cleanup-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator is SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo);
+    }
+
+    [Fact]
+    public void CleanupSsaRemovesSameOperandIntegerComparisons()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    stack i32[-2147483648 2147483647] equal = value == value ? 1 : 100;
+                    stack i32[-2147483648 2147483647] notEqual = value != value ? 100 : 1;
+                    stack i32[-2147483648 2147483647] less = value < value ? 100 : 1;
+                    stack i32[-2147483648 2147483647] lessOrEqual = value <= value ? 1 : 100;
+                    stack i32[-2147483648 2147483647] greater = value > value ? 100 : 1;
+                    stack i32[-2147483648 2147483647] greaterOrEqual = value >= value ? 1 : 100;
+                    return equal + notEqual + less + lessOrEqual + greater + greaterOrEqual;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cleanup-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator is SsaBinaryOperator.Equal
+                or SsaBinaryOperator.NotEqual
+                or SsaBinaryOperator.LessThan
+                or SsaBinaryOperator.LessThanOrEqual
+                or SsaBinaryOperator.GreaterThan
+                or SsaBinaryOperator.GreaterThanOrEqual);
+    }
+
+    [Fact]
+    public void ShapeBranchesSimplifiesBooleanReturnDiamondToCondition()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn bool Run(bool flag) {
+                    if (flag) {
+                        return true;
+                    }
+
+                    return false;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "shape-branches"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        var block = Assert.Single(run.Blocks);
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_flag", returnValue.Name);
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaSelectRValue);
     }
 
     [Fact]
@@ -570,7 +747,43 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
-    public void InlineSsaKeepsPublicOrdinaryDirectCallsWithoutExplicitInline()
+    public void InlineSsaKeepsPublicOrdinaryNonWrapperDirectCallsWithoutExplicitInline()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                ffi fn void Touch();
+
+                public fn i32[-2147483648 2147483647] AddOne(i32[-2147483648 2147483647] value) {
+                    Touch();
+                    return value + 1;
+                }
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    return AddOne(value);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "inline-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        var call = Assert.Single(run.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaCallRValue>());
+
+        Assert.Equal("AddOne", call.FunctionName);
+    }
+
+    [Fact]
+    public void InlineSsaInlinesPublicWrapperDirectCallsWithoutExplicitInline()
     {
         var pipeline = DefaultCompilerPipeline.Create();
         var result = pipeline.Run(
@@ -593,13 +806,20 @@ public sealed class CompilerPipelineOptimizeSsaTests
         Assert.NotNull(ssa);
 
         var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
-        var call = Assert.Single(run.Blocks
-            .SelectMany(static block => block.Instructions)
-            .OfType<SsaValueInstruction>()
-            .Select(static instruction => instruction.Value)
-            .OfType<SsaCallRValue>());
-
-        Assert.Equal("AddOne", call.FunctionName);
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName == "AddOne");
+        Assert.Contains(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaBinaryRValue>(),
+            static binary => binary.Operator == SsaBinaryOperator.Add);
     }
 
     [Fact]
@@ -901,6 +1121,35 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void ValueFactsUseConstantMasksToProveSignedValuesNonNegative()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Mask(i32[-2147483648 2147483647] value) {
+                    return value & 255;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "value-facts"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts));
+        Assert.NotNull(facts);
+
+        var maskFacts = Assert.Single(facts.Functions.Values, static function => function.FunctionName == "Mask");
+        var signBit = System.Numerics.BigInteger.One << 31;
+        Assert.Contains(
+            maskFacts.Values.Values,
+            fact => fact.KnownBitsKind == SsaFactLatticeKind.Known
+                    && fact.KnownBits is { } knownBits
+                    && (knownBits.KnownZeroBits & signBit) != System.Numerics.BigInteger.Zero);
+        Assert.Contains(maskFacts.Values.Values, static fact => HasIntegerRange(fact, 0, 255));
+    }
+
+    [Fact]
     public void ValueFactsUseKnownBitsToProveShiftedLowBitIsZero()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -952,6 +1201,36 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void ValueFactsPropagateDivisionAndModuloRanges()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Divide(i32[0 100] value) {
+                    return value / 10;
+                }
+
+                fn i32[-2147483648 2147483647] Modulo(i32[0 100] value) {
+                    return value % 8;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "value-facts"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts));
+        Assert.NotNull(facts);
+
+        var divideFacts = Assert.Single(facts.Functions.Values, static function => function.FunctionName == "Divide");
+        Assert.Contains(divideFacts.Values.Values, static fact => HasIntegerRange(fact, 0, 10));
+
+        var moduloFacts = Assert.Single(facts.Functions.Values, static function => function.FunctionName == "Modulo");
+        Assert.Contains(moduloFacts.Values.Values, static fact => HasIntegerRange(fact, 0, 7));
+    }
+
+    [Fact]
     public void FactDrivenBranchPruningUsesKnownBitsForMaskedComparisons()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -995,6 +1274,38 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 fn i32[-2147483648 2147483647] Run(i32[0 7] value) {
                     stack i32[0 4095] forced = (i32[0 4095])(value | 8);
                     if (forced == 0) {
+                        return 1;
+                    }
+
+                    return 2;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "prune-branches"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(run.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
+
+        var block = Assert.Single(run.Blocks);
+        var resultValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(new System.Numerics.BigInteger(2), resultValue.Value);
+    }
+
+    [Fact]
+    public void FactDrivenBranchPruningUsesModuloRangeFacts()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[-2147483648 2147483647] Run(i32[0 100] value) {
+                    stack i32[-2147483648 2147483647] slot = value % 8;
+                    if (slot >= 8) {
                         return 1;
                     }
 
@@ -1883,6 +2194,149 @@ public sealed class CompilerPipelineOptimizeSsaTests
         Assert.Contains(
             instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaAddressOfLocalRValue>(),
             static address => address.LocalName == "local");
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStackFieldLoadsFromSource()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    stack mut Pair pair = new Pair(0, 1);
+                    pair.Left = value;
+                    return pair.Left;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "memory-opt-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var run = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var instructions = run.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.DoesNotContain(
+            instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaLoadIndirectRValue>(),
+            static load => string.Equals(load.Text, "pair.Left", StringComparison.Ordinal));
+
+        var returnValue = Assert.IsType<SsaValueReference>(Assert.Single(run.Blocks).Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsFromSource()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Inner(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Salt) { }
+                record Outer(Inner Left, Inner Right) { }
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    stack mut Outer outer = new Outer(new Inner(0, 1), new Inner(2, 3));
+                    outer.Left.Value = value;
+                    return outer.Left.Value;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "memory-opt-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var run = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var instructions = run.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.DoesNotContain(
+            instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaLoadIndirectRValue>(),
+            static load => string.Equals(load.Text, "outer.Left.Value", StringComparison.Ordinal));
+
+        var returnValue = Assert.IsType<SsaValueReference>(Assert.Single(run.Blocks).Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationPreservesStackFieldFactsAcrossPureScalarCallsFromSource()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+
+                noinline finite law i32[-2147483648 2147483647] Touch(i32[-2147483648 2147483647] value) {
+                    return value + 1;
+                }
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    stack mut Pair pair = new Pair(0, 1);
+                    pair.Left = value;
+                    stack i32[-2147483648 2147483647] ignored = Touch(value);
+                    return pair.Left + ignored;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "memory-opt-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var run = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var instructions = run.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(
+            instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaCallRValue>(),
+            static call => call.FunctionName == "Touch");
+        Assert.DoesNotContain(
+            instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaLoadIndirectRValue>(),
+            static load => string.Equals(load.Text, "pair.Left", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStackFieldFactsAcrossSinglePredecessorBlocksFromSource()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+
+                fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] value) {
+                    stack mut Pair pair = new Pair(0, 1);
+                    pair.Left = value;
+                    if (flag) {
+                        return pair.Left;
+                    }
+
+                    return pair.Left + 1;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "memory-opt-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var run = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var instructions = run.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.DoesNotContain(
+            instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaLoadIndirectRValue>(),
+            static load => string.Equals(load.Text, "pair.Left", StringComparison.Ordinal));
     }
 
     [Fact]

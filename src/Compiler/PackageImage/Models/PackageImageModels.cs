@@ -103,7 +103,8 @@ internal sealed record StarkPackageFunctionManifest(
     string InlinePreference = "inlinehint",
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
-    bool IsVarargs = false);
+    bool IsVarargs = false,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -143,7 +144,8 @@ internal sealed record StarkPackageMethodManifest(
     bool IsStatic = false,
     string? Visibility = null,
     bool IsUnsafe = false,
-    bool IsVarargs = false);
+    bool IsVarargs = false,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -164,7 +166,8 @@ internal sealed record StarkPackageTypeManifest(
     IReadOnlyList<StarkPackageEnumVariantManifest>? Variants = null,
     IReadOnlyList<StarkPackageMethodManifest>? Methods = null,
     StarkPackageDestructorManifest? Destructor = null,
-    IReadOnlyList<StarkPackageConstructorManifest>? Constructors = null);
+    IReadOnlyList<StarkPackageConstructorManifest>? Constructors = null,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,
@@ -250,7 +253,8 @@ internal sealed record StarkPackageTypedFunctionManifest(
     string InlinePreference = "inlinehint",
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
-    bool IsVarargs = false);
+    bool IsVarargs = false,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -273,7 +277,8 @@ internal sealed record StarkPackageTypedMethodManifest(
     bool IsStatic = false,
     string? Visibility = null,
     bool IsUnsafe = false,
-    bool IsVarargs = false);
+    bool IsVarargs = false,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
@@ -291,7 +296,8 @@ internal sealed record StarkPackageTypedTypeManifest(
     IReadOnlyList<StarkPackageTypedEnumVariantManifest>? Variants = null,
     IReadOnlyList<StarkPackageTypedMethodManifest>? Methods = null,
     StarkPackageDestructorManifest? Destructor = null,
-    IReadOnlyList<StarkPackageTypedConstructorManifest>? Constructors = null);
+    IReadOnlyList<StarkPackageTypedConstructorManifest>? Constructors = null,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageTypedGlobalManifest(
     string Name,
@@ -473,7 +479,8 @@ internal sealed record StarkPackageFunctionTemplateManifest(
     IReadOnlyList<StarkPackageTemplateConversionManifest>? Conversions = null,
     IReadOnlyList<StarkPackageTemplateDirectCallManifest>? DirectCalls = null,
     IReadOnlyList<StarkPackageTemplateFieldAccessManifest>? FieldAccesses = null,
-    IReadOnlyList<StarkPackageTemplateMemberCallManifest>? MemberCalls = null);
+    IReadOnlyList<StarkPackageTemplateMemberCallManifest>? MemberCalls = null,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageCompilerFactsSection(
     IReadOnlyList<StarkPackageFunctionEffectManifest> FunctionEffects,
@@ -481,7 +488,8 @@ internal sealed record StarkPackageCompilerFactsSection(
     IReadOnlyList<StarkPackageConcreteTypeLayoutManifest>? ConcreteLayouts = null,
     IReadOnlyList<StarkPackageEnumLayoutManifest>? EnumLayouts = null,
     IReadOnlyList<StarkPackageFunctionSemanticManifest>? FunctionSemantics = null,
-    StarkPackageLinkageManifest? Linkage = null);
+    StarkPackageLinkageManifest? Linkage = null,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageLinkageManifest(
     string ObjectFileName,
@@ -504,7 +512,8 @@ internal sealed record StarkPackageFunctionEffectManifest(
     bool IsCold,
     string InlinePreference,
     bool IsStrictFp,
-    bool IsVarargs = false);
+    bool IsVarargs = false,
+    string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageAbiParameterManifest(
     string SourceName,

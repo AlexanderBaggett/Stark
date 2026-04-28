@@ -89,3 +89,33 @@ This is why fixed-array initializers and slice views are separate concepts.
 FFI, raw pointers, and native package metadata are deliberately explicit. Stark
 lets you cross into C or platform APIs, but it does not pretend those calls have
 the same guarantees as ordinary safe code.
+
+## Backend Optimization Boundaries
+
+By default, optimized Stark builds try to give LLVM a broad view of the program.
+When source or package bodies are available, the compiler can choose
+whole-program-style optimization so small standard-library helpers and package
+functions can inline into callers.
+
+Some modules intentionally need a compiled backend boundary:
+
+```stark
+[Backend(Opaque)]
+module System.Memory
+```
+
+The same attribute can be used on a narrower callable or type-owned surface:
+
+```stark
+[Backend(Opaque)]
+finite law i32[0 max] Hash(i32[0 max] value) {
+    return value;
+}
+```
+
+`[Backend(Opaque)]` keeps the source API visible, but prevents callers from
+looking through the marked boundary for ThinLTO, cross-module inlining, backend
+cloning, or backend specialization. It is for runtime, platform, and interop
+code where the boundary itself is part of the performance or correctness
+strategy. Prefer a function or type boundary over a whole-module boundary when
+that gives the compiler more safe code to optimize.

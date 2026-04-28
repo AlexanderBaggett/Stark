@@ -33,7 +33,8 @@ internal static partial class PackageImageBuilder
             IsCold: effects.IsCold,
             InlinePreference: RenderInlinePreference(effects.InlinePreference),
             IsStrictFp: effects.IsStrictFp,
-            IsVarargs: effects.IsVarargs);
+            IsVarargs: effects.IsVarargs,
+            BackendOptimizationMode: RenderBackendOptimizationMode(effects.BackendOptimizationMode));
         return true;
     }
 

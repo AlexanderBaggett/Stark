@@ -493,6 +493,11 @@ internal static class LlvmSpecializationEmissionPlanner
         IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects)
     {
         var effects = allFunctionEffects[functionName];
+        if (effects.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+        {
+            return effects with { InlinePreference = InlinePreference.NoInline };
+        }
+
         return effects.InlinePreference == InlinePreference.Inline
             ? effects
             : effects with { InlinePreference = InlinePreference.Inline };
@@ -510,12 +515,14 @@ internal static class LlvmSpecializationEmissionPlanner
         return importedDeclarations.TryGetValue(functionName, out var declaration)
             && declaration.Function is { HasBody: true } function
             && declaration.Visibility != StarkVisibility.Export
+            && function.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
             && !function.Modifiers.IsFfi
             && !function.Modifiers.IsCold
             && function.Modifiers.InlinePreference != InlinePreference.NoInline
             && (!function.Modifiers.HasExplicitInlinePreference || function.Modifiers.InlinePreference == InlinePreference.Inline)
             && !recursiveImportedLawFunctions.Contains(functionName)
             && effectModel.Functions.TryGetValue(functionName, out var effects)
+            && effects.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
             && FunctionKindFacts.IsLaw(effects.Kind)
             && !effects.IsFfi
             && !effects.IsCold
@@ -534,6 +541,7 @@ internal static class LlvmSpecializationEmissionPlanner
     {
         return !recursiveImportedLawFunctions.Contains(strategy.SymbolName)
             && allFunctionEffects.TryGetValue(strategy.SymbolName, out var effects)
+            && effects.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
             && FunctionKindFacts.IsLaw(effects.Kind)
             && !effects.IsFfi
             && !effects.IsCold

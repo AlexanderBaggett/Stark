@@ -518,6 +518,7 @@ internal static class CompilerCli
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
         var enableExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel, toolchainOptions.LinkerTool)
+            && ShouldEnableRootModuleLto(result)
             && !UsesPrecompiledStarkLibraries(result)
             && !LlvmTextReferencesSystemCollections(llvmModule.Text);
         var toolchainMetrics = new ToolchainMetrics();
@@ -2076,16 +2077,29 @@ internal static class CompilerCli
         return NativeToolchain.SupportsExecutableThinLto();
     }
 
-    private static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
+    internal static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
     {
-        // Keep the historical System.Collections grow/move/drop ThinLTO issue
-        // isolated while allowing the rest of an optimized executable to use
-        // cross-module imports.
-        // System.Memory also stays native for now: owned text allocation can
+        if (IsBackendOpaque(module))
+        {
+            return false;
+        }
+
+        // System.Memory stays native for now: owned text allocation can
         // miscompile when root code, System.Text, and System.Memory all
         // participate in the same ThinLTO link.
-        return !string.Equals(module.SyntaxModel.ModuleName, "System.Collections", StringComparison.Ordinal)
-            && !string.Equals(module.SyntaxModel.ModuleName, "System.Memory", StringComparison.Ordinal);
+        return !string.Equals(module.SyntaxModel.ModuleName, "System.Memory", StringComparison.Ordinal);
+    }
+
+    internal static bool ShouldEnableRootModuleLto(CompilationResult result)
+    {
+        return !result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+            || syntaxModel?.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque;
+    }
+
+    private static bool IsBackendOpaque(LoadedModuleDocument module)
+    {
+        return module.SyntaxModel.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque
+            || module.PackageImageFacts?.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque;
     }
 
     private static bool LlvmTextReferencesSystemCollections(string? llvmText)

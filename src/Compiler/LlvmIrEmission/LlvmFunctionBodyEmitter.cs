@@ -745,8 +745,8 @@ internal sealed class LlvmFunctionBodyEmitter
                 SsaBinaryOperator.WrappingAdd => "add",
                 SsaBinaryOperator.WrappingSubtract => "sub",
                 SsaBinaryOperator.WrappingMultiply => "mul",
-                SsaBinaryOperator.Divide => HasUnsignedIntegerSemantics(binary.Type) ? "udiv" : "sdiv",
-                SsaBinaryOperator.Modulo => HasUnsignedIntegerSemantics(binary.Type) ? "urem" : "srem",
+                SsaBinaryOperator.Divide => CanUseUnsignedIntegerDivisionSemantics(binary) ? "udiv" : "sdiv",
+                SsaBinaryOperator.Modulo => CanUseUnsignedIntegerDivisionSemantics(binary) ? "urem" : "srem",
                 SsaBinaryOperator.BitwiseAnd => "and",
                 SsaBinaryOperator.BitwiseXor => "xor",
                 SsaBinaryOperator.BitwiseOr => "or",
@@ -819,10 +819,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     SsaBinaryOperator.Equal => "eq",
                     SsaBinaryOperator.NotEqual => "ne",
-                    SsaBinaryOperator.LessThan => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "ult" : "slt",
-                    SsaBinaryOperator.LessThanOrEqual => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "ule" : "sle",
-                    SsaBinaryOperator.GreaterThan => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "ugt" : "sgt",
-                    SsaBinaryOperator.GreaterThanOrEqual => ShouldUseUnsignedIntegerComparison(binary.Left.Type) ? "uge" : "sge",
+                    SsaBinaryOperator.LessThan => ShouldUseUnsignedIntegerComparison(binary) ? "ult" : "slt",
+                    SsaBinaryOperator.LessThanOrEqual => ShouldUseUnsignedIntegerComparison(binary) ? "ule" : "sle",
+                    SsaBinaryOperator.GreaterThan => ShouldUseUnsignedIntegerComparison(binary) ? "ugt" : "sgt",
+                    SsaBinaryOperator.GreaterThanOrEqual => ShouldUseUnsignedIntegerComparison(binary) ? "uge" : "sge",
                     _ => string.Empty
                 };
 
@@ -1515,12 +1515,62 @@ internal sealed class LlvmFunctionBodyEmitter
         return binary.Operator switch
         {
             SsaBinaryOperator.Add or SsaBinaryOperator.Subtract or SsaBinaryOperator.Multiply
-                => CanUseUnsignedNoWrap(binary) ? " nuw nsw" : " nsw",
+                => GetOrdinaryIntegerArithmeticNoWrapFlags(binary),
             SsaBinaryOperator.ShiftLeft => GetShiftLeftNoWrapFlags(binary),
             SsaBinaryOperator.Divide => CanUseExactSignedDivision(binary) ? " exact" : string.Empty,
             SsaBinaryOperator.ShiftRight => CanUseExactArithmeticShiftRight(binary) ? " exact" : string.Empty,
             _ => string.Empty
         };
+    }
+
+    private string GetOrdinaryIntegerArithmeticNoWrapFlags(SsaBinaryRValue binary)
+    {
+        var canUseUnsignedNoWrap = CanUseUnsignedNoWrap(binary);
+        var canUseSignedNoWrap = CanUseSignedNoWrap(binary);
+        return (canUseUnsignedNoWrap, canUseSignedNoWrap) switch
+        {
+            (true, true) => " nuw nsw",
+            (true, false) => " nuw",
+            (false, true) => " nsw",
+            _ => string.Empty
+        };
+    }
+
+    private bool CanUseUnsignedIntegerDivisionSemantics(SsaBinaryRValue binary)
+    {
+        if (HasUnsignedIntegerSemantics(binary.Type))
+        {
+            return true;
+        }
+
+        return binary.Operator is SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo
+            && CanProveNonNegativeInteger(binary.Left)
+            && CanProveNonNegativeInteger(binary.Right);
+    }
+
+    private bool CanProveNonNegativeInteger(SsaValue value)
+    {
+        return TryGetIntegerValueRange(value, new HashSet<string>(StringComparer.Ordinal), out var min, out _)
+                && min >= BigInteger.Zero
+            || TryGetKnownZeroSignBit(value);
+    }
+
+    private bool TryGetKnownZeroSignBit(SsaValue value)
+    {
+        var normalizedType = NormalizeAggregateType(value.Type);
+        if (normalizedType.Kind != StarkTypeKind.Integer
+            || normalizedType.BitWidth is not int bitWidth
+            || bitWidth <= 0
+            || value is not SsaValueReference reference
+            || !_valueFacts.TryGetValue(reference.Name, out var facts)
+            || facts.KnownBitsKind != SsaFactLatticeKind.Known
+            || facts.KnownBits is not { } knownBits)
+        {
+            return false;
+        }
+
+        var signBit = BigInteger.One << (bitWidth - 1);
+        return (knownBits.KnownZeroBits & signBit) != BigInteger.Zero;
     }
 
     private bool CanUseUnsignedNoWrap(SsaBinaryRValue binary)
@@ -1548,6 +1598,60 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaBinaryOperator.Multiply => leftMax * rightMax < domainSize,
             _ => false
         };
+    }
+
+    private bool CanUseSignedNoWrap(SsaBinaryRValue binary)
+    {
+        var type = NormalizeAggregateType(binary.Left.Type);
+        if (type.Kind != StarkTypeKind.Integer || type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            return false;
+        }
+
+        if (!type.IsUnsigned)
+        {
+            return true;
+        }
+
+        if (!TryGetIntegerValueRange(binary.Left, new HashSet<string>(StringComparer.Ordinal), out var leftMin, out var leftMax)
+            || !TryGetIntegerValueRange(binary.Right, new HashSet<string>(StringComparer.Ordinal), out var rightMin, out var rightMax))
+        {
+            return false;
+        }
+
+        GetSignedIntegerBounds(bitWidth, out var signedMin, out var signedMax);
+        if (leftMin < signedMin || leftMax > signedMax || rightMin < signedMin || rightMax > signedMax)
+        {
+            return false;
+        }
+
+        var resultRange = binary.Operator switch
+        {
+            SsaBinaryOperator.Add => new SsaIntegerRangeFact(leftMin + rightMin, leftMax + rightMax),
+            SsaBinaryOperator.Subtract => new SsaIntegerRangeFact(leftMin - rightMax, leftMax - rightMin),
+            SsaBinaryOperator.Multiply => MultiplyRanges(leftMin, leftMax, rightMin, rightMax),
+            _ => null
+        };
+
+        return resultRange is { } range
+            && range.Min >= signedMin
+            && range.Max <= signedMax;
+    }
+
+    private static SsaIntegerRangeFact MultiplyRanges(
+        BigInteger leftMin,
+        BigInteger leftMax,
+        BigInteger rightMin,
+        BigInteger rightMax)
+    {
+        var candidates = new[]
+        {
+            leftMin * rightMin,
+            leftMin * rightMax,
+            leftMax * rightMin,
+            leftMax * rightMax
+        };
+        return new SsaIntegerRangeFact(candidates.Min(), candidates.Max());
     }
 
     private string GetShiftLeftNoWrapFlags(SsaBinaryRValue binary)
@@ -1880,6 +1984,18 @@ internal sealed class LlvmFunctionBodyEmitter
     private static bool ShouldUseUnsignedIntegerComparison(StarkTypeSymbol type)
         => type.Kind == StarkTypeKind.Bool || HasUnsignedIntegerSemantics(type);
 
+    private bool ShouldUseUnsignedIntegerComparison(SsaBinaryRValue binary)
+    {
+        var isOrderedComparison = binary.Operator is SsaBinaryOperator.LessThan
+            or SsaBinaryOperator.LessThanOrEqual
+            or SsaBinaryOperator.GreaterThan
+            or SsaBinaryOperator.GreaterThanOrEqual;
+        return ShouldUseUnsignedIntegerComparison(binary.Left.Type)
+            || isOrderedComparison
+                && CanProveNonNegativeInteger(binary.Left)
+                && CanProveNonNegativeInteger(binary.Right);
+    }
+
     private string GetFixedArrayIndexGepFlags(SsaValue? index, StarkTypeSymbol aggregateType)
     {
         if (index is null || aggregateType.FixedLength is not int fixedLength)
@@ -2089,6 +2205,11 @@ internal sealed class LlvmFunctionBodyEmitter
             return;
         }
 
+        if (TryEmitDictionaryKeyCallSiteSpecialization(result, call, abiCallee))
+        {
+            return;
+        }
+
         var arguments = new List<string>();
         string? indirectReturnSlot = null;
 
@@ -2224,6 +2345,310 @@ internal sealed class LlvmFunctionBodyEmitter
 
         var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(resultName, call.Type);
         AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}");
+    }
+
+    private enum DictionaryKeyCallSiteOperation
+    {
+        Hash,
+        Equals
+    }
+
+    private bool TryEmitDictionaryKeyCallSiteSpecialization(
+        string result,
+        SsaCallRValue call,
+        AbiFunctionSignature abiCallee)
+    {
+        if (abiCallee.IsFfi
+            || TryResolveDictionaryKeyCallSiteOperation(call, abiCallee) is not { } operation)
+        {
+            return false;
+        }
+
+        var expectedParameterCount = operation == DictionaryKeyCallSiteOperation.Hash ? 1 : 2;
+        if (!TryResolveDictionaryKeyCallSiteType(call, abiCallee, expectedParameterCount, out var keyType))
+        {
+            return false;
+        }
+
+        if (operation == DictionaryKeyCallSiteOperation.Hash)
+        {
+            if (call.Type.Kind != StarkTypeKind.Integer || call.Type.BitWidth != 64)
+            {
+                return false;
+            }
+
+            if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var value))
+            {
+                return false;
+            }
+
+            EmitDictionaryKeyHashValue(result, keyType, value);
+            return true;
+        }
+
+        if (call.Type.Kind != StarkTypeKind.Bool
+            || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var left)
+            || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[1], 1, keyType, out var right))
+        {
+            return false;
+        }
+
+        AppendLine($"  {result} = icmp eq {MapType(keyType)} {left}, {right}");
+        return true;
+    }
+
+    private static DictionaryKeyCallSiteOperation? TryResolveDictionaryKeyCallSiteOperation(
+        SsaCallRValue call,
+        AbiFunctionSignature abiCallee)
+    {
+        foreach (var candidate in new[]
+                 {
+                     abiCallee.SourceName,
+                     abiCallee.DisplaySourceName,
+                     abiCallee.Name,
+                     abiCallee.SymbolName,
+                     call.FunctionName
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (candidate is "System.Collections.DictionaryKey.Hash"
+                or "DictionaryKey.Hash"
+                or "System_Collections_DictionaryKey_Hash")
+            {
+                return DictionaryKeyCallSiteOperation.Hash;
+            }
+
+            if (candidate is "System.Collections.DictionaryKey.Equals"
+                or "DictionaryKey.Equals"
+                or "System_Collections_DictionaryKey_Equals")
+            {
+                return DictionaryKeyCallSiteOperation.Equals;
+            }
+
+            if (candidate.StartsWith("__stark_mono_fn_System_Collections__", StringComparison.Ordinal))
+            {
+                if (candidate.Contains("System_Collections_DictionaryKey_Hash__", StringComparison.Ordinal))
+                {
+                    return DictionaryKeyCallSiteOperation.Hash;
+                }
+
+                if (candidate.Contains("System_Collections_DictionaryKey_Equals__", StringComparison.Ordinal))
+                {
+                    return DictionaryKeyCallSiteOperation.Equals;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryResolveDictionaryKeyCallSiteType(
+        SsaCallRValue call,
+        AbiFunctionSignature abiCallee,
+        int expectedParameterCount,
+        out StarkTypeSymbol keyType)
+    {
+        keyType = StarkTypeSymbols.Error;
+        var userParameters = abiCallee.UserParameters;
+        if (call.Arguments.Count != expectedParameterCount
+            || userParameters.Count != expectedParameterCount)
+        {
+            return false;
+        }
+
+        var firstParameterType = NormalizeDictionaryKeyType(userParameters[0].SourceType);
+        if (userParameters[0].SourceType.BorrowKind != StarkBorrowKind.None
+            && IsSupportedDictionaryKeyScalarType(firstParameterType))
+        {
+            keyType = firstParameterType;
+        }
+        else if (!TryResolveDictionaryKeyArgumentType(call, 0, out keyType))
+        {
+            return false;
+        }
+
+        for (var index = 1; index < userParameters.Count; index++)
+        {
+            var parameterType = NormalizeDictionaryKeyType(userParameters[index].SourceType);
+            if (userParameters[index].SourceType.BorrowKind != StarkBorrowKind.None
+                && IsSupportedDictionaryKeyScalarType(parameterType))
+            {
+                if (parameterType != keyType)
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!TryResolveDictionaryKeyArgumentType(call, index, out var argumentType)
+                || argumentType != keyType)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryResolveDictionaryKeyArgumentType(
+        SsaCallRValue call,
+        int argumentIndex,
+        out StarkTypeSymbol keyType)
+    {
+        keyType = NormalizeDictionaryKeyType(call.Arguments[argumentIndex].Type);
+        if (IsSupportedDictionaryKeyScalarType(keyType))
+        {
+            return true;
+        }
+
+        var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && argumentIndex < call.IndirectArgumentAddresses.Count
+            ? call.IndirectArgumentAddresses[argumentIndex]
+            : null;
+        if (indirectArgumentAddress?.Type is { Kind: StarkTypeKind.RawPointer, ElementType: not null } pointerType)
+        {
+            keyType = NormalizeDictionaryKeyType(pointerType.ElementType);
+            return IsSupportedDictionaryKeyScalarType(keyType);
+        }
+
+        keyType = StarkTypeSymbols.Error;
+        return false;
+    }
+
+    private bool TryMaterializeDictionaryKeyScalarArgument(
+        SsaCallRValue call,
+        AbiParameterSymbol parameter,
+        int argumentIndex,
+        StarkTypeSymbol keyType,
+        out string value)
+    {
+        value = string.Empty;
+        var argument = call.Arguments[argumentIndex];
+        if (parameter.Kind == AbiParameterKind.Direct)
+        {
+            value = FormatValue(argument);
+            return true;
+        }
+
+        if (parameter.Kind != AbiParameterKind.IndirectIn)
+        {
+            return false;
+        }
+
+        var llvmType = MapType(keyType);
+        var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && argumentIndex < call.IndirectArgumentAddresses.Count
+            ? call.IndirectArgumentAddresses[argumentIndex]
+            : null;
+        if (indirectArgumentAddress is not null)
+        {
+            value = LoadDictionaryKeyScalarValue(
+                llvmType,
+                keyType,
+                FormatValue(indirectArgumentAddress),
+                GetKnownPointerAlignmentSuffix(indirectArgumentAddress, keyType),
+                $"dict_key_arg_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+            return true;
+        }
+
+        var promotedLocal = call.IndirectArgumentLocalNames is not null && argumentIndex < call.IndirectArgumentLocalNames.Count
+            ? call.IndirectArgumentLocalNames[argumentIndex]
+            : null;
+        if (!string.IsNullOrWhiteSpace(promotedLocal))
+        {
+            var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
+                candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
+            if (promotedParameter is not null)
+            {
+                if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
+                {
+                    value = LoadDictionaryKeyScalarValue(
+                        llvmType,
+                        keyType,
+                        $"%{EscapeIdentifier(promotedParameter.LlvmName)}",
+                        GetTypeAlignmentSuffix(keyType),
+                        $"dict_key_param_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                    return true;
+                }
+
+                EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
+                value = LoadDictionaryKeyScalarValue(
+                    llvmType,
+                    keyType,
+                    $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}",
+                    GetStackObjectAlignmentSuffix(keyType),
+                    $"dict_key_param_slot_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                return true;
+            }
+
+            EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
+            value = LoadDictionaryKeyScalarValue(
+                llvmType,
+                keyType,
+                $"%{EscapeIdentifier($"slot_{promotedLocal}")}",
+                GetStackObjectAlignmentSuffix(keyType),
+                $"dict_key_local_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+            return true;
+        }
+
+        if (argument.Type.BorrowKind == StarkBorrowKind.None
+            && NormalizeDictionaryKeyType(argument.Type) == keyType)
+        {
+            value = FormatValue(argument);
+            return true;
+        }
+
+        return false;
+    }
+
+    private string LoadDictionaryKeyScalarValue(
+        string llvmType,
+        StarkTypeSymbol keyType,
+        string address,
+        string alignmentSuffix,
+        string tempPrefix)
+    {
+        var loaded = $"%{EscapeIdentifier(CreateAbiTempName(tempPrefix))}";
+        AppendLine($"  {loaded} = load {llvmType}, ptr {address}{alignmentSuffix}{GetValueRangeMetadataSuffix(keyType)}");
+        return loaded;
+    }
+
+    private void EmitDictionaryKeyHashValue(string result, StarkTypeSymbol keyType, string value)
+    {
+        var llvmType = MapType(keyType);
+        if (keyType.Kind == StarkTypeKind.Bool)
+        {
+            AppendLine($"  {result} = zext i1 {value} to i64");
+            return;
+        }
+
+        var bitWidth = keyType.BitWidth ?? 64;
+        if (bitWidth == 64)
+        {
+            AppendLine($"  {result} = add i64 {value}, 0");
+            return;
+        }
+
+        var opcode = bitWidth < 64 ? "zext" : "trunc";
+        AppendLine($"  {result} = {opcode} {llvmType} {value} to i64");
+    }
+
+    private static StarkTypeSymbol NormalizeDictionaryKeyType(StarkTypeSymbol type)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+    }
+
+    private static bool IsSupportedDictionaryKeyScalarType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
     }
 
     private bool TryEmitAsciiToUnicodeLiteralCallSiteSpecialization(

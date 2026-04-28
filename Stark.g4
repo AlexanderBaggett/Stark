@@ -9,11 +9,25 @@ importDeclaration
     ;
 
 moduleDeclaration
-    : MODULE qualifiedName
+    : attributeList* MODULE qualifiedName
+    ;
+
+attributeList
+    : LBRACK attribute (COMMA attribute)* COMMA? RBRACK
+    ;
+
+attribute
+    : qualifiedName (LPAREN (attributeArgument (COMMA attributeArgument)* COMMA?)? RPAREN)?
+    ;
+
+attributeArgument
+    : qualifiedName
+    | StringLiteral
+    | IntegerLiteral
     ;
 
 topLevelDeclaration
-    : visibilityModifier? (
+    : attributeList* visibilityModifier? (
           functionDeclaration
         | structDeclaration
         | recordDeclaration
@@ -166,17 +180,21 @@ doctrineBody
     ;
 
 structMember
-    : fieldDeclaration
+    : attributeList* (
+          fieldDeclaration
     | methodDeclaration
     | constructorDeclaration
     | destructorDeclaration
+      )
     ;
 
 recordMember
-    : fieldDeclaration
+    : attributeList* (
+          fieldDeclaration
     | methodDeclaration
     | constructorDeclaration
     | destructorDeclaration
+      )
     ;
 
 enumVariantDeclaration
@@ -193,11 +211,11 @@ enumVariantFieldDeclaration
     ;
 
 traitMember
-    : traitMethodDeclaration
+    : attributeList* traitMethodDeclaration
     ;
 
 doctrineMember
-    : doctrineMethodDeclaration
+    : attributeList* doctrineMethodDeclaration
     ;
 
 fieldDeclaration

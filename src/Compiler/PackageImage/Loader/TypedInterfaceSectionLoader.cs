@@ -16,6 +16,16 @@ internal static partial class PackageImageLoader
             .ThenByDescending(static import => import.IsExported)
             .Select(static import => new ImportDeclarationModel(import.ModuleName, import.IsExported))
             .ToArray();
+        if (!TryParseBackendOptimizationMode(
+                module.Module.EffectiveCompilerFacts?.BackendOptimizationMode,
+                out var backendOptimizationMode))
+        {
+            return false;
+        }
+
+        IReadOnlyList<ModuleAttributeModel> moduleAttributes = backendOptimizationMode == ModuleBackendOptimizationMode.Opaque
+            ? [new ModuleAttributeModel("Backend", ["Opaque"])]
+            : Array.Empty<ModuleAttributeModel>();
         var publishedOverloadKeysBySymbol = BuildPublishedOverloadKeyLookup(module.Module);
         var declarations = new List<TopLevelDeclarationModel>();
 
@@ -40,7 +50,8 @@ internal static partial class PackageImageLoader
         foreach (var type in typedInterface.Types.OrderBy(static item => item.Name, StringComparer.Ordinal))
         {
             if (!TryParseVisibility(type.Visibility, out var visibility)
-                || !TryParseTypeDeclarationKind(type.Kind, out var declarationKind))
+                || !TryParseTypeDeclarationKind(type.Kind, out var declarationKind)
+                || !TryParseBackendOptimizationMode(type.BackendOptimizationMode, out var typeBackendOptimizationMode))
             {
                 return false;
             }
@@ -52,13 +63,22 @@ internal static partial class PackageImageLoader
                 Function: null,
                 Destructor: type.Destructor is null
                     ? null
-                    : new DestructorDeclarationModel(type.Destructor.IsMutable)));
+                    : new DestructorDeclarationModel(
+                        type.Destructor.IsMutable,
+                        BackendOptimizationMode: typeBackendOptimizationMode),
+                Attributes: BuildBackendAttributes(typeBackendOptimizationMode),
+                BackendOptimizationMode: typeBackendOptimizationMode));
 
             foreach (var method in (type.Methods ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))
             {
-                if (!TryParseFunctionKind(method.Kind, out var functionKind))
+                if (!TryParseFunctionKind(method.Kind, out var functionKind)
+                    || !TryParseBackendOptimizationMode(method.BackendOptimizationMode, out var methodBackendOptimizationMode))
                 {
                     return false;
+                }
+                if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
+                {
+                    methodBackendOptimizationMode = typeBackendOptimizationMode;
                 }
 
                 if (!TryParseVisibility(method.Visibility ?? type.Visibility, out var methodVisibility))
@@ -102,7 +122,10 @@ internal static partial class PackageImageLoader
                             method.Parameters),
                         isStatic: method.IsStatic,
                         publishedOverloadKey: publishedOverloadKey,
-                        isUnsafe: method.IsUnsafe)));
+                        isUnsafe: method.IsUnsafe,
+                        backendOptimizationMode: methodBackendOptimizationMode),
+                    Attributes: BuildBackendAttributes(methodBackendOptimizationMode),
+                    BackendOptimizationMode: methodBackendOptimizationMode));
             }
         }
 
@@ -124,7 +147,8 @@ internal static partial class PackageImageLoader
         foreach (var function in typedInterface.Functions.OrderBy(static item => item.Name, StringComparer.Ordinal))
         {
             if (!TryParseVisibility(function.Visibility, out var visibility)
-                || !TryParseFunctionKind(function.Kind, out var functionKind))
+                || !TryParseFunctionKind(function.Kind, out var functionKind)
+                || !TryParseBackendOptimizationMode(function.BackendOptimizationMode, out var functionBackendOptimizationMode))
             {
                 return false;
             }
@@ -161,15 +185,20 @@ internal static partial class PackageImageLoader
                         publishedOverloadKeysBySymbol,
                         function.QualifiedName,
                         function.SymbolName,
-                        function.Parameters),
+                    function.Parameters),
                     publishedOverloadKey: publishedOverloadKey,
-                    isUnsafe: function.IsUnsafe)));
+                    isUnsafe: function.IsUnsafe,
+                    backendOptimizationMode: functionBackendOptimizationMode),
+                Attributes: BuildBackendAttributes(functionBackendOptimizationMode),
+                BackendOptimizationMode: functionBackendOptimizationMode));
         }
 
         syntaxModel = new SyntaxModel(
             module.Module.ModuleName,
             imports,
-            declarations);
+            declarations,
+            moduleAttributes,
+            backendOptimizationMode);
         return true;
     }
 
@@ -228,6 +257,13 @@ internal static partial class PackageImageLoader
         return publishedOverloadKeysBySymbol.TryGetValue(symbolName, out var overloadKey)
             ? overloadKey
             : null;
+    }
+
+    private static IReadOnlyList<ModuleAttributeModel> BuildBackendAttributes(ModuleBackendOptimizationMode backendOptimizationMode)
+    {
+        return backendOptimizationMode == ModuleBackendOptimizationMode.Opaque
+            ? [new ModuleAttributeModel("Backend", ["Opaque"])]
+            : Array.Empty<ModuleAttributeModel>();
     }
 
     private static bool HasPublishedGenericTemplateBody(

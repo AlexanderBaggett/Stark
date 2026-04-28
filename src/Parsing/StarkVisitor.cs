@@ -51,6 +51,24 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitModuleDeclaration([NotNull] StarkParser.ModuleDeclarationContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.attributeList"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAttributeList([NotNull] StarkParser.AttributeListContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.attribute"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAttribute([NotNull] StarkParser.AttributeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.attributeArgument"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAttributeArgument([NotNull] StarkParser.AttributeArgumentContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.topLevelDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

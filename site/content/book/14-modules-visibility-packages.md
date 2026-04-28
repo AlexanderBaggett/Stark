@@ -47,6 +47,34 @@ module App
 file. `export import` deliberately re-exports that module through the package
 surface.
 
+## Module Backend Boundaries
+
+Backend attributes use C#-style square brackets before the declaration they
+control. Stark currently keeps this surface narrow. The supported backend
+boundary attribute is:
+
+```stark
+[Backend(Opaque)]
+module System.Memory
+
+[Backend(Opaque)]
+finite law i32[0 max] Hash(i32[0 max] value) {
+    return value;
+}
+```
+
+`[Backend(Opaque)]` is not a visibility modifier. Importers still see the
+visible `internal`, `public`, and `export` declarations according to the normal
+rules. The attribute only says that backend whole-program optimization must
+treat the marked module, callable, type, or doctrine as a compiled boundary:
+callers should not import the affected bodies for ThinLTO, cross-module
+inlining, backend cloning, or backend specialization.
+
+Most application modules should omit it. Use it for runtime, platform, and
+interop code when a real backend boundary is part of the implementation
+contract. Prefer the narrowest boundary that preserves correctness and
+performance.
+
 ## Visibility Levels
 
 Stark defaults to module-private declarations. Widen visibility only when there

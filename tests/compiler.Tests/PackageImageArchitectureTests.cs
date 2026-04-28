@@ -1,9 +1,217 @@
 using Stark.Compiler;
+using Stark.Parsing;
 
 namespace compiler.Tests;
 
 public sealed class PackageImageArchitectureTests
 {
+    [Fact]
+    public void PackageImagePreservesBackendOpaqueModuleBoundary()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-backend-opaque-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    [Backend(Opaque)]
+                    module Facade
+
+                    public fn i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                        return value;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.Equal("opaque", facadeModule.CompilerSections?.CompilerFacts?.BackendOptimizationMode);
+            Assert.Contains("\"BackendOptimizationMode\": \"opaque\"", manifest.ToJson(), StringComparison.Ordinal);
+
+            var resolvedModule = CreateResolvedPackageModule(facadeModule);
+            Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
+            Assert.Contains("[Backend(Opaque)]", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSyntaxModel(resolvedModule, out var syntaxModel));
+            Assert.Equal(ModuleBackendOptimizationMode.Opaque, syntaxModel.BackendOptimizationMode);
+            var attribute = Assert.Single(syntaxModel.ModuleAttributes ?? []);
+            Assert.Equal("Backend", attribute.Name);
+            Assert.Equal(["Opaque"], attribute.Arguments);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
+            Assert.Equal(ModuleBackendOptimizationMode.Opaque, facts.BackendOptimizationMode);
+
+            Assert.True(PackageImageLoader.TryBuildModuleDocument(resolvedModule, out var importedDocument));
+            Assert.False(CompilerCli.ShouldEnableDependencyLto(importedDocument));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesFineGrainedBackendOpaqueBoundaries()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-fine-backend-opaque-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    [Backend(Opaque)]
+                    public finite law i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                        return value;
+                    }
+
+                    [Backend(Opaque)]
+                    public finite law T Echo<T>(T value) {
+                        return value;
+                    }
+
+                    [Backend(Opaque)]
+                    public struct Box {
+                        i32[-2147483648 2147483647] Value;
+
+                        public finite law i32[-2147483648 2147483647] Read(borrow Box self) {
+                            return self.Value;
+                        }
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var typedInterface = facadeModule.CompilerSections?.TypedInterface;
+            var compilerFacts = facadeModule.CompilerSections?.CompilerFacts;
+            Assert.NotNull(typedInterface);
+            Assert.NotNull(compilerFacts);
+
+            var identity = Assert.Single(typedInterface!.Functions, static function => function.Name == "Identity");
+            Assert.Equal("opaque", identity.BackendOptimizationMode);
+            var echo = Assert.Single(typedInterface.Functions, static function => function.Name == "Echo");
+            Assert.Equal("opaque", echo.BackendOptimizationMode);
+
+            var box = Assert.Single(typedInterface.Types, static type => type.Name == "Box");
+            Assert.Equal("opaque", box.BackendOptimizationMode);
+            var read = Assert.Single(box.Methods ?? [], static method => method.Name == "Read");
+            Assert.Equal("opaque", read.BackendOptimizationMode);
+            var identityEffects = Assert.Single(
+                compilerFacts!.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.Identity");
+            Assert.Equal("opaque", identityEffects.BackendOptimizationMode);
+            var echoEffects = Assert.Single(
+                compilerFacts.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.Echo");
+            Assert.Equal("opaque", echoEffects.BackendOptimizationMode);
+            var readEffects = Assert.Single(
+                compilerFacts.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.Box.Read");
+            Assert.Equal("opaque", readEffects.BackendOptimizationMode);
+            var echoTemplate = Assert.Single(
+                facadeModule.CompilerSections?.GenericTemplates?.Functions ?? [],
+                static function => function.QualifiedResolvedName == "Facade.Echo");
+            Assert.Equal("opaque", echoTemplate.BackendOptimizationMode);
+
+            Assert.Contains("\"BackendOptimizationMode\": \"opaque\"", manifest.ToJson(), StringComparison.Ordinal);
+
+            var resolvedModule = CreateResolvedPackageModule(facadeModule);
+            Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
+            Assert.Contains("[Backend(Opaque)]", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSyntaxModel(resolvedModule, out var syntaxModel));
+            var importedIdentity = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Identity");
+            Assert.Equal(ModuleBackendOptimizationMode.Opaque, importedIdentity.Function!.BackendOptimizationMode);
+            var importedEcho = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Echo");
+            Assert.Equal(ModuleBackendOptimizationMode.Opaque, importedEcho.Function!.BackendOptimizationMode);
+            var importedBox = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Box");
+            Assert.Equal(ModuleBackendOptimizationMode.Opaque, importedBox.BackendOptimizationMode);
+            var importedRead = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Box.Read");
+            Assert.Equal(ModuleBackendOptimizationMode.Opaque, importedRead.Function!.BackendOptimizationMode);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
+            Assert.Equal(
+                ModuleBackendOptimizationMode.Opaque,
+                facts.FunctionTemplates["Facade.Echo"].BackendOptimizationMode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void NonOpaqueSourceDependencyCanParticipateInLto()
+    {
+        var parseResult = StarkSyntax.ParseCompilationUnit("module Helpers");
+        var syntaxModel = SyntaxModelFactory.Create(parseResult);
+        var document = new LoadedModuleDocument(
+            new ResolvedModuleReference(
+                "Helpers",
+                "/virtual/Helpers.stark",
+                IsExternal: false,
+                IsRoot: false),
+            parseResult,
+            syntaxModel);
+
+        Assert.True(CompilerCli.ShouldEnableDependencyLto(document));
+    }
+
+    [Fact]
+    public void SystemCollectionsSourceUsesBackendOpaqueInsteadOfCompilerNameGate()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var collectionsPath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark");
+        var parseResult = StarkSyntax.ParseCompilationUnit(File.ReadAllText(collectionsPath));
+        var syntaxModel = SyntaxModelFactory.Create(parseResult);
+
+        Assert.Equal("System.Collections", syntaxModel.ModuleName);
+        Assert.Equal(ModuleBackendOptimizationMode.Opaque, syntaxModel.BackendOptimizationMode);
+
+        var nonOpaqueCollections = StarkSyntax.ParseCompilationUnit("module System.Collections");
+        var nonOpaqueSyntaxModel = SyntaxModelFactory.Create(nonOpaqueCollections);
+        var nonOpaqueDocument = new LoadedModuleDocument(
+            new ResolvedModuleReference(
+                "System.Collections",
+                "/virtual/System/Collections.stark",
+                IsExternal: false,
+                IsRoot: false),
+            nonOpaqueCollections,
+            nonOpaqueSyntaxModel);
+
+        Assert.True(CompilerCli.ShouldEnableDependencyLto(nonOpaqueDocument));
+    }
+
     [Fact]
     public void PackageImagePreservesFfiVarargsFacts()
     {
@@ -590,6 +798,23 @@ public sealed class PackageImageArchitectureTests
             $"/virtual/lib{module.ModuleName}.a",
             new StarkPackageManifest(module.ModuleName, $"lib{module.ModuleName}.a", [module]),
             module);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Stark.slnx")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Unable to locate the Stark repository root.");
     }
 
     private static void AssertConstIntegerType(

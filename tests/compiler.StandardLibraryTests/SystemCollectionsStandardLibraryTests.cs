@@ -18,6 +18,15 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
+        fn bool IsPowerOfTwo(i64[0 max] value) {
+            if (value == 0) {
+                return false;
+            }
+
+            stack i64[0 max] mask = (i64[0 max])(value - 1);
+            return (value & mask) == 0;
+        }
+
         fn bool ConsumeList(List<i32[0 max]> values, i64[0 max] expected) {
             return values.Count() == expected && values.Capacity() >= expected;
         }
@@ -38,6 +47,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             stack i32[0 max] key = 17;
             stack mut i32[0 max] found = 0;
             return values.Count() == expected
+                && IsPowerOfTwo(values.Capacity())
                 && values.ContainsKey(key)
                 && values.TryGet(key, found)
                 && found == 34;
@@ -89,10 +99,18 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+            if (!Ok(dictionary.Reserve(3)) || !IsPowerOfTwo(dictionary.Capacity())) {
+                return 9;
+            }
+
             for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
                 stack i32[0 max] key = i;
                 stack i32[0 max] value = (i32[0 max])(i * 2);
                 if (!Ok(dictionary.Set(key, value))) {
+                    return 9;
+                }
+
+                if (!IsPowerOfTwo(dictionary.Capacity())) {
                     return 9;
                 }
 
@@ -270,7 +288,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         index += 1;
                     }
 
-                    return dictionary.Capacity() >= 16;
+                    stack i32[0 max] lookupKey = 4;
+                    stack mut i32[0 max] found = 0;
+                    return dictionary.Capacity() >= 16
+                        && dictionary.TryGet(lookupKey, found)
+                        && found == 5;
                 }
                 """,
                 appPath),
@@ -283,6 +305,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         Assert.NotNull(llvm);
         Assert.Contains("ComputeHashStorageGrowthCapacity", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("ComputeContiguousGrowthCapacity", llvm.Text, StringComparison.Ordinal);
+        var tryGetBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__i32_0_2147483647__i32_0_2147483647",
+            "Expected integer Dictionary.TryGet specialization to be emitted.");
+        Assert.Contains(" = and i64 ", tryGetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain(" srem i64 ", tryGetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__", tryGetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__", tryGetBody, StringComparison.Ordinal);
     }
 
     [Fact]

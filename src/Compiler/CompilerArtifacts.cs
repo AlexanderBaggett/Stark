@@ -208,14 +208,18 @@ public sealed record FunctionDeclarationModel(
     AsmFunctionModel? Asm = null,
     IReadOnlyList<string>? GenericParameterNames = null,
     string? PublishedOverloadKey = null,
-    bool IsStatic = false)
+    bool IsStatic = false,
+    IReadOnlyList<ModuleAttributeModel>? Attributes = null,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
 }
 
 public sealed record DestructorDeclarationModel(
-    bool IsMutable);
+    bool IsMutable,
+    IReadOnlyList<ModuleAttributeModel>? Attributes = null,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
 
 public sealed record TypeAliasDeclarationModel(
     string Name,
@@ -240,12 +244,26 @@ public sealed record TopLevelDeclarationModel(
     StarkVisibility Visibility,
     FunctionDeclarationModel? Function,
     DestructorDeclarationModel? Destructor = null,
-    TypeAliasDeclarationModel? TypeAlias = null);
+    TypeAliasDeclarationModel? TypeAlias = null,
+    IReadOnlyList<ModuleAttributeModel>? Attributes = null,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
+
+public enum ModuleBackendOptimizationMode
+{
+    Default,
+    Opaque
+}
+
+public sealed record ModuleAttributeModel(
+    string Name,
+    IReadOnlyList<string> Arguments);
 
 public sealed record SyntaxModel(
     string ModuleName,
     IReadOnlyList<ImportDeclarationModel> Imports,
-    IReadOnlyList<TopLevelDeclarationModel> Declarations);
+    IReadOnlyList<TopLevelDeclarationModel> Declarations,
+    IReadOnlyList<ModuleAttributeModel>? ModuleAttributes = null,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
 
 public sealed record DeclarationIndex(
     string ModuleName,
@@ -408,7 +426,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateConversionSummary>? ConversionSummaries = null,
     IReadOnlyList<ImportedTemplateDirectCallSummary>? DirectCallSummaries = null,
     IReadOnlyList<ImportedTemplateFieldAccessSummary>? FieldAccessSummaries = null,
-    IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null)
+    IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
 
@@ -714,7 +733,8 @@ public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, EnumLayoutSymbol> EnumLayouts,
     IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> FunctionSemantics,
     IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates,
-    PackageImageLinkageFacts? Linkage = null)
+    PackageImageLinkageFacts? Linkage = null,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
 {
     public bool HasPublishedFunctionSemantics => FunctionSemantics.Count > 0;
 
@@ -761,7 +781,8 @@ public sealed record FunctionEffectProfile(
     bool IsHot,
     bool IsCold,
     InlinePreference InlinePreference,
-    bool IsStrictFp);
+    bool IsStrictFp,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
 
 public sealed record FunctionEffectModel(
     string ModuleName,
@@ -1347,7 +1368,8 @@ public sealed record TypedFunctionSignature(
     bool IsStatic = false,
     StarkFunctionKind Kind = StarkFunctionKind.Fn,
     bool IsUnsafe = false,
-    bool IsVarargs = false)
+    bool IsVarargs = false,
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];

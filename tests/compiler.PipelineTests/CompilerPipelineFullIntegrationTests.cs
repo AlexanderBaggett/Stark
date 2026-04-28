@@ -1989,6 +1989,51 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void ClosedWorldOptimizationModelKeepsOpaqueImportedLawsAtAbiBoundary()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Math
+                module Demo
+
+                law i32[-2147483648 2147483647] UseLaw(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    return Math.Add(left, right);
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Math", "/virtual/Math.stark", IsExternal: false),
+                        """
+                        module Math
+
+                        [Backend(Opaque)]
+                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                            return left + right;
+                        }
+                        """,
+                        "/virtual/Math.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ClosedWorldOptimization, out ClosedWorldOptimizationModel? closedWorld));
+        Assert.NotNull(closedWorld);
+
+        Assert.Equal(
+            new[] { ClosedWorldCallLoweringStrategy.DirectAbiBoundary },
+            closedWorld.Functions["Math.Add"].SelectionOrder);
+        Assert.Equal(ClosedWorldCodeGenerationMode.SharedCode, closedWorld.Functions["Math.Add"].CodeGenerationMode);
+        Assert.True(closedWorld.Functions["Math.Add"].CanDevirtualize);
+    }
+
+
+    [Fact]
     public void PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModule()
     {
         var pipeline = DefaultCompilerPipeline.Create();

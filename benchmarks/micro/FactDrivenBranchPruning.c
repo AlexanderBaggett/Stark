@@ -34,6 +34,24 @@ static int64_t nested_score(int32_t value, int64_t salt) {
     return salt + (int64_t)value;
 }
 
+static int64_t modulo_score(int32_t value, int64_t salt) {
+    int32_t slot = value % 8;
+    if (slot >= 8) {
+        return salt - 4000;
+    }
+
+    return salt + (int64_t)slot;
+}
+
+static int64_t divide_score(int32_t value, int64_t salt) {
+    int32_t bucket = value / 10;
+    if (bucket > 10) {
+        return salt - 5000;
+    }
+
+    return salt + (int64_t)bucket;
+}
+
 int main(void) {
     int64_t total = (int64_t)getpid();
 
@@ -41,6 +59,8 @@ int main(void) {
         total += score(i % 11, total % 97);
         total += switch_score(10 + (i % 3), total % 31);
         total += nested_score(i % 21, total % 53);
+        total += modulo_score(i % 101, total % 43);
+        total += divide_score(i % 101, total % 47);
         total %= 1000000007;
     }
 

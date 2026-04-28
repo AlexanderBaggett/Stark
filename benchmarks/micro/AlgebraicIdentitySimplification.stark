@@ -6,14 +6,40 @@ finite law i64[min max] Normalize(i64[min max] value) {
     stack i64[min max] multiply = add * 1;
     stack i64[min max] masked = multiply & -1;
     stack i64[min max] shifted = masked << 0;
+    stack i64[min max] divided = shifted / 1;
+    stack i64[min max] rightShifted = divided >> 0;
     stack i64[min max] sameAnd = shifted & shifted;
     stack i64[min max] sameOr = sameAnd | sameAnd;
     stack i64[min max] zeroXor = sameOr ^ sameOr;
     stack i64[min max] zeroAnd = value & 0;
     stack i64[min max] zeroMultiply = value * 0;
     stack i64[min max] zeroSubtract = value - value;
+    stack i64[min max] zeroModulo = value % 1;
     stack i64[min max] allOnes = value | -1;
-    return ((shifted ^ 0) + zeroXor + zeroAnd + zeroMultiply + zeroSubtract + (allOnes & 1)) - 1;
+    return ((rightShifted ^ 0) + zeroXor + zeroAnd + zeroMultiply + zeroSubtract + zeroModulo + (allOnes & 1)) - 1;
+}
+
+finite law i64[min max] NormalizeSlot(i32[0 7] slot, i64[min max] salt) {
+    stack i32[min max] modulo = slot % 8;
+    stack i32[min max] divided = slot / 8;
+    return salt + (i64[min max])modulo + (i64[min max])divided;
+}
+
+finite law i64[min max] NormalizeNonZeroSlot(i32[1 8] slot, i64[min max] salt) {
+    stack i32[min max] divided = slot / slot;
+    stack i32[min max] modulo = slot % slot;
+    return salt + (i64[min max])divided + (i64[min max])modulo;
+}
+
+finite law i64[min max] NormalizeComparisons(i32[min max] value, i64[min max] salt) {
+    stack i32[min max] copy = value;
+    stack i32[min max] equal = value == copy ? 1 : 100;
+    stack i32[min max] notEqual = value != copy ? 100 : 1;
+    stack i32[min max] less = value < copy ? 100 : 1;
+    stack i32[min max] lessOrEqual = value <= copy ? 1 : 100;
+    stack i32[min max] greater = value > copy ? 100 : 1;
+    stack i32[min max] greaterOrEqual = value >= copy ? 1 : 100;
+    return salt + (i64[min max])(equal + notEqual + less + lessOrEqual + greater + greaterOrEqual);
 }
 
 export ffi fn i32[min max] main() {
@@ -21,6 +47,9 @@ export ffi fn i32[min max] main() {
 
     for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
         total += Normalize(((i64[min max])i * 17) + (total % 97));
+        total += NormalizeSlot((i32[0 7])(i & 7), total % 41);
+        total += NormalizeNonZeroSlot((i32[1 8])((i & 7) + 1), total % 43);
+        total += NormalizeComparisons(i, total % 47);
         total = total % 1000000007;
     }
 

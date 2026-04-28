@@ -1305,6 +1305,26 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void UnsignedOrdinaryArithmeticDoesNotInventSignedNoWrapForHighBitResults()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn u32[0 max] AddIntoHighBit(u32[2147483647 2147483647] left, u32[1 1] right) {
+                return left + right;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("add nuw i32", llvm);
+        Assert.DoesNotContain("add nuw nsw i32", llvm);
+        Assert.DoesNotContain("add nsw i32", llvm);
+    }
+
+    [Fact]
     public void PropagatedValueFactsEmitUnsignedNoWrapForJoinedRanges()
     {
         var result = Compile(
@@ -1343,6 +1363,45 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc range(i32 0, 8) i32 @Mask(i32 range(i32 0, 16) %arg_value)", llvm);
+    }
+
+    [Fact]
+    public void ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] DivideMasked(i32[-2147483648 2147483647] value, i32[1 10] divisor) {
+                return (value & 255) / divisor;
+            }
+
+            fn i32[-2147483648 2147483647] ModuloMasked(i32[-2147483648 2147483647] value, i32[1 10] divisor) {
+                return (value & 255) % divisor;
+            }
+
+            fn bool LessMasked(i32[-2147483648 2147483647] value, i32[0 255] threshold) {
+                return (value & 255) < threshold;
+            }
+
+            fn bool GreaterMasked(i32[-2147483648 2147483647] value, i32[0 255] threshold) {
+                return (value & 255) > threshold;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("udiv i32", llvm);
+        Assert.Contains("urem i32", llvm);
+        Assert.Contains("icmp ult i32", llvm);
+        Assert.Contains("icmp ugt i32", llvm);
+        Assert.Contains("define fastcc range(i32 0, 256) i32 @DivideMasked", llvm);
+        Assert.Contains("define fastcc range(i32 0, 10) i32 @ModuloMasked", llvm);
+        Assert.DoesNotContain("sdiv i32", llvm);
+        Assert.DoesNotContain("srem i32", llvm);
+        Assert.DoesNotContain("icmp slt i32", llvm);
+        Assert.DoesNotContain("icmp sgt i32", llvm);
     }
 
     [Fact]
@@ -1485,6 +1544,10 @@ public sealed class LlvmIrEmissionTests
             fn i32[-2147483648 2147483647] Divide(i32[-2147483648 2147483647] value, i32[2 2] divisor) {
                 return value / divisor;
             }
+
+            fn i32[-2147483648 2147483647] Remainder(i32[-2147483648 2147483647] value, i32[2 2] divisor) {
+                return value % divisor;
+            }
             """);
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -1493,6 +1556,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("shl i32", llvm);
         Assert.Contains("ashr i32", llvm);
         Assert.Contains("sdiv i32", llvm);
+        Assert.Contains("srem i32", llvm);
         Assert.DoesNotContain("shl nuw", llvm);
         Assert.DoesNotContain("shl nsw", llvm);
         Assert.DoesNotContain("ashr exact", llvm);
@@ -3715,13 +3779,15 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%bucket_alignment_ok = icmp ule i64 %effective_alignment, 16", llvm);
         Assert.Contains("%bucket_size_ok = icmp ule i64 %requested_size, 4096", llvm);
         Assert.Contains("br i1 %can_bucket, label %bucket_select_16, label %large_allocate", llvm);
-        Assert.Contains("%payload_size = phi i64 [16, %bucket_16_allocate]", llvm);
-        Assert.Contains("[%requested_size, %large_allocate]", llvm);
-        Assert.Contains("%block_alignment = phi i64 [16, %bucket_16_allocate]", llvm);
-        Assert.Contains("[%effective_alignment, %large_allocate]", llvm);
-        Assert.Contains("%bucket_size = phi i64 [16, %bucket_16_allocate]", llvm);
-        Assert.Contains("[0, %large_allocate]", llvm);
-        Assert.Contains("store i64 %bucket_size, ptr %bucket_size_slot, align 8", llvm);
+        Assert.Contains("br label %bucket_16_refill", llvm);
+        Assert.Contains("bucket_16_refill:", llvm);
+        Assert.Contains("%bucket_16_slab_base = call ptr @__stark_os_allocate(i64 noundef", llvm);
+        Assert.Contains("%bucket_16_refill_index = phi i64 [1, %bucket_16_slab_ok], [%bucket_16_refill_next, %bucket_16_refill_body]", llvm);
+        Assert.Contains("%bucket_16_refill_offset = mul i64 %bucket_16_refill_index, 48", llvm);
+        Assert.Contains("store i64 16, ptr %bucket_16_block_bucket_size_slot, align 8", llvm);
+        Assert.Contains("store ptr %bucket_16_block, ptr @__stark_alloc_bucket_16, align 8", llvm);
+        Assert.Contains("ret ptr %bucket_16_first", llvm);
+        Assert.Contains("store i64 0, ptr %bucket_size_slot, align 8", llvm);
         Assert.Contains("store ptr %ptr, ptr @__stark_alloc_bucket_16, align 8", llvm);
         Assert.Contains("br i1 %bucket_is_4096, label %bucket_4096_push, label %free_os", llvm);
         Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
