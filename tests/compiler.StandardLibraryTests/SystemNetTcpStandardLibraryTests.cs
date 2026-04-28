@@ -402,8 +402,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("define fastcc noundef i64 @ReadSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef i64 @WriteSocket(", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadSocket\(", llvm);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocket\(", llvm);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
@@ -505,8 +505,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("define fastcc noundef ptr @ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @ListenTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @AcceptSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef i64 @ReadSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef i64 @WriteSocket(", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadSocket\(", llvm);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocket\(", llvm);
         Assert.Contains("define fastcc noundef i32 @ShutdownSocket(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CloseSocket(", llvm, StringComparison.Ordinal);
 

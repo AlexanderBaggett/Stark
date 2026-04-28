@@ -1,0 +1,28 @@
+import System.Process
+module Benchmarks.Micro.BranchSelectPredication
+
+noinline finite law i64[min max] Choose(bool flag, i64[min max] left, i64[min max] right) {
+    if (flag) {
+        return left;
+    }
+
+    return right;
+}
+
+export ffi fn i32[min max] main() {
+    stack i64[min max] seed = (i64[min max])System.Process.CurrentId();
+    stack mut i64[min max] total = seed & 1023;
+
+    for willexit (stack mut i32[0 500000] i = 0; i < 500000; i += 1) {
+        stack i64[min max] wide = (i64[min max])i;
+        stack bool flag = ((wide + total) & 1) == 0;
+        total += Choose(flag, wide + 3, total - wide);
+        total = total % 1000000007;
+    }
+
+    if (total == 0) {
+        return 1;
+    }
+
+    return 0;
+}

@@ -93,6 +93,84 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void CleanupRemovesIntegerAlgebraicIdentities()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Add,
+                                        new SsaValueReference("arg_value", valueType),
+                                        new SsaIntegerConstant(BigInteger.Zero, valueType),
+                                        valueType,
+                                        "+")),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Multiply,
+                                        new SsaIntegerConstant(BigInteger.One, valueType),
+                                        new SsaValueReference("v0", valueType),
+                                        valueType,
+                                        "*")),
+                                new SsaValueInstruction(
+                                    "v2",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.BitwiseAnd,
+                                        new SsaValueReference("v1", valueType),
+                                        new SsaIntegerConstant(-BigInteger.One, valueType),
+                                        valueType,
+                                        "&")),
+                                new SsaValueInstruction(
+                                    "v3",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.ShiftLeft,
+                                        new SsaValueReference("v2", valueType),
+                                        new SsaIntegerConstant(BigInteger.Zero, valueType),
+                                        valueType,
+                                        "<<")),
+                                new SsaValueInstruction(
+                                    "v4",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.BitwiseXor,
+                                        new SsaValueReference("v3", valueType),
+                                        new SsaIntegerConstant(BigInteger.Zero, valueType),
+                                        valueType,
+                                        "^"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v4", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Empty(block.Instructions);
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
     public void CleanupRemovesIdentityPhiNodes()
     {
         var boolType = StarkTypeSymbols.Bool;
@@ -733,15 +811,17 @@ public sealed class SsaOptimizationTests
         var function = Assert.Single(optimized.Functions);
         var entry = Assert.Single(function.Blocks, static block => block.Id == 0);
 
-        Assert.Equal(SsaTerminatorKind.Branch, entry.Terminator.Kind);
-        Assert.Equal(2, entry.Terminator.Targets.Count);
-        Assert.Equal(1, entry.Terminator.Targets[0]);
-        Assert.Equal(2, entry.Terminator.Targets[1]);
-        var condition = Assert.IsType<SsaValueReference>(entry.Terminator.Condition);
-        var compare = Assert.Single(entry.Instructions.OfType<SsaValueInstruction>());
-        Assert.Equal(compare.ResultName, condition.Name);
+        Assert.Equal(SsaTerminatorKind.Return, entry.Terminator.Kind);
+        var returnValue = Assert.IsType<SsaValueReference>(entry.Terminator.Value);
+        var instructions = entry.Instructions.OfType<SsaValueInstruction>().ToArray();
+        var compare = Assert.Single(instructions, static instruction => instruction.Value is SsaBinaryRValue);
         var compareValue = Assert.IsType<SsaBinaryRValue>(compare.Value);
         Assert.Equal(SsaBinaryOperator.Equal, compareValue.Operator);
+        var selectInstruction = Assert.Single(instructions, static instruction => instruction.Value is SsaSelectRValue);
+        Assert.Equal(selectInstruction.ResultName, returnValue.Name);
+        var select = Assert.IsType<SsaSelectRValue>(selectInstruction.Value);
+        var selectCondition = Assert.IsType<SsaValueReference>(select.Condition);
+        Assert.Equal(compare.ResultName, selectCondition.Name);
     }
 
     [Fact]
@@ -862,7 +942,11 @@ public sealed class SsaOptimizationTests
         var function = Assert.Single(optimized.Functions);
         var entry = Assert.Single(function.Blocks, static block => block.Id == 0);
 
-        Assert.Equal(SsaTerminatorKind.Branch, entry.Terminator.Kind);
+        Assert.Equal(SsaTerminatorKind.Return, entry.Terminator.Kind);
+        var returnValue = Assert.IsType<SsaValueReference>(entry.Terminator.Value);
+        var selectInstruction = Assert.Single(entry.Instructions.OfType<SsaValueInstruction>());
+        Assert.Equal(selectInstruction.ResultName, returnValue.Name);
+        Assert.IsType<SsaSelectRValue>(selectInstruction.Value);
         Assert.DoesNotContain(function.Blocks, static block => block.Id == 3);
     }
 
@@ -923,9 +1007,11 @@ public sealed class SsaOptimizationTests
         var function = Assert.Single(optimized.Functions);
         var entry = Assert.Single(function.Blocks, static block => block.Id == 0);
 
-        Assert.Equal(SsaTerminatorKind.Branch, entry.Terminator.Kind);
-        Assert.Equal(1, entry.Terminator.Targets[0]);
-        Assert.Equal(2, entry.Terminator.Targets[1]);
+        Assert.Equal(SsaTerminatorKind.Return, entry.Terminator.Kind);
+        var returnValue = Assert.IsType<SsaValueReference>(entry.Terminator.Value);
+        var selectInstruction = Assert.Single(entry.Instructions.OfType<SsaValueInstruction>());
+        Assert.Equal(selectInstruction.ResultName, returnValue.Name);
+        Assert.IsType<SsaSelectRValue>(selectInstruction.Value);
     }
 
     [Fact]
@@ -949,12 +1035,17 @@ public sealed class SsaOptimizationTests
 
         var function = Assert.Single(GetOptimizedSsa(result).Functions);
         var entry = Assert.Single(function.Blocks, static block => block.Id == 0);
-        Assert.Equal(SsaTerminatorKind.Branch, entry.Terminator.Kind);
-        Assert.Single(entry.Instructions.OfType<SsaValueInstruction>());
+        Assert.Equal(SsaTerminatorKind.Return, entry.Terminator.Kind);
+        var returnValue = Assert.IsType<SsaValueReference>(entry.Terminator.Value);
+        var instructions = entry.Instructions.OfType<SsaValueInstruction>().ToArray();
+        Assert.Contains(instructions, static instruction => instruction.Value is SsaBinaryRValue);
+        var selectInstruction = Assert.Single(instructions, static instruction => instruction.Value is SsaSelectRValue);
+        Assert.Equal(selectInstruction.ResultName, returnValue.Name);
 
         var llvm = GetLlvm(result);
         Assert.Contains("icmp eq i32 %arg_value, 1", llvm);
-        Assert.Contains("br i1", llvm);
+        Assert.Contains("select i1", llvm);
+        Assert.DoesNotContain("br i1", llvm);
         Assert.DoesNotContain("switch i32", llvm);
     }
 
@@ -1087,16 +1178,16 @@ public sealed class SsaOptimizationTests
         var optimized = new SsaCleanupOptimizer().Optimize(module);
         var function = Assert.Single(optimized.Functions);
 
-        Assert.DoesNotContain(function.Blocks, static block => block.Id == 3);
-        var thenBlock = Assert.Single(function.Blocks, static block => block.Id == 1);
-        var elseBlock = Assert.Single(function.Blocks, static block => block.Id == 2);
-
-        var thenReturn = Assert.IsType<SsaIntegerConstant>(thenBlock.Terminator.Value);
-        var elseReturn = Assert.IsType<SsaIntegerConstant>(elseBlock.Terminator.Value);
-        Assert.Equal(SsaTerminatorKind.Return, thenBlock.Terminator.Kind);
-        Assert.Equal(SsaTerminatorKind.Return, elseBlock.Terminator.Kind);
-        Assert.Equal(new BigInteger(1), thenReturn.Value);
-        Assert.Equal(new BigInteger(2), elseReturn.Value);
+        var entry = Assert.Single(function.Blocks);
+        Assert.Equal(SsaTerminatorKind.Return, entry.Terminator.Kind);
+        var returnValue = Assert.IsType<SsaValueReference>(entry.Terminator.Value);
+        var selectInstruction = Assert.Single(entry.Instructions.OfType<SsaValueInstruction>());
+        Assert.Equal(selectInstruction.ResultName, returnValue.Name);
+        var select = Assert.IsType<SsaSelectRValue>(selectInstruction.Value);
+        var whenTrue = Assert.IsType<SsaIntegerConstant>(select.WhenTrue);
+        var whenFalse = Assert.IsType<SsaIntegerConstant>(select.WhenFalse);
+        Assert.Equal(new BigInteger(1), whenTrue.Value);
+        Assert.Equal(new BigInteger(2), whenFalse.Value);
     }
 
     [Fact]
@@ -1302,8 +1393,16 @@ public sealed class SsaOptimizationTests
                 Operator: SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual
             });
 
-        var branchCondition = Assert.IsType<SsaValueReference>(entry.Terminator.Condition);
-        Assert.Equal("arg_flag", branchCondition.Name);
+        Assert.Equal(SsaTerminatorKind.Return, entry.Terminator.Kind);
+        var returnValue = Assert.IsType<SsaValueReference>(entry.Terminator.Value);
+        var selectInstruction = Assert.Single(
+            instructions,
+            static instruction => instruction.Value is SsaSelectRValue);
+        Assert.Equal(selectInstruction.ResultName, returnValue.Name);
+
+        var select = Assert.IsType<SsaSelectRValue>(selectInstruction.Value);
+        var selectCondition = Assert.IsType<SsaValueReference>(select.Condition);
+        Assert.Equal("arg_flag", selectCondition.Name);
     }
 
     [Fact]
@@ -1485,6 +1584,964 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void FactDrivenBranchPruningThreadsProvenEdgesThroughBranchOnlyBlocks()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.LessThan,
+                                        new SsaValueReference("arg_value", valueType),
+                                        new SsaIntegerConstant(10, valueType),
+                                        boolType,
+                                        "<"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 4],
+                                Condition: new SsaValueReference("v0", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_check",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.LessThan,
+                                        new SsaValueReference("arg_value", valueType),
+                                        new SsaIntegerConstant(20, valueType),
+                                        boolType,
+                                        "<"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [2, 3],
+                                Condition: new SsaValueReference("v1", boolType))),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_fast",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(1, valueType))),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_slow",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(2, valueType))),
+                        new SsaBasicBlock(
+                            4,
+                            "bb4_default",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(3, valueType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var optimized = new SsaFactDrivenBranchPruner().Optimize(module, facts);
+        var function = Assert.Single(optimized.Functions);
+        var entry = Assert.Single(function.Blocks, static block => block.Id == 0);
+
+        Assert.Equal(SsaTerminatorKind.Branch, entry.Terminator.Kind);
+        Assert.Equal([2, 4], entry.Terminator.Targets);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStoredStackScalarLoadsWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("local", valueType),
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadLocalRValue("local", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadLocalRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsAddressEscapedLocalLoads()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var pointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("local", valueType),
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "addr",
+                                    new SsaAddressOfLocalRValue("local", valueType, pointerType, "&local")),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadLocalRValue("local", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadLocalRValue { LocalName: "local" });
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v0", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationRemovesOverwrittenStackScalarStoresWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("local", valueType),
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaIntegerConstant(7, valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadLocalRValue("local", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "local");
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadLocalRValue);
+        var returnValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(new BigInteger(7), returnValue.Value);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStackScalarsAcrossSinglePredecessorBlocks()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("local", valueType),
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [1])),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_return",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadLocalRValue("local", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var returnBlock = Assert.Single(function.Blocks, static block => block.Id == 1);
+
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadLocalRValue { LocalName: "local" });
+        var returnValue = Assert.IsType<SsaValueReference>(returnBlock.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackScalarLoadsAtJoinBlocks()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("flag", boolType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("local", valueType)
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_then",
+                            [],
+                            [
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_else",
+                            [],
+                            [
+                                new SsaStoreLocalInstruction(
+                                    "local",
+                                    valueType,
+                                    new SsaIntegerConstant(2, valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadLocalRValue("local", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadLocalRValue { LocalName: "local" });
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsRepeatedGlobalScalarLoadsWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType)),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v1", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Single(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" });
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v0", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStoredGlobalScalarLoadsWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(
+            block.Instructions.OfType<SsaStoreGlobalInstruction>(),
+            static instruction => instruction.GlobalName == "Demo.Value");
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" });
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossCallBarriers()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue("Touch", [], valueType, "Touch()")),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v1", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Equal(
+            2,
+            block.Instructions
+                .OfType<SsaValueInstruction>()
+                .Count(static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" }));
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v1", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsGlobalScalarsAcrossSinglePredecessorBlocks()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [1])),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_return",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var returnBlock = Assert.Single(function.Blocks, static block => block.Id == 1);
+
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" });
+
+        var returnValue = Assert.IsType<SsaValueReference>(returnBlock.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAtJoinBlocks()
+    {
+        var boolType = StarkTypeSymbols.Bool;
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("flag", boolType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_then",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(1, valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_else",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(2, valueType))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" });
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(7, valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(0, valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var store = Assert.Single(block.Instructions.OfType<SsaStoreGlobalInstruction>());
+
+        Assert.Equal("Demo.Value", store.GlobalName);
+        var storeValue = Assert.IsType<SsaIntegerConstant>(store.Value);
+        Assert.Equal(new BigInteger(7), storeValue.Value);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossCallBarriers()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue("Touch", [], valueType, "Touch()")),
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(7, valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(0, valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Equal(
+            2,
+            block.Instructions.OfType<SsaStoreGlobalInstruction>().Count(static store => store.GlobalName == "Demo.Value"));
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsGlobalScalarLoadsAcrossPureCalls()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue("Demo.Touch", [], valueType, "Touch()")),
+                                new SsaValueInstruction(
+                                    "v1",
+                                    new SsaLoadGlobalRValue("Demo.Value", valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v1", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureEffect("Demo.Touch"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Single(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadGlobalRValue { GlobalName: "Demo.Value" });
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v0", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureCalls()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue("Demo.Touch", [], valueType, "Touch()")),
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(7, valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(0, valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureEffect("Demo.Touch"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var store = Assert.Single(block.Instructions.OfType<SsaStoreGlobalInstruction>());
+
+        Assert.Equal("Demo.Value", store.GlobalName);
+        var storeValue = Assert.IsType<SsaIntegerConstant>(store.Value);
+        Assert.Equal(new BigInteger(7), storeValue.Value);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossPureArgumentMemoryReadsWhenGlobalAddressIsPassed()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var pointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: false);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue(
+                                        "Demo.Read",
+                                        [new SsaGlobalAddressValue("Demo.Value", valueType, pointerType)],
+                                        valueType,
+                                        "Read(&Value)")),
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(7, valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(0, valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureReadArgumentEffect("Demo.Read"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Equal(
+            2,
+            block.Instructions.OfType<SsaStoreGlobalInstruction>().Count(static store => store.GlobalName == "Demo.Value"));
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureArgumentMemoryReadsWithScalarArguments()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("value", valueType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaValueInstruction(
+                                    "ignored",
+                                    new SsaCallRValue(
+                                        "Demo.Read",
+                                        [new SsaValueReference("arg_value", valueType)],
+                                        valueType,
+                                        "Read(value)")),
+                                new SsaStoreGlobalInstruction(
+                                    "Demo.Value",
+                                    valueType,
+                                    new SsaIntegerConstant(7, valueType))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(0, valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer(Effects(PureReadArgumentEffect("Demo.Read"))).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+        var store = Assert.Single(block.Instructions.OfType<SsaStoreGlobalInstruction>());
+
+        Assert.Equal("Demo.Value", store.GlobalName);
+        var storeValue = Assert.IsType<SsaIntegerConstant>(store.Value);
+        Assert.Equal(new BigInteger(7), storeValue.Value);
+    }
+
+    [Fact]
     public void ConstantPropagationFoldsConstantBranchesInLlvm()
     {
         var result = Compile(
@@ -1540,6 +2597,39 @@ public sealed class SsaOptimizationTests
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));
+    }
+
+    private static FunctionEffectModel Effects(params FunctionEffectProfile[] profiles)
+    {
+        return new FunctionEffectModel(
+            "Demo",
+            profiles.ToDictionary(static profile => profile.Name, StringComparer.Ordinal));
+    }
+
+    private static FunctionEffectProfile PureEffect(string name)
+    {
+        return new FunctionEffectProfile(
+            name,
+            StarkFunctionKind.FiniteLaw,
+            ReadsArgumentMemory: false,
+            IsPure: true,
+            NoSync: true,
+            NoFree: true,
+            NoUnwind: true,
+            WillReturn: true,
+            MustProgress: true,
+            UseFastCallingConvention: true,
+            IsFfi: false,
+            IsVarargs: false,
+            IsHot: false,
+            IsCold: false,
+            InlinePreference: InlinePreference.InlineHint,
+            IsStrictFp: false);
+    }
+
+    private static FunctionEffectProfile PureReadArgumentEffect(string name)
+    {
+        return PureEffect(name) with { ReadsArgumentMemory = true };
     }
 
     private static SsaIrModule GetOptimizedSsa(CompilationResult result)

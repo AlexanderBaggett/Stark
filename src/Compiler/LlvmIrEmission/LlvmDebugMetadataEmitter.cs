@@ -65,6 +65,21 @@ internal sealed class DebugMetadataEmitter
             return null;
         }
 
+        return GetValueRangeMetadataRef(metadataBody);
+    }
+
+    public string? GetValueRangeMetadataRef(StarkTypeSymbol type, SsaIntegerRangeFact range)
+    {
+        if (!LlvmValueRangeFacts.TryBuildRangeMetadataBody(type, range, out var metadataBody))
+        {
+            return null;
+        }
+
+        return GetValueRangeMetadataRef(metadataBody);
+    }
+
+    private string GetValueRangeMetadataRef(string metadataBody)
+    {
         if (_rangeRefs.TryGetValue(metadataBody, out var existing))
         {
             return existing;

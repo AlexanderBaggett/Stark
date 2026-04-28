@@ -25,6 +25,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<MidLevelIrModule> MidLevelIr = new("lowering.mir");
     public static readonly ArtifactKey<SsaIrModule> SsaIr = new("lowering.ssa");
     public static readonly ArtifactKey<SsaIrModule> OptimizedSsaIr = new("lowering.ssa.optimized");
+    public static readonly ArtifactKey<SsaValueFactModel> SsaValueFacts = new("optimization.ssa.value-facts");
     public static readonly ArtifactKey<AbiModel> AbiModel = new("lowering.abi");
     public static readonly ArtifactKey<LlvmIrModule> LlvmIrModule = new("codegen.llvm-ir");
 }
@@ -2624,6 +2625,14 @@ public sealed record SsaBinaryRValue(
     string Text)
     : SsaRValue(Type, Text);
 
+public sealed record SsaSelectRValue(
+    SsaValue Condition,
+    SsaValue WhenTrue,
+    SsaValue WhenFalse,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
 public sealed record SsaCallRValue(
     string FunctionName,
     IReadOnlyList<SsaValue> Arguments,
@@ -2886,6 +2895,49 @@ public sealed record SsaIrModule(
     public IReadOnlyList<string> AddressTakenFunctions =>
         AddressTakenFunctionRecords ?? [];
 }
+
+public enum SsaFactLatticeKind
+{
+    Unknown,
+    Known,
+    Overdefined
+}
+
+public enum SsaNullabilityFactKind
+{
+    Unknown,
+    Null,
+    NonNull,
+    Overdefined
+}
+
+public sealed record SsaIntegerRangeFact(BigInteger Min, BigInteger Max);
+
+public sealed record SsaKnownBitsFact(BigInteger KnownZeroBits, BigInteger KnownOneBits);
+
+public sealed record SsaValueFacts(
+    string ValueName,
+    StarkTypeSymbol Type,
+    SsaFactLatticeKind IntegerRangeKind = SsaFactLatticeKind.Unknown,
+    SsaIntegerRangeFact? IntegerRange = null,
+    SsaFactLatticeKind KnownBitsKind = SsaFactLatticeKind.Unknown,
+    SsaKnownBitsFact? KnownBits = null,
+    SsaFactLatticeKind BooleanKind = SsaFactLatticeKind.Unknown,
+    bool? BooleanConstant = null,
+    SsaNullabilityFactKind Nullability = SsaNullabilityFactKind.Unknown,
+    SsaFactLatticeKind PointerAlignmentKind = SsaFactLatticeKind.Unknown,
+    int? PointerAlignmentBytes = null,
+    SsaFactLatticeKind LengthKind = SsaFactLatticeKind.Unknown,
+    SsaIntegerRangeFact? LengthRange = null);
+
+public sealed record SsaFunctionFactModel(
+    string FunctionName,
+    IReadOnlyDictionary<string, SsaValueFacts> Values,
+    IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>>? BlockEntryValueFacts = null);
+
+public sealed record SsaValueFactModel(
+    string ModuleName,
+    IReadOnlyDictionary<string, SsaFunctionFactModel> Functions);
 
 public sealed record LlvmIrModule(
     string ModuleName,

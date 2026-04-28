@@ -23,6 +23,7 @@ internal sealed class LlvmIrEmitter
     private readonly SemanticValidationModel? _semanticValidation;
     private readonly ClosedWorldOptimizationModel? _closedWorldModel;
     private readonly SpecializationCodegenStrategyModel? _specializationCodegenStrategy;
+    private readonly SsaValueFactModel? _ssaValueFacts;
     private readonly CompilerLogBag? _logs;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
@@ -65,7 +66,8 @@ internal sealed class LlvmIrEmitter
         SemanticValidationModel? semanticValidation = null,
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
-        CompilerLogBag? logs = null)
+        CompilerLogBag? logs = null,
+        SsaValueFactModel? ssaValueFacts = null)
         : this(
             input,
             parseResult,
@@ -82,7 +84,8 @@ internal sealed class LlvmIrEmitter
             semanticValidation,
             closedWorldModel,
             specializationCodegenStrategy,
-            logs)
+            logs,
+            ssaValueFacts)
     {
     }
 
@@ -102,7 +105,8 @@ internal sealed class LlvmIrEmitter
         SemanticValidationModel? semanticValidation = null,
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
-        CompilerLogBag? logs = null)
+        CompilerLogBag? logs = null,
+        SsaValueFactModel? ssaValueFacts = null)
     {
         _input = input;
         _parseResult = parseResult;
@@ -114,6 +118,7 @@ internal sealed class LlvmIrEmitter
         _semanticValidation = semanticValidation;
         _closedWorldModel = closedWorldModel;
         _specializationCodegenStrategy = specializationCodegenStrategy;
+        _ssaValueFacts = ssaValueFacts;
         _logs = logs;
         _abiModel = abiModel;
         _ssa = ssa;
@@ -171,6 +176,7 @@ internal sealed class LlvmIrEmitter
             () => _debugInfo.Enabled,
             () => _debugInfo.EmptyTupleRef,
             type => _debugInfo.GetValueRangeMetadataRef(type),
+            (type, range) => _debugInfo.GetValueRangeMetadataRef(type, range),
             (key, displayName) => _debugInfo.GetTbaaTypeDescriptorRef(key, displayName),
             (key, displayName, fields) => _debugInfo.GetTbaaStructTypeDescriptorRef(key, displayName, fields),
             (baseTypeDescriptorRef, accessTypeDescriptorRef, offsetBytes) => _debugInfo.GetTbaaAccessTagRef(
@@ -859,6 +865,7 @@ internal sealed class LlvmIrEmitter
             SsaUseRValue use => [use.Value],
             SsaUnaryRValue unary => [unary.Operand],
             SsaBinaryRValue binary => [binary.Left, binary.Right],
+            SsaSelectRValue select => [select.Condition, select.WhenTrue, select.WhenFalse],
             SsaCallRValue call => call.IndirectArgumentAddresses is { Count: > 0 }
                 ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
                 : call.Arguments,
@@ -1165,6 +1172,7 @@ internal sealed class LlvmIrEmitter
         var functionBuilder = new StringBuilder();
         var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
+        var valueFacts = TryGetSsaValueFacts(ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
             BuildDefinitionSignatureCore(
                 internalize,
@@ -1174,7 +1182,8 @@ internal sealed class LlvmIrEmitter
                 effects,
                 effectiveMemoryEffects,
                 parameterEffects,
-                specializationLinkage),
+                specializationLinkage,
+                TryGetReturnIntegerRange(abiFunction, ssaFunction, valueFacts)),
             debugFunction));
         functionBuilder.AppendLine("{");
 
@@ -1186,11 +1195,84 @@ internal sealed class LlvmIrEmitter
             ssaFunction,
             _emissionContext,
             debugFunction,
+            valueFacts,
             parameterEffects,
             effects.IsStrictFp);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);
+    }
+
+    private SsaFunctionFactModel? TryGetSsaValueFacts(SsaFunction ssaFunction)
+    {
+        return _ssaValueFacts is not null
+               && _ssaValueFacts.Functions.TryGetValue(ssaFunction.Name, out var facts)
+            ? facts
+            : null;
+    }
+
+    private static SsaIntegerRangeFact? TryGetReturnIntegerRange(
+        AbiFunctionSignature abiFunction,
+        SsaFunction ssaFunction,
+        SsaFunctionFactModel? facts)
+    {
+        if (facts is null
+            || abiFunction.IsFfi
+            || abiFunction.ReturnsIndirect
+            || abiFunction.SourceReturnType.Kind != StarkTypeKind.Integer)
+        {
+            return null;
+        }
+
+        var ranges = new List<SsaIntegerRangeFact>();
+        var sawNonConstantReturn = false;
+        foreach (var returnValue in ssaFunction.Blocks
+                     .Where(static block => block.Terminator.Kind == SsaTerminatorKind.Return)
+                     .Select(static block => block.Terminator.Value))
+        {
+            if (returnValue is null)
+            {
+                continue;
+            }
+
+            if (!TryGetIntegerRange(returnValue, facts, out var range))
+            {
+                return null;
+            }
+
+            sawNonConstantReturn |= returnValue is not SsaIntegerConstant;
+            ranges.Add(range);
+        }
+
+        return ranges.Count == 0 || !sawNonConstantReturn
+            ? null
+            : new SsaIntegerRangeFact(
+                ranges.Min(static range => range.Min),
+                ranges.Max(static range => range.Max));
+    }
+
+    private static bool TryGetIntegerRange(
+        SsaValue value,
+        SsaFunctionFactModel facts,
+        out SsaIntegerRangeFact range)
+    {
+        if (value is SsaIntegerConstant integer)
+        {
+            range = new SsaIntegerRangeFact(integer.Value, integer.Value);
+            return true;
+        }
+
+        if (value is SsaValueReference reference
+            && facts.Values.TryGetValue(reference.Name, out var valueFacts)
+            && valueFacts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && valueFacts.IntegerRange is { } knownRange)
+        {
+            range = knownRange;
+            return true;
+        }
+
+        range = default!;
+        return false;
     }
 
     private bool IsImmutableGlobalName(string globalName)
@@ -1467,7 +1549,8 @@ internal sealed class LlvmIrEmitter
             effects,
             memoryEffects,
             parameterEffects,
-            specializationLinkage);
+            specializationLinkage,
+            returnRange: null);
     }
 
     private string BuildDefinitionSignatureCore(
@@ -1478,7 +1561,8 @@ internal sealed class LlvmIrEmitter
         FunctionEffectProfile effects,
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
-        MonomorphizationLinkageKind? specializationLinkage = null)
+        MonomorphizationLinkageKind? specializationLinkage = null,
+        SsaIntegerRangeFact? returnRange = null)
     {
         var signature = _functionSignatureBuilder.BuildDefinitionSignature(
             internalize,
@@ -1487,7 +1571,8 @@ internal sealed class LlvmIrEmitter
             effects,
             memoryEffects,
             parameterEffects,
-            specializationLinkage);
+            specializationLinkage,
+            returnRange);
 
         return availableExternally
             ? PrefixAvailableExternally(signature)
@@ -1744,6 +1829,11 @@ internal sealed class LlvmIrEmitter
             case SsaBinaryRValue binary:
                 AddStringConstant(binary.Left, constants, ref index);
                 AddStringConstant(binary.Right, constants, ref index);
+                return;
+            case SsaSelectRValue select:
+                AddStringConstant(select.Condition, constants, ref index);
+                AddStringConstant(select.WhenTrue, constants, ref index);
+                AddStringConstant(select.WhenFalse, constants, ref index);
                 return;
             case SsaCallRValue call:
                 foreach (var argument in call.Arguments)

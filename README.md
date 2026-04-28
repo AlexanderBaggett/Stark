@@ -64,7 +64,7 @@ Create `hello.stark`:
 import System.Console
 module Hello
 
-fn i32[min max] main() {
+export ffi fn i32[min max] main() {
     WriteLine("Hello, World!");
     return 0;
 }
@@ -128,7 +128,7 @@ dotnet run --project src -- libExample.starkpkg.json --inspect-pkg
 With no input path, the compiler reads Stark source from stdin:
 
 ```bash
-printf 'module Demo\nfn i32[min max] main() { return 1; }\n' \
+printf 'module Demo\nexport ffi fn i32[min max] main() { return 1; }\n' \
   | dotnet run --project src -- --emit-llvm
 ```
 
@@ -273,11 +273,11 @@ Run only Stark benchmarks when C or Rust is not installed:
 STARK_BENCH_LANGUAGES=stark scripts/run-benchmarks.sh
 ```
 
-The benchmark runner compiles each selected program, performs one warmup run,
-then writes CSV rows with microsecond timings:
+The benchmark runner compiles each selected program, records executable size,
+performs one warmup run, then writes CSV rows with microsecond timings:
 
 ```text
-benchmark,language,runs,compile_us,min_us,avg_us,max_us
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us
 ```
 
 Result files and machine metadata are written under `benchmarks/results/` by
@@ -288,6 +288,16 @@ default. Important environment variables:
 - `STARK_BENCH_LANGUAGES`: comma-separated list, default `stark,c,rust`.
 - `STARK_BENCH_C_COMPILER`: C compiler, default `clang`.
 - `STARK_BENCH_RUST_COMPILER`: Rust compiler, default `rustc`.
+- `STARK_BENCH_BASELINE_FILE`: optional previous CSV to compare against.
+- `STARK_BENCH_MAX_REGRESSION_PCT`: allowed same-language regression, default
+  `10`, when a baseline is configured.
+- `STARK_BENCH_REGRESSION_METRIC`: metric column for baseline checks, default
+  `avg_us`. Use `compile_us`, `llvm_object_us`, `link_us`, `toolchain_us`, or
+  `binary_bytes` for compile-time, Stark LLVM/backend, and code-size gates.
+- `STARK_BENCH_MIN_REGRESSION_DELTA`: minimum absolute delta before a
+  regression gate can fail, default `50`.
+- `STARK_BENCH_MAX_STARK_TO_C_RATIO` / `STARK_BENCH_MAX_STARK_TO_RUST_RATIO`:
+  optional same-run performance gates against the C and Rust rows.
 - `STARK_TARGET`: optional LLVM target triple for Stark.
 - `STARK_COMPILER_ARGS`: extra Stark compiler arguments.
 
@@ -379,6 +389,7 @@ generated parser files are up to date.
 | --- | --- |
 | `scripts/build-stdlib.sh [output-dir]` | Build the `System` standard-library package and package image. |
 | `scripts/run-benchmarks.sh` | Compile and run Stark/C/Rust benchmark scenarios, writing CSV results and machine metadata. |
+| `scripts/check-benchmark-regressions.sh` | Check benchmark CSV files against a baseline and optional C/Rust ratio gates. |
 | `scripts/build-site.sh` | Generate reference/book content and build the Hugo site into `site/public/`. |
 | `scripts/check-site-links.sh` | Validate generated site links and catch escaped embedded-code regressions. |
 | `scripts/deploy-site.sh` | Build the site and deploy `site/public/` with `rsync` over SSH. |

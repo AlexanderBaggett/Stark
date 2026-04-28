@@ -101,6 +101,7 @@ internal sealed partial class MidLevelIrLowerer
         private sealed class ScopeFrame
         {
             public List<(string Name, StarkTypeSymbol Type)> Locals { get; } = [];
+            public List<(string AliasName, string? PreviousAlias, bool HadAlias)> NameAliases { get; } = [];
         }
 
         private sealed class DestructorContext : IDisposable
@@ -244,6 +245,7 @@ internal sealed partial class MidLevelIrLowerer
         private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _importedMemberCallOrdinals;
         private int _nextBlockId;
         private int _nextTempId;
+        private int _nextScopedLocalId;
 
         public FunctionMirBuilder(
             HighLevelIrFunction function,
@@ -495,6 +497,7 @@ internal sealed partial class MidLevelIrLowerer
 
             var scope = _scopes.Pop();
             EmitStorageDead(scope);
+            RestoreScopedNameAliases(scope);
         }
 
         private void LowerStatement(StarkParser.StatementContext statement)
@@ -605,13 +608,12 @@ internal sealed partial class MidLevelIrLowerer
                     : StarkTypeSymbols.Error;
             foreach (var declarator in declaration.constantDeclarators().constantDeclarator())
             {
-                var name = declarator.Identifier().GetText();
-                RegisterLocal(name, declaredType, storageClass: "local", isMutable: false, isConstant: true);
-                TrackDeclaredLocal(name, declaredType);
-                Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
-                TrackCompileTimeConstant(name, declaredType, declarator.variableInitializer());
-                LowerVariableInitializer(name, declaredType, declarator.variableInitializer());
-                InitializeRuntimeDropState(name, declaredType, isActive: true);
+                var sourceName = declarator.Identifier().GetText();
+                var localName = DeclareLocal(sourceName, declaredType, storageClass: "local", isMutable: false, isConstant: true);
+                Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
+                TrackCompileTimeConstant(sourceName, declaredType, declarator.variableInitializer());
+                LowerVariableInitializer(localName, declaredType, declarator.variableInitializer());
+                InitializeRuntimeDropState(localName, declaredType, isActive: true);
             }
         }
 
@@ -644,11 +646,11 @@ internal sealed partial class MidLevelIrLowerer
 
             foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
             {
-                var name = declarator.Identifier().GetText();
+                var sourceName = declarator.Identifier().GetText();
                 if (TryGetFixedTextStorageCapacity(declarator, out var fixedTextCapacity))
                 {
                     LowerFixedTextStorageVariableDeclaration(
-                        name,
+                        sourceName,
                         declaredType,
                         storageClass,
                         declaration.MUT() is not null,
@@ -657,15 +659,14 @@ internal sealed partial class MidLevelIrLowerer
                     continue;
                 }
 
-                RegisterLocal(name, declaredType, storageClass, declaration.MUT() is not null, isConstant: false);
-                TrackDeclaredLocal(name, declaredType);
-                Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
-                InitializeRuntimeDropState(name, declaredType, isActive: false);
+                var localName = DeclareLocal(sourceName, declaredType, storageClass, declaration.MUT() is not null, isConstant: false);
+                Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
+                InitializeRuntimeDropState(localName, declaredType, isActive: false);
 
                 if (declarator.variableInitializer() is { } initializer)
                 {
-                    LowerVariableInitializer(name, declaredType, initializer);
-                    SetRuntimeDropState(name, isActive: true);
+                    LowerVariableInitializer(localName, declaredType, initializer);
+                    SetRuntimeDropState(localName, isActive: true);
                 }
             }
         }
@@ -700,14 +701,13 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (!IsTextBufferType(declaredType))
             {
-                RegisterLocal(name, declaredType, storageClass, isMutable, isConstant: false);
-                TrackDeclaredLocal(name, declaredType);
-                Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
-                InitializeRuntimeDropState(name, declaredType, isActive: false);
+                var declaredLocalName = DeclareLocal(name, declaredType, storageClass, isMutable, isConstant: false);
+                Emit(MidLevelIrStatementKind.StorageLive, declaredLocalName, declaredLocalName, declaredType);
+                InitializeRuntimeDropState(declaredLocalName, declaredType, isActive: false);
                 if (initializer is not null)
                 {
-                    LowerVariableInitializer(name, declaredType, initializer);
-                    SetRuntimeDropState(name, isActive: true);
+                    LowerVariableInitializer(declaredLocalName, declaredType, initializer);
+                    SetRuntimeDropState(declaredLocalName, isActive: true);
                 }
 
                 return;
@@ -722,10 +722,9 @@ internal sealed partial class MidLevelIrLowerer
             Emit(MidLevelIrStatementKind.StorageLive, storageName, storageName, storageType);
             InitializeRuntimeDropState(storageName, storageType, isActive: false);
 
-            RegisterLocal(name, declaredType, storageClass, isMutable, isConstant: false);
-            TrackDeclaredLocal(name, declaredType);
-            Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
-            InitializeRuntimeDropState(name, declaredType, isActive: false);
+            var localName = DeclareLocal(name, declaredType, storageClass, isMutable, isConstant: false);
+            Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
+            InitializeRuntimeDropState(localName, declaredType, isActive: false);
 
             var emptyText = BuildFixedTextStorageValue(storageName, storageType, declaredType, capacity);
             if (emptyText is null)
@@ -734,8 +733,8 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            Emit(MidLevelIrStatementKind.Assign, $"{name}[{capacity}]", name, declaredType, new MidLevelIrUseRValue(emptyText));
-            SetRuntimeDropState(name, isActive: true);
+            Emit(MidLevelIrStatementKind.Assign, $"{name}[{capacity}]", localName, declaredType, new MidLevelIrUseRValue(emptyText));
+            SetRuntimeDropState(localName, isActive: true);
 
             if (initializer is null)
             {
@@ -750,7 +749,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (TryGetStandaloneInterpolatedTextLiteral(expression) is { } interpolatedLiteral)
             {
-                if (!LowerFixedTextStorageInterpolatedInitializer(name, declaredType, interpolatedLiteral))
+                if (!LowerFixedTextStorageInterpolatedInitializer(localName, declaredType, interpolatedLiteral))
                 {
                     MarkUnsupported(initializer, "Fixed text storage interpolation could not be lowered.");
                 }
@@ -764,7 +763,7 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            if (!LowerFixedTextStorageConcatInitializer(name, declaredType, additive))
+            if (!LowerFixedTextStorageConcatInitializer(localName, declaredType, additive))
             {
                 MarkUnsupported(initializer, "Fixed text storage concatenation could not be lowered.");
             }
@@ -1838,81 +1837,93 @@ internal sealed partial class MidLevelIrLowerer
 
         private void LowerFor(StarkParser.ForStatementContext forStatement)
         {
-            if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
-            {
-                var declaredType = TryResolveLocalDeclarationType(TemplateLocalDeclarationFacts.ForVariableKind, localForVariableDeclaration, out var publishedType)
-                    ? publishedType
-                    : ResolveTypeWithGenericSubstitution(localForVariableDeclaration.type_(), CurrentModuleName);
-                var storageClass = localForVariableDeclaration.storageClass().GetText();
+            _scopes.Push(new ScopeFrame());
+            _compileTimeConstantState.PushScope();
 
-                foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
-                {
-                    var name = declarator.Identifier().GetText();
-                    RegisterLocal(name, declaredType, storageClass, localForVariableDeclaration.MUT() is not null, isConstant: false);
-                    TrackDeclaredLocal(name, declaredType);
-                    Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
-                    InitializeRuntimeDropState(name, declaredType, isActive: false);
-                    if (declarator.variableInitializer() is { } initializer)
-                    {
-                        LowerVariableInitializer(name, declaredType, initializer);
-                        SetRuntimeDropState(name, isActive: true);
-                    }
-                }
-            }
-            else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
-            {
-                foreach (var expression in initializerExpressions.expression())
-                {
-                    LowerExpressionStatement(expression);
-                }
-            }
-
-            var conditionBlock = CreateBlock($"for_{forStatement.loopBehavior().GetText()}_cond");
-            var bodyBlock = CreateBlock("for_body");
-            var iteratorBlock = CreateBlock("for_iter");
-            var exitBlock = CreateBlock("for_exit");
-
-            EnsureGoto(conditionBlock.Id);
-
-            CurrentBlock = conditionBlock;
-            if (forStatement.forCondition() is { } condition)
-            {
-                CurrentBlock.Terminator = new MidLevelIrTerminator(
-                    MidLevelIrTerminatorKind.Branch,
-                    [bodyBlock.Id, exitBlock.Id],
-                    ConditionText: condition.expression().GetText(),
-                    Condition: LowerExpressionToOperand(condition.expression(), StarkTypeSymbols.Bool));
-            }
-            else
-            {
-                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bodyBlock.Id]);
-            }
-
-            _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
-            CurrentBlock = bodyBlock;
             try
             {
-                LowerStatement(forStatement.statement());
+                if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
+                {
+                    var declaredType = TryResolveLocalDeclarationType(TemplateLocalDeclarationFacts.ForVariableKind, localForVariableDeclaration, out var publishedType)
+                        ? publishedType
+                        : ResolveTypeWithGenericSubstitution(localForVariableDeclaration.type_(), CurrentModuleName);
+                    var storageClass = localForVariableDeclaration.storageClass().GetText();
+
+                    foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
+                    {
+                        var sourceName = declarator.Identifier().GetText();
+                        var localName = DeclareLocal(sourceName, declaredType, storageClass, localForVariableDeclaration.MUT() is not null, isConstant: false);
+                        Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
+                        InitializeRuntimeDropState(localName, declaredType, isActive: false);
+                        if (declarator.variableInitializer() is { } initializer)
+                        {
+                            LowerVariableInitializer(localName, declaredType, initializer);
+                            SetRuntimeDropState(localName, isActive: true);
+                        }
+                    }
+                }
+                else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
+                {
+                    foreach (var expression in initializerExpressions.expression())
+                    {
+                        LowerExpressionStatement(expression);
+                    }
+                }
+
+                var conditionBlock = CreateBlock($"for_{forStatement.loopBehavior().GetText()}_cond");
+                var bodyBlock = CreateBlock("for_body");
+                var iteratorBlock = CreateBlock("for_iter");
+                var exitBlock = CreateBlock("for_exit");
+
+                EnsureGoto(conditionBlock.Id);
+
+                CurrentBlock = conditionBlock;
+                if (forStatement.forCondition() is { } condition)
+                {
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Branch,
+                        [bodyBlock.Id, exitBlock.Id],
+                        ConditionText: condition.expression().GetText(),
+                        Condition: LowerExpressionToOperand(condition.expression(), StarkTypeSymbols.Bool));
+                }
+                else
+                {
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bodyBlock.Id]);
+                }
+
+                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
+                _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+                CurrentBlock = bodyBlock;
+                try
+                {
+                    LowerStatement(forStatement.statement());
+                }
+                finally
+                {
+                    _breakTargets.Pop();
+                    _loops.Pop();
+                }
+                EnsureGoto(iteratorBlock.Id);
+
+                CurrentBlock = iteratorBlock;
+                if (forStatement.forIterator() is { } iterator)
+                {
+                    foreach (var expression in iterator.expressionList().expression())
+                    {
+                        LowerExpressionStatement(expression);
+                    }
+                }
+
+                EnsureGoto(conditionBlock.Id);
+                CurrentBlock = exitBlock;
             }
             finally
             {
-                _breakTargets.Pop();
-                _loops.Pop();
+                _compileTimeConstantState.PopScope();
+                var scope = _scopes.Pop();
+                EmitStorageDead(scope);
+                RestoreScopedNameAliases(scope);
             }
-            EnsureGoto(iteratorBlock.Id);
-
-            CurrentBlock = iteratorBlock;
-            if (forStatement.forIterator() is { } iterator)
-            {
-                foreach (var expression in iterator.expressionList().expression())
-                {
-                    LowerExpressionStatement(expression);
-                }
-            }
-
-            EnsureGoto(conditionBlock.Id);
-            CurrentBlock = exitBlock;
         }
 
         private MidLevelIrOperand? LowerExpressionToOperand(StarkParser.ExpressionContext expression, StarkTypeSymbol? expectedType = null)
@@ -5287,7 +5298,7 @@ internal sealed partial class MidLevelIrLowerer
 
                 var operatorText = operators[index - 1];
                 var resultType = operatorText is "<<" or ">>"
-                    ? current.Type
+                    ? GetShiftResultType(current.Type)
                     : FindCommonType(current.Type, next.Type);
                 if (requireInteger && resultType.Kind != StarkTypeKind.Integer)
                 {
@@ -6282,6 +6293,83 @@ internal sealed partial class MidLevelIrLowerer
             RecordMoveFromOperand(operand, targetType);
         }
 
+        private string DeclareLocal(string sourceName, StarkTypeSymbol type, string storageClass, bool isMutable, bool isConstant)
+        {
+            var localName = AllocateLocalStorageName(sourceName);
+            RegisterLocal(localName, type, storageClass, isMutable, isConstant);
+            TrackDeclaredLocal(localName, type);
+            if (!string.Equals(localName, sourceName, StringComparison.Ordinal))
+            {
+                PushScopedNameAlias(sourceName, localName);
+            }
+
+            return localName;
+        }
+
+        private string AllocateLocalStorageName(string sourceName)
+        {
+            if (!_localsByName.ContainsKey(sourceName)
+                && !_parametersByName.ContainsKey(sourceName))
+            {
+                return sourceName;
+            }
+
+            var sanitized = SanitizeLocalNameHint(sourceName);
+            string candidate;
+            do
+            {
+                candidate = $"$local{_nextScopedLocalId}_{sanitized}";
+                _nextScopedLocalId++;
+            }
+            while (_localsByName.ContainsKey(candidate) || _parametersByName.ContainsKey(candidate));
+
+            return candidate;
+        }
+
+        private static string SanitizeLocalNameHint(string sourceName)
+        {
+            var chars = sourceName
+                .Select(static ch => char.IsAsciiLetterOrDigit(ch) || ch == '_' ? ch : '_')
+                .ToArray();
+            return chars.Length == 0 ? "local" : new string(chars);
+        }
+
+        private void PushScopedNameAlias(string sourceName, string localName)
+        {
+            if (_scopes.Count == 0)
+            {
+                _nameAliases[sourceName] = localName;
+                return;
+            }
+
+            var scope = _scopes.Peek();
+            if (!scope.NameAliases.Any(alias => string.Equals(alias.AliasName, sourceName, StringComparison.Ordinal)))
+            {
+                scope.NameAliases.Add((
+                    sourceName,
+                    _nameAliases.TryGetValue(sourceName, out var previousAlias) ? previousAlias : null,
+                    _nameAliases.ContainsKey(sourceName)));
+            }
+
+            _nameAliases[sourceName] = localName;
+        }
+
+        private void RestoreScopedNameAliases(ScopeFrame scope)
+        {
+            for (var index = scope.NameAliases.Count - 1; index >= 0; index--)
+            {
+                var (aliasName, previousAlias, hadAlias) = scope.NameAliases[index];
+                if (hadAlias)
+                {
+                    _nameAliases[aliasName] = previousAlias!;
+                }
+                else
+                {
+                    _nameAliases.Remove(aliasName);
+                }
+            }
+        }
+
         private void RegisterLocal(string name, StarkTypeSymbol type, string storageClass, bool isMutable, bool isConstant)
         {
             if (_localsByName.ContainsKey(name))
@@ -6651,6 +6739,13 @@ internal sealed partial class MidLevelIrLowerer
             return left.DisplayName == right.DisplayName
                 ? left
                 : StarkTypeSymbols.Error;
+        }
+
+        private static StarkTypeSymbol GetShiftResultType(StarkTypeSymbol left)
+        {
+            return left.Kind == StarkTypeKind.Integer && left.BitWidth is int bitWidth && bitWidth > 0
+                ? StarkTypeSymbols.Integer(bitWidth, isUnsigned: left.IsUnsigned)
+                : left;
         }
 
         private static bool HasSameStorageType(StarkTypeSymbol left, StarkTypeSymbol right)

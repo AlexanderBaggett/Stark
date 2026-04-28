@@ -1781,7 +1781,9 @@ turn that book outline into published website content.
   - `OwnedPathAllocation`: runtime allocator linkage plus `System.IO.Path` stdlib hot-loop overhead.
   - `OwnedTextAllocation`: mixed stdlib/runtime/codegen overhead; allocator sharing is fixed, but owned-result traffic and public `System.Text` call boundaries still dominate.
 - [x] Add a concrete optimization task for each top-tier regression
-- [x] Add whole-program or LTO-style optimization for Stark executables so stdlib calls can inline into user code. This is probably the highest-leverage fix.
+- [ ] Add whole-program or LTO-style optimization for Stark executables so stdlib calls can inline into user code. This is probably the highest-leverage fix.
+  - [x] add the first executable ThinLTO wiring
+  - [ ] re-enable executable ThinLTO after fixing the packaged `System.Collections` grow/move/drop runtime spin
 - [x] Add direct Unicode integer formatting instead of ASCII formatting followed by full UTF-8 decode.
 - [x] Add an ASCII-fast path for TryConvertAsciiToUnicode, especially for known ASCII sources.
 - [x] Lower text concat/copy operations to llvm.memcpy where source/destination are contiguous.
@@ -1875,73 +1877,157 @@ expected to affect runtime speed. Optimizations must preserve `-O0` and `-Og`
 debuggability unless a task explicitly says otherwise. 
 
 - [ ] Add an SSA value-fact model artifact
-  - [ ] introduce a compiler artifact for per-function SSA facts, such as `SsaValueFactModel` or equivalent
+  - [x] introduce a compiler artifact for per-function SSA facts, such as `SsaValueFactModel` or equivalent
   - [ ] represent integer ranges, known bits, boolean constants, known-null/non-null pointers, known pointer alignment, and known slice/text lengths
+    - [x] represent integer ranges from source types, constants, simple arithmetic, conversions, and phis
+    - [x] represent boolean constants proven from simple range comparisons
+    - [x] represent known bits for integer singleton constants
+    - [x] represent known zero bits for nonnegative bounded integer ranges
+    - [x] represent known-null and known-non-null facts for obvious null/address values
+    - [x] represent exact fixed-array slice lengths and direct text-slice length ranges
+    - [x] represent exact text literal lengths for `ascii` and `unicode` constants
+    - [x] infer known pointer alignment beyond the field reserved in the fact model
+    - [x] infer slice/text length ranges beyond fixed arrays and direct text-slice lengths
   - [ ] include block-entry and block-exit fact sets so facts learned from branches can be scoped correctly
-  - [ ] make the fact lattice explicit: unknown, known fact, conflicting/overdefined fact
+    - [x] include branch-derived block-entry integer range facts for simple comparison edges
+  - [x] make the fact lattice explicit: unknown, known fact, conflicting/overdefined fact
   - [ ] add diagnostic/log hooks so optimization traces can explain which facts were learned or rejected
   - [ ] add unit tests for fact joining at phis, branch targets, loops, and unreachable blocks
+    - [x] add tests for type-derived ranges, proven comparisons, and phi range joins
+    - [x] add tests for dependent range propagation after phi joins
+    - [x] add tests for fixed-array slice lengths and direct text-slice length ranges
+    - [x] add tests for branch target entry facts
 
 - [ ] Add an SSA value-range and proof-propagation pass
-  - [ ] add a `value-facts` pass after `const-prop` and before `lower-abi`
-  - [ ] run it at `-O1`, `-O2`, and `-O3`; skip fact-based rewrites at `-O0` and `-Og`
+  - [x] add a `value-facts` pass after `const-prop` and before `lower-abi`
+  - [x] run it at `-O1`, `-O2`, and `-O3`; skip fact-based rewrites at `-O0` and `-Og`
   - [ ] propagate source-level integer range constraints through `add`, `sub`, `mul`, shifts, bitwise operations, comparisons, casts, and phis
+    - [x] propagate integer facts through dependent SSA instructions after phi joins reach a fixed point
+    - [x] fix MIR lowering so shift expressions do not keep stale constrained left-operand ranges as their result type
+    - [x] propagate conservative ranges for bounded shifts and nonnegative bitwise `and`/`or`/`xor`
+    - [x] propagate known zero/one bits through bitwise `and`/`or`/`xor` and bitwise-not
+    - [x] propagate known zero/one bits through singleton left/right shifts
+    - [x] preserve known zero/one bits through same-width and truncating integer conversions
+    - [x] prove equality and inequality comparisons from conflicting known zero/one bits
+    - [x] propagate conservative ranges for wrapping arithmetic when the mathematical range fits the result type
+    - [x] propagate saturating arithmetic result ranges by clamping endpoint and multiplication-candidate ranges
   - [ ] prove tighter result ranges for non-wrapping arithmetic where Stark's ordinary arithmetic makes overflow undefined
   - [ ] preserve separate handling for wrapping and saturating arithmetic so proof facts do not erase required semantics
+    - [x] keep wrapping arithmetic facts conservative when operand ranges may wrap
   - [ ] propagate known slice length, text length, and fixed-array length facts through slice/text construction and indexing operations
+    - [x] propagate fixed-array lengths through slice construction
+    - [x] propagate direct text-slice length operand ranges through text construction
+    - [x] propagate exact text literal lengths through `System.Text.AsciiLength` and `System.Text.UnicodeLength`
   - [ ] propagate branch facts such as `x < n` on the true edge and `x >= n` on the false edge
+    - [x] propagate simple integer comparison range facts onto branch target entry facts
   - [ ] propagate pointer facts from null checks, equality checks, borrow-derived non-null values, and address-of operations
+    - [x] propagate raw-pointer nullability facts from `== null` and `!= null` branch edges
+    - [x] propagate raw-pointer non-null facts from equality edges when either side is already known non-null
   - [ ] add tests showing narrower ranges after branches, phis, casts, arithmetic, and loops
+    - [x] add tests for bitwise and shift range propagation
+    - [x] add tests for branch-target range facts
+    - [x] add branch-pruning regression coverage for bitwise-derived ranges
+    - [x] add branch-pruning regression coverage for known-bits-derived masked values
+    - [x] add branch-pruning regression coverage for known-bits-derived shifted masks
+    - [x] add branch-pruning regression coverage for known-bits-derived impossible equality
+    - [x] add branch-pruning regression coverage for nullability-derived raw pointer facts
+    - [x] add branch-pruning regression coverage for pointer-equality-derived raw pointer facts
+    - [x] add branch-pruning regression coverage for text-literal length facts
+    - [x] add branch-pruning regression coverage for explicit wrapping and saturating arithmetic facts
 
-- [ ] Add fact-driven branch and switch pruning
-  - [ ] add a rewrite pass after `value-facts` that consumes the SSA fact artifact
-  - [ ] fold comparisons proven always true or always false
-  - [ ] rewrite branches with proven conditions into gotos
-  - [ ] remove switch cases whose match value is outside the proven input range
-  - [ ] rewrite switches with one reachable case into direct gotos or simple branches
-  - [ ] remove blocks that become unreachable, then rerun SSA cleanup and constant propagation
-  - [ ] keep branch-weight metadata valid after deleting or merging edges
-  - [ ] add tests proving dead switch arms, impossible branches, and unreachable phis are removed
+- [x] Add fact-driven branch and switch pruning
+  - [x] add a rewrite pass after `value-facts` that consumes the SSA fact artifact
+  - [x] fold comparisons proven always true or always false
+  - [x] rewrite branches with proven conditions into gotos
+  - [x] remove switch cases whose match value is outside the proven input range
+  - [x] rewrite switches with one reachable case into direct gotos or simple branches
+  - [x] remove blocks that become unreachable, then rerun SSA cleanup and constant propagation
+  - [x] keep branch-weight metadata valid after deleting or merging edges
+  - [x] add tests proving dead switch arms, impossible branches, and unreachable phis are removed
 
 - [ ] Feed value facts into LLVM emission
-  - [ ] teach LLVM emission to consume the SSA value-fact artifact instead of relying only on local type-based range queries
+  - [x] teach LLVM emission to consume the SSA value-fact artifact instead of relying only on local type-based range queries
   - [ ] emit stronger `range` metadata for loads and returns when propagated facts are narrower than source types
+    - [x] emit narrower return `range(...)` attributes from propagated SSA return-value facts
+    - [x] prefer propagated SSA value facts when emitting `!range` metadata for load and call results
   - [ ] emit stronger `nuw`, `nsw`, and `exact` flags on arithmetic, division, and shifts when facts prove the contracts
+    - [x] use propagated integer ranges when deciding integer no-wrap/exact flags
   - [ ] emit stronger `inbounds`/`nuw` GEP flags for fixed-array, slice, text, and aggregate element accesses when index facts prove object bounds
-  - [ ] emit `llvm.assume` for facts that are valuable to LLVM but not otherwise visible in IR
+    - [x] use propagated integer ranges in existing fixed-array, slice, text, and aggregate index proofs
+    - [x] use propagated slice/text length facts, including phi-joined lower bounds, in slice and text GEP proofs
+  - [x] emit `llvm.assume` for facts that are valuable to LLVM but not otherwise visible in IR
   - [ ] add LLVM tests that compare before/after IR for range metadata, arithmetic flags, GEP flags, and assumptions
+    - [x] add LLVM test for propagated phi range producing stronger no-wrap flags
+    - [x] add LLVM test for propagated value facts producing narrower return range attributes
+    - [x] add LLVM tests for branch-refined integer range and raw-pointer `llvm.assume` facts
+    - [x] add LLVM tests for pointer-alignment facts and arbitrary raw pointers without invented alignment
+    - [x] add LLVM test for propagated slice/text length facts feeding GEP flags
 
 - [ ] Add direct-call devirtualization for known function pointers
-  - [ ] add an SSA rewrite pass after `cleanup-ssa` and before inlining
-  - [ ] detect `SsaIndirectCallRValue` targets that are directly `SsaFunctionAddressValue`
-  - [ ] detect targets loaded through phis where every reachable incoming value is the same function address
-  - [ ] rewrite proven indirect calls into `SsaCallRValue` direct calls
-  - [ ] preserve address-taken function facts when a function pointer value still escapes or is stored
-  - [ ] remove address-taken function facts when devirtualization eliminates the only address use
-  - [ ] add tests for direct fnptr calls, lambda calls, phi-joined identical targets, and non-devirtualized mixed targets
+  - [x] add a standalone SSA rewrite pass after cleanup/constant propagation and before `inline-ssa`
+  - [x] move the direct-call rewrite out of cleanup/constant propagation once standalone pass ordering became useful
+  - [x] detect `SsaIndirectCallRValue` targets that are directly `SsaFunctionAddressValue`
+  - [x] detect targets loaded through phis where every reachable incoming value is the same function address
+  - [x] rewrite proven indirect calls into `SsaCallRValue` direct calls
+  - [x] preserve indirect-call target and argument operands through SSA cleanup use tracking
+  - [x] preserve address-taken function facts when a function pointer value still escapes or is stored
+  - [x] remove address-taken function facts when devirtualization eliminates the only address use
+  - [x] add tests for direct fnptr calls, lambda calls, phi-joined identical targets, and non-devirtualized mixed targets
+    - [x] direct fnptr calls
+    - [x] phi-joined identical targets
+    - [x] non-devirtualized mixed targets
+    - [x] lambda calls
+  - [x] add a Stark/C/Rust microbenchmark for known function-pointer devirtualization
 
 - [ ] Add Stark-level direct-call inlining
-  - [ ] add an `inline-ssa` pass after devirtualization and before cleanup/const propagation reruns
-  - [ ] inline small non-recursive module-private functions with available SSA bodies
+  - [x] add an `inline-ssa` pass after devirtualization and before cleanup/const propagation reruns
+  - [x] implement a first conservative inliner for small single-block expression bodies already marked `InlinePreference.Inline`
+  - [x] inline small non-recursive module-private functions with available SSA bodies
   - [ ] inline wrapper-like functions identified by `FunctionOptimizationSummary`
+    - [x] inline direct-call forwarding wrappers and short forwarding chains
   - [ ] inline `law` and `finite law` helpers more aggressively than ordinary functions
-  - [ ] inline monomorphized generic helpers when the concrete body is owned by the current module or available from a package image
+    - [x] inline small public same-module `law` and `finite law` helpers under a larger scalar-only single-block budget
+  - [x] inline monomorphized generic helpers when the concrete body is owned by the current module or available from a package image
   - [ ] clone and inline call sites with constant arguments when the clone unlocks branch pruning, range narrowing, or aggregate scalarization
-  - [ ] refuse inlining for `ffi`, `cold`, explicitly `noinline`, recursive, or unsupported direct-codegen bodies
-  - [ ] rerun SSA cleanup, constant propagation, value-facts, and branch pruning after inlining
-  - [ ] add tests showing abstraction wrappers disappear from optimized SSA and LLVM
-  - [ ] add benchmarks comparing hand-written monomorphic code to equivalent wrapper/generic/law code
+  - [x] refuse inlining for `ffi`, `cold`, explicitly `noinline`, recursive, or unsupported direct-codegen bodies in the first pass
+  - [x] rerun SSA cleanup and constant propagation after inlining
+  - [x] rerun value-facts and branch pruning after inlining once those passes exist
+  - [x] add tests showing small direct-call helpers disappear from optimized SSA and LLVM
+  - [x] add a Stark/C/Rust microbenchmark for direct-call inlining
+  - [x] add benchmarks comparing hand-written monomorphic code to equivalent wrapper/generic/law code
 
 - [ ] Add alias-aware memory optimization
   - [ ] add a memory fact pass after inlining and cleanup
+    - [x] add a first conservative stack-scalar memory optimization pass after branch pruning and before ABI/LLVM lowering
   - [ ] partition memory by stack local, global, field path, aggregate lane, borrow parameter, raw pointer, and unknown memory
+    - [x] add same-block scalar global tracking with calls, indirect stores, and memory copies as conservative barriers
   - [ ] use ownership validation, borrow kinds, `noalias`, parameter capture summaries, and function memory-effect summaries to decide which operations may alias
+    - [x] use function effect summaries so pure/no-sync direct calls preserve scalar global facts
   - [ ] treat `law`/readonly calls as non-barriers for memory they cannot read or write
+    - [x] treat pure/no-sync direct calls, including `law` calls, as non-barriers for scalar global memory facts
+    - [x] preserve scalar global facts across readonly argument-memory calls while keeping stores that such calls may observe through global or pointer-backed arguments
   - [ ] eliminate redundant loads when no intervening write can affect the loaded location
+    - [x] eliminate redundant non-escaping stack-scalar local loads within a basic block
+    - [x] forward non-escaping stack-scalar locals across simple single-predecessor block edges
+    - [x] eliminate repeated same-block scalar global loads when no global write barrier intervenes
+    - [x] forward scalar global facts across simple single-predecessor block edges
   - [ ] forward stored scalar values to later loads when the local/field/lane is proven unchanged
+    - [x] forward stored stack-scalar values to later same-block local loads
+    - [x] forward direct same-block scalar global stores to later loads of the same global
   - [ ] remove stores overwritten before any possible read
+    - [x] remove same-block overwritten stores for non-escaping stack scalar locals after forwarding eligible loads
+    - [x] remove dead stores to non-escaping stack scalar locals after load forwarding when no later load can observe them
+    - [x] remove same-block overwritten stores for scalar globals when no read or global-memory barrier can observe the earlier write
   - [ ] keep raw-pointer and FFI operations conservative unless facts prove isolation
+    - [x] keep address-taken and slice-backed local storage conservative in the first pass
   - [ ] add tests for redundant local loads, field loads, readonly calls, unknown raw-pointer barriers, and dead stores
+    - [x] add SSA regression coverage for stack-scalar forwarding, single-predecessor forwarding, overwritten stack-scalar stores, address-taken locals, and join-block conservatism
+    - [x] add SSA regression coverage for same-block scalar global forwarding and call-barrier conservatism
+    - [x] add SSA regression coverage for single-predecessor scalar global forwarding and join-block conservatism
+    - [x] add SSA regression coverage for overwritten scalar global stores and call-barrier preservation
+    - [x] add SSA and pipeline regression coverage for preserving scalar global facts across pure direct calls
+    - [x] add SSA regression coverage for readonly argument-memory calls that can and cannot observe pending scalar global stores
+    - [x] add a Stark/C/Rust microbenchmark for scalar global forwarding across pure direct calls
 
 - [ ] Add scalar replacement of aggregates before ABI lowering
   - [ ] add an SROA pass after inlining, memory optimization, and cleanup
@@ -1993,10 +2079,15 @@ debuggability unless a task explicitly says otherwise.
 
 - [ ] Add branch shaping and predication
   - [ ] implement jump threading from proven branch facts
+    - [x] thread proven edges through side-effect-free branch-only blocks without rewriting phi edges
   - [ ] merge diamonds into `select` when both arms are pure, cheap, and branch misprediction is likely more expensive than executing both arms
+    - [x] add late SSA branch shaping that predicatizes simple scalar return diamonds into LLVM `select`
   - [ ] keep branches when either arm may trap, allocate, write memory, call FFI, or contain cold error handling
+    - [x] keep source-weighted branches intact so branch-weight metadata is preserved
   - [ ] normalize boolean and comparison chains into backend-friendly forms before LLVM emission
   - [ ] add tests for branchless lowering, preserved cold branches, and fewer hot-path branches
+    - [x] add SSA, LLVM, and pipeline tests for branchless scalar return lowering and pass ordering
+    - [x] add SSA regression coverage for jump threading through branch-only blocks
 
 - [ ] Add tail-call and recursion optimization
   - [ ] convert self-tail-recursive functions into loops before SSA cleanup
@@ -2017,14 +2108,18 @@ debuggability unless a task explicitly says otherwise.
   - [ ] clone generic functions when concrete type facts allow smaller or faster bodies
   - [ ] add SpecConstr-style specialization for recursive functions over known enum/state shapes
   - [ ] erase doctrine and trait abstraction overhead when constraint resolution is compile-time complete
-  - [ ] add tests comparing optimized generic abstractions to hand-written monomorphic code
+  - [x] add tests comparing optimized generic abstractions to hand-written monomorphic code
 
 - [ ] Add rule-based optimization for pure and `law` code
   - [ ] define a phase-controlled rewrite rule format for selected `law` functions and standard-library combinators
   - [ ] support arithmetic, bitwise, text, slice, and future iterator/view rewrites
+    - [x] fold integer arithmetic and bitwise identity operations during SSA cleanup
+    - [x] fold integer absorbing constants and same-operand bitwise/subtraction identities during SSA cleanup
   - [ ] require each rewrite rule to declare side-effect, overflow, range, and alias preconditions
   - [ ] emit optimizer diagnostics for rule firings, missed firings, and inhibited rewrites
   - [ ] add benchmark-backed tests for intermediate-structure elimination and algebraic simplification
+    - [x] add a Stark/C/Rust microbenchmark for integer algebraic identity simplification
+    - [x] extend the algebraic identity benchmark to cover absorbing constants and same-operand identities
 
 - [ ] Add equality-saturation experiments for selected hot kernels
   - [ ] build e-graph rewrite sets for arithmetic, bitwise, and pure `law` expressions
@@ -2033,8 +2128,20 @@ debuggability unless a task explicitly says otherwise.
   - [ ] compare extracted code against conventional GVN, PRE, reassociation, and LLVM-only optimization on representative workloads
 
 - [ ] Add optimization benchmark gates against Rust and C
+  - [x] add a scriptable benchmark regression gate for current CSV vs baseline CSV and optional same-run Stark/C/Rust ratios
   - [ ] add a microbenchmark for every new optimizer pass before enabling it by default at `-O2` or `-O3`
+    - [x] add a Stark/C/Rust microbenchmark for the first `inline-ssa` pass
+    - [x] add a Stark/C/Rust microbenchmark for stack-scalar load forwarding
+    - [x] add a Stark/C/Rust microbenchmark for bitwise-derived range pruning
+    - [x] add a Stark/C/Rust microbenchmark for algebraic identity simplification
+    - [x] add a Stark/C/Rust microbenchmark for nullability-derived branch pruning
+    - [x] add a Stark/C/Rust microbenchmark for text-literal length branch pruning
+    - [x] add a Stark/C/Rust microbenchmark for explicit wrapping and saturating arithmetic range pruning
+    - [x] add a Stark/C/Rust microbenchmark for branch-select predication
+    - [x] add Stark/C/Rust microbenchmarks for hand-written, law-wrapper, and generic-wrapper abstraction parity
   - [ ] compare each benchmark against idiomatic Rust, idiomatic C, and hand-tuned C where appropriate
-  - [ ] track whether each pass improves runtime, code size, compile time, and LLVM optimization time
+  - [x] support runtime or compile-time metric checks from the benchmark CSV gate
+  - [x] emit benchmark executable size and support `binary_bytes` baseline gates
+  - [x] extend benchmark gates to track LLVM optimization time
   - [ ] require regressions against Rust to be triaged before marking a pass complete
   - [ ] document cases where Stark beats C because range, ownership, alias, law, or closed-world facts are stronger than C can express

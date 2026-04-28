@@ -61,7 +61,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.DoesNotContain("getelementptr inbounds nuw i8, ptr null, i64 0", llvm);
         Assert.DoesNotContain("ptrtoint", llvm);
         Assert.DoesNotContain("inttoptr", llvm);
-        Assert.Contains("ret ptr null", llvm);
+        Assert.Contains("ret ptr", llvm);
     }
 
     [Fact]

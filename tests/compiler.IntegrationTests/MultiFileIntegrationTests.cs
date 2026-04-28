@@ -419,7 +419,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Globals
 
-                public const i32[-2147483648 2147483647] Answer = 7;
+                public const Answer = 7;
                 """);
 
             var buildStdout = new StringWriter();
@@ -592,7 +592,7 @@ public sealed class MultiFileIntegrationTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-o", outputPath],
+                [appPath, "--emit-exe", "-I", Path.Combine(repositoryRoot, "stdlib", "src"), "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -747,7 +747,7 @@ public sealed class MultiFileIntegrationTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-o", outputPath],
+                [appPath, "--emit-exe", "-I", Path.Combine(repositoryRoot, "stdlib", "src"), "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

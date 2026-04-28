@@ -2031,7 +2031,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return false;
         }
 
-        if (!string.Equals(CurrentModuleName, "System.Text", StringComparison.Ordinal)
+        if (!IsSystemTextBuiltinHostModule(CurrentModuleName)
             && builtinKind is SystemTextBuiltinKind.TryConcatAscii
                 or SystemTextBuiltinKind.TryConcatUnicode
                 or SystemTextBuiltinKind.TryConvertAsciiToUnicode)
@@ -3269,7 +3269,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private bool UsesSystemTextConcatBuiltin(IEnumerable<TypedFunctionSignature> signatures)
     {
-        return string.Equals(CurrentModuleName, "System.Text", StringComparison.Ordinal)
+        return IsSystemTextBuiltinHostModule(CurrentModuleName)
             && signatures.Any(static signature =>
                 string.Equals(signature.Name, "TryConcatAscii", StringComparison.Ordinal)
                 || string.Equals(signature.Name, "TryConcatUnicode", StringComparison.Ordinal));
@@ -3498,7 +3498,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
         else
         {
-            if (!string.Equals(moduleName, "System.Text", StringComparison.Ordinal))
+            if (!IsSystemTextBuiltinHostModule(moduleName))
             {
                 return false;
             }
@@ -3526,6 +3526,13 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             or "AsciiLength" or "UnicodeLength"
             or "TryConcatAscii" or "TryConcatUnicode"
             or "TryConvertAsciiToUnicode";
+    }
+
+    private static bool IsSystemTextBuiltinHostModule(string moduleName)
+    {
+        return string.Equals(moduleName, "System.Text", StringComparison.Ordinal)
+            || string.Equals(moduleName, "System.Runtime.Platform.Linux", StringComparison.Ordinal)
+            || string.Equals(moduleName, "System.Runtime.Platform.Windows", StringComparison.Ordinal);
     }
 
     private static bool TryGetSystemMathBuiltin(

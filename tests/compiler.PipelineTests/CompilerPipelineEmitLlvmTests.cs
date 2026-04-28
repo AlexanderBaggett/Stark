@@ -243,7 +243,7 @@ public sealed class CompilerPipelineEmitLlvmTests
 
 
     [Fact]
-    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawEmitLawClonesWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+    public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-llvm-pipeline-");
         var manifestPath = Path.Combine(tempDirectory.FullName, "libMath.starkpkg.json");
@@ -328,15 +328,20 @@ public sealed class CompilerPipelineEmitLlvmTests
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
-            var cloneSymbol = $"__stark_law_clone_{function.SymbolName}";
-            Assert.Contains($"define internal dso_local fastcc noundef i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
-            Assert.Contains($"call fastcc i32 @{cloneSymbol}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain($"__stark_law_clone_{function.SymbolName}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain("call fastcc", llvmModule.Text, StringComparison.Ordinal);
             Assert.True(
                 System.Text.RegularExpressions.Regex.IsMatch(
                     llvmModule.Text,
                     $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*",
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant),
                 $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvmModule.Text,
+                    $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*memory\(none\)[^\r\n]*alwaysinline",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                $"Expected imported specialization '{function.SymbolName}' to retain finite-law LLVM attributes.");
         }
         finally
         {

@@ -55,6 +55,7 @@ public sealed class CompilerCliTests
         Assert.Contains("--native-library <name>", text);
         Assert.Contains("--native-pkg-config <name>", text);
         Assert.Contains("--save-temps <dir>", text);
+        Assert.Contains("--toolchain-metrics <path>", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
         Assert.Contains("--log-verbosity <normal|verbose>", text);
@@ -851,6 +852,7 @@ public sealed class CompilerCliTests
 
             var clangLog = await File.ReadAllTextAsync(clangLogPath);
             Assert.Contains("-O0", clangLog, StringComparison.Ordinal);
+            Assert.DoesNotContain("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
         }
         finally
         {
@@ -919,6 +921,8 @@ public sealed class CompilerCliTests
 
             var clangLog = await File.ReadAllTextAsync(clangLogPath);
             Assert.Contains("-Og", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-Xclang", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
         }
         finally
         {
@@ -1726,6 +1730,7 @@ public sealed class CompilerCliTests
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
         var librarySearchPath = Path.Combine(tempDirectory.FullName, "native-libs");
         var tempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        var metricsPath = Path.Combine(tempDirectory.FullName, "toolchain.metrics");
         Directory.CreateDirectory(librarySearchPath);
 
         var linkerLogPath = Path.Combine(tempDirectory.FullName, "linker.log");
@@ -1754,7 +1759,8 @@ public sealed class CompilerCliTests
                     "--linker", linkerPath,
                     "-L", librarySearchPath,
                     "--link-arg=-Wl,--gc-sections",
-                    "--save-temps", tempsPath
+                    "--save-temps", tempsPath,
+                    "--toolchain-metrics", metricsPath
                 ],
                 new StringReader(string.Empty),
                 stdout,
@@ -1766,11 +1772,18 @@ public sealed class CompilerCliTests
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(Path.Combine(tempsPath, "root.ll")));
             Assert.True(File.Exists(Path.Combine(tempsPath, OperatingSystem.IsWindows() ? "root.obj" : "root.o")));
+            Assert.True(File.Exists(metricsPath));
 
             var linkerLog = await File.ReadAllTextAsync(linkerLogPath);
             Assert.Contains("-L", linkerLog);
             Assert.Contains(Path.GetFullPath(librarySearchPath), linkerLog);
             Assert.Contains("-Wl,--gc-sections", linkerLog);
+
+            var metrics = await File.ReadAllTextAsync(metricsPath);
+            Assert.Contains("timing_unit=microseconds", metrics);
+            Assert.Contains("llvm_object_us=", metrics);
+            Assert.Contains("link_us=", metrics);
+            Assert.Contains("toolchain_us=", metrics);
         }
         finally
         {

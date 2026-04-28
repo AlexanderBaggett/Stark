@@ -1,6 +1,12 @@
 import System.Runtime.Buffer
-import System.Text
 module System.Runtime.Platform.Windows
+
+internal finite law ascii AsciiView(Ascii source);
+internal finite law rawptr<i8[-128 127]> AsciiData(ascii source);
+internal finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+internal finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
+internal finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+internal finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
 internal ffi fn rawmutptr<i8[-128 127]> GetStdHandle(i32[-2147483648 2147483647] nStdHandle);
 internal ffi fn i32[-2147483648 2147483647] WriteFile(rawptr<i8[-128 127]> hFile, rawptr<i8[-128 127]> buffer, i32[-2147483648 2147483647] bytesToWrite, rawmutptr<i32[-2147483648 2147483647]> bytesWritten, rawptr<i8[-128 127]> overlapped);
@@ -802,9 +808,9 @@ internal fn bool TryDecodeUtf8PathToWide(
         return false;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.AsciiLength(path);
+    stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(path);
     stack ascii fullPath = path[0, length];
-    stack rawptr<i8[-128 127]> data = System.Text.AsciiData(fullPath);
+    stack rawptr<i8[-128 127]> data = AsciiData(fullPath);
     if (length > 0 && data == null) {
         return false;
     }
@@ -1213,9 +1219,9 @@ internal fn i32[-2147483648 2147483647] FlushEncodedWriteBuffer(rawptr<i8[-128 1
 }
 
 internal fn i32[-2147483648 2147483647] WriteAsciiToHandle(rawptr<i8[-128 127]> handle, ascii text) {
-    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.AsciiLength(text);
+    stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(text);
     stack ascii view = text[0, length];
-    return WriteBufferToHandle(handle, System.Text.AsciiData(view), length);
+    return WriteBufferToHandle(handle, AsciiData(view), length);
 }
 
 internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]> handle, unicode text) {
@@ -1223,7 +1229,7 @@ internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]
         return -1;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.UnicodeLength(text);
+    stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(text);
     if (length <= 0) {
         return 0;
     }
@@ -1233,7 +1239,7 @@ internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]
 
     while willexit (index < length) {
         stack unicode unit = text[index, 1];
-        stack rawptr<i32[-2147483648 2147483647]> data = System.Text.UnicodeData(unit);
+        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(unit);
         stack i32[-2147483648 2147483647] codePoint = *data;
         stack i64[-9223372036854775808 9223372036854775807] required = Utf8EncodedLength(codePoint);
 
@@ -1358,7 +1364,7 @@ internal finite law ascii PathSeparator() {
 }
 
 internal finite law bool IsDirectorySeparator(ascii value) {
-    stack i8[-128 127] unit = *System.Text.AsciiData(value);
+    stack i8[-128 127] unit = *AsciiData(value);
     return unit == (i8[-128 127])47 || unit == (i8[-128 127])92;
 }
 
@@ -1568,18 +1574,18 @@ internal fn bool TryBuildWindowsDirectorySearchPath(rawmutptr<i16[-32768 32767]>
         Length = 0,
         Capacity = pathBuffer.Writable()
     };
-    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.AsciiLength(path);
+    stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(path);
     stack ascii fullPath = path[0, length];
     stack mut ascii suffix = "\\*";
     if (length > 0 && IsDirectorySeparator(path[length - 1, 1])) {
         suffix = "*";
     }
 
-    if (!System.Text.TryConcatAscii(&searchPath, fullPath, suffix)) {
+    if (!TryConcatAscii(&searchPath, fullPath, suffix)) {
         return false;
     }
 
-    return TryBuildWindowsWidePath(destination, capacity, System.Text.AsciiView(searchPath));
+    return TryBuildWindowsWidePath(destination, capacity, AsciiView(searchPath));
 }
 
 internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path) {

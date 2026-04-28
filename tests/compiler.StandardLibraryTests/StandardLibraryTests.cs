@@ -500,7 +500,7 @@ public class StandardLibraryTestSuite
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
-            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, "hello\nα");
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, "hello\nbytes\nα");
             Assert.Equal(0, execution.ExitCode);
             Assert.Equal(string.Empty, execution.Stdout);
             Assert.Equal(string.Empty, execution.Stderr);
@@ -2271,8 +2271,11 @@ public class StandardLibraryTestSuite
         Assert.Equal("System.IO.IOError", ioStatus.OrderedFields[1].Type.DisplayName);
 
         var ioResult = Assert.Single(
-            layouts,
-            static layout => layout.Key.StartsWith("System.IO.IOResult<", StringComparison.Ordinal)).Value;
+            layouts.Values,
+            static layout =>
+                layout.EnumName.StartsWith("System.IO.IOResult<", StringComparison.Ordinal)
+                && layout.OrderedFields.Count >= 2
+                && layout.OrderedFields[1].Type.DisplayName == "i32");
         AssertCompactTag(ioResult, bitWidth: 8, maxTagValue: 1);
         Assert.Equal(["$tag", "$Ok_0", "$Err_0"], ioResult.OrderedFields.Select(static field => field.Name).ToArray());
         Assert.Equal("i32", ioResult.OrderedFields[1].Type.DisplayName);
@@ -2288,8 +2291,11 @@ public class StandardLibraryTestSuite
         Assert.Equal("System.Memory.MemoryError", memoryStatus.OrderedFields[1].Type.DisplayName);
 
         var memoryResult = Assert.Single(
-            layouts,
-            static layout => layout.Key.StartsWith("System.Memory.MemoryResult<", StringComparison.Ordinal)).Value;
+            layouts.Values,
+            static layout =>
+                layout.EnumName.StartsWith("System.Memory.MemoryResult<", StringComparison.Ordinal)
+                && layout.OrderedFields.Count >= 2
+                && layout.OrderedFields[1].Type.DisplayName == "i32");
         AssertCompactTag(memoryResult, bitWidth: 8, maxTagValue: 1);
         Assert.Equal(["$tag", "$Ok_0", "$Err_0"], memoryResult.OrderedFields.Select(static field => field.Name).ToArray());
         Assert.Equal("i32", memoryResult.OrderedFields[1].Type.DisplayName);

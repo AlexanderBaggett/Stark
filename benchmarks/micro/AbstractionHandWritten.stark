@@ -1,0 +1,21 @@
+import System.Process
+module Benchmarks.Micro.AbstractionHandWritten
+
+finite law i64[min max] Score(i64[min max] value, i64[min max] salt) {
+    return (((value * 31) + salt) ^ (value >> 3)) % 1000003;
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
+
+    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+        total += Score((i64[min max])i, total % 97);
+        total = total % 1000000007;
+    }
+
+    if (total <= 0) {
+        return 1;
+    }
+
+    return 0;
+}

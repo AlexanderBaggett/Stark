@@ -61,7 +61,10 @@ internal static class FunctionOverloadFacts
             return declaration.Name;
         }
 
-        return GetResolvedLocalName(syntaxModel, declaration.Name, BuildOverloadKey(declaration.Function.Parameters));
+        var overloadKey = string.IsNullOrEmpty(declaration.Function.PublishedOverloadKey)
+            ? BuildOverloadKey(declaration.Function.Parameters)
+            : declaration.Function.PublishedOverloadKey;
+        return GetResolvedLocalName(syntaxModel, declaration.Name, overloadKey);
     }
 
     public static string GetResolvedLocalName(

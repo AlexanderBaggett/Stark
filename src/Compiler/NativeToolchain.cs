@@ -7,7 +7,10 @@ internal sealed record NativeToolchainResult(
     bool Succeeded,
     string OutputPath,
     string StandardOutput,
-    string StandardError);
+    string StandardError)
+{
+    public TimeSpan Duration { get; init; } = TimeSpan.Zero;
+}
 
 internal static class NativeToolchain
 {
@@ -150,17 +153,20 @@ internal static class NativeToolchain
         startInfo.ArgumentList.Add("-o");
         startInfo.ArgumentList.Add(fullOutputPath);
 
+        var stopwatch = Stopwatch.StartNew();
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start clang.");
         var standardOutput = process.StandardOutput.ReadToEnd();
         var standardError = process.StandardError.ReadToEnd();
         process.WaitForExit();
+        stopwatch.Stop();
 
         return new NativeToolchainResult(
             process.ExitCode == 0,
             fullOutputPath,
             standardOutput,
-            standardError);
+            standardError)
+        { Duration = stopwatch.Elapsed };
     }
 
     public static NativeToolchainResult EmitExecutable(
@@ -285,23 +291,27 @@ internal static class NativeToolchain
             }
 
             AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, optimizationLevel);
             AppendCompileLtoArguments(startInfo.ArgumentList, compileOnly && enableLto);
             AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
             startInfo.ArgumentList.Add(fullOutputPath);
 
+            var stopwatch = Stopwatch.StartNew();
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start clang.");
             var standardOutput = process.StandardOutput.ReadToEnd();
             var standardError = process.StandardError.ReadToEnd();
             process.WaitForExit();
+            stopwatch.Stop();
 
             return new NativeToolchainResult(
                 process.ExitCode == 0,
                 fullOutputPath,
                 standardOutput,
-                standardError);
+                standardError)
+            { Duration = stopwatch.Elapsed };
         }
         finally
         {
@@ -444,17 +454,20 @@ internal static class NativeToolchain
             startInfo.ArgumentList.Add(argument);
         }
 
+        var stopwatch = Stopwatch.StartNew();
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Failed to start {toolName}.");
         var standardOutput = process.StandardOutput.ReadToEnd();
         var standardError = process.StandardError.ReadToEnd();
         process.WaitForExit();
+        stopwatch.Stop();
 
         return new NativeToolchainResult(
             process.ExitCode == 0,
             fullOutputPath,
             standardOutput,
-            standardError);
+            standardError)
+        { Duration = stopwatch.Elapsed };
     }
 
     private static string? ExtractQuotedValue(string line)
@@ -573,6 +586,22 @@ internal static class NativeToolchain
             CompilerOptimizationLevel.O2 => "-O2",
             _ => "-O3"
         });
+    }
+
+    private static void AppendStarkLlvmIrCompileStabilityArguments(
+        ICollection<string> arguments,
+        CompilerOptimizationLevel optimizationLevel)
+    {
+        if (optimizationLevel == CompilerOptimizationLevel.O0)
+        {
+            return;
+        }
+
+        // Stark runs its own high-level optimization pipeline before LLVM emission.
+        // Let clang lower the IR to native code, but avoid known pathological LLVM
+        // optimizer behavior on generated stdlib modules such as System.FileSystem.
+        arguments.Add("-Xclang");
+        arguments.Add("-disable-llvm-passes");
     }
 
     private static void AppendCompileLtoArguments(ICollection<string> arguments, bool enableLto)

@@ -38,7 +38,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(ssaModule);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsaModule));
         Assert.NotNull(optimizedSsaModule);
-        Assert.Equal(24, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
+        Assert.Equal(30, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
         Assert.Contains(
             result.Logs,
             log => log.Severity == DiagnosticSeverity.Info
@@ -4575,6 +4575,67 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.Contains(functions, static function => function.SourceName == "Box.Echo");
         Assert.True(FunctionOverloadFacts.TryFindFunctionDeclaration(syntaxModel, "First", "(BufferView)", out _));
         Assert.True(FunctionOverloadFacts.TryFindFunctionDeclaration(syntaxModel, "Box.Echo", "(borrowBox,BufferView)", out _));
+    }
+
+    [Fact]
+    public void PublishedOverloadKeysDriveResolvedNamesForPackageDeclarations()
+    {
+        static FunctionModifierSet Modifiers() => new(
+            InlinePreference.InlineHint,
+            HasExplicitInlinePreference: false,
+            IsHot: false,
+            IsCold: false,
+            IsFfi: false,
+            IsVarargs: false,
+            IsStrictFp: false);
+
+        var syntaxModel = new SyntaxModel(
+            "Facade",
+            [],
+            [
+                new TopLevelDeclarationModel(
+                    "WriteLine",
+                    DeclarationKind.Function,
+                    StarkVisibility.Public,
+                    new FunctionDeclarationModel(
+                        Name: "WriteLine",
+                        Kind: StarkFunctionKind.Fn,
+                        ReturnType: "void",
+                        Parameters:
+                        [
+                            new ParameterModel("handle", "rawptr<i8>"),
+                            new ParameterModel("text", "ascii")
+                        ],
+                        Modifiers: Modifiers(),
+                        HasBody: false,
+                        PublishedOverloadKey: "(rawptr<i8[-128127]>,ascii)")),
+                new TopLevelDeclarationModel(
+                    "WriteLine",
+                    DeclarationKind.Function,
+                    StarkVisibility.Public,
+                    new FunctionDeclarationModel(
+                        Name: "WriteLine",
+                        Kind: StarkFunctionKind.Fn,
+                        ReturnType: "void",
+                        Parameters:
+                        [
+                            new ParameterModel("handle", "rawptr<i8>"),
+                            new ParameterModel("text", "unicode")
+                        ],
+                        Modifiers: Modifiers(),
+                        HasBody: false,
+                        PublishedOverloadKey: "(rawptr<i8[-128127]>,unicode)"))
+            ]);
+
+        var ascii = syntaxModel.Declarations[0];
+        var unicode = syntaxModel.Declarations[1];
+
+        Assert.Equal(
+            "WriteLine#(rawptr<i8[-128127]>,ascii)",
+            FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, ascii));
+        Assert.Equal(
+            "WriteLine#(rawptr<i8[-128127]>,unicode)",
+            FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, unicode));
     }
 
 

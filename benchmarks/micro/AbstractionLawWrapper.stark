@@ -1,0 +1,25 @@
+import System.Process
+module Benchmarks.Micro.AbstractionLawWrapper
+
+public finite law i64[min max] MixCore(i64[min max] value, i64[min max] salt) {
+    return (((value * 31) + salt) ^ (value >> 3)) % 1000003;
+}
+
+public finite law i64[min max] Mix(i64[min max] value, i64[min max] salt) {
+    return MixCore(value, salt);
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
+
+    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+        total += Mix((i64[min max])i, total % 97);
+        total = total % 1000000007;
+    }
+
+    if (total <= 0) {
+        return 1;
+    }
+
+    return 0;
+}

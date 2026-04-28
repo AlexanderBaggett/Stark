@@ -491,15 +491,6 @@ file static class PackageImageIntegerTypeText
 
         if (rangeMin is not null && rangeMax is not null)
         {
-            var parsedMin = BigInteger.Parse(rangeMin, System.Globalization.CultureInfo.InvariantCulture);
-            var parsedMax = BigInteger.Parse(rangeMax, System.Globalization.CultureInfo.InvariantCulture);
-            if (parsedMin == min && parsedMax == max)
-            {
-                return isUnsigned
-                    ? $"{prefix}{normalizedBitWidth}[0 max]"
-                    : $"{prefix}{normalizedBitWidth}[min max]";
-            }
-
             return $"{prefix}{normalizedBitWidth}[{rangeMin} {rangeMax}]";
         }
 

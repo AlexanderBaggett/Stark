@@ -282,7 +282,7 @@ public sealed class PackageImageCallableValueTests
             Assert.Equal(lambda.FunctionName, Assert.Single(optimizedSsa.AddressTakenFunctions));
             Assert.Equal(lambda.FunctionName, Assert.Single(llvm.AddressTakenFunctions));
             Assert.Contains("; synthetic definition: Run.__lambda_", llvm.Text, StringComparison.Ordinal);
-            Assert.Contains("define internal dso_local fastcc noundef i32 @Run___lambda_", llvm.Text, StringComparison.Ordinal);
+            Assert.Matches(@"define internal dso_local fastcc noundef(?: range\([^)]*\))? i32 @Run___lambda_", llvm.Text);
             Assert.Matches(@"call fastcc i32 @Facade_Apply\(ptr (noundef )?@Run___lambda_", llvm.Text);
         }
         finally

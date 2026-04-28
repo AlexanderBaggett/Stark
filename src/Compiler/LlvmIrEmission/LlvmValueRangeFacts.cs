@@ -21,11 +21,46 @@ internal static class LlvmValueRangeFacts
         return true;
     }
 
+    public static bool TryBuildRangeMetadataBody(
+        StarkTypeSymbol type,
+        SsaIntegerRangeFact range,
+        out string metadataBody)
+    {
+        metadataBody = string.Empty;
+
+        if (!TryGetNonFullValueRange(type, range, out var bitWidth, out var min, out var max))
+        {
+            return false;
+        }
+
+        var llvmType = $"i{bitWidth}";
+        var lower = FormatTwosComplementInteger(min, bitWidth);
+        var upperExclusive = FormatTwosComplementInteger(max + BigInteger.One, bitWidth);
+        metadataBody = $"!{{{llvmType} {lower}, {llvmType} {upperExclusive}}}";
+        return true;
+    }
+
     public static bool TryBuildRangeAttribute(StarkTypeSymbol type, out string attribute)
     {
         attribute = string.Empty;
 
         if (!TryGetNonFullValueRange(type, out var bitWidth, out var min, out var max))
+        {
+            return false;
+        }
+
+        var llvmType = $"i{bitWidth}";
+        var lower = FormatTwosComplementInteger(min, bitWidth);
+        var upperExclusive = FormatTwosComplementInteger(max + BigInteger.One, bitWidth);
+        attribute = $"range({llvmType} {lower}, {upperExclusive})";
+        return true;
+    }
+
+    public static bool TryBuildRangeAttribute(StarkTypeSymbol type, SsaIntegerRangeFact range, out string attribute)
+    {
+        attribute = string.Empty;
+
+        if (!TryGetNonFullValueRange(type, range, out var bitWidth, out var min, out var max))
         {
             return false;
         }
@@ -48,6 +83,27 @@ internal static class LlvmValueRangeFacts
             return false;
         }
 
+        var valueCount = max - min + BigInteger.One;
+        var domainSize = BigInteger.One << bitWidth;
+        return valueCount > BigInteger.Zero && valueCount < domainSize;
+    }
+
+    private static bool TryGetNonFullValueRange(
+        StarkTypeSymbol type,
+        SsaIntegerRangeFact range,
+        out int bitWidth,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        if (!TryGetValueRange(type, out bitWidth, out var typeMin, out var typeMax))
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        min = BigInteger.Max(range.Min, typeMin);
+        max = BigInteger.Min(range.Max, typeMax);
         var valueCount = max - min + BigInteger.One;
         var domainSize = BigInteger.One << bitWidth;
         return valueCount > BigInteger.Zero && valueCount < domainSize;

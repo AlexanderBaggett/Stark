@@ -48,7 +48,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @WriteStderrAscii(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @WriteStderrUnicode(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenStdin(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef i64 @ReadStdin(", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadStdin\(", llvm);
         Assert.Contains("define fastcc noundef i1 @IsTerminal(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @GetStdHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @WriteFile(", llvm, StringComparison.Ordinal);
@@ -119,7 +119,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef ptr @OpenDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CloseDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntry(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef i32 @DirectoryEntryKindFromWindowsAttributes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@DirectoryEntryKindFromWindowsAttributes(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);

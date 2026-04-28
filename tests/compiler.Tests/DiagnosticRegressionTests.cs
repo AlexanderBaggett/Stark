@@ -197,7 +197,7 @@ public sealed class DiagnosticRegressionTests
 
             fn i32[-2147483648 2147483647] Source();
 
-            const i32[-2147483648 2147483647] Answer = Source();
+            const i32 Answer = Source();
             """);
 
         Assert.False(result.Succeeded);

@@ -36,6 +36,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private readonly HashSet<string> _referencedValueNames;
     private readonly HashSet<string> _addressTakenParameterNames;
     private readonly IReadOnlyDictionary<string, SsaRValue> _valueDefinitions;
+    private readonly IReadOnlyDictionary<string, SsaValueFacts> _valueFacts;
     private readonly IReadOnlyDictionary<int, SsaBasicBlock> _blocksById;
     private readonly IReadOnlyDictionary<int, int> _blockOrderById;
     private readonly IReadOnlyDictionary<int, int> _predecessorCounts;
@@ -65,6 +66,7 @@ internal sealed class LlvmFunctionBodyEmitter
         SsaFunction ssaFunction,
         LlvmEmissionContext context,
         DebugFunctionContext? debugFunction,
+        SsaFunctionFactModel? valueFacts,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         bool isStrictFp)
     {
@@ -79,6 +81,7 @@ internal sealed class LlvmFunctionBodyEmitter
         _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         _addressTakenParameterNames = CollectAddressTakenParameterNames(ssaFunction);
         _valueDefinitions = CollectValueDefinitions(ssaFunction);
+        _valueFacts = valueFacts?.Values ?? new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         _blocksById = ssaFunction.Blocks.ToDictionary(static block => block.Id);
         _blockOrderById = CollectBlockOrder(ssaFunction);
         _predecessorCounts = CountPredecessors(ssaFunction);
@@ -410,6 +413,9 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaUseRValue use => IsKnownNonNullPointerValue(use.Value, visitedValueNames),
             SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer =>
                 IsKnownNonNullPointerValue(convert.Operand, visitedValueNames),
+            SsaSelectRValue select when select.Type.Kind == StarkTypeKind.RawPointer =>
+                IsKnownNonNullPointerValue(select.WhenTrue, new HashSet<string>(visitedValueNames, StringComparer.Ordinal))
+                && IsKnownNonNullPointerValue(select.WhenFalse, new HashSet<string>(visitedValueNames, StringComparer.Ordinal)),
             SsaAddressOfLocalRValue => true,
             SsaAddressOfParameterRValue => true,
             SsaFieldAddressRValue fieldAddress => IsKnownNonNullPointerValue(fieldAddress.Address, visitedValueNames),
@@ -504,11 +510,11 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaLoadGlobalRValue load:
                 AppendLine(
-                    $"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(load.GlobalName))}{GetGlobalObjectAlignmentSuffix(load.GlobalName, load.Type)}{GetInvariantLoadMetadataSuffix(load.GlobalName)}{GetValueRangeMetadataSuffix(load.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaGlobalRootKey(load.GlobalName), load.Type)}");
+                    $"  {result} = load {MapType(load.Type)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(load.GlobalName))}{GetGlobalObjectAlignmentSuffix(load.GlobalName, load.Type)}{GetInvariantLoadMetadataSuffix(load.GlobalName)}{GetValueRangeMetadataSuffix(instruction.ResultName, load.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaGlobalRootKey(load.GlobalName), load.Type)}");
                 return;
             case SsaLoadLocalRValue loadLocal:
                 EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
-                AppendLine($"  {result} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetLocalObjectAlignmentSuffix(loadLocal.LocalName, loadLocal.Type)}{GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName)}{GetValueRangeMetadataSuffix(loadLocal.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(loadLocal.LocalName), loadLocal.Type)}");
+                AppendLine($"  {result} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetLocalObjectAlignmentSuffix(loadLocal.LocalName, loadLocal.Type)}{GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName)}{GetValueRangeMetadataSuffix(instruction.ResultName, loadLocal.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(loadLocal.LocalName), loadLocal.Type)}");
                 return;
             case SsaConvertRValue convert:
                 EmitConvert(instruction.ResultName, result, convert);
@@ -561,7 +567,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaLoadIndirectRValue loadIndirect:
                 AppendLine(
-                    $"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}{GetKnownPointerAlignmentSuffix(loadIndirect.Address, loadIndirect.Type)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}{GetValueRangeMetadataSuffix(loadIndirect.Type)}{GetTbaaMetadataSuffix(loadIndirect.Address, loadIndirect.Type)}{GetScopedNoAliasMetadataSuffix(loadIndirect.Address)}");
+                    $"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}{GetKnownPointerAlignmentSuffix(loadIndirect.Address, loadIndirect.Type)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}{GetValueRangeMetadataSuffix(instruction.ResultName, loadIndirect.Type)}{GetTbaaMetadataSuffix(loadIndirect.Address, loadIndirect.Type)}{GetScopedNoAliasMetadataSuffix(loadIndirect.Address)}");
                 return;
             case SsaUnaryRValue unary:
                 EmitUnary(result, unary);
@@ -569,11 +575,14 @@ internal sealed class LlvmFunctionBodyEmitter
             case SsaBinaryRValue binary:
                 EmitBinary(result, binary);
                 return;
+            case SsaSelectRValue select:
+                EmitSelect(result, select);
+                return;
             case SsaCallRValue call:
                 EmitCall(instruction.ResultName, result, call);
                 return;
             case SsaIndirectCallRValue indirectCall:
-                EmitIndirectCall(result, indirectCall);
+                EmitIndirectCall(instruction.ResultName, result, indirectCall);
                 return;
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA rvalue '{instruction.Value.GetType().Name}'.");
@@ -705,6 +714,12 @@ internal sealed class LlvmFunctionBodyEmitter
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA unary operator '{unary.Operator}'.");
         }
+    }
+
+    private void EmitSelect(string result, SsaSelectRValue select)
+    {
+        AppendLine(
+            $"  {result} = select i1 {FormatValue(select.Condition)}, {MapType(select.Type)} {FormatValue(select.WhenTrue)}, {MapType(select.Type)} {FormatValue(select.WhenFalse)}");
     }
 
     private void EmitBinary(string result, SsaBinaryRValue binary)
@@ -1747,8 +1762,14 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         if (value is SsaValueReference reference
-            && visitedReferences.Add(reference.Name)
-            && _valueDefinitions.TryGetValue(reference.Name, out var definition))
+            && TryGetIntegerValueFact(reference.Name, out min, out max))
+        {
+            return true;
+        }
+
+        if (value is SsaValueReference referenceValue
+            && visitedReferences.Add(referenceValue.Name)
+            && _valueDefinitions.TryGetValue(referenceValue.Name, out var definition))
         {
             switch (definition)
             {
@@ -1760,6 +1781,22 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         return TryGetIntegerTypeRange(value.Type, out min, out max);
+    }
+
+    private bool TryGetIntegerValueFact(string valueName, out BigInteger min, out BigInteger max)
+    {
+        if (_valueFacts.TryGetValue(valueName, out var facts)
+            && facts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && facts.IntegerRange is { } range)
+        {
+            min = range.Min;
+            max = range.Max;
+            return true;
+        }
+
+        min = default;
+        max = default;
+        return false;
     }
 
     private static bool CanPreserveIntegerRangeThroughConversion(SsaConvertRValue convert)
@@ -1869,8 +1906,8 @@ internal sealed class LlvmFunctionBodyEmitter
             return GetZeroOffsetGepFlags();
         }
 
-        return TryGetKnownSliceElementCount(slice, new HashSet<string>(StringComparer.Ordinal), out var elementCount)
-            && IsIndexRangeWithinExclusiveBound(index, elementCount)
+        return TryGetKnownSliceElementCountLowerBound(slice, new HashSet<string>(StringComparer.Ordinal), out var elementCountLowerBound)
+            && IsIndexRangeWithinExclusiveBound(index, elementCountLowerBound)
                 ? GetProvenInObjectGepFlags()
                 : string.Empty;
     }
@@ -1882,8 +1919,8 @@ internal sealed class LlvmFunctionBodyEmitter
             return GetZeroOffsetGepFlags();
         }
 
-        return TryGetKnownTextUnitCount(textValue, new HashSet<string>(StringComparer.Ordinal), out var unitCount)
-            && IsIndexRangeWithinInclusiveBound(start, unitCount)
+        return TryGetKnownTextUnitCountLowerBound(textValue, new HashSet<string>(StringComparer.Ordinal), out var unitCountLowerBound)
+            && IsIndexRangeWithinInclusiveBound(start, unitCountLowerBound)
                 ? GetProvenInObjectGepFlags()
                 : string.Empty;
     }
@@ -1911,58 +1948,79 @@ internal sealed class LlvmFunctionBodyEmitter
             && max <= inclusiveBound;
     }
 
-    private bool TryGetKnownSliceElementCount(
+    private bool TryGetKnownSliceElementCountLowerBound(
         SsaValue slice,
         HashSet<string> visitedReferences,
-        out BigInteger elementCount)
+        out BigInteger elementCountLowerBound)
     {
         if (slice is SsaValueReference reference
-            && visitedReferences.Add(reference.Name)
-            && _valueDefinitions.TryGetValue(reference.Name, out var definition))
+            && visitedReferences.Add(reference.Name))
         {
-            switch (definition)
+            if (_valueFacts.TryGetValue(reference.Name, out var facts)
+                && facts.LengthKind == SsaFactLatticeKind.Known
+                && facts.LengthRange is { } lengthRange
+                && lengthRange.Min >= BigInteger.Zero)
             {
-                case SsaUseRValue use:
-                    return TryGetKnownSliceElementCount(use.Value, visitedReferences, out elementCount);
-                case SsaMakeSliceFromLocalRValue makeSlice when makeSlice.SourceType.FixedLength is int fixedLength:
-                    elementCount = fixedLength;
-                    return true;
+                elementCountLowerBound = lengthRange.Min;
+                return true;
+            }
+
+            if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+            {
+                switch (definition)
+                {
+                    case SsaUseRValue use:
+                        return TryGetKnownSliceElementCountLowerBound(use.Value, visitedReferences, out elementCountLowerBound);
+                    case SsaMakeSliceFromLocalRValue makeSlice when makeSlice.SourceType.FixedLength is int fixedLength:
+                        elementCountLowerBound = fixedLength;
+                        return true;
+                }
             }
         }
 
-        elementCount = default;
+        elementCountLowerBound = default;
         return false;
     }
 
-    private bool TryGetKnownTextUnitCount(
+    private bool TryGetKnownTextUnitCountLowerBound(
         SsaValue textValue,
         HashSet<string> visitedReferences,
-        out BigInteger unitCount)
+        out BigInteger unitCountLowerBound)
     {
         switch (textValue)
         {
             case SsaStringConstant text:
-                unitCount = ResolveStringConstant(text.LiteralText, text.Type).DataLength;
+                unitCountLowerBound = ResolveStringConstant(text.LiteralText, text.Type).DataLength;
                 return true;
             case SsaValueReference reference
-                when visitedReferences.Add(reference.Name)
-                     && _valueDefinitions.TryGetValue(reference.Name, out var definition):
-                switch (definition)
+                when visitedReferences.Add(reference.Name):
+                if (_valueFacts.TryGetValue(reference.Name, out var facts)
+                    && facts.LengthKind == SsaFactLatticeKind.Known
+                    && facts.LengthRange is { } lengthRange
+                    && lengthRange.Min >= BigInteger.Zero)
                 {
-                    case SsaUseRValue use:
-                        return TryGetKnownTextUnitCount(use.Value, visitedReferences, out unitCount);
-                    case SsaTextSliceRValue textSlice
-                        when TryGetIntegerValueRange(textSlice.Length, new HashSet<string>(StringComparer.Ordinal), out var min, out var max)
-                             && min == max
-                             && min >= BigInteger.Zero:
-                        unitCount = max;
-                        return true;
+                    unitCountLowerBound = lengthRange.Min;
+                    return true;
+                }
+
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    switch (definition)
+                    {
+                        case SsaUseRValue use:
+                            return TryGetKnownTextUnitCountLowerBound(use.Value, visitedReferences, out unitCountLowerBound);
+                        case SsaTextSliceRValue textSlice
+                            when TryGetIntegerValueRange(textSlice.Length, new HashSet<string>(StringComparer.Ordinal), out var min, out _)
+                                 && min >= BigInteger.Zero:
+                            unitCountLowerBound = min;
+                            return true;
+                    }
                 }
 
                 break;
         }
 
-        unitCount = default;
+        unitCountLowerBound = default;
         return false;
     }
 
@@ -2154,7 +2212,7 @@ internal sealed class LlvmFunctionBodyEmitter
             return;
         }
 
-        var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(call.Type);
+        var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(resultName, call.Type);
         AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}");
     }
 
@@ -2172,7 +2230,7 @@ internal sealed class LlvmFunctionBodyEmitter
         return $"({string.Join(", ", parameterTypes)}) {escapedName}";
     }
 
-    private void EmitIndirectCall(string result, SsaIndirectCallRValue call)
+    private void EmitIndirectCall(string resultName, string result, SsaIndirectCallRValue call)
     {
         if (call.Target.Type.FunctionPointerParameterTypes is not { } parameterTypes)
         {
@@ -2208,7 +2266,7 @@ internal sealed class LlvmFunctionBodyEmitter
             return;
         }
 
-        AppendLine($"  {result} = {callPrefix} {MapType(call.Type)} {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}{GetValueRangeMetadataSuffix(call.Type)}");
+        AppendLine($"  {result} = {callPrefix} {MapType(call.Type)} {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}{GetValueRangeMetadataSuffix(resultName, call.Type)}");
     }
 
     private bool ShouldEmitTailCallMarker(string resultName)
@@ -2476,9 +2534,18 @@ internal sealed class LlvmFunctionBodyEmitter
                     return false;
                 }
 
-                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition)
+                    && TryGetKnownPointerAlignmentBytesCore(definition, pointeeType, visitedValueNames, out alignmentBytes))
                 {
-                    return TryGetKnownPointerAlignmentBytesCore(definition, pointeeType, visitedValueNames, out alignmentBytes);
+                    return true;
+                }
+
+                if (_valueFacts.TryGetValue(reference.Name, out var facts)
+                    && facts.PointerAlignmentKind == SsaFactLatticeKind.Known
+                    && facts.PointerAlignmentBytes is > 1)
+                {
+                    alignmentBytes = facts.PointerAlignmentBytes.Value;
+                    return true;
                 }
 
                 var indirectParameter = _abiFunction.UserParameters.FirstOrDefault(
@@ -2494,14 +2561,6 @@ internal sealed class LlvmFunctionBodyEmitter
                 }
 
                 return false;
-            case SsaLoadGlobalRValue loadGlobal:
-                alignmentBytes = GetGlobalObjectAlignmentBytes(loadGlobal.GlobalName, loadGlobal.Type) ?? 1;
-                return alignmentBytes > 1;
-            case SsaLoadLocalRValue loadLocal:
-                alignmentBytes = GetLocalObjectAlignmentBytes(loadLocal.LocalName, loadLocal.Type) ?? 1;
-                return alignmentBytes > 1;
-            case SsaLoadIndirectRValue loadIndirect:
-                return TryGetKnownPointerAlignmentBytesCore(loadIndirect.Address, loadIndirect.Type, visitedValueNames, out alignmentBytes);
             case SsaGlobalAddressValue globalAddress:
                 alignmentBytes = GetGlobalObjectAlignmentBytes(globalAddress.GlobalName, globalAddress.PointeeType) ?? 1;
                 return alignmentBytes > 1;
@@ -3225,6 +3284,9 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaUseRValue use => IsNamedReference(use.Value, valueName),
             SsaUnaryRValue unary => IsNamedReference(unary.Operand, valueName),
             SsaBinaryRValue binary => IsNamedReference(binary.Left, valueName) || IsNamedReference(binary.Right, valueName),
+            SsaSelectRValue select => IsNamedReference(select.Condition, valueName)
+                || IsNamedReference(select.WhenTrue, valueName)
+                || IsNamedReference(select.WhenFalse, valueName),
             SsaCallRValue call => call.Arguments.Any(argument => IsNamedReference(argument, valueName))
                 || (call.IndirectArgumentAddresses?.OfType<SsaValue>().Any(address => IsNamedReference(address, valueName)) ?? false),
             SsaConvertRValue convert => IsNamedReference(convert.Operand, valueName),
@@ -4019,6 +4081,19 @@ internal sealed class LlvmFunctionBodyEmitter
         return _context.GetValueRangeMetadataRef(type) is { } rangeMetadataRef
             ? $", !range {rangeMetadataRef}"
             : string.Empty;
+    }
+
+    private string GetValueRangeMetadataSuffix(string valueName, StarkTypeSymbol type)
+    {
+        if (_valueFacts.TryGetValue(valueName, out var facts)
+            && facts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && facts.IntegerRange is { } range
+            && _context.GetValueRangeMetadataRef(type, range) is { } factRangeMetadataRef)
+        {
+            return $", !range {factRangeMetadataRef}";
+        }
+
+        return GetValueRangeMetadataSuffix(type);
     }
 
     private ScopedNoAliasMetadataModel? BuildScopedNoAliasMetadata(
@@ -5354,6 +5429,11 @@ internal sealed class LlvmFunctionBodyEmitter
                     VisitValue(binary.Left);
                     VisitValue(binary.Right);
                     break;
+                case SsaSelectRValue select:
+                    VisitValue(select.Condition);
+                    VisitValue(select.WhenTrue);
+                    VisitValue(select.WhenFalse);
+                    break;
                 case SsaCallRValue call:
                     foreach (var argument in call.Arguments)
                     {
@@ -5661,6 +5741,15 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaUseRValue use => IsPotentialKnownNonNullPointerValue(use.Value, valueDefinitions, visitedValueNames),
             SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer =>
                 IsPotentialKnownNonNullPointerValue(convert.Operand, valueDefinitions, visitedValueNames),
+            SsaSelectRValue select when select.Type.Kind == StarkTypeKind.RawPointer =>
+                IsPotentialKnownNonNullPointerValue(
+                    select.WhenTrue,
+                    valueDefinitions,
+                    new HashSet<string>(visitedValueNames, StringComparer.Ordinal))
+                && IsPotentialKnownNonNullPointerValue(
+                    select.WhenFalse,
+                    valueDefinitions,
+                    new HashSet<string>(visitedValueNames, StringComparer.Ordinal)),
             SsaAddressOfLocalRValue => true,
             SsaAddressOfParameterRValue => true,
             SsaFieldAddressRValue fieldAddress =>
@@ -5928,6 +6017,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 case SsaConvertRValue convert:
                     AddAddressValueRoots(convert.Operand, visitedValueNames);
                     break;
+                case SsaSelectRValue select:
+                    AddAddressValueRoots(select.WhenTrue, visitedValueNames);
+                    AddAddressValueRoots(select.WhenFalse, visitedValueNames);
+                    break;
             }
         }
 
@@ -6125,6 +6218,10 @@ internal sealed class LlvmFunctionBodyEmitter
                     break;
                 case SsaConvertRValue convert:
                     AddAddressValueRoots(convert.Operand, visitedValueNames);
+                    break;
+                case SsaSelectRValue select:
+                    AddAddressValueRoots(select.WhenTrue, visitedValueNames);
+                    AddAddressValueRoots(select.WhenFalse, visitedValueNames);
                     break;
             }
         }

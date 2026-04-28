@@ -1,6 +1,11 @@
 import System.Runtime.Buffer
-import System.Text
 module System.Runtime.Platform.Linux
+
+internal finite law rawptr<i8[-128 127]> AsciiData(ascii source);
+internal finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
+internal finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
+internal finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+internal finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
 internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall1Handle(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> arg1)
     in("rax") number,
@@ -1111,7 +1116,7 @@ internal fn i32[-2147483648 2147483647] FutexWake(rawptr<i32[-2147483648 2147483
 }
 
 internal fn bool TryBuildLinuxPath(rawmutptr<Ascii> destination, ascii path) {
-    return System.Text.TryConcatAscii(destination, path, "\0");
+    return TryConcatAscii(destination, path, "\0");
 }
 
 internal fn rawptr<i8[-128 127]> OpenFileWithFlags(ascii path, i64[-9223372036854775808 9223372036854775807] flags, i64[-9223372036854775808 9223372036854775807] mode) {
@@ -1176,12 +1181,12 @@ internal fn i32[-2147483648 2147483647] FlushEncodedWriteBuffer(
 }
 
 internal fn i32[-2147483648 2147483647] WriteAsciiToHandle(rawptr<i8[-128 127]> handle, ascii text) {
-    stack mut i64[-9223372036854775808 9223372036854775807] remaining = System.Text.AsciiLength(text);
+    stack mut i64[-9223372036854775808 9223372036854775807] remaining = AsciiLength(text);
     stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
 
     while willexit (remaining > 0) {
         stack ascii chunk = text[written, remaining];
-        stack rawptr<i8[-128 127]> data = System.Text.AsciiData(chunk);
+        stack rawptr<i8[-128 127]> data = AsciiData(chunk);
         stack i64[-9223372036854775808 9223372036854775807] syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, remaining);
         if (syscallResult < 0) {
             return (i32[-2147483648 2147483647])syscallResult;
@@ -1288,7 +1293,7 @@ internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]
         return -1;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] length = System.Text.UnicodeLength(text);
+    stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(text);
     if (length <= 0) {
         return 0;
     }
@@ -1298,7 +1303,7 @@ internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]
 
     while willexit (index < length) {
         stack unicode unit = text[index, 1];
-        stack rawptr<i32[-2147483648 2147483647]> data = System.Text.UnicodeData(unit);
+        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(unit);
         stack i32[-2147483648 2147483647] codePoint = *data;
         stack i64[-9223372036854775808 9223372036854775807] required = Utf8EncodedLength(codePoint);
 
@@ -1380,7 +1385,7 @@ internal finite law ascii PathSeparator() {
 }
 
 internal finite law bool IsDirectorySeparator(ascii value) {
-    return *System.Text.AsciiData(value) == (i8[-128 127])47;
+    return *AsciiData(value) == (i8[-128 127])47;
 }
 
 internal fn bool IsTerminal(rawptr<i8[-128 127]> handle) {

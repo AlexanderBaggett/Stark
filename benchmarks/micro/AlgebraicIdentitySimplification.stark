@@ -1,0 +1,32 @@
+import System.Process
+module Benchmarks.Micro.AlgebraicIdentitySimplification
+
+finite law i64[min max] Normalize(i64[min max] value) {
+    stack i64[min max] add = value + 0;
+    stack i64[min max] multiply = add * 1;
+    stack i64[min max] masked = multiply & -1;
+    stack i64[min max] shifted = masked << 0;
+    stack i64[min max] sameAnd = shifted & shifted;
+    stack i64[min max] sameOr = sameAnd | sameAnd;
+    stack i64[min max] zeroXor = sameOr ^ sameOr;
+    stack i64[min max] zeroAnd = value & 0;
+    stack i64[min max] zeroMultiply = value * 0;
+    stack i64[min max] zeroSubtract = value - value;
+    stack i64[min max] allOnes = value | -1;
+    return ((shifted ^ 0) + zeroXor + zeroAnd + zeroMultiply + zeroSubtract + (allOnes & 1)) - 1;
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
+
+    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+        total += Normalize(((i64[min max])i * 17) + (total % 97));
+        total = total % 1000000007;
+    }
+
+    if (total <= 0) {
+        return 1;
+    }
+
+    return 0;
+}

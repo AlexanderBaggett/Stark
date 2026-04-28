@@ -5,7 +5,7 @@ namespace Stark.Compiler;
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
@@ -37,6 +37,7 @@ internal static class CompilerCli
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
+        string? toolchainMetricsPath = null;
         string? packageLibraryFile = null;
         var diagnosticFormat = DiagnosticOutputFormat.Text;
         var logLevel = DiagnosticSeverity.Warning;
@@ -251,6 +252,19 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (TryReadOptionValue(argument, "--toolchain-metrics", args, ref index, out var toolchainMetricsValue))
+            {
+                if (string.IsNullOrWhiteSpace(toolchainMetricsValue))
+                {
+                    await stderr.WriteLineAsync("Toolchain metrics path must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                toolchainMetricsPath = toolchainMetricsValue.Trim();
+                continue;
+            }
+
             if (TryReadOptionValue(argument, "--package-library-file", args, ref index, out var packageLibraryValue))
             {
                 if (string.IsNullOrWhiteSpace(packageLibraryValue))
@@ -440,6 +454,7 @@ internal static class CompilerCli
             librarySearchDirectories,
             linkArguments,
             saveTempsDirectory,
+            toolchainMetricsPath,
             nativeDependencies);
         using var logOutputScope = diagnosticFormat == DiagnosticOutputFormat.Json
             ? CompilerLogOutput.Push(TextWriter.Null, DiagnosticSeverity.Error)
@@ -503,6 +518,7 @@ internal static class CompilerCli
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
         var enableExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel);
+        var toolchainMetrics = new ToolchainMetrics();
 
         try
         {
@@ -515,6 +531,7 @@ internal static class CompilerCli
                 targetInfo: compilerOptions.TargetInfo,
                 optimizationLevel: compilerOptions.OptimizationLevel,
                 enableLto: enableExecutableLto);
+            toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -553,6 +570,7 @@ internal static class CompilerCli
                     compilerOptions,
                     intermediateDirectory,
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
+                    toolchainMetrics: toolchainMetrics,
                     enableLto: enableExecutableLto);
                 if (!sourceDependencyResult.Success)
                 {
@@ -576,7 +594,8 @@ internal static class CompilerCli
                 inputPath,
                 compilerOptions,
                 toolchainOptions,
-                intermediateDirectory);
+                intermediateDirectory,
+                toolchainMetrics);
             if (!nativeDependencyResult.Success)
             {
                 await WriteDiagnosticsAsync(stderr, nativeDependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -611,6 +630,7 @@ internal static class CompilerCli
                 compilerOptions.TargetInfo,
                 compilerOptions.OptimizationLevel,
                 enableExecutableLto);
+            toolchainMetrics.AddLink(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
                 await WriteDiagnosticsAsync(
@@ -632,6 +652,7 @@ internal static class CompilerCli
                 await stderr.WriteAsync(toolchainResult.StandardError);
             }
 
+            await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
             await stdout.WriteLineAsync($"Emitted executable: {toolchainResult.OutputPath}");
             return 0;
         }
@@ -667,6 +688,7 @@ internal static class CompilerCli
         var resolvedOutputPath = outputPath ?? DeriveLibraryOutputPath(inputPath, result);
         var objectPaths = new List<string>();
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-lib-", out var cleanupDirectory);
+        var toolchainMetrics = new ToolchainMetrics();
 
         try
         {
@@ -678,6 +700,7 @@ internal static class CompilerCli
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
                 optimizationLevel: compilerOptions.OptimizationLevel);
+            toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, rootObjectResult);
@@ -691,7 +714,12 @@ internal static class CompilerCli
             {
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
-                    var dependencyResult = CompileDependencyObject(module, compilerOptions, intermediateDirectory, preserveTemps: toolchainOptions.SaveTempsDirectory is not null);
+                    var dependencyResult = CompileDependencyObject(
+                        module,
+                        compilerOptions,
+                        intermediateDirectory,
+                        preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
+                        toolchainMetrics: toolchainMetrics);
                     if (!dependencyResult.Success)
                     {
                         await WriteDiagnosticsAsync(stderr, dependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -712,6 +740,7 @@ internal static class CompilerCli
             }
 
             var toolchainResult = NativeToolchain.CreateStaticLibrary(objectPaths, resolvedOutputPath, toolchainOptions.ArchiverTool);
+            toolchainMetrics.AddArchive(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
                 await WriteToolchainFailureAsync(stdout, stderr, toolchainResult);
@@ -735,6 +764,7 @@ internal static class CompilerCli
                 toolchainOptions.NativeDependencies.ToManifest(Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory));
             await File.WriteAllTextAsync(manifestPath, manifest.ToJson());
 
+            await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
             await stdout.WriteLineAsync($"Emitted static library: {toolchainResult.OutputPath}");
             await stdout.WriteLineAsync($"Emitted package image: {manifestPath}");
             return 0;
@@ -773,12 +803,14 @@ internal static class CompilerCli
             : Path.Combine(
                 CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-obj-", out _),
                 $"{Path.GetFileNameWithoutExtension(resolvedOutputPath)}.ll");
+        var toolchainMetrics = new ToolchainMetrics();
         var toolchainResult = NativeToolchain.EmitObject(
             llvmModule.Text,
             resolvedOutputPath,
             preservedLlvmOutputPath: preservedLlvmPath,
             targetInfo: compilerOptions.TargetInfo,
             optimizationLevel: compilerOptions.OptimizationLevel);
+        toolchainMetrics.AddLlvmObject(toolchainResult);
         if (!toolchainResult.Succeeded)
         {
             if (!string.IsNullOrWhiteSpace(toolchainResult.StandardOutput))
@@ -804,6 +836,7 @@ internal static class CompilerCli
             await stderr.WriteAsync(toolchainResult.StandardError);
         }
 
+        await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
         await stdout.WriteLineAsync($"Emitted object file: {toolchainResult.OutputPath}");
         return 0;
     }
@@ -1118,7 +1151,8 @@ internal static class CompilerCli
         string? inputPath,
         CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions,
-        string intermediateDirectory)
+        string intermediateDirectory,
+        ToolchainMetrics? toolchainMetrics = null)
     {
         var diagnostics = new List<CompilerDiagnostic>();
         var dependencySets = new List<NativeDependencySet>();
@@ -1267,6 +1301,7 @@ internal static class CompilerCli
                     includeDirectories,
                     compilerOptions.TargetInfo,
                     compilerOptions.OptimizationLevel);
+                toolchainMetrics?.AddNativeObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
                     return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, [], toolchainResult);
@@ -1731,7 +1766,8 @@ internal static class CompilerCli
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
         string intermediateDirectory,
-        bool preserveTemps)
+        bool preserveTemps,
+        ToolchainMetrics? toolchainMetrics = null)
     {
         var dependencyResult = CompileDependencyLlvm(module, rootOptions);
         if (!dependencyResult.Success)
@@ -1747,6 +1783,7 @@ internal static class CompilerCli
         }
 
         var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps);
+        toolchainMetrics?.AddLlvmObject(toolchainResult);
         return toolchainResult.Succeeded
             ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary)
             : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult, RequiresMathLibrary: false, RequiresWinsockLibrary: false);
@@ -1758,6 +1795,7 @@ internal static class CompilerCli
         CompilerOptions rootOptions,
         string intermediateDirectory,
         bool preserveTemps,
+        ToolchainMetrics? toolchainMetrics,
         bool enableLto)
     {
         var compiledModules = new List<DependencyLlvmCompileResult>(modules.Count);
@@ -1810,6 +1848,7 @@ internal static class CompilerCli
                 }
 
                 var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
+                toolchainMetrics?.AddLlvmObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
                     return new SourceDependencyLinkResult(
@@ -1940,7 +1979,11 @@ internal static class CompilerCli
 
     private static bool ShouldEnableExecutableLto(CompilerOptimizationLevel optimizationLevel)
     {
-        return optimizationLevel is CompilerOptimizationLevel.O2 or CompilerOptimizationLevel.O3;
+        // ThinLTO currently miscompiles at least the packaged System.Collections
+        // grow/move/drop executable, causing an optimized binary to spin.
+        // Keep executable LTO disabled until the imported-package/LTO contract is fixed.
+        _ = optimizationLevel;
+        return false;
     }
 
     private static LlvmSymbolSummary SummarizeLlvmSymbols(string llvmText)
@@ -2132,6 +2175,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --native-pkg-config <name>     Add a package-owned pkg-config discovery package");
         await stdout.WriteLineAsync("  --native-link-arg <arg>        Add a package-owned native linker argument");
         await stdout.WriteLineAsync("  --save-temps <dir>             Preserve intermediate LLVM and object files in <dir>");
+        await stdout.WriteLineAsync("  --toolchain-metrics <path>     Write native LLVM/link timing metrics as key=value lines");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Compiler Logs:");
         await stdout.WriteLineAsync("  --diagnostic-format <text|json>      Choose text diagnostics or a stable JSON diagnostic document (default: text)");
@@ -2290,7 +2334,7 @@ internal static class CompilerCli
         {
             CliMode.Check => "ownership-validate",
             CliMode.EmitMir => "lower-mir",
-            CliMode.EmitSsa => "const-prop",
+            CliMode.EmitSsa => "prune-branches",
             CliMode.EmitPackage => "lower-abi",
             _ => null
         };
@@ -2735,7 +2779,84 @@ internal static class CompilerCli
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
         string? SaveTempsDirectory,
+        string? ToolchainMetricsPath,
         NativeDependencyCliOptions NativeDependencies);
+
+    private sealed class ToolchainMetrics
+    {
+        public long LlvmObjectMicroseconds { get; private set; }
+
+        public int LlvmObjectCount { get; private set; }
+
+        public long NativeObjectMicroseconds { get; private set; }
+
+        public int NativeObjectCount { get; private set; }
+
+        public long LinkMicroseconds { get; private set; }
+
+        public int LinkCount { get; private set; }
+
+        public long ArchiveMicroseconds { get; private set; }
+
+        public int ArchiveCount { get; private set; }
+
+        public void AddLlvmObject(NativeToolchainResult result)
+        {
+            LlvmObjectMicroseconds += ToMicroseconds(result.Duration);
+            LlvmObjectCount++;
+        }
+
+        public void AddNativeObject(NativeToolchainResult result)
+        {
+            NativeObjectMicroseconds += ToMicroseconds(result.Duration);
+            NativeObjectCount++;
+        }
+
+        public void AddLink(NativeToolchainResult result)
+        {
+            LinkMicroseconds += ToMicroseconds(result.Duration);
+            LinkCount++;
+        }
+
+        public void AddArchive(NativeToolchainResult result)
+        {
+            ArchiveMicroseconds += ToMicroseconds(result.Duration);
+            ArchiveCount++;
+        }
+
+        public async Task WriteAsync(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            var fullPath = Path.GetFullPath(path);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? Environment.CurrentDirectory);
+            await File.WriteAllTextAsync(
+                fullPath,
+                string.Join(
+                    Environment.NewLine,
+                    [
+                        "timing_unit=microseconds",
+                        $"llvm_object_us={LlvmObjectMicroseconds}",
+                        $"llvm_object_count={LlvmObjectCount}",
+                        $"native_object_us={NativeObjectMicroseconds}",
+                        $"native_object_count={NativeObjectCount}",
+                        $"link_us={LinkMicroseconds}",
+                        $"link_count={LinkCount}",
+                        $"archive_us={ArchiveMicroseconds}",
+                        $"archive_count={ArchiveCount}",
+                        $"toolchain_us={LlvmObjectMicroseconds + NativeObjectMicroseconds + LinkMicroseconds + ArchiveMicroseconds}"
+                    ])
+                + Environment.NewLine);
+        }
+
+        private static long ToMicroseconds(TimeSpan duration)
+        {
+            return (duration.Ticks * 1_000_000L + TimeSpan.TicksPerSecond / 2) / TimeSpan.TicksPerSecond;
+        }
+    }
 
     private static async Task WriteDiagnosticsAsync(
         TextWriter writer,

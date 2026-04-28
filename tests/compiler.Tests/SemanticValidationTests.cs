@@ -27,12 +27,16 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn storeborrow i32[-2147483648 2147483647] Source();
-            static borrow i32[-2147483648 2147483647] Current = Source();
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn storeborrow Box Source();
+            static borrow Box Current = Source();
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4005");
+        AssertDiagnostic(result, "STK3002");
     }
 
     [Fact]
@@ -310,7 +314,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647] Answer = 1 + 2;
+            const i32 Answer = 1 + 2;
             """);
 
         Assert.True(result.Succeeded);
@@ -325,7 +329,7 @@ public sealed class SemanticValidationTests
 
             fn i32[-2147483648 2147483647] Read();
 
-            const i32[-2147483648 2147483647] Answer = Read();
+            const i32 Answer = Read();
             """);
 
         Assert.False(result.Succeeded);
@@ -339,7 +343,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647] Answer = 42;
+            const i32 Answer = 42;
 
             law i32[-2147483648 2147483647] Read() {
                 return Answer;
@@ -470,10 +474,7 @@ public sealed class SemanticValidationTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn storeborrow mut Box Source();
-
-            law void Touch() {
-                stack mut borrow mut Box box = Source();
+            law void Touch(mut borrow Box box) {
                 box.Value = 1;
                 return;
             }
@@ -878,7 +879,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647] Answer = 42;
+            const i32 Answer = 42;
 
             doctrine Numbers {
                 law i32[-2147483648 2147483647] Read() {

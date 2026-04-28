@@ -43,7 +43,7 @@ internal sealed class LlvmFunctionAttributeBuilder
         return string.Join(" ", segments);
     }
 
-    public string RenderAbiReturnType(AbiFunctionSignature abiFunction)
+    public string RenderAbiReturnType(AbiFunctionSignature abiFunction, SsaIntegerRangeFact? returnRange = null)
     {
         var segments = new List<string>();
 
@@ -55,7 +55,7 @@ internal sealed class LlvmFunctionAttributeBuilder
         if (!abiFunction.IsFfi
             && !abiFunction.ReturnsIndirect
             && abiFunction.SourceReturnType.BorrowKind == StarkBorrowKind.None
-            && LlvmValueRangeFacts.TryBuildRangeAttribute(abiFunction.SourceReturnType, out var rangeAttribute))
+            && TryBuildReturnRangeAttribute(abiFunction.SourceReturnType, returnRange, out var rangeAttribute))
         {
             segments.Add(rangeAttribute);
         }
@@ -63,6 +63,16 @@ internal sealed class LlvmFunctionAttributeBuilder
         segments.Add(MapType(abiFunction.LlvmReturnType));
 
         return string.Join(" ", segments);
+    }
+
+    private static bool TryBuildReturnRangeAttribute(
+        StarkTypeSymbol returnType,
+        SsaIntegerRangeFact? returnRange,
+        out string rangeAttribute)
+    {
+        return returnRange is { } range
+            ? LlvmValueRangeFacts.TryBuildRangeAttribute(returnType, range, out rangeAttribute)
+            : LlvmValueRangeFacts.TryBuildRangeAttribute(returnType, out rangeAttribute);
     }
 
     public string BuildFunctionAttributes(

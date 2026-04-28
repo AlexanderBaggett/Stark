@@ -20,6 +20,7 @@ internal sealed class LlvmEmissionContext
     private readonly Func<bool> _isDebugInfoEnabled;
     private readonly Func<string> _getEmptyTupleMetadataRef;
     private readonly Func<StarkTypeSymbol, string?> _getValueRangeMetadataRef;
+    private readonly Func<StarkTypeSymbol, SsaIntegerRangeFact, string?> _getValueRangeFactMetadataRef;
     private readonly Func<string, string, string> _getTbaaTypeDescriptorRef;
     private readonly Func<string, string, IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)>, string> _getTbaaStructTypeDescriptorRef;
     private readonly Func<string, string, long, string> _getTbaaAccessTagRef;
@@ -53,6 +54,7 @@ internal sealed class LlvmEmissionContext
         Func<bool> isDebugInfoEnabled,
         Func<string> getEmptyTupleMetadataRef,
         Func<StarkTypeSymbol, string?> getValueRangeMetadataRef,
+        Func<StarkTypeSymbol, SsaIntegerRangeFact, string?> getValueRangeFactMetadataRef,
         Func<string, string, string> getTbaaTypeDescriptorRef,
         Func<string, string, IReadOnlyList<(string TypeDescriptorRef, long OffsetBytes)>, string> getTbaaStructTypeDescriptorRef,
         Func<string, string, long, string> getTbaaAccessTagRef,
@@ -85,6 +87,7 @@ internal sealed class LlvmEmissionContext
         _isDebugInfoEnabled = isDebugInfoEnabled;
         _getEmptyTupleMetadataRef = getEmptyTupleMetadataRef;
         _getValueRangeMetadataRef = getValueRangeMetadataRef;
+        _getValueRangeFactMetadataRef = getValueRangeFactMetadataRef;
         _getTbaaTypeDescriptorRef = getTbaaTypeDescriptorRef;
         _getTbaaStructTypeDescriptorRef = getTbaaStructTypeDescriptorRef;
         _getTbaaAccessTagRef = getTbaaAccessTagRef;
@@ -118,6 +121,9 @@ internal sealed class LlvmEmissionContext
     public string EmptyTupleMetadataRef => _getEmptyTupleMetadataRef();
 
     public string? GetValueRangeMetadataRef(StarkTypeSymbol type) => _getValueRangeMetadataRef(type);
+
+    public string? GetValueRangeMetadataRef(StarkTypeSymbol type, SsaIntegerRangeFact range) =>
+        _getValueRangeFactMetadataRef(type, range);
 
     public string GetTbaaTypeDescriptorRef(string key, string displayName) =>
         _getTbaaTypeDescriptorRef(key, displayName);

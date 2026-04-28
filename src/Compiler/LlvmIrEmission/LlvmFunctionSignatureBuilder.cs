@@ -50,7 +50,8 @@ internal sealed class LlvmFunctionSignatureBuilder
         FunctionEffectProfile effects,
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
-        MonomorphizationLinkageKind? specializationLinkage = null)
+        MonomorphizationLinkageKind? specializationLinkage = null,
+        SsaIntegerRangeFact? returnRange = null)
     {
         var segments = new List<string> { "define" };
 
@@ -69,7 +70,7 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add("fastcc");
         }
 
-        segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
+        segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction, returnRange));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({RenderAbiParameterList(abiFunction, includeNames: true, parameterEffects)})");
 
         if (ResolveDefinitionAddressAttribute(internalize, specializationLinkage) is { } addressAttribute)

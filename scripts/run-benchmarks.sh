@@ -11,17 +11,25 @@ filter="${STARK_BENCH_FILTER:-}"
 target="${STARK_TARGET:-}"
 extra_args="${STARK_COMPILER_ARGS:-}"
 languages="${STARK_BENCH_LANGUAGES:-stark,c,rust}"
+run_timeout_seconds="${STARK_BENCH_TIMEOUT_SECONDS:-30}"
 c_compiler="${STARK_BENCH_C_COMPILER:-clang}"
 rust_compiler="${STARK_BENCH_RUST_COMPILER:-rustc}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 output_dir="${STARK_BENCH_OUTPUT_DIR:-${bench_root}/results}"
 results_file="${STARK_BENCH_RESULTS_FILE:-}"
 machine_file="${STARK_BENCH_MACHINE_FILE:-}"
+baseline_file="${STARK_BENCH_BASELINE_FILE:-}"
+regression_checker="${STARK_BENCH_REGRESSION_CHECKER:-${repo_root}/scripts/check-benchmark-regressions.sh}"
 c_flags=(-O3 -DNDEBUG -std=c17)
 rust_flags=(-C opt-level=3 -C debug-assertions=no -C overflow-checks=no)
 
 if ! [[ "${runs}" =~ ^[1-9][0-9]*$ ]]; then
   echo "STARK_BENCH_RUNS must be a positive integer." >&2
+  exit 2
+fi
+
+if ! [[ "${run_timeout_seconds}" =~ ^[0-9]+$ ]]; then
+  echo "STARK_BENCH_TIMEOUT_SECONDS must be a non-negative integer." >&2
   exit 2
 fi
 
@@ -120,6 +128,14 @@ write_machine_metadata() {
     printf 'timing_unit=microseconds\n'
     printf 'stark_filter=%s\n' "${filter:-<none>}"
     printf 'benchmark_languages=%s\n' "${languages}"
+    printf 'benchmark_timeout_seconds=%s\n' "${run_timeout_seconds}"
+    printf 'benchmark_baseline_file=%s\n' "${baseline_file:-<none>}"
+    printf 'benchmark_regression_metric=%s\n' "${STARK_BENCH_REGRESSION_METRIC:-avg_us}"
+    printf 'benchmark_require_baseline=%s\n' "${STARK_BENCH_REQUIRE_BASELINE:-0}"
+    printf 'benchmark_max_regression_pct=%s\n' "${STARK_BENCH_MAX_REGRESSION_PCT:-10}"
+    printf 'benchmark_min_regression_delta=%s\n' "${STARK_BENCH_MIN_REGRESSION_DELTA:-${STARK_BENCH_MIN_REGRESSION_DELTA_US:-50}}"
+    printf 'benchmark_max_stark_to_c_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-<disabled>}"
+    printf 'benchmark_max_stark_to_rust_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-<disabled>}"
     printf 'stark_target=%s\n' "${target:-host-default}"
     printf 'stark_flags=--emit-exe -O3\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
@@ -141,13 +157,69 @@ ns_to_us() {
   printf '%s\n' "$(((ns + 500) / 1000))"
 }
 
+file_size_bytes() {
+  local path="$1"
+  if stat -c '%s' "${path}" >/dev/null 2>&1; then
+    stat -c '%s' "${path}"
+    return
+  fi
+
+  stat -f '%z' "${path}"
+}
+
+read_metric_value() {
+  local path="$1"
+  local key="$2"
+
+  if [[ ! -f "${path}" ]]; then
+    printf '0\n'
+    return
+  fi
+
+  awk -F= -v key="${key}" '$1 == key { print $2; found = 1; exit } END { if (!found) print 0 }' "${path}"
+}
+
+run_benchmark_executable() {
+  local benchmark_id="$1"
+  local language="$2"
+  local phase="$3"
+  local output_path="$4"
+  local status
+
+  if [[ "${run_timeout_seconds}" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
+    if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null; then
+      return 0
+    fi
+
+    status="$?"
+    if [[ "${status}" -eq 124 ]]; then
+      echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
+    else
+      echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+    fi
+
+    exit "${status}"
+  fi
+
+  if "${output_path}" >/dev/null; then
+    return 0
+  fi
+
+  status="$?"
+  echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+  exit "${status}"
+}
+
 time_executable() {
   local benchmark_id="$1"
   local language="$2"
   local compile_us="$3"
-  local output_path="$4"
+  local llvm_object_us="$4"
+  local link_us="$5"
+  local toolchain_us="$6"
+  local output_path="$7"
 
-  "${output_path}" >/dev/null
+  run_benchmark_executable "${benchmark_id}" "${language}" "warmup" "${output_path}"
 
   local total_ns=0
   local min_ns=0
@@ -158,7 +230,7 @@ time_executable() {
     local run_end
     local elapsed_ns
     run_start="$(date +%s%N)"
-    "${output_path}" >/dev/null
+    run_benchmark_executable "${benchmark_id}" "${language}" "run ${run}/${runs}" "${output_path}"
     run_end="$(date +%s%N)"
     elapsed_ns="$((run_end - run_start))"
     total_ns="$((total_ns + elapsed_ns))"
@@ -173,10 +245,12 @@ time_executable() {
   local min_us
   local avg_us
   local max_us
+  local binary_bytes
   min_us="$(ns_to_us "${min_ns}")"
   avg_us="$(ns_to_us "$((total_ns / runs))")"
   max_us="$(ns_to_us "${max_ns}")"
-  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${min_us}" "${avg_us}" "${max_us}")"
+  binary_bytes="$(file_size_bytes "${output_path}")"
+  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}")"
 }
 
 compile_and_time_stark() {
@@ -187,6 +261,7 @@ compile_and_time_stark() {
   local compile_start
   local compile_end
   local compile_us
+  local metrics_path="${output_path}.metrics"
   compile_start="$(date +%s%N)"
   dotnet run --project "${repo_root}/src" -- \
     "${source_path}" \
@@ -194,10 +269,18 @@ compile_and_time_stark() {
     -O3 \
     -I "${stdlib_root}" \
     -o "${output_path}" \
+    --toolchain-metrics "${metrics_path}" \
     "${compiler_args[@]}" >/dev/null
   compile_end="$(date +%s%N)"
   compile_us="$(ns_to_us "$((compile_end - compile_start))")"
-  time_executable "${benchmark_id}" "stark" "${compile_us}" "${output_path}"
+  time_executable \
+    "${benchmark_id}" \
+    "stark" \
+    "${compile_us}" \
+    "$(read_metric_value "${metrics_path}" llvm_object_us)" \
+    "$(read_metric_value "${metrics_path}" link_us)" \
+    "$(read_metric_value "${metrics_path}" toolchain_us)" \
+    "${output_path}"
 }
 
 compile_and_time_c() {
@@ -212,7 +295,7 @@ compile_and_time_c() {
   "${c_compiler}" "${source_path}" "${c_flags[@]}" -o "${output_path}"
   compile_end="$(date +%s%N)"
   compile_us="$(ns_to_us "$((compile_end - compile_start))")"
-  time_executable "${benchmark_id}" "c" "${compile_us}" "${output_path}"
+  time_executable "${benchmark_id}" "c" "${compile_us}" 0 0 0 "${output_path}"
 }
 
 compile_and_time_rust() {
@@ -235,7 +318,7 @@ compile_and_time_rust() {
   "${rust_compiler}" --crate-name "${crate_name}" "${source_path}" "${rust_flags[@]}" -o "${output_path}"
   compile_end="$(date +%s%N)"
   compile_us="$(ns_to_us "$((compile_end - compile_start))")"
-  time_executable "${benchmark_id}" "${language}" "${compile_us}" "${output_path}"
+  time_executable "${benchmark_id}" "${language}" "${compile_us}" 0 0 0 "${output_path}"
 }
 
 write_machine_metadata "${machine_file}"
@@ -268,7 +351,7 @@ if [[ -n "${extra_args}" ]]; then
   compiler_args+=(${extra_args})
 fi
 
-emit_row 'benchmark,language,runs,compile_us,min_us,avg_us,max_us'
+emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us'
 
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
@@ -336,3 +419,12 @@ for source_path in "${benchmarks[@]}"; do
     done
   fi
 done
+
+if [[ -n "${baseline_file}" || "${STARK_BENCH_REQUIRE_BASELINE:-0}" == "1" || -n "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-}" || -n "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-}" ]]; then
+  regression_args=("${results_file}")
+  if [[ -n "${baseline_file}" ]]; then
+    regression_args+=("${baseline_file}")
+  fi
+
+  "${regression_checker}" "${regression_args[@]}"
+fi

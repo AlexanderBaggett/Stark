@@ -199,13 +199,17 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             enum Token {
                 End,
-                Text(ascii),
+                Text(Payload),
             }
 
             fn i32[-2147483648 2147483647] Run() {
-                stack Token token = Token.Text("hello");
+                stack Token token = Token.Text(new Payload() { Text = "hello" });
                 return 0;
             }
             """);
@@ -223,13 +227,17 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             enum Token {
                 End,
-                Text(ascii),
+                Text(Payload),
             }
 
             fn i32[-2147483648 2147483647] Run(bool choose) {
-                stack Token token = choose ? Token.Text("hello") : Token.End;
+                stack Token token = choose ? Token.Text(new Payload() { Text = "hello" }) : Token.End;
                 return 0;
             }
             """);
@@ -248,16 +256,20 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             enum Token {
                 Empty,
-                Text(ascii),
+                Text(Payload),
             }
 
             fn i32[-2147483648 2147483647] Run(bool choose) {
                 stack mut Token token;
 
                 if (choose) {
-                    token = Token.Text("hello");
+                    token = Token.Text(new Payload() { Text = "hello" });
                 }
 
                 return 0;
@@ -400,13 +412,17 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             enum Token {
                 End,
-                Text(ascii),
+                Text(Payload),
             }
 
             fn i32[-2147483648 2147483647] Run() {
-                stack mut Token token = Token.Text("hello");
+                stack mut Token token = Token.Text(new Payload() { Text = "hello" });
                 token = Token.End;
                 return 0;
             }
@@ -426,12 +442,16 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            enum Token {
-                Empty,
-                Text(ascii),
+            struct Payload {
+                ascii Text;
             }
 
-            fn void Consume(ascii text) {
+            enum Token {
+                Empty,
+                Text(Payload),
+            }
+
+            fn void Consume(Payload text) {
                 return;
             }
 
@@ -580,9 +600,13 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             struct Pair {
-                ascii Left;
-                ascii Right;
+                Payload Left;
+                Payload Right;
             }
 
             fn void Consume(Pair value) {
@@ -590,8 +614,8 @@ public sealed class OwnershipRoadmapRegressionTests
             }
 
             fn i32[-2147483648 2147483647] Run() {
-                stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
-                stack ascii left = pair.Left;
+                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
+                stack Payload left = pair.Left;
                 Consume(pair);
                 return 0;
             }
@@ -613,9 +637,13 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             struct Pair {
-                ascii Left;
-                ascii Right;
+                Payload Left;
+                Payload Right;
             }
 
             fn void Consume(Pair value) {
@@ -623,9 +651,9 @@ public sealed class OwnershipRoadmapRegressionTests
             }
 
             fn i32[-2147483648 2147483647] Run() {
-                stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
-                stack ascii left = pair.Left;
-                pair.Left = "c";
+                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
+                stack Payload left = pair.Left;
+                pair.Left = new Payload() { Text = "c" };
                 Consume(pair);
                 return 0;
             }
@@ -643,19 +671,23 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             struct Pair {
-                ascii Left;
-                ascii Right;
+                Payload Left;
+                Payload Right;
             }
 
             fn i32[-2147483648 2147483647] Run(bool choose) {
-                stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
+                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
 
                 if (choose) {
-                    stack ascii left = pair.Left;
+                    stack Payload left = pair.Left;
                 }
 
-                stack ascii current = pair.Left;
+                stack Payload current = pair.Left;
                 return 0;
             }
             """);
@@ -671,20 +703,24 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
+            struct Payload {
+                ascii Text;
+            }
+
             struct Pair {
-                ascii Left;
-                ascii Right;
+                Payload Left;
+                Payload Right;
             }
 
             fn i32[-2147483648 2147483647] Run(bool choose) {
-                stack mut Pair pair = new Pair() { Left = "a", Right = "b" };
+                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
 
                 if (choose) {
-                    stack ascii left = pair.Left;
-                    pair.Left = "c";
+                    stack Payload left = pair.Left;
+                    pair.Left = new Payload() { Text = "c" };
                 }
 
-                stack ascii current = pair.Left;
+                stack Payload current = pair.Left;
                 return 0;
             }
             """);
@@ -813,7 +849,7 @@ public sealed class OwnershipRoadmapRegressionTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4202", "Lifetime error", "cannot assign a borrow with an unknown source lifetime to 'borrowAlias'", "destination scope");
+        AssertDiagnostic(result, "STK3002", "Assignment expects 'retborrow i32'", "found 'i32'");
     }
 
     [Fact]
@@ -838,12 +874,7 @@ public sealed class OwnershipRoadmapRegressionTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4202", "Lifetime error", "source lifetime could not be proven", "destination scope");
-        Assert.Contains(
-            result.Diagnostics,
-            diagnostic => diagnostic.Code == "STK4202"
-                && diagnostic.Severity == DiagnosticSeverity.Info
-                && diagnostic.Message.Contains("borrow source for call 'Source' is here.", StringComparison.Ordinal));
+        AssertDiagnostic(result, "STK3002", "Assignment expects 'retborrow i32'", "found 'i32'");
     }
 
     [Fact]
@@ -864,7 +895,7 @@ public sealed class OwnershipRoadmapRegressionTests
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4202", "Lifetime error", "source lifetime could not be proven", "return path");
+        AssertDiagnostic(result, "STK3002", "Assignment expects 'retborrow i32'", "found 'i32'");
     }
 
     private static CompilationResult Compile(string source)
