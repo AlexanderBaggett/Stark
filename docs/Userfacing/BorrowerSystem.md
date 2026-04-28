@@ -262,10 +262,11 @@ fn void InvalidNullBorrow() {
 
 Stark distinguishes ordinary shared access from deep immutability.
 
-Two forms:
+The forms:
 
 * `frozen T`: nothing reachable through this reference may be mutated for the lifetime of the borrow.
 * `shared T`: shared access is permitted, but mutation capable primitives may exist in this domain.
+* `const T`: the reachable object graph has permanent const provenance and remains deeply immutable beyond a single borrow lifetime.
 
 Under `frozen`, the language prohibits:
 
@@ -275,7 +276,9 @@ Under `frozen`, the language prohibits:
 * upgrading reachable readonly aliases back to mutable raw aliases in safe code
 * laundering reachable readonly aliases through integer conversions
 
-This distinction lets the compiler rely on true read only behavior rather than the absence of writes through one syntactic path. That allows hoisting, sharing, and reusing reads.
+This distinction lets the compiler rely on true read-only behavior rather than the absence of writes through one syntactic path. That allows hoisting, sharing, and reusing reads.
+
+`const` is stronger than `frozen`. A `frozen` borrow is readonly for the lifetime of that borrow. A `const` parameter or global describes memory that safe Stark code cannot mutate through any reachable path.
 
 Frozen access permits reads but rejects mutation through anything reachable:
 
@@ -469,9 +472,44 @@ Available qualifiers:
 * exact length
 * length multiple
 * disjoint from another slice
-* mutable but non overlapping
+* mutable but non-overlapping
 
-These tell the compiler more about alignment, bounds, non overlap, and vectorization than a basic pointer plus length would.
+These tell the compiler more about alignment, bounds, non-overlap, and vectorization than a basic pointer plus length would.
+
+## 11. Memory-Separation Composition
+
+`disjoint` is a memory-region contract. It composes with the borrower qualifiers but does not replace them.
+
+Rules:
+
+* `disjoint borrow T` means readonly borrowed access to a region that does not overlap the other regions named by the same disjoint contract.
+* `disjoint borrow mut T` means mutable borrowed access to a region that does not overlap the other regions named by the same disjoint contract.
+* `out T` and `init T` keep their write-before-read requirements when they are also disjoint from input regions.
+* `frozen T` and `const T` remain deeply readonly; adding `disjoint` also proves memory separation.
+* `shared T` does not establish disjointness by itself. Shared-state capabilities still need explicit disjoint contracts or other proof before the compiler treats accesses as non-overlapping.
+
+The relational form states exact relationships:
+
+```stark
+fn void Copy(borrow u8[] source, borrow mut u8[] destination)
+    where disjoint(source, destination) {
+    return;
+}
+```
+
+Inside `Copy`, `source` and `destination` are known not to overlap for the duration of the call. The readonly or mutable authority still comes from `borrow` and `borrow mut`; `disjoint` only supplies the non-overlap fact.
+
+The checked branch form scopes the same fact to the true branch:
+
+```stark
+if disjoint(source, destination) {
+    Copy(source, destination);
+}
+```
+
+The false branch receives no disjoint fact and must use overlap-safe code.
+
+`const` and `disjoint` are independent. Two const parameters can alias the same immutable object graph. The compiler treats them as non-overlapping only when `disjoint` is written or proven.
 
 ## Summary
 
@@ -484,7 +522,9 @@ The Stark borrower system is organized around:
 * an explicit raw pointer boundary
 * null free safe borrows
 * transitive immutability
+* permanent const provenance
 * explicit initialization contracts
+* explicit disjoint memory-region contracts
 * explicit effects
 * restricted destruction
 * explicit shared state capability

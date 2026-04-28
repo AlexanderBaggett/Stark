@@ -2244,6 +2244,96 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void SystemTextAsciiToUnicodeLiteralCallSpecializesAtCallSite()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_check_capacity", llvm);
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("store i32 83, ptr", llvm);
+        Assert.Contains("store i64 5, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCall()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run(ascii source) {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, source);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+        Assert.DoesNotContain("abi_ascii2unicode_store", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCall()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "caf\u00E9");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+        Assert.DoesNotContain("abi_ascii2unicode_store", llvm);
+    }
+
+    [Fact]
     public void SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
     {
         var result = Compile(

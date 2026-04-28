@@ -1347,6 +1347,161 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitExecutableModeEnablesThinLtoForOptimizedBuildsWhenLldIsAvailable()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
+        await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
+        System.Diagnostics.Process.Start("chmod", $"+x {lldPath}")!.WaitForExit();
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-O3",
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-flto=thin", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-O3", clangLog, StringComparison.Ordinal);
+            Assert.Contains("-fuse-ld=lld", clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeKeepsSystemMemoryDependencyOutOfThinLto()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-system-memory-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var saveTempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixAppendCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
+        await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
+        System.Diagnostics.Process.Start("chmod", $"+x {lldPath}")!.WaitForExit();
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import System
+                module App
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> text = 0.ToAscii();
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-O3",
+                    "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
+                    "--save-temps", saveTempsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("root.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal));
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("System_Text.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal));
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal)
+                    && !line.Contains("-flto=thin", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeLinksManifestBackedLibrariesWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -2117,6 +2272,32 @@ public sealed class CompilerCliTests
         return path;
     }
 
+    private static async Task<string> CreateUnixAppendCaptureClangAsync(string directory, string logPath)
+    {
+        var path = Path.Combine(directory, "clang");
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf '%s\n' "$*" >> "{{logPath}}"
+            out=""
+            prev=""
+            for arg in "$@"; do
+              if [ "$prev" = "-o" ]; then
+                out="$arg"
+                break
+              fi
+              prev="$arg"
+            done
+            if [ -n "$out" ]; then
+              : > "$out"
+            fi
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
+    }
+
     private static async Task<string> CreateUnixCaptureArchiverAsync(string directory, string logPath)
     {
         var path = Path.Combine(directory, "capture-archiver.sh");
@@ -2131,6 +2312,23 @@ public sealed class CompilerCliTests
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Stark.slnx")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Unable to locate the Stark repository root.");
     }
 
     private static string? FindFirstAvailableTool(params string[] toolNames)

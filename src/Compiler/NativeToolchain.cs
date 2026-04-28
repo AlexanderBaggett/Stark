@@ -14,6 +14,13 @@ internal sealed record NativeToolchainResult(
 
 internal static class NativeToolchain
 {
+    public static bool SupportsExecutableThinLto()
+    {
+        return OperatingSystem.IsWindows()
+            ? CommandExists("lld-link")
+            : CommandExists("ld.lld");
+    }
+
     public static bool TryDetectDefaultTargetInfo(out LlvmTargetInfo targetInfo)
     {
         targetInfo = default!;

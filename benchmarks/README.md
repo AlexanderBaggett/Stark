@@ -25,16 +25,27 @@ Both runners compile executable Stark, C, and Rust benchmarks and perform one
 warmup execution per binary.
 
 The Bash runner records executable size plus Stark object/link/toolchain timing
-and prints CSV rows:
+and writes CSV rows:
 
 ```text
-benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,c_avg_ratio
 ```
 
-The Windows PowerShell runner currently prints:
+The Windows PowerShell runner currently writes:
 
 ```text
-benchmark,language,runs,compile_us,min_us,avg_us,max_us
+benchmark,language,runs,compile_us,min_us,avg_us,max_us,c_avg_ratio
+```
+
+The `c_avg_ratio` column is calculated after the last benchmark finishes. It
+uses the average runtime for the same benchmark: `row avg_us / C avg_us`.
+The C row is `1.000000`; faster rows are below `1.0`, slower rows are above
+`1.0`. Rows without a same-benchmark C result leave the ratio blank. To add or
+refresh this column on an existing Linux/macOS result file without rerunning
+benchmarks:
+
+```bash
+scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
 ```
 
 Each executable Stark benchmark must have same-stem C and Rust counterparts
@@ -166,6 +177,9 @@ The locked default flags are:
   visible owned path joining plus path-view inspection helpers.
 - `text/AsciiToUnicodeConversion.stark` is an executable benchmark for the
   caller-buffer ASCII-to-Unicode conversion fast path.
+- `text/AsciiToUnicodeConversionRuntime.stark` uses the executable path
+  (`argv[0]`) as runtime ASCII input so the Stark, C, and Rust rows must
+  convert bytes that are not available as compile-time literals.
 - `text/TextPathCallerBuffer.stark` is a compile-only benchmark for the current
   caller-owned path buffer helpers and low-level text conversion helpers.
 - `network/TcpLoopbackThroughput.stark` is an executable loopback benchmark for

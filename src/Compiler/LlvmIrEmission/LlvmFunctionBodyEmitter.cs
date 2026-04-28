@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Globalization;
 using System.Text;
+using Stark.Parsing;
 
 namespace Stark.Compiler.LlvmIrEmission;
 
@@ -54,6 +55,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _valueAliases = new(StringComparer.Ordinal);
     private SourceLocation? _currentDebugLocation;
+    private SsaBasicBlock? _currentBlock;
     private int? _entryStaticAllocaInsertionIndex;
     private int _nextAbiTempId;
     private int _nextAssumeTempId;
@@ -151,6 +153,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         foreach (var block in _ssaFunction.Blocks)
         {
+            _currentBlock = block;
             AppendLine($"{FormatBlockLabel(block.Id)}:");
 
             if (block.Id == _ssaFunction.EntryBlockId)
@@ -181,6 +184,8 @@ internal sealed class LlvmFunctionBodyEmitter
             EmitTerminator(block.Terminator);
             AppendLine(string.Empty);
         }
+
+        _currentBlock = null;
 
         FlushEntryStaticAllocas();
     }
@@ -2079,6 +2084,11 @@ internal sealed class LlvmFunctionBodyEmitter
                 $"FFI string returns are not yet supported for '{call.FunctionName}'.");
         }
 
+        if (TryEmitAsciiToUnicodeLiteralCallSiteSpecialization(resultName, result, call, abiCallee))
+        {
+            return;
+        }
+
         var arguments = new List<string>();
         string? indirectReturnSlot = null;
 
@@ -2214,6 +2224,134 @@ internal sealed class LlvmFunctionBodyEmitter
 
         var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(resultName, call.Type);
         AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}");
+    }
+
+    private bool TryEmitAsciiToUnicodeLiteralCallSiteSpecialization(
+        string resultName,
+        string result,
+        SsaCallRValue call,
+        AbiFunctionSignature abiCallee)
+    {
+        if (!IsTryConvertAsciiToUnicodeAbiTarget(abiCallee)
+            || call.Type.Kind != StarkTypeKind.Bool
+            || call.Arguments.Count != 2
+            || call.Arguments[0].Type is not { Kind: StarkTypeKind.RawPointer, ElementType: not null } destinationPointerType
+            || call.Arguments[1] is not SsaStringConstant { Type.Kind: StarkTypeKind.Ascii } source
+            || !CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            return false;
+        }
+
+        var literalKind = source.LiteralText.StartsWith("'", StringComparison.Ordinal)
+            ? TextLiteralKind.Character
+            : TextLiteralKind.String;
+        if (!TextLiteralDecoder.TryDecode(source.LiteralText, literalKind, out var decoded, out _)
+            || !decoded.IsAscii)
+        {
+            return false;
+        }
+
+        var sourceBytes = decoded.Utf8Bytes;
+        var destinationStructType = destinationPointerType.ElementType;
+        var destination = FormatValue(call.Arguments[0]);
+        var destinationLlvmType = MapType(destinationStructType);
+        var pointerAlignment = GetTypeAlignmentSuffix(StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: true));
+        var lengthAlignment = GetTypeAlignmentSuffix(StarkTypeSymbols.Integer(64));
+        var unitAlignment = GetTypeAlignmentSuffix(StarkTypeSymbols.Integer(32));
+
+        var nullDestinationLabel = EscapeIdentifier(CreateAbiTempName("ascii2unicode_null_destination"));
+        var checkCapacityLabel = EscapeIdentifier(CreateAbiTempName("ascii2unicode_check_capacity"));
+        var checkStorageLabel = EscapeIdentifier(CreateAbiTempName("ascii2unicode_check_storage"));
+        var storeLabel = EscapeIdentifier(CreateAbiTempName("ascii2unicode_store"));
+        var failNonnullLabel = EscapeIdentifier(CreateAbiTempName("ascii2unicode_fail_nonnull"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("ascii2unicode_done"));
+
+        var destinationIsNull = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_destination_is_null"))}";
+        AppendLine($"  {destinationIsNull} = icmp eq ptr {destination}, null");
+        AppendLine($"  br i1 {destinationIsNull}, label %{nullDestinationLabel}, label %{checkCapacityLabel}");
+
+        AppendLine($"{checkCapacityLabel}:");
+        var dataAddress = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_data_addr"))}";
+        var lengthAddress = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_length_addr"))}";
+        var capacityAddress = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_capacity_addr"))}";
+        var capacity = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_capacity"))}";
+        var capacityTooSmall = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_capacity_too_small"))}";
+        AppendLine($"  {dataAddress} = getelementptr{GetProvenInObjectGepFlags()} {destinationLlvmType}, ptr {destination}, i32 0, i32 0");
+        AppendLine($"  {lengthAddress} = getelementptr{GetProvenInObjectGepFlags()} {destinationLlvmType}, ptr {destination}, i32 0, i32 1");
+        AppendLine($"  {capacityAddress} = getelementptr{GetProvenInObjectGepFlags()} {destinationLlvmType}, ptr {destination}, i32 0, i32 2");
+        AppendLine($"  {capacity} = load i64, ptr {capacityAddress}{lengthAlignment}");
+        AppendLine($"  {capacityTooSmall} = icmp slt i64 {capacity}, {sourceBytes.Length.ToString(CultureInfo.InvariantCulture)}");
+        AppendLine($"  br i1 {capacityTooSmall}, label %{failNonnullLabel}, label %{checkStorageLabel}");
+
+        string? data = null;
+        AppendLine($"{checkStorageLabel}:");
+        if (sourceBytes.Length == 0)
+        {
+            AppendLine($"  br label %{storeLabel}");
+        }
+        else
+        {
+            data = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_data"))}";
+            var dataIsNull = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_data_is_null"))}";
+            AppendLine($"  {data} = load ptr, ptr {dataAddress}{pointerAlignment}");
+            AppendLine($"  {dataIsNull} = icmp eq ptr {data}, null");
+            AppendLine($"  br i1 {dataIsNull}, label %{failNonnullLabel}, label %{storeLabel}");
+        }
+
+        AppendLine($"{storeLabel}:");
+        for (var index = 0; index < sourceBytes.Length; index++)
+        {
+            var destinationUnit = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_unit"))}";
+            AppendLine($"  {destinationUnit} = getelementptr{GetProvenInObjectGepFlags()} i32, ptr {data}, i64 {index.ToString(CultureInfo.InvariantCulture)}");
+            AppendLine($"  store i32 {sourceBytes[index].ToString(CultureInfo.InvariantCulture)}, ptr {destinationUnit}{unitAlignment}");
+        }
+
+        AppendLine($"  store i64 {sourceBytes.Length.ToString(CultureInfo.InvariantCulture)}, ptr {lengthAddress}{lengthAlignment}");
+        AppendLine($"  br label %{doneLabel}");
+
+        AppendLine($"{failNonnullLabel}:");
+        AppendLine($"  store i64 0, ptr {lengthAddress}{lengthAlignment}");
+        AppendLine($"  br label %{doneLabel}");
+
+        AppendLine($"{nullDestinationLabel}:");
+        AppendLine($"  br label %{doneLabel}");
+
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi i1 [ true, %{storeLabel} ], [ false, %{failNonnullLabel} ], [ false, %{nullDestinationLabel} ]");
+        return true;
+    }
+
+    private bool CanSplitCurrentBlockForCallSiteControlFlow()
+    {
+        if (_currentBlock is null)
+        {
+            return false;
+        }
+
+        // Splitting the emitted LLVM block changes the predecessor label seen by successors.
+        // Keep this narrow until phi incoming labels can be rewritten for split blocks.
+        foreach (var targetId in EnumerateTerminatorTargets(_currentBlock.Terminator))
+        {
+            if (_blocksById.TryGetValue(targetId, out var targetBlock) && targetBlock.Phis.Count != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsTryConvertAsciiToUnicodeAbiTarget(AbiFunctionSignature abiCallee)
+    {
+        if (string.Equals(abiCallee.SymbolName, "System_Text_TryConvertAsciiToUnicode", StringComparison.Ordinal)
+            || string.Equals(abiCallee.Name, "System.Text.TryConvertAsciiToUnicode", StringComparison.Ordinal)
+            || string.Equals(abiCallee.DisplaySourceName, "System.Text.TryConvertAsciiToUnicode", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return string.Equals(_context.ModuleName, "System.Text", StringComparison.Ordinal)
+            && string.Equals(abiCallee.SymbolName, "TryConvertAsciiToUnicode", StringComparison.Ordinal);
     }
 
     private string RenderCallTarget(AbiFunctionSignature abiCallee)

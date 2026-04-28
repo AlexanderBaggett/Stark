@@ -32,6 +32,62 @@ Common consequences include:
 These are compiler outputs, not language syntax.
 They are emitted only when the implementation can prove them from the source rules plus body analysis.
 
+### 2.1 Disjoint Function Parameters
+
+`disjoint` is Stark's source-level contract for memory regions that do not overlap.
+The parameter-prefix form and the relational `where disjoint(...)` form both feed the same internal memory-separation fact model.
+
+Each `disjoint(...)` relation forms a pairwise non-overlap group. `where disjoint(a, b, c)` records `a` separate from `b`, `a` separate from `c`, and `b` separate from `c`. Multiple groups remain independent: `where disjoint(a, b), disjoint(c, d)` records only the two stated pairs and does not record any relationship between `a` or `b` and `c` or `d`.
+
+Disjointness facts are not transitive. `disjoint(a, b), disjoint(b, c)` does not prove `disjoint(a, c)` unless that relation is also stated or separately proven.
+
+For a four-parameter function where `a` and `b` do not overlap and `c` and `d` do not overlap, but cross-group pairs such as `b` and `d` may overlap, the source form is `where disjoint(a, b), disjoint(c, d)`. For a four-parameter function where all parameters are mutually separate, the source form is `where disjoint(a, b, c, d)`.
+
+For function parameters, disjointness gives the compiler these backend facts:
+
+- a parameter whose whole reachable memory region is disjoint from every other accessible pointer region is emitted with LLVM `noalias` when the LLVM parameter rules allow it
+- individual loads, stores, and memory-touching calls through disjoint roots carry scoped `!alias.scope` and `!noalias` metadata
+- inlined bodies preserve disjointness through scoped noalias metadata instead of relying only on parameter attributes
+- disjoint output or initialization destinations compose with `writeonly`, `initializes(...)`, and dead-store reasoning when the initialized byte range is known
+- disjoint readonly inputs compose with `readonly`, `captures(none)`, or read-only `captures(...)` facts
+
+The compiler treats disjointness as a memory-range fact, not as a root-identity fact. Two slices from the same allocation can be disjoint when their element ranges do not overlap. Two different values are not considered disjoint merely because their names differ.
+
+### 2.2 Branch-Scoped Disjointness
+
+`if disjoint(a, b)` creates a control-flow-scoped memory fact. The true branch carries a proven no-overlap relation for the listed memory regions. The false branch keeps ordinary conservative aliasing behavior.
+
+For contiguous slices and text views, the check lowers to pointer-range comparisons over the data pointer, element size, and length. Once the true branch is selected, memory operations through the checked regions receive scoped `!alias.scope` and `!noalias` metadata. If the fact is introduced inside a nested scope or loop body, the compiler uses a distinct alias-scope domain for that scope and emits `llvm.experimental.noalias.scope.decl` when the selected LLVM representation needs an explicit scope boundary.
+
+The runtime check is a source-level fact boundary. Optimizer metadata must not be attached outside the dominated true-branch region unless later analysis proves the fact still holds.
+
+### 2.3 Independent Loops
+
+`independent` on a `while` or `for` loop means loop iterations have no loop-carried memory dependencies. The loop body may still use induction variables, local scalar temporaries, and immutable reads, but a memory write in one iteration may not be read or written by another iteration.
+
+Independent loops lower to LLVM loop-dependence metadata:
+
+- memory operations covered by the contract receive `!llvm.access.group`
+- the loop latch receives `!llvm.loop.parallel_accesses` referencing those access groups
+- existing termination facts continue to lower to `mustprogress` or `!llvm.loop.mustprogress` where valid
+- vectorization and interleaving hints are attached only when the independent contract and target cost model justify them
+
+The contract is semantic, not a hint. If a loop marked `independent` contains a real loop-carried memory dependence, the program violates the Stark source contract. Safe Stark code must either prove the contract statically or establish the required disjointness through checked facts such as `if disjoint(...)` before entering the loop.
+
+### 2.4 Const Parameters
+
+`const` on a parameter means the reachable object graph has const provenance and is deeply immutable. It is stronger than `frozen`, which is a borrow-duration readonly view. A const parameter describes memory that safe Stark code cannot mutate at any point through any reachable path.
+
+Const parameters produce these backend facts:
+
+- pointer-like ABI values are `nonnull`, `noundef`, `dereferenceable`, and aligned according to the concrete type layout
+- argument memory is `readonly`, and functions that only read const parameters receive restrictive `memory(...)` attributes
+- captures are `captures(none)` when the pointer does not escape, or `captures(address, read_provenance)` when readonly provenance is stored for later reads
+- loads through permanently immutable const provenance carry `!invariant.load` when the loaded object cannot be replaced for the lifetime represented in IR
+- projections from const parameters preserve frozen/readonly provenance and keep raw conversions from regaining mutable authority
+
+Const does not imply disjointness. Multiple const parameters may alias the same immutable object graph. The compiler emits `noalias` for const parameters only when a separate disjointness fact is present or proven.
+
 ## 3. Internal ABI and FFI Boundaries
 
 At the source level, `ffi` marks a foreign-facing function boundary.

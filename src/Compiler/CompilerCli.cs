@@ -517,7 +517,9 @@ internal static class CompilerCli
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
-        var enableExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel);
+        var enableExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel, toolchainOptions.LinkerTool)
+            && !UsesPrecompiledStarkLibraries(result)
+            && !LlvmTextReferencesSystemCollections(llvmModule.Text);
         var toolchainMetrics = new ToolchainMetrics();
 
         try
@@ -1914,7 +1916,14 @@ internal static class CompilerCli
                     continue;
                 }
 
-                var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
+                var toolchainResult = EmitDependencyObject(
+                    dependencyResult,
+                    rootOptions,
+                    intermediateDirectory,
+                    preserveTemps,
+                    enableLto
+                        && ShouldEnableDependencyLto(dependencyResult.Module)
+                        && !LlvmTextReferencesSystemCollections(dependencyResult.LlvmText));
                 toolchainMetrics?.AddLlvmObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
@@ -2051,13 +2060,65 @@ internal static class CompilerCli
             enableLto: enableLto);
     }
 
-    private static bool ShouldEnableExecutableLto(CompilerOptimizationLevel optimizationLevel)
+    private static bool ShouldEnableExecutableLto(CompilerOptimizationLevel optimizationLevel, string? linkerTool)
     {
-        // ThinLTO currently miscompiles at least the packaged System.Collections
-        // grow/move/drop executable, causing an optimized binary to spin.
-        // Keep executable LTO disabled until the imported-package/LTO contract is fixed.
-        _ = optimizationLevel;
+        if (optimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og or CompilerOptimizationLevel.O1)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(linkerTool)
+            && !Path.GetFileName(linkerTool).Contains("clang", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return NativeToolchain.SupportsExecutableThinLto();
+    }
+
+    private static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
+    {
+        // Keep the historical System.Collections grow/move/drop ThinLTO issue
+        // isolated while allowing the rest of an optimized executable to use
+        // cross-module imports.
+        // System.Memory also stays native for now: owned text allocation can
+        // miscompile when root code, System.Text, and System.Memory all
+        // participate in the same ThinLTO link.
+        return !string.Equals(module.SyntaxModel.ModuleName, "System.Collections", StringComparison.Ordinal)
+            && !string.Equals(module.SyntaxModel.ModuleName, "System.Memory", StringComparison.Ordinal);
+    }
+
+    private static bool LlvmTextReferencesSystemCollections(string? llvmText)
+    {
+        if (string.IsNullOrWhiteSpace(llvmText))
+        {
+            return false;
+        }
+
+        foreach (var rawLine in llvmText.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
+        {
+            var line = rawLine.TrimStart();
+            if (line.StartsWith("declare ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (line.Contains("@System_Collections", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private static bool UsesPrecompiledStarkLibraries(CompilationResult result)
+    {
+        return result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
+            && loadedModules is not null
+            && loadedModules.ImportedModules.Any(static module =>
+                !module.Reference.IsExternal
+                && !string.IsNullOrWhiteSpace(module.Reference.LibraryPath));
     }
 
     private static LlvmSymbolSummary SummarizeLlvmSymbols(string llvmText)

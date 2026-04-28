@@ -189,11 +189,89 @@ Function declarations may appear with either:
 
 Semicolon form is used for FFI functions and forward declarations.
 
-Function parameters are written as `T name`.
+Function parameters are normally written as `T name`. Parameter memory contracts may add a prefix before the type or a `where` clause after the parameter list.
 
 Default argument syntax such as `fn i32 Add(i32 left = 1)` is not part of Stark.
 
-### 5.4 Function Items and Function Pointers
+### 5.4 Parameter Memory Contracts
+
+Function parameters support memory-separation and deep-immutability contracts.
+These contracts are part of the function type and are checked at call sites.
+
+The parameter-prefix `disjoint` form declares that the memory region reachable through that parameter does not overlap the memory region reachable through any other `disjoint` parameter in the same parameter list:
+
+```stark
+fn void Add(
+    disjoint borrow f32[] left,
+    disjoint borrow f32[] right,
+    disjoint borrow mut f32[] output) {
+    return;
+}
+```
+
+The relational `where disjoint(...)` form declares exact disjointness relations between named parameters:
+
+```stark
+fn void Copy(borrow u8[] source, borrow mut u8[] destination)
+    where disjoint(source, destination) {
+    return;
+}
+```
+
+`disjoint(a, b, c)` means every listed memory region is pairwise non-overlapping for the duration of the call. This is the form for three parameters that are all separate from each other:
+
+```stark
+fn void Process(borrow u8[] a, borrow u8[] b, borrow mut u8[] c)
+    where disjoint(a, b, c) {
+    return;
+}
+```
+
+Multiple `disjoint(...)` clauses in the same `where` clause are separated with commas. They describe separate disjoint groups and do not imply disjointness between groups:
+
+```stark
+fn void ProcessPairs(
+    borrow u8[] a,
+    borrow u8[] b,
+    borrow u8[] c,
+    borrow mut u8[] d)
+    where disjoint(a, b), disjoint(c, d) {
+    return;
+}
+```
+
+In `ProcessPairs`, `a` and `b` do not overlap, and `c` and `d` do not overlap. No other pair is promised to be separate. For example, `b` and `d` may still overlap.
+
+Disjointness is not transitive. `where disjoint(a, b), disjoint(b, c)` does not mean `a` and `c` are separate.
+
+To require all four parameters to be separate from each other, put all four names in the same group:
+
+```stark
+fn void ProcessAllSeparate(
+    borrow u8[] a,
+    borrow u8[] b,
+    borrow u8[] c,
+    borrow mut u8[] d)
+    where disjoint(a, b, c, d) {
+    return;
+}
+```
+
+A disjoint contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy `disjoint` when their element ranges do not overlap.
+
+A `const` parameter is a parameter whose reachable object graph is deeply immutable. It is stronger than ordinary readonly access and stronger than `frozen` borrow access because it requires permanent const provenance rather than only a call-scoped readonly view:
+
+```stark
+fn i32[0 max] Lookup(const Table table, i32[0 max] key) {
+    return table.Find(key);
+}
+```
+
+Projections from a `const` parameter remain deeply readonly. Safe code may not derive a mutable borrow, mutable raw pointer, or mutation-capable alias from any reachable part of a const parameter graph.
+
+`const` does not imply `disjoint`. Two const parameters can refer to the same immutable object graph unless `disjoint` is also written or proven.
+
+### 5.5 Function Items and Function Pointers
 
 Stark's first class callable model starts with **function items**.
 
@@ -229,7 +307,7 @@ fnptr<finite law i32[0 max](i32[0 max])>
 
 The current `fnptr` type is an ordinary safe callable pointer. Unsafe function items cannot be promoted to ordinary `fnptr` values because that would hide the unsafe requirement from later calls. Call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
 
-### 5.5 Lambdas and Capture Modes
+### 5.6 Lambdas and Capture Modes
 
 Lambda syntax follows the C# arrow form:
 
@@ -356,11 +434,14 @@ The qualifiers:
 * `storeborrow`
 * `frozen`
 * `shared`
+* `const`
 * `out`
 * `init`
 * `mut`
 
 These are part of the type model, not local syntax sugar.
+
+`const` is valid on function parameters and means the parameter refers to a deeply immutable reachable object graph. Top-level `const` declarations use the same deep immutability contract for global objects.
 
 ### 6.4 Raw Pointers
 
@@ -414,6 +495,17 @@ The access qualifiers:
 
 * `frozen T`: deeply immutable for the lifetime of the borrow
 * `shared T`: explicit shared access domain
+
+The deep-const parameter form is:
+
+* `const T`: deeply immutable reachable object graph with const provenance
+
+The memory-separation forms are:
+
+* `disjoint T name`: parameter-prefix disjointness for function parameters
+* `where disjoint(a, b)`: relational disjointness between named memory regions
+
+`disjoint` means the named memory regions do not overlap. `const` means the reachable memory cannot be mutated through safe Stark code. The two contracts are independent; immutable memory can still alias another immutable view.
 
 Destruction is intentionally restricted:
 
@@ -682,7 +774,31 @@ Loop behavior rules:
   * is the only loop form accepted inside a declared `finite` function
   * if the loop condition is statically unconditional (`while willexit (true)` or `for willexit (;;)`), the body must contain at least one structural `break` or `return`
 
-### 10.3 Switch and Patterns
+Loops may also carry the `independent` memory contract:
+
+```stark
+for willexit independent (stack i32[0 max] i = 0; i < count; i += 1) {
+    output[i] = left[i] + right[i];
+}
+```
+
+`independent` means loop iterations have no loop-carried memory dependencies. A memory write in one iteration may not be read or written by another iteration, and a call inside the loop may not create cross-iteration memory dependence. Reads from immutable memory are allowed. Writes are allowed when each iteration writes a region proven separate from the regions read or written by other iterations.
+
+### 10.3 Disjoint Branch Conditions
+
+`if disjoint(...)` tests memory-region overlap and introduces a branch-scoped fact:
+
+```stark
+if disjoint(source, destination) {
+    CopyDisjoint(source, destination);
+} else {
+    CopyOverlapSafe(source, destination);
+}
+```
+
+Inside the true branch, every memory region listed in `disjoint(...)` is known to be pairwise non-overlapping. The false branch does not receive the disjoint fact and must use overlap-safe behavior. For contiguous slices and text views, the check compares the memory ranges represented by their data pointer, element size, and length.
+
+### 10.4 Switch and Patterns
 
 The switch surface includes:
 

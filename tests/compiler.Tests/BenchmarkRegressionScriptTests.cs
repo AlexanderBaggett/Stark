@@ -5,6 +5,36 @@ namespace compiler.Tests;
 public sealed class BenchmarkRegressionScriptTests
 {
     [Fact]
+    public async Task AddBenchmarkCRatiosUsesAverageRuntimeByBenchmark()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        using var files = new TemporaryBenchmarkFiles();
+        var current = files.WriteCsv(
+            "current.csv",
+            "benchmarks/micro/Calls,c,50,1000,0,0,0,10000,900,1000,1100",
+            "benchmarks/micro/Calls,stark,50,1000,200,100,300,10000,700,800,900",
+            "benchmarks/micro/Calls,rust,50,1000,0,0,0,10000,1100,1200,1300",
+            "benchmarks/micro/NoC,stark,50,1000,200,100,300,10000,400,500,600");
+
+        var result = await RunScriptAsync(
+            repositoryRoot,
+            Path.Combine(repositoryRoot, "scripts", "add-benchmark-c-ratios.sh"),
+            [current],
+            new Dictionary<string, string?>());
+
+        Assert.Equal(0, result.ExitCode);
+
+        var lines = File.ReadAllLines(current);
+        Assert.Equal(
+            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,c_avg_ratio",
+            lines[0]);
+        Assert.EndsWith(",1.000000", lines[1], StringComparison.Ordinal);
+        Assert.EndsWith(",0.800000", lines[2], StringComparison.Ordinal);
+        Assert.EndsWith(",1.200000", lines[3], StringComparison.Ordinal);
+        Assert.EndsWith(",", lines[4], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CheckBenchmarkRegressionsPassesWithinConfiguredBaselineThreshold()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -86,6 +116,25 @@ public sealed class BenchmarkRegressionScriptTests
         string? baselinePath,
         IReadOnlyDictionary<string, string?> environment)
     {
+        var arguments = new List<string> { currentPath };
+        if (baselinePath is not null)
+        {
+            arguments.Add(baselinePath);
+        }
+
+        return await RunScriptAsync(
+            repositoryRoot,
+            Path.Combine(repositoryRoot, "scripts", "check-benchmark-regressions.sh"),
+            arguments,
+            environment);
+    }
+
+    private static async Task<ProcessResult> RunScriptAsync(
+        string repositoryRoot,
+        string scriptPath,
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string?> environment)
+    {
         var startInfo = new ProcessStartInfo
         {
             FileName = "bash",
@@ -95,11 +144,10 @@ public sealed class BenchmarkRegressionScriptTests
             UseShellExecute = false
         };
 
-        startInfo.ArgumentList.Add(Path.Combine(repositoryRoot, "scripts", "check-benchmark-regressions.sh"));
-        startInfo.ArgumentList.Add(currentPath);
-        if (baselinePath is not null)
+        startInfo.ArgumentList.Add(scriptPath);
+        foreach (var argument in arguments)
         {
-            startInfo.ArgumentList.Add(baselinePath);
+            startInfo.ArgumentList.Add(argument);
         }
 
         foreach (var item in environment)

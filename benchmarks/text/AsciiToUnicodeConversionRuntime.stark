@@ -1,0 +1,54 @@
+import System
+module Benchmarks.Text.AsciiToUnicodeConversionRuntime
+
+ffi fn i64[0 max] strlen(rawptr<i8[-128 127]> text);
+
+const Iterations = 50000;
+const Capacity = 512;
+
+export ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[-128 127]>> argv) {
+    if (argc <= 0 || argv == null) {
+        return 1;
+    }
+
+    stack rawmutptr<i8[-128 127]> sourceData = *argv;
+    if (sourceData == null) {
+        return 1;
+    }
+
+    stack i64[0 max] sourceLength = strlen(sourceData);
+    if (sourceLength == 0 || sourceLength > Capacity) {
+        return 1;
+    }
+
+    stack Ascii sourceOwner = new Ascii() {
+        Data = sourceData,
+        Length = sourceLength,
+        Capacity = sourceLength
+    };
+    stack ascii source = System.Text.AsciiView(sourceOwner);
+    stack mut i32[-2147483648 2147483647][512] unicodeBuffer = { 0 };
+    stack mut Unicode unicodeText = new Unicode() {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = Capacity
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 50000] i = 0; i < Iterations; i += 1) {
+        if (!System.Text.TryConvertAsciiToUnicode(&unicodeText, source)) {
+            return 2;
+        }
+
+        checksum += unicodeText.Length;
+        for willexit (stack mut i64[0 512] index = 0; index < unicodeText.Length; index += 1) {
+            checksum += *(&unicodeText.Data[index]);
+        }
+    }
+
+    if (checksum <= 0) {
+        return 3;
+    }
+
+    return 0;
+}

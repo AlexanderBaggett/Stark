@@ -1706,6 +1706,8 @@ turn that book outline into published website content.
   - [x] Draft Chapter 7: Ownership, Moves, and Drops
   - [x] Draft Chapter 8: Borrowing in Stark
   - [x] Draft Chapter 9: Stark Borrowing Compared With Rust
+  - [ ] Draft Chapter 9.5: Stronger Slice and Array Contracts
+    - [ ] Add examples for each qualifier and what each one does and means
   - [x] Draft Chapter 10: Storage Classes and Lifetimes
   - [x] Draft Chapter 11: Aggregates and Layout-Aware Design
   - [x] Draft Chapter 12: Enums and Pattern Matching
@@ -1836,6 +1838,60 @@ turn that book outline into published website content.
 - [ ] C# style triple """ strings and @"  strings
 - [ ] Rust style rumtime dynamic heap allocation with dynamic sizing via `List` like rusts `vec` C# function names, but with rust semantics
 
+
+### New Langauge Features
+
+- [ ] Add `disjoint` function parameter contracts.
+  - [ ] support the parameter-prefix form, such as `disjoint borrow u8[] source`
+  - [ ] support the relational `where disjoint(a, b)` form for explicit parameter pairs and groups
+  - [ ] define `disjoint` as a semantic contract that the named memory regions do not overlap for the duration of the call
+  - [ ] validate safe `disjoint` calls using borrow, ownership, slice-range, and projection facts
+  - [ ] reject safe calls when two `disjoint` arguments may refer to overlapping memory
+  - [ ] lower proven parameter disjointness to LLVM `noalias` where valid
+  - [ ] lower call/body memory accesses through disjoint roots to scoped `!alias.scope` and `!noalias` metadata
+  - [ ] add parser, type-checking, ownership, semantic, LLVM, and negative tests
+
+- [ ] Add `if disjoint(...)` runtime disjointness tests.
+  - [ ] support `if disjoint(a, b)` and multi-operand `if disjoint(a, b, c)` conditions
+  - [ ] define the true branch as a fact scope where the named memory regions do not overlap
+  - [ ] preserve normal overlap-safe semantics in the false branch
+  - [ ] lower contiguous slice and text-view disjoint checks to pointer-range comparisons
+  - [ ] feed true-branch facts into borrow validation, SSA memory facts, and LLVM scoped noalias metadata
+  - [ ] add examples for choosing between copy-fast and overlap-safe paths
+  - [ ] add parser, lowering, branch-fact, and LLVM metadata tests
+
+- [ ] Add loop `independent` contracts.
+  - [ ] support `for willexit independent (...)` and `while willexit independent (...)`
+  - [ ] define `independent` as a semantic contract that loop iterations have no loop-carried memory dependencies
+  - [ ] validate safe independent loops using disjoint parameter facts, per-iteration index ranges, borrow exclusivity, and call memory effects
+  - [ ] reject independent loops when a memory write in one iteration may be read or written by another iteration
+  - [ ] lower independent loop memory accesses to LLVM `!llvm.access.group`
+  - [ ] lower independent loops to LLVM `!llvm.loop.parallel_accesses` and preserve existing `mustprogress` facts
+  - [ ] add vectorization-focused LLVM and benchmark tests for independent slice loops
+
+- [ ] Add `const` as a parameter qualifier.
+  - [ ] support parameter syntax such as `const Table table` and `const u8[] bytes`
+  - [ ] define `const` parameters as references to deeply immutable reachable object graphs
+  - [ ] require callers to pass values with permanent const provenance or compiler-proven equivalent deep immutability
+  - [ ] keep `const` separate from `disjoint`; multiple const parameters may alias unless disjointness is stated or proven
+  - [ ] make projections from const parameters preserve frozen/readonly provenance
+  - [ ] lower const parameter loads to readonly/invariant LLVM facts where valid
+  - [ ] reject safe attempts to derive mutable raw aliases from const parameter graphs
+  - [ ] add type-checking, raw-conversion, lowering, and LLVM tests
+
+- [ ] Update language documentation for memory-separation contracts.
+  - [x] update `docs/Userfacing/LanguageReference.md` with syntax and source-level semantics for `disjoint`, `if disjoint`, loop `independent`, and const parameters
+  - [x] update `docs/Userfacing/BorrowerSystem.md` with how `disjoint`, `borrow mut`, `out`, `init`, `frozen`, `shared`, and const parameters compose
+  - [x] update `docs/Internals/LanguageInternals.md` with the LLVM facts emitted from these contracts
+  - [ ] add compiler diagnostic examples for invalid overlapping arguments and invalid independent loops
+
+- [ ] Update the Stark Book and website for memory-separation contracts.
+  - [ ] add a Stark Book chapter or section explaining `disjoint` parameters and `if disjoint`
+  - [ ] add a Stark Book chapter or section explaining loop `independent` and vectorization-oriented loop contracts
+  - [ ] add a Stark Book chapter or section explaining const parameter provenance and deep immutability
+  - [ ] add website reference pages or feature callouts for these contracts
+  - [ ] add runnable examples that show overlap-safe and disjoint-fast paths
+  - [ ] update website navigation and book summary entries for the new material
 
 ### Trait/Doctrine Runtime Dispatch, If Ever Added
 
@@ -1996,6 +2052,68 @@ debuggability unless a task explicitly says otherwise.
   - [x] add a Stark/C/Rust microbenchmark for direct-call inlining
   - [x] add benchmarks comparing hand-written monomorphic code to equivalent wrapper/generic/law code
 
+- [ ] Add whole-program executable optimization for stdlib and package-image code
+  - [x] re-enable executable ThinLTO for optimized source-built executable dependency graphs when an LLD linker is available
+  - [ ] fix the `System.Collections` grow/move/drop ThinLTO correctness issue so collection-using executables can participate
+  - [ ] fix the `System.Memory`/`System.Text`/root ThinLTO correctness issue exposed by `benchmarks/text/OwnedTextAllocation`
+    - [x] temporarily keep `System.Memory` dependency objects out of executable ThinLTO while preserving root and `System.Text` ThinLTO participation
+  - [ ] extend package-library emission/linking so package-image code can safely participate in executable LTO
+  - [x] make source-built stdlib builtin definitions visible to optimized user-code callers so `alwaysinline` and normal inlining can actually fire across module boundaries
+  - [x] verify `System.Text.TryConvertAsciiToUnicode` can inline into `benchmarks/text/AsciiToUnicodeConversion` instead of remaining an external `System_Text` call
+    - [x] focused run showed `AsciiToUnicodeConversion` binary size drop to ~7.5 KiB and same-run C ratio improve from roughly 1.5-1.7x to roughly 1.07x on April 28, 2026
+  - [x] preserve a portable fallback path on toolchains where executable LTO is unavailable
+  - [x] add CLI regression coverage proving optimized executable links request ThinLTO when LLD is available
+  - [ ] add pipeline or LLVM regression coverage proving a root executable can optimize through a stdlib/package-image call boundary
+  - [x] re-run the ASCII-to-Unicode benchmark to measure the closed-world optimization impact
+
+- [ ] Add targeted literal-source specialization for `TryConvertAsciiToUnicode`
+  - [x] detect calls shaped like `TryConvertAsciiToUnicode(destination, "literal")` after lowering
+  - [x] emit caller-side capacity checks, direct byte-to-`i32` widening stores, and constant `Unicode.Length` assignment for proven literal sources
+  - [x] skip the UTF-8 fallback path only when the source value is proven ASCII-only; keep dynamic-source calls on the full conversion builtin
+  - [x] add LLVM regression coverage showing the literal-source call disappears while dynamic-source behavior stays unchanged
+  - [x] refresh `benchmarks/text/AsciiToUnicodeConversion` after the specialization so the benchmark tracks the intended fast path
+    - [x] focused 10-run sample on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1577 us versus C at 1535 us, for a same-run C ratio of 1.027
+
+- [ ] Promote `TryConvertAsciiToUnicode` literal specialization into a full SSA optimization feature
+  - [ ] explicitly keep dynamic-source ASCII widening out of this iteration; dynamic `ascii` values and `AsciiView(buffer)` sources should continue using the full builtin unless their source bytes are compile-time known
+  - [ ] extend the SSA value-fact model with known text literal payload facts
+    - [ ] record decoded byte payload for proven `ascii` literals
+    - [ ] record decoded UTF-32 payload for proven `unicode` literals when useful for copy lowering
+    - [ ] record exact literal length and ASCII-only status together so the optimizer can distinguish ASCII-only literals from general UTF-8 literals
+  - [ ] propagate known literal payload facts through simple non-dynamic carriers
+    - [ ] direct `use`/alias values
+    - [ ] stack locals initialized from a literal and not overwritten before the call
+    - [ ] immutable locals and constants initialized from a literal
+    - [ ] phis only when every reachable incoming value is the same literal payload
+  - [ ] move the literal conversion rewrite out of the LLVM emitter and into an SSA rewrite pass
+    - [ ] rewrite eligible calls into explicit SSA control-flow blocks before ABI lowering
+    - [ ] preserve exact `TryConvertAsciiToUnicode` semantics: null destination returns `false`, non-null failures clear `destination.Length`, capacity too small returns `false`, null destination data with non-empty source returns `false`, and success stores the converted data and final length
+    - [ ] allow rewritten calls in blocks whose successors have phi nodes by producing normal SSA blocks instead of emitter-local LLVM labels
+    - [ ] keep non-ASCII literals on the full UTF-8 conversion builtin
+  - [ ] add literal-size-aware lowering strategies
+    - [ ] emit direct constant `i32` stores for small ASCII literals
+    - [ ] emit a precomputed UTF-32 readonly constant plus `llvm.memcpy` for larger ASCII literals
+    - [ ] choose and document the size threshold with benchmark data
+  - [ ] add correctness coverage for literal specialization
+    - [ ] direct literal call
+    - [ ] escaped ASCII literal call
+    - [ ] empty literal call
+    - [ ] literal stored in a local
+    - [ ] literal stored in an immutable local or const
+    - [ ] phi-joined identical literal payload
+    - [ ] non-ASCII literal fallback
+    - [ ] too-small destination
+    - [ ] null destination
+    - [ ] null destination data with non-empty source
+    - [ ] call inside a loop
+    - [ ] call in a block flowing into phi nodes
+  - [ ] add performance coverage for literal specialization
+    - [ ] tiny literal benchmark
+    - [ ] medium literal benchmark
+    - [ ] large literal benchmark that exercises the `llvm.memcpy` path
+    - [ ] compare the public API literal path against a raw widening-kernel ceiling benchmark
+    - [ ] track `c_avg_ratio`, binary size, and benchmark stability before/after the rewrite
+
 - [ ] Add alias-aware memory optimization
   - [ ] add a memory fact pass after inlining and cleanup
     - [x] add a first conservative stack-scalar memory optimization pass after branch pruning and before ABI/LLVM lowering
@@ -2139,6 +2257,10 @@ debuggability unless a task explicitly says otherwise.
     - [x] add a Stark/C/Rust microbenchmark for explicit wrapping and saturating arithmetic range pruning
     - [x] add a Stark/C/Rust microbenchmark for branch-select predication
     - [x] add Stark/C/Rust microbenchmarks for hand-written, law-wrapper, and generic-wrapper abstraction parity
+  - [x] add non-erased benchmark variants for literal-heavy text conversion cases
+    - [x] create an ASCII-to-Unicode benchmark variant whose source bytes or selected input vary at runtime so C, Rust, and Stark cannot fold the conversion/checksum away completely
+    - [x] keep the C and Rust counterparts idiomatic while documenting the specific runtime dependency that prevents whole-benchmark erasure
+    - [ ] compare both public API usage and a raw widening-kernel shape when that distinction is needed to isolate compiler codegen from stdlib boundary overhead
   - [ ] compare each benchmark against idiomatic Rust, idiomatic C, and hand-tuned C where appropriate
   - [x] support runtime or compile-time metric checks from the benchmark CSV gate
   - [x] emit benchmark executable size and support `binary_bytes` baseline gates
