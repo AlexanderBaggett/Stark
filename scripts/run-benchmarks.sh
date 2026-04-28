@@ -6,12 +6,14 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 bench_root="${repo_root}/benchmarks"
 stdlib_root="${repo_root}/stdlib/src"
 
-runs="${STARK_BENCH_RUNS:-50}"
+runs="${STARK_BENCH_RUNS:-20}"
 filter="${STARK_BENCH_FILTER:-}"
 target="${STARK_TARGET:-}"
 extra_args="${STARK_COMPILER_ARGS:-}"
 languages="${STARK_BENCH_LANGUAGES:-stark,c,rust}"
 run_timeout_seconds="${STARK_BENCH_TIMEOUT_SECONDS:-30}"
+capture_rss="${STARK_BENCH_CAPTURE_RSS:-0}"
+rss_poll_interval_seconds="${STARK_BENCH_RSS_POLL_INTERVAL_SECONDS:-0.002}"
 c_compiler="${STARK_BENCH_C_COMPILER:-clang}"
 rust_compiler="${STARK_BENCH_RUST_COMPILER:-rustc}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -31,6 +33,21 @@ fi
 
 if ! [[ "${run_timeout_seconds}" =~ ^[0-9]+$ ]]; then
   echo "STARK_BENCH_TIMEOUT_SECONDS must be a non-negative integer." >&2
+  exit 2
+fi
+
+if [[ "${capture_rss}" != "0" && "${capture_rss}" != "1" ]]; then
+  echo "STARK_BENCH_CAPTURE_RSS must be 0 or 1." >&2
+  exit 2
+fi
+
+if ! [[ "${rss_poll_interval_seconds}" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]]; then
+  echo "STARK_BENCH_RSS_POLL_INTERVAL_SECONDS must be a positive number." >&2
+  exit 2
+fi
+
+if ! awk -v value="${rss_poll_interval_seconds}" 'BEGIN { exit !(value > 0) }'; then
+  echo "STARK_BENCH_RSS_POLL_INTERVAL_SECONDS must be greater than zero." >&2
   exit 2
 fi
 
@@ -130,6 +147,9 @@ write_machine_metadata() {
     printf 'stark_filter=%s\n' "${filter:-<none>}"
     printf 'benchmark_languages=%s\n' "${languages}"
     printf 'benchmark_timeout_seconds=%s\n' "${run_timeout_seconds}"
+    printf 'benchmark_capture_rss=%s\n' "${capture_rss}"
+    printf 'benchmark_peak_rss_unit=KiB\n'
+    printf 'benchmark_peak_rss_source=Linux /proc VmHWM sampled while each benchmark process runs when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled, unavailable, or process exits before sampling\n'
     printf 'benchmark_baseline_file=%s\n' "${baseline_file:-<none>}"
     printf 'benchmark_regression_metric=%s\n' "${STARK_BENCH_REGRESSION_METRIC:-avg_us}"
     printf 'benchmark_require_baseline=%s\n' "${STARK_BENCH_REQUIRE_BASELINE:-0}"
@@ -169,6 +189,49 @@ file_size_bytes() {
   stat -f '%z' "${path}"
 }
 
+read_process_peak_rss_kib() {
+  local pid="$1"
+  local status_path="/proc/${pid}/status"
+
+  if [[ ! -r "${status_path}" ]]; then
+    printf '0\n'
+    return
+  fi
+
+  awk '
+    $1 == "VmHWM:" {
+      print $2
+      found = 1
+      exit
+    }
+    $1 == "VmRSS:" && rss == "" {
+      rss = $2
+    }
+    END {
+      if (!found) {
+        print rss == "" ? 0 : rss
+      }
+    }
+  ' "${status_path}" 2>/dev/null || printf '0\n'
+}
+
+poll_process_peak_rss_kib() {
+  local pid="$1"
+  local peak_path="$2"
+  local peak=0
+
+  while [[ -d "/proc/${pid}" ]]; do
+    local sample
+    sample="$(read_process_peak_rss_kib "${pid}")"
+    if [[ "${sample}" =~ ^[0-9]+$ && "${sample}" -gt "${peak}" ]]; then
+      peak="${sample}"
+      printf '%s\n' "${peak}" > "${peak_path}"
+    fi
+
+    sleep "${rss_poll_interval_seconds}" 2>/dev/null || sleep 1
+  done
+}
+
 read_metric_value() {
   local path="$1"
   local key="$2"
@@ -181,6 +244,8 @@ read_metric_value() {
   awk -F= -v key="${key}" '$1 == key { print $2; found = 1; exit } END { if (!found) print 0 }' "${path}"
 }
 
+last_run_peak_rss_kib=0
+
 run_benchmark_executable() {
   local benchmark_id="$1"
   local language="$2"
@@ -188,27 +253,93 @@ run_benchmark_executable() {
   local output_path="$4"
   local status
 
-  if [[ "${run_timeout_seconds}" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
-    if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null; then
+  last_run_peak_rss_kib=0
+
+  if [[ "${capture_rss}" != "1" ]]; then
+    if [[ "${run_timeout_seconds}" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
+      if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null; then
+        return 0
+      else
+        status="$?"
+      fi
+
+      if [[ "${status}" -eq 124 ]]; then
+        echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
+      else
+        echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+      fi
+
+      exit "${status}"
+    fi
+
+    if "${output_path}" >/dev/null; then
       return 0
-    else
-      status="$?"
     fi
 
-    if [[ "${status}" -eq 124 ]]; then
-      echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
-    else
-      echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
-    fi
-
+    status="$?"
+    echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
     exit "${status}"
   fi
 
-  if "${output_path}" >/dev/null; then
+  local peak_path
+  local timeout_path
+  local poller_pid=""
+  local watchdog_pid=""
+
+  peak_path="$(mktemp "${tmp_dir}/peak-rss.XXXXXX")"
+  timeout_path="$(mktemp "${tmp_dir}/timeout.XXXXXX")"
+  rm -f "${timeout_path}"
+  printf '0\n' > "${peak_path}"
+
+  "${output_path}" >/dev/null &
+  local child_pid="$!"
+
+  poll_process_peak_rss_kib "${child_pid}" "${peak_path}" &
+  poller_pid="$!"
+
+  if [[ "${run_timeout_seconds}" -gt 0 ]]; then
+    (
+      sleep "${run_timeout_seconds}"
+      if kill -0 "${child_pid}" 2>/dev/null; then
+        printf '1\n' > "${timeout_path}"
+        kill -TERM "${child_pid}" 2>/dev/null || true
+        sleep 1
+        kill -KILL "${child_pid}" 2>/dev/null || true
+      fi
+    ) &
+    watchdog_pid="$!"
+  fi
+
+  set +e
+  wait "${child_pid}"
+  status="$?"
+  set -e
+
+  if [[ -n "${watchdog_pid}" ]]; then
+    kill "${watchdog_pid}" 2>/dev/null || true
+    wait "${watchdog_pid}" 2>/dev/null || true
+  fi
+
+  if [[ -n "${poller_pid}" ]]; then
+    kill "${poller_pid}" 2>/dev/null || true
+    wait "${poller_pid}" 2>/dev/null || true
+  fi
+
+  last_run_peak_rss_kib="$(cat "${peak_path}" 2>/dev/null || printf '0\n')"
+  rm -f "${peak_path}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    rm -f "${timeout_path}"
     return 0
   fi
 
-  status="$?"
+  if [[ -f "${timeout_path}" ]]; then
+    rm -f "${timeout_path}"
+    echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
+    exit 124
+  fi
+
+  rm -f "${timeout_path}"
   echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
   exit "${status}"
 }
@@ -227,6 +358,7 @@ time_executable() {
   local total_ns=0
   local min_ns=0
   local max_ns=0
+  local peak_rss_kib="${last_run_peak_rss_kib}"
   local run
   for ((run = 1; run <= runs; run++)); do
     local run_start
@@ -236,6 +368,9 @@ time_executable() {
     run_benchmark_executable "${benchmark_id}" "${language}" "run ${run}/${runs}" "${output_path}"
     run_end="$(date +%s%N)"
     elapsed_ns="$((run_end - run_start))"
+    if [[ "${last_run_peak_rss_kib}" =~ ^[0-9]+$ && "${last_run_peak_rss_kib}" -gt "${peak_rss_kib}" ]]; then
+      peak_rss_kib="${last_run_peak_rss_kib}"
+    fi
     total_ns="$((total_ns + elapsed_ns))"
     if [[ "${min_ns}" -eq 0 || "${elapsed_ns}" -lt "${min_ns}" ]]; then
       min_ns="${elapsed_ns}"
@@ -253,7 +388,7 @@ time_executable() {
   avg_us="$(ns_to_us "$((total_ns / runs))")"
   max_us="$(ns_to_us "${max_ns}")"
   binary_bytes="$(file_size_bytes "${output_path}")"
-  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}")"
+  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${peak_rss_kib}")"
 }
 
 compile_and_time_stark() {
@@ -354,7 +489,7 @@ if [[ -n "${extra_args}" ]]; then
   compiler_args+=(${extra_args})
 fi
 
-emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us'
+emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,peak_rss_kib'
 
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
