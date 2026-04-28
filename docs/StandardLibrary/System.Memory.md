@@ -97,9 +97,20 @@ direct syscall-backed virtual-memory allocation on supported syscall
 architectures. Windows targets use OS heap APIs rather than the CRT allocator.
 Small and medium allocations are cached in simple size-class free lists so
 collection growth and heap locals do not need an operating-system allocation for
-every reuse. Very large allocations and allocations requiring alignment above
-the current bucket guarantee stay on the OS-backed path. The public
-`System.Memory` surface should stay stable as the backend continues to grow.
+every reuse. When a size-class bucket is empty, the runtime allocates one
+slab/page-sized region, returns the first block, and pushes the remaining blocks
+onto the bucket free list. Very large allocations and allocations requiring
+alignment above the current bucket guarantee stay on the OS-backed path. The
+public `System.Memory` surface should stay stable as the backend continues to
+grow.
+
+The current retention policy favors hot-path reuse. Freed bucket blocks return
+to the thread-local bucket list and the slab backing those blocks is retained
+until process teardown. Large or over-aligned allocations that bypass buckets
+are returned to the operating system immediately through the matching OS-backed
+free path. A future allocator policy can add slab release under memory pressure,
+but that should be measured separately because it trades steady-state speed for
+lower peak retention.
 
 `Reallocate` may reuse a small or medium bucket allocation in place when the new
 requested byte length still fits the recorded bucket size and the requested

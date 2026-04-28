@@ -50,7 +50,9 @@ public sealed class CompilerPipelineSyntaxModelTests
     [Theory]
     [InlineData("[Backend(Opaque)]\ninline fn void Run() { ; }")]
     [InlineData("[Backend(Opaque)]\ninlinehint fn void Run() { ; }")]
+    [InlineData("[Backend(Opaque)]\nnoinline fn void Run() { ; }")]
     [InlineData("[Backend(Opaque)]\nhot fn void Run() { ; }")]
+    [InlineData("[Backend(Opaque)]\ncold fn void Run() { ; }")]
     [InlineData("[Backend(Opaque)]\nffi fn void Run();")]
     public void BackendOpaqueCallableAttributesRejectConflictingModifiers(string declaration)
     {
@@ -67,6 +69,79 @@ public sealed class CompilerPipelineSyntaxModelTests
 
         Assert.False(result.Succeeded);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK2113");
+    }
+
+    [Fact]
+    public void BackendOpaqueCallableAttributesRejectDuplicates()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                [Backend(Opaque)]
+                [Backend(Opaque)]
+                fn void Run() {
+                    ;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "syntax-model"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK2111");
+    }
+
+    [Theory]
+    [InlineData(
+        """
+        [Backend(Opaque)]
+        [Backend(Opaque)]
+        struct Box {
+        }
+        """,
+        "STK2111")]
+    [InlineData(
+        """
+        [Backend(Opaque)]
+        [Backend(Opaque)]
+        record Cursor(i32[-2147483648 2147483647] Position) {
+        }
+        """,
+        "STK2111")]
+    [InlineData(
+        """
+        [Backend(Opaque)]
+        [Backend(Opaque)]
+        doctrine Numbers {
+            finite law bool Equals(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
+        }
+        """,
+        "STK2111")]
+    [InlineData(
+        """
+        struct Box {
+            [Backend(Opaque)]
+            i32[-2147483648 2147483647] Value;
+        }
+        """,
+        "STK2110")]
+    public void BackendOpaqueTypeAndContractAttributesReportDiagnostics(string declaration, string diagnosticCode)
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                $$"""
+                module Demo
+
+                {{declaration}}
+                """),
+            new CompilerOptions(StopAfterPassId: "syntax-model"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == diagnosticCode);
     }
 
     [Fact]

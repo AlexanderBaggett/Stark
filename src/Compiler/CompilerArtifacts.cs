@@ -2949,6 +2949,14 @@ public sealed record SsaIntegerRangeFact(BigInteger Min, BigInteger Max);
 
 public sealed record SsaKnownBitsFact(BigInteger KnownZeroBits, BigInteger KnownOneBits);
 
+public sealed record SsaTextLiteralPayloadFact(
+    string DecodedText,
+    string Utf8PayloadHex,
+    string Utf32PayloadHex,
+    bool IsAsciiOnly,
+    int Utf8Length,
+    int Utf32Length);
+
 public sealed record SsaValueFacts(
     string ValueName,
     StarkTypeSymbol Type,
@@ -2962,12 +2970,15 @@ public sealed record SsaValueFacts(
     SsaFactLatticeKind PointerAlignmentKind = SsaFactLatticeKind.Unknown,
     int? PointerAlignmentBytes = null,
     SsaFactLatticeKind LengthKind = SsaFactLatticeKind.Unknown,
-    SsaIntegerRangeFact? LengthRange = null);
+    SsaIntegerRangeFact? LengthRange = null,
+    SsaFactLatticeKind TextLiteralPayloadKind = SsaFactLatticeKind.Unknown,
+    SsaTextLiteralPayloadFact? TextLiteralPayload = null);
 
 public sealed record SsaFunctionFactModel(
     string FunctionName,
     IReadOnlyDictionary<string, SsaValueFacts> Values,
-    IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>>? BlockEntryValueFacts = null);
+    IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>>? BlockEntryValueFacts = null,
+    IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>>? BlockExitValueFacts = null);
 
 public sealed record SsaValueFactModel(
     string ModuleName,

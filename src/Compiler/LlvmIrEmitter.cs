@@ -1846,6 +1846,7 @@ internal sealed class LlvmIrEmitter
                     AddStringConstant(address, constants, ref index);
                 }
 
+                AddAsciiToUnicodeLiteralMemcpyConstant(call, constants, ref index);
                 return;
             case SsaConvertRValue convert:
                 AddStringConstant(convert.Operand, constants, ref index);
@@ -2099,6 +2100,41 @@ internal sealed class LlvmIrEmitter
             Initializer: key.Initializer,
             DataLength: key.DataLength,
             AlignmentBytes: key.AlignmentBytes);
+    }
+
+    private static void AddAsciiToUnicodeLiteralMemcpyConstant(
+        SsaCallRValue call,
+        Dictionary<StringConstantKey, EmittedStringConstant> constants,
+        ref int index)
+    {
+        if (!IsPotentialTryConvertAsciiToUnicodeCall(call.FunctionName)
+            || call.Arguments is not
+            [
+                _,
+                SsaStringConstant
+                {
+                    Type.Kind: StarkTypeKind.Ascii
+                } source
+            ]
+            || !TextLiteralDecoder.TryDecode(
+                source.LiteralText,
+                GetTextLiteralKind(source.LiteralText),
+                out var decoded,
+                out _)
+            || !decoded.IsAscii
+            || decoded.Utf8Bytes.Length < LlvmTextOptimizationConstants.AsciiToUnicodeLiteralMemcpyThresholdCodeUnits)
+        {
+            return;
+        }
+
+        AddStringLiteral(source.LiteralText, StarkTypeSymbols.Unicode, constants, ref index);
+    }
+
+    private static bool IsPotentialTryConvertAsciiToUnicodeCall(string functionName)
+    {
+        return string.Equals(functionName, "TryConvertAsciiToUnicode", StringComparison.Ordinal)
+               || string.Equals(functionName, "System.Text.TryConvertAsciiToUnicode", StringComparison.Ordinal)
+               || functionName.EndsWith(".TryConvertAsciiToUnicode", StringComparison.Ordinal);
     }
 
     private static byte[] DecodeAsciiStringLiteral(string literalText)

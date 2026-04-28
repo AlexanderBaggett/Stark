@@ -2340,6 +2340,40 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpy()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][64] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 64
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
+        Assert.Contains("constant [42 x i32]", llvm);
+        Assert.Contains("i64 164, i1 false)", llvm);
+        Assert.Contains("store i64 41, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+        Assert.DoesNotContain("abi_ascii2unicode_unit", llvm);
+    }
+
+    [Fact]
     public void SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCall()
     {
         var result = Compile(
@@ -2366,6 +2400,286 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
         Assert.DoesNotContain("abi_ascii2unicode_store", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSite()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+                stack ascii source = "Stark";
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, source);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("store i32 83, ptr", llvm);
+        Assert.Contains("store i64 5, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSite()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+                const ascii source = "Stark";
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, source);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("store i32 83, ptr", llvm);
+        Assert.Contains("store i64 5, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSite()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run(bool choose) {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+                stack ascii source = choose ? "Stark" : "Stark";
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, source);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("store i32 83, ptr", llvm);
+        Assert.Contains("store i64 5, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSite()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "A\nZ");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("store i32 65, ptr", llvm);
+        Assert.Contains("store i32 10, ptr", llvm);
+        Assert.Contains("store i32 90, ptr", llvm);
+        Assert.Contains("store i64 3, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoad()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = null,
+                    Length = 7,
+                    Capacity = 0
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("store i64 0, ptr", llvm);
+        Assert.DoesNotContain("abi_ascii2unicode_data_is_null", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestination()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                return TryConvertAsciiToUnicode(null, "Stark");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_null_destination", llvm);
+        Assert.Contains("icmp eq ptr null, null", llvm);
+        Assert.Contains("false, %abi_ascii2unicode_null_destination", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacity()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut i32[-2147483648 2147483647][4] unicodeBuffer = { 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 7,
+                    Capacity = 4
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_capacity_too_small", llvm);
+        Assert.Contains("icmp slt i64", llvm);
+        Assert.Contains("store i64 0, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationData()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn bool Run() {
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = null,
+                    Length = 7,
+                    Capacity = 16
+                };
+
+                return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_data_is_null", llvm);
+        Assert.Contains("store i64 0, ptr", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
+    }
+
+    [Fact]
+    public void SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabel()
+    {
+        var result = Compile(
+            """
+            module System.Text
+
+            public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+            public fn i32[-2147483648 2147483647] Run(bool choose) {
+                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut Unicode ownedUnicode = new Unicode() {
+                    Data = &unicodeBuffer[0],
+                    Length = 0,
+                    Capacity = 16
+                };
+                stack mut i32[-2147483648 2147483647] result = 0;
+                if (choose) {
+                    TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+                    result = 2;
+                } else {
+                    result = 3;
+                }
+
+                return result;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Matches(@"phi i32 \[ %v\d+, %abi_ascii2unicode_done_\d+ \]", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
     [Fact]
@@ -6985,6 +7299,182 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("declare internal fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.DoesNotContain("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.DoesNotContain("call fastcc i32 @Identity(", llvm);
+    }
+
+    [Fact]
+    public void BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphization()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Backend(Opaque)]
+            fn T Identity<T>(T value) {
+                return value;
+            }
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                return Identity(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        var specializationHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Identity__i32");
+        Assert.Contains("optnone", specializationHeader);
+        Assert.Contains("noinline", specializationHeader);
+        Assert.DoesNotContain("alwaysinline", specializationHeader);
+        Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+    }
+
+    [Fact]
+    public void BackendOpaqueGenericTypeMethodsRemainOptimizationBoundariesAfterMonomorphization()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Backend(Opaque)]
+            struct Box<T> {
+                T Value;
+
+                fn T Read(borrow Box<T> self) {
+                    return self.Value;
+                }
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack Box<i32[-2147483648 2147483647]> box = new Box<i32[-2147483648 2147483647]>() { Value = 7 };
+                return box.Read();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        var specializationHeader = llvm
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Single(static line => line.StartsWith("define ", StringComparison.Ordinal)
+                && line.Contains("@__stark_mono_fn_Demo__", StringComparison.Ordinal)
+                && line.Contains("Box_Read", StringComparison.Ordinal));
+        var symbolMatch = Regex.Match(specializationHeader, @"@(?<symbol>__stark_mono_fn_Demo__[^(]+)\(", RegexOptions.CultureInvariant);
+        Assert.True(symbolMatch.Success, specializationHeader);
+
+        Assert.Contains("optnone", specializationHeader);
+        Assert.Contains("noinline", specializationHeader);
+        Assert.DoesNotContain("alwaysinline", specializationHeader);
+        Assert.Contains($"call fastcc i32 @{symbolMatch.Groups["symbol"].Value}(", llvm);
+    }
+
+    [Fact]
+    public void BackendOpaqueStructAndRecordMethodsRemainNarrowOptimizationBoundaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Backend(Opaque)]
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+
+                finite law i32[-2147483648 2147483647] Read(borrow Box self) {
+                    return self.Value;
+                }
+            }
+
+            struct FastBox {
+                i32[-2147483648 2147483647] Value;
+
+                finite law i32[-2147483648 2147483647] Read(borrow FastBox self) {
+                    return self.Value;
+                }
+            }
+
+            [Backend(Opaque)]
+            record Point(i32[-2147483648 2147483647] X) {
+                finite law i32[-2147483648 2147483647] Read(borrow Point self) {
+                    return self.X;
+                }
+            }
+
+            record FastPoint(i32[-2147483648 2147483647] X) {
+                finite law i32[-2147483648 2147483647] Read(borrow FastPoint self) {
+                    return self.X;
+                }
+            }
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack Box box = new Box() { Value = 7 };
+                stack FastBox fastBox = new FastBox() { Value = 3 };
+                stack Point point = new Point(11);
+                stack FastPoint fastPoint = new FastPoint(5);
+                return box.Read() + fastBox.Read() + point.Read() + fastPoint.Read();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        var boxReadHeader = ExtractDefinitionHeader(llvm, "Box_Read");
+        Assert.Contains("optnone", boxReadHeader);
+        Assert.Contains("noinline", boxReadHeader);
+        Assert.Contains("call fastcc i32 @Box_Read(", llvm);
+
+        var fastBoxReadHeader = ExtractDefinitionHeader(llvm, "FastBox_Read");
+        Assert.Contains("alwaysinline", fastBoxReadHeader);
+        Assert.DoesNotContain("optnone", fastBoxReadHeader);
+        Assert.DoesNotContain("noinline", fastBoxReadHeader);
+
+        var pointReadHeader = ExtractDefinitionHeader(llvm, "Point_Read");
+        Assert.Contains("optnone", pointReadHeader);
+        Assert.Contains("noinline", pointReadHeader);
+        Assert.Contains("call fastcc i32 @Point_Read(", llvm);
+
+        var fastPointReadHeader = ExtractDefinitionHeader(llvm, "FastPoint_Read");
+        Assert.Contains("alwaysinline", fastPointReadHeader);
+        Assert.DoesNotContain("optnone", fastPointReadHeader);
+        Assert.DoesNotContain("noinline", fastPointReadHeader);
+    }
+
+    [Fact]
+    public void BackendOpaqueDoctrineMethodsRemainNarrowOptimizationBoundaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Backend(Opaque)]
+            doctrine SlowNumbers {
+                finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    return left + right;
+                }
+            }
+
+            doctrine FastNumbers {
+                finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    return left + right;
+                }
+            }
+
+            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                return SlowNumbers.Add(value, 1) + FastNumbers.Add(value, 2);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        var slowAddHeader = ExtractDefinitionHeader(llvm, "SlowNumbers_Add");
+        Assert.Contains("optnone", slowAddHeader);
+        Assert.Contains("noinline", slowAddHeader);
+        Assert.Contains("call fastcc i32 @SlowNumbers_Add(", llvm);
+
+        var fastAddHeader = ExtractDefinitionHeader(llvm, "FastNumbers_Add");
+        Assert.Contains("alwaysinline", fastAddHeader);
+        Assert.DoesNotContain("optnone", fastAddHeader);
+        Assert.DoesNotContain("noinline", fastAddHeader);
+        Assert.DoesNotContain("call fastcc i32 @FastNumbers_Add(", llvm);
     }
 
     [Fact]

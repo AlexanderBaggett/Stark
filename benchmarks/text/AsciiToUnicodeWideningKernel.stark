@@ -1,0 +1,33 @@
+import System
+module Benchmarks.Text.AsciiToUnicodeWideningKernel
+
+export ffi fn i32[min max] main() {
+    stack ascii source = "alpha/beta.txt";
+    stack rawptr<i8[-128 127]> sourceData = System.Text.AsciiData(source);
+    stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.AsciiLength(source);
+    if (sourceData == null || sourceLength != 14) {
+        return 1;
+    }
+
+    stack mut i32[-2147483648 2147483647][32] unicodeBuffer = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+        for willexit (stack mut i64[0 32] index = 0; index < sourceLength; index += 1) {
+            *(&unicodeBuffer[index]) = (i32[min max])(*(&sourceData[index]));
+        }
+
+        checksum += sourceLength;
+        checksum += *(&unicodeBuffer[0]);
+        checksum += *(&unicodeBuffer[sourceLength - 1]);
+    }
+
+    if (checksum != 45400000) {
+        return 2;
+    }
+
+    return 0;
+}

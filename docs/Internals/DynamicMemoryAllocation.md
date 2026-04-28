@@ -214,7 +214,9 @@ The Linux implementation starts with syscall-backed virtual-memory allocation.
 The Windows implementation starts with OS heap APIs rather than the CRT
 allocator. A small size-class free-list layer sits above those OS primitives for
 small and medium allocations, while very large allocations stay on the OS-backed
-path. The public Stark API should not expose those choices.
+path. Empty size-class buckets refill from one slab/page-sized OS allocation at
+a time and split that slab into many same-size blocks. The public Stark API
+should not expose those choices.
 
 Current implementation note: the compiler-backed allocator now routes heap
 locals and `System.Memory` allocation through Stark-owned runtime helpers. The
@@ -223,8 +225,11 @@ for sized free, reuse fixed buckets when the requested size and alignment fit
 the bucket contract, and avoid explicit `malloc`, `realloc`, and `free` lowering
 in Stark-owned runtime code. `Reallocate` reuses an existing bucket block in
 place only when the new layout still fits that bucket; otherwise it falls back
-to allocate-copy-free. Per-thread caches are deliberately deferred until
-`System.Threading` owns enough runtime policy to make them safe and measurable.
+to allocate-copy-free. Bucket-backed frees retain the slab memory on the bucket
+free list for process-lifetime reuse; large and over-aligned allocations still
+return to the OS-backed free path immediately. Per-thread caches are
+deliberately deferred until `System.Threading` owns enough runtime policy to
+make them safe and measurable.
 The first executable benchmark convention lives in `benchmarks/allocator` and
 keeps allocator smoke measurements short enough for normal development runs.
 

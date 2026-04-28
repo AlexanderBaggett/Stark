@@ -2469,6 +2469,527 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void ValueFactsJoinLoopPhiInputsToAStableRange()
+    {
+        var valueType = StarkTypeSymbols.Integer(32, BigInteger.Zero, new BigInteger(10));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [1])),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_loop",
+                            [
+                                new SsaPhi(
+                                    "loop_phi",
+                                    "loop",
+                                    valueType,
+                                    [
+                                        new SsaPhiIncoming(0, new SsaIntegerConstant(0, valueType)),
+                                        new SsaPhiIncoming(2, new SsaValueReference("loop_backedge", valueType))
+                                    ])
+                            ],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [2])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_backedge",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "loop_backedge",
+                                    new SsaUseRValue(new SsaIntegerConstant(10, valueType)))
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [1]))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var phiFacts = functionFacts.Values["loop_phi"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, phiFacts.IntegerRangeKind);
+        Assert.NotNull(phiFacts.IntegerRange);
+        Assert.Equal(BigInteger.Zero, phiFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(10), phiFacts.IntegerRange.Max);
+    }
+
+    [Fact]
+    public void ValueFactsIgnoreUnreachablePhiInputs()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [2])),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_unreachable",
+                            [],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [2])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_join",
+                            [
+                                new SsaPhi(
+                                    "result_phi",
+                                    "result",
+                                    valueType,
+                                    [
+                                        new SsaPhiIncoming(0, new SsaIntegerConstant(2, valueType)),
+                                        new SsaPhiIncoming(1, new SsaIntegerConstant(100, valueType))
+                                    ])
+                            ],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("result_phi", valueType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var phiFacts = functionFacts.Values["result_phi"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, phiFacts.IntegerRangeKind);
+        Assert.NotNull(phiFacts.IntegerRange);
+        Assert.Equal(new BigInteger(2), phiFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(2), phiFacts.IntegerRange.Max);
+    }
+
+    [Fact]
+    public void ValueFactsCaptureTextLiteralPayloadFacts()
+    {
+        var asciiType = StarkTypeSymbols.Ascii;
+        var unicodeType = StarkTypeSymbols.Unicode;
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    unicodeType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "ascii_literal",
+                                    new SsaUseRValue(new SsaStringConstant("\"Stark\"", asciiType))),
+                                new SsaValueInstruction(
+                                    "unicode_literal",
+                                    new SsaUseRValue(new SsaStringConstant("\"λ\"", unicodeType)))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("unicode_literal", unicodeType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+
+        var asciiPayload = functionFacts.Values["ascii_literal"].TextLiteralPayload;
+        Assert.NotNull(asciiPayload);
+        Assert.Equal(SsaFactLatticeKind.Known, functionFacts.Values["ascii_literal"].TextLiteralPayloadKind);
+        Assert.Equal("Stark", asciiPayload!.DecodedText);
+        Assert.Equal("537461726B", asciiPayload.Utf8PayloadHex);
+        Assert.Equal("00000053,00000074,00000061,00000072,0000006B", asciiPayload.Utf32PayloadHex);
+        Assert.True(asciiPayload.IsAsciiOnly);
+        Assert.Equal(5, asciiPayload.Utf8Length);
+        Assert.Equal(5, asciiPayload.Utf32Length);
+
+        var unicodePayload = functionFacts.Values["unicode_literal"].TextLiteralPayload;
+        Assert.NotNull(unicodePayload);
+        Assert.Equal(SsaFactLatticeKind.Known, functionFacts.Values["unicode_literal"].TextLiteralPayloadKind);
+        Assert.Equal("λ", unicodePayload!.DecodedText);
+        Assert.Equal("CEBB", unicodePayload.Utf8PayloadHex);
+        Assert.Equal("000003BB", unicodePayload.Utf32PayloadHex);
+        Assert.False(unicodePayload.IsAsciiOnly);
+        Assert.Equal(2, unicodePayload.Utf8Length);
+        Assert.Equal(1, unicodePayload.Utf32Length);
+    }
+
+    [Fact]
+    public void ValueFactsPreserveOnlyIdenticalTextLiteralPayloadsThroughPhi()
+    {
+        var textType = StarkTypeSymbols.Ascii;
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    textType,
+                    [new TypedParameterSymbol("choose", StarkTypeSymbols.Bool)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 2],
+                                Condition: new SsaValueReference("arg_choose", StarkTypeSymbols.Bool))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_left",
+                            [],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_right",
+                            [],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [3])),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_join",
+                            [
+                                new SsaPhi(
+                                    "same_phi",
+                                    "same",
+                                    textType,
+                                    [
+                                        new SsaPhiIncoming(1, new SsaStringConstant("\"same\"", textType)),
+                                        new SsaPhiIncoming(2, new SsaStringConstant("\"same\"", textType))
+                                    ]),
+                                new SsaPhi(
+                                    "mixed_phi",
+                                    "mixed",
+                                    textType,
+                                    [
+                                        new SsaPhiIncoming(1, new SsaStringConstant("\"left\"", textType)),
+                                        new SsaPhiIncoming(2, new SsaStringConstant("\"right\"", textType))
+                                    ])
+                            ],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("same_phi", textType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+
+        var samePayload = functionFacts.Values["same_phi"].TextLiteralPayload;
+        Assert.NotNull(samePayload);
+        Assert.Equal(SsaFactLatticeKind.Known, functionFacts.Values["same_phi"].TextLiteralPayloadKind);
+        Assert.Equal("same", samePayload!.DecodedText);
+        Assert.Equal(SsaFactLatticeKind.Known, functionFacts.Values["same_phi"].LengthKind);
+        var sameLength = functionFacts.Values["same_phi"].LengthRange;
+        Assert.NotNull(sameLength);
+        Assert.Equal(new BigInteger(4), sameLength!.Min);
+        Assert.Equal(new BigInteger(4), sameLength.Max);
+
+        Assert.Equal(SsaFactLatticeKind.Unknown, functionFacts.Values["mixed_phi"].TextLiteralPayloadKind);
+        Assert.Null(functionFacts.Values["mixed_phi"].TextLiteralPayload);
+        Assert.Equal(SsaFactLatticeKind.Known, functionFacts.Values["mixed_phi"].LengthKind);
+        var mixedLength = functionFacts.Values["mixed_phi"].LengthRange;
+        Assert.NotNull(mixedLength);
+        Assert.Equal(new BigInteger(4), mixedLength!.Min);
+        Assert.Equal(new BigInteger(5), mixedLength.Max);
+    }
+
+    [Fact]
+    public void ValueFactsClampNonWrappingArithmeticToContinuingTypeRange()
+    {
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var leftType = StarkTypeSymbols.Integer(16, new BigInteger(240), new BigInteger(250));
+        var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    resultType,
+                    [
+                        new TypedParameterSymbol("left", leftType),
+                        new TypedParameterSymbol("right", rightType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "sum",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Add,
+                                        new SsaValueReference("arg_left", leftType),
+                                        new SsaValueReference("arg_right", rightType),
+                                        resultType,
+                                        "+"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("sum", resultType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var sumFacts = functionFacts.Values["sum"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, sumFacts.IntegerRangeKind);
+        Assert.NotNull(sumFacts.IntegerRange);
+        Assert.Equal(new BigInteger(250), sumFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(255), sumFacts.IntegerRange.Max);
+    }
+
+    [Fact]
+    public void ValueFactsDoNotCreateInvalidRangesWhenNonWrappingArithmeticAlwaysOverflows()
+    {
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var leftType = StarkTypeSymbols.Integer(16, new BigInteger(250), new BigInteger(255));
+        var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    resultType,
+                    [
+                        new TypedParameterSymbol("left", leftType),
+                        new TypedParameterSymbol("right", rightType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "sum",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Add,
+                                        new SsaValueReference("arg_left", leftType),
+                                        new SsaValueReference("arg_right", rightType),
+                                        resultType,
+                                        "+"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("sum", resultType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var sumFacts = functionFacts.Values["sum"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, sumFacts.IntegerRangeKind);
+        Assert.NotNull(sumFacts.IntegerRange);
+        Assert.Equal(BigInteger.Zero, sumFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(255), sumFacts.IntegerRange.Max);
+    }
+
+    [Fact]
+    public void ValueFactsKeepWrappingArithmeticConservativeWhenRangeMayWrap()
+    {
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var leftType = StarkTypeSymbols.Integer(16, new BigInteger(250), new BigInteger(255));
+        var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    resultType,
+                    [
+                        new TypedParameterSymbol("left", leftType),
+                        new TypedParameterSymbol("right", rightType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "sum",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.WrappingAdd,
+                                        new SsaValueReference("arg_left", leftType),
+                                        new SsaValueReference("arg_right", rightType),
+                                        resultType,
+                                        "+%"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("sum", resultType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var sumFacts = functionFacts.Values["sum"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, sumFacts.IntegerRangeKind);
+        Assert.NotNull(sumFacts.IntegerRange);
+        Assert.Equal(BigInteger.Zero, sumFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(255), sumFacts.IntegerRange.Max);
+    }
+
+    [Fact]
+    public void ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemantics()
+    {
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var leftType = StarkTypeSymbols.Integer(16, new BigInteger(250), new BigInteger(255));
+        var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    resultType,
+                    [
+                        new TypedParameterSymbol("left", leftType),
+                        new TypedParameterSymbol("right", rightType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "sum",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.SaturatingAdd,
+                                        new SsaValueReference("arg_left", leftType),
+                                        new SsaValueReference("arg_right", rightType),
+                                        resultType,
+                                        "+|"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("sum", resultType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var sumFacts = functionFacts.Values["sum"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, sumFacts.IntegerRangeKind);
+        Assert.NotNull(sumFacts.IntegerRange);
+        Assert.Equal(new BigInteger(255), sumFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(255), sumFacts.IntegerRange.Max);
+    }
+
+    [Fact]
+    public void ValueFactsClampIntegerConversionsToTargetRange()
+    {
+        var sourceType = StarkTypeSymbols.Integer(16, new BigInteger(240), new BigInteger(260));
+        var targetType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    targetType,
+                    [new TypedParameterSymbol("value", sourceType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "converted",
+                                    new SsaConvertRValue(
+                                        new SsaValueReference("arg_value", sourceType),
+                                        targetType,
+                                        "cast"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("converted", targetType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+        var convertedFacts = functionFacts.Values["converted"];
+
+        Assert.Equal(SsaFactLatticeKind.Known, convertedFacts.IntegerRangeKind);
+        Assert.NotNull(convertedFacts.IntegerRange);
+        Assert.Equal(new BigInteger(240), convertedFacts.IntegerRange!.Min);
+        Assert.Equal(new BigInteger(255), convertedFacts.IntegerRange.Max);
+    }
+
+    [Fact]
     public void AliasAwareMemoryOptimizationForwardsStoredStackScalarLoadsWithinBlock()
     {
         var valueType = StarkTypeSymbols.Integer(32);
@@ -2638,6 +3159,173 @@ public sealed class SsaOptimizationTests
 
         var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
         Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationForwardsStoredStackFixedArrayElementLoadsWithinBlock()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var arrayType = StarkTypeSymbols.FixedArray(valueType, 4);
+        var arrayPointerType = StarkTypeSymbols.RawPointer(arrayType, isMutable: true);
+        var elementPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("value", valueType),
+                        new TypedParameterSymbol("other", valueType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("items", arrayType),
+                                new SsaValueInstruction(
+                                    "items_addr",
+                                    new SsaAddressOfLocalRValue("items", arrayType, arrayPointerType, "&items")),
+                                new SsaValueInstruction(
+                                    "first_addr",
+                                    new SsaElementAddressRValue(
+                                        new SsaValueReference("items_addr", arrayPointerType),
+                                        arrayType,
+                                        null,
+                                        0,
+                                        elementPointerType,
+                                        "&items[0]")),
+                                new SsaValueInstruction(
+                                    "second_addr",
+                                    new SsaElementAddressRValue(
+                                        new SsaValueReference("items_addr", arrayPointerType),
+                                        arrayType,
+                                        null,
+                                        1,
+                                        elementPointerType,
+                                        "&items[1]")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("first_addr", elementPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("second_addr", elementPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_other", valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("first_addr", elementPointerType),
+                                        valueType,
+                                        "items[0]:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.DoesNotContain(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("arg_value", returnValue.Name);
+    }
+
+    [Fact]
+    public void AliasAwareMemoryOptimizationKeepsStackFixedArrayElementLoadsAcrossDynamicElementStores()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var indexType = StarkTypeSymbols.Integer(64, rangeMin: 0, rangeMax: 3);
+        var arrayType = StarkTypeSymbols.FixedArray(valueType, 4);
+        var arrayPointerType = StarkTypeSymbols.RawPointer(arrayType, isMutable: true);
+        var elementPointerType = StarkTypeSymbols.RawPointer(valueType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [
+                        new TypedParameterSymbol("value", valueType),
+                        new TypedParameterSymbol("index", indexType)
+                    ],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("items", arrayType),
+                                new SsaValueInstruction(
+                                    "items_addr",
+                                    new SsaAddressOfLocalRValue("items", arrayType, arrayPointerType, "&items")),
+                                new SsaValueInstruction(
+                                    "first_addr",
+                                    new SsaElementAddressRValue(
+                                        new SsaValueReference("items_addr", arrayPointerType),
+                                        arrayType,
+                                        null,
+                                        0,
+                                        elementPointerType,
+                                        "&items[0]")),
+                                new SsaValueInstruction(
+                                    "dynamic_addr",
+                                    new SsaElementAddressRValue(
+                                        new SsaValueReference("items_addr", arrayPointerType),
+                                        arrayType,
+                                        new SsaValueReference("arg_index", indexType),
+                                        null,
+                                        elementPointerType,
+                                        "&items[index]")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("first_addr", elementPointerType),
+                                    valueType,
+                                    new SsaValueReference("arg_value", valueType)),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("dynamic_addr", elementPointerType),
+                                    valueType,
+                                    new SsaIntegerConstant(9, valueType)),
+                                new SsaValueInstruction(
+                                    "v0",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("first_addr", elementPointerType),
+                                        valueType,
+                                        "items[0]:load"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaAliasAwareMemoryOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Contains(
+            block.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        var returnValue = Assert.IsType<SsaValueReference>(block.Terminator.Value);
+        Assert.Equal("v0", returnValue.Name);
     }
 
     [Fact]

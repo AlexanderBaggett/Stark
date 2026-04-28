@@ -283,7 +283,7 @@ benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_by
 Result files and machine metadata are written under `benchmarks/results/` by
 default. Important environment variables:
 
-- `STARK_BENCH_RUNS`: measured runs after warmup, default `50`.
+- `STARK_BENCH_RUNS`: measured runs after warmup, default `20`.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark paths.
 - `STARK_BENCH_LANGUAGES`: comma-separated list, default `stark,c,rust`.
 - `STARK_BENCH_C_COMPILER`: C compiler, default `clang`.

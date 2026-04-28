@@ -72,14 +72,23 @@ the module and use visible declarations according to the normal `internal`,
 `public`, and `export` rules.
 
 On a module, it makes the whole module a backend optimization boundary. On a
-function, method, `struct`, `record`, or `doctrine`, it marks only that narrower
-surface. In practice, calls across an opaque boundary stay real calls instead
-of being imported into callers for ThinLTO, cross-module inlining, backend
-cloning, or backend specialization.
+function or method, it marks only that callable. On a `struct` or `record`, the
+type's constructors, destructors, methods, and monomorphized type-owned methods
+inherit the boundary. On a `doctrine`, doctrine methods and generated doctrine
+helper/dispatch symbols inherit it when they can otherwise become backend
+optimization surfaces. In practice, calls across an opaque boundary stay real
+calls instead of being imported into callers for ThinLTO, cross-module inlining,
+backend cloning, or backend specialization.
 
 Use this only for runtime/platform/interop code or for a documented backend
 correctness boundary. Most modules should omit the attribute and let the
 compiler choose the fastest safe optimization mode.
+
+As a rule of thumb, Stark optimizes as much visible safe code as it can in
+optimized executable builds. Reach for `[Backend(Opaque)]` only after a real
+correctness issue or benchmark shows that a boundary helps. Prefer the
+narrowest boundary that solves the problem: function first, then type or
+doctrine, and only then a whole module.
 
 ## Imports
 

@@ -28,14 +28,21 @@ The Bash runner records executable size plus Stark object/link/toolchain timing
 and writes CSV rows:
 
 ```text
-benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,c_avg_ratio
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
 ```
 
 The Windows PowerShell runner currently writes:
 
 ```text
-benchmark,language,runs,compile_us,min_us,avg_us,max_us,c_avg_ratio
+benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
 ```
+
+Set `STARK_BENCH_CAPTURE_RSS=1` to capture peak RSS. On Linux, the Bash runner
+samples `/proc/<pid>/status` while each benchmark process runs and records the
+largest observed `VmHWM` value in `peak_rss_kib`. On Windows, the PowerShell
+runner records `Process.PeakWorkingSet64` after each benchmark process exits. A
+`0` value means peak RSS capture was disabled, unavailable on that host, or the
+Linux process exited before the sampler observed it.
 
 The `c_avg_ratio` column is calculated after the last benchmark finishes. It
 uses the average runtime for the same benchmark: `row avg_us / C avg_us`.
@@ -60,12 +67,16 @@ benchmarks/micro/Calls.rs
 Useful environment variables:
 
 - `STARK_BENCH_RUNS`: measured executions per benchmark after one warmup run.
-  Defaults to `50`. Set it lower for quick smoke runs.
+  Defaults to `20`. Set it lower for quick smoke runs.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark file paths.
 - `STARK_BENCH_LANGUAGES`: comma-separated language list. Defaults to
   `stark,c,rust`.
 - `STARK_BENCH_TIMEOUT_SECONDS`: per-executable warmup/run timeout. Defaults
   to `30`; set to `0` to disable when using a platform without `timeout`.
+- `STARK_BENCH_CAPTURE_RSS`: set to `1` to collect `peak_rss_kib`. Defaults to
+  `0` so ordinary timing runs avoid sampler overhead.
+- `STARK_BENCH_RSS_POLL_INTERVAL_SECONDS`: Linux `/proc` peak RSS sampling
+  interval for the Bash runner when RSS capture is enabled. Defaults to `0.002`.
 - `STARK_TARGET`: optional LLVM target triple passed to the compiler.
 - `STARK_COMPILER_ARGS`: extra compiler arguments.
 - `STARK_BENCH_C_COMPILER`: C compiler command. Defaults to `clang`.
@@ -130,7 +141,7 @@ Each run writes:
 
 - `results-<timestamp>.<unique>.csv`: benchmark path, measured runs, compile
   time, Stark LLVM object-generation time, link/toolchain time, binary size,
-  and min/average/max runtime in microseconds.
+  min/average/max runtime in microseconds, and peak RSS in KiB.
 - `machine-<timestamp>.<unique>.txt`: repository, host, CPU, memory, OS, and
   compiler metadata needed to interpret the results.
 
@@ -169,9 +180,15 @@ The locked default flags are:
 - `collections/ListGrowth.stark`, `collections/StackGrowth.stark`, and
   `collections/QueueGrowth.stark` are executable growth benchmarks for the
   contiguous owned collections.
-- `collections/ListIteration.stark`, `collections/LinkedListPush.stark`, and
-  `collections/DictionaryLookup.stark` exercise indexed list iteration,
-  linked-list node allocation/removal, and integer-key hash-table lookup.
+- `collections/ListIteration.stark`, `collections/LinkedListPush.stark`,
+  `collections/LinkedListBuildClear.stark`, `collections/LinkedListChurn.stark`,
+  `collections/LinkedListReservedPush.stark`, and `collections/DictionaryLookup.stark`
+  exercise indexed list iteration, linked-list build-and-drain, linked-list bulk
+  clear, linked-list add/remove churn, explicit Stark node reservation before
+  build-and-drain, and integer-key hash-table lookup. `LinkedListReservedPush`
+  includes the Stark reservation call in total process time; it validates the
+  public performance knob against natural C/Rust linked-list baselines rather
+  than isolating post-reserve hot-loop cost.
   `DictionaryLookup` pre-reserves the Stark dictionary so setup matches the C
   fixed-capacity table and Rust `HashMap::with_capacity` baseline.
 - `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-
@@ -179,11 +196,21 @@ The locked default flags are:
   concatenation through `System.Memory`.
 - `text/OwnedPathAllocation.stark` is an executable benchmark for allocation-
   visible owned path joining plus path-view inspection helpers.
+- `text/AsciiToUnicodeConversionTinyLiteral.stark` is an executable benchmark
+  for tiny known-ASCII literals that should lower to direct scalar widening
+  stores.
 - `text/AsciiToUnicodeConversion.stark` is an executable benchmark for the
-  caller-buffer ASCII-to-Unicode conversion fast path.
+  caller-buffer ASCII-to-Unicode conversion fast path on a medium known-ASCII
+  literal.
+- `text/AsciiToUnicodeConversionLargeLiteral.stark` is an executable benchmark
+  for larger known-ASCII literals that should lower through the UTF-32
+  constant plus `llvm.memcpy` specialization path.
 - `text/AsciiToUnicodeConversionRuntime.stark` uses the executable path
   (`argv[0]`) as runtime ASCII input so the Stark, C, and Rust rows must
   convert bytes that are not available as compile-time literals.
+- `text/AsciiToUnicodeWideningKernel.stark` is an executable ceiling benchmark
+  for raw ASCII byte-to-UTF-32 widening without the public `Unicode` wrapper
+  checks.
 - `text/TextPathCallerBuffer.stark` is a compile-only benchmark for the current
   caller-owned path buffer helpers and low-level text conversion helpers.
 - `network/TcpLoopbackThroughput.stark` is an executable loopback benchmark for

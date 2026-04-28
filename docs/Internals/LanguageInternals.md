@@ -58,9 +58,20 @@ struct RuntimeHandle {
 Module-level opacity applies to the entire module. Function-level opacity is a
 finer boundary: the marked callable remains a real backend call while unrelated
 declarations in the same module can still participate in whole-program
-optimization. Type and doctrine opacity propagate to their owned methods so
-standard-library code can isolate fragile runtime or collection internals
-without making the whole module opaque.
+optimization.
+
+Type-level opacity applies to the marked `struct` or `record` and is inherited
+by explicit constructors, destructors, methods, and monomorphized type-owned
+method instantiations unless a future narrower rule is added. Compiler-generated
+layout, move, and drop mechanics that do not produce a callable backend symbol
+are treated as part of the opaque type operation rather than as separate
+cross-module inline surfaces.
+
+Doctrine-level opacity applies to the doctrine declaration and is inherited by
+doctrine methods, generated doctrine helper/dispatch symbols, and concrete
+instantiations that can otherwise become backend optimization surfaces. The goal
+is narrow containment: standard-library code can isolate fragile runtime,
+collection, or doctrine internals without making the whole module opaque.
 
 Opaque does not mean source-hidden, abstract, private, or unavailable. It is
 not a visibility modifier. It is an optimization-boundary request for the
@@ -90,6 +101,22 @@ future policy can independently choose:
 This keeps Stark's performance-first default while still giving the standard
 library and advanced package authors a precise escape hatch for backend
 boundaries.
+
+Operationally, the policy is:
+
+- optimize closed-world by default for `-O1`, `-O2`, and `-O3` executable
+  builds when source bodies, package typed bodies, or package optimization facts
+  are available
+- prefer the narrowest opaque boundary that preserves correctness or measured
+  performance: function before type, type before module
+- use `[Backend(Opaque)]` for runtime/platform/interop code, fragile backend
+  lowering, or deliberately tuned code where importing the body makes the whole
+  program slower
+- record every whole-program optimization decision in toolchain metrics so a
+  benchmark run can explain which modules joined ThinLTO and which stayed
+  native-only
+- treat the attribute as a performance lever that must be justified by tests or
+  benchmark ratios, not as a general encapsulation mechanism
 
 ## 2. Borrowing and Emitted Facts
 

@@ -1,4 +1,5 @@
 using System.Text;
+using Stark.Parsing;
 
 namespace Stark.Compiler.LlvmIrEmission;
 
@@ -162,7 +163,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add("declare i32 @HeapFree(ptr, i32, ptr) nounwind");
         }
 
-        if (usesRuntimeAllocator || usesTextConcatBuiltin)
+        if (usesRuntimeAllocator || usesTextConcatBuiltin || UsesAsciiToUnicodeLiteralMemcpySpecialization())
         {
             declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
         }
@@ -343,22 +344,6 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"  store atomic i32 0, ptr @{RuntimeAllocatorLockName} release, align 4");
         builder.AppendLine("  ret void");
         builder.AppendLine("}");
-    }
-
-    private static string BuildRuntimeAllocatorBucketSizePhiIncoming(string largeValue)
-    {
-        var incoming = RuntimeAllocatorBucketSizes
-            .Select(static bucketSize => $"{bucketSize}, %bucket_{bucketSize}_allocate")
-            .Concat([$"{largeValue}, %large_allocate"]);
-        return string.Join(", ", incoming.Select(static item => $"[{item}]"));
-    }
-
-    private static string BuildRuntimeAllocatorBucketConstantPhiIncoming(string largeValue, int bucketValue)
-    {
-        var incoming = RuntimeAllocatorBucketSizes
-            .Select(bucketSize => $"{bucketValue}, %bucket_{bucketSize}_allocate")
-            .Concat([$"{largeValue}, %large_allocate"]);
-        return string.Join(", ", incoming.Select(static item => $"[{item}]"));
     }
 
     private void EmitRuntimeAllocateHelperDefinition(StringBuilder builder)
@@ -3413,6 +3398,55 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             && signatures.Any(static signature =>
                 string.Equals(signature.Name, "TryConcatAscii", StringComparison.Ordinal)
                 || string.Equals(signature.Name, "TryConcatUnicode", StringComparison.Ordinal));
+    }
+
+    private bool UsesAsciiToUnicodeLiteralMemcpySpecialization()
+    {
+        foreach (var function in _enumerateSsaFunctions())
+        {
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is not SsaValueInstruction
+                        {
+                            Value: SsaCallRValue
+                            {
+                                Arguments:
+                                [
+                                    _,
+                                    SsaStringConstant
+                                    {
+                                        Type.Kind: StarkTypeKind.Ascii
+                                    } source
+                                ]
+                            } call
+                        }
+                        || !IsPotentialTryConvertAsciiToUnicodeCall(call.FunctionName)
+                        || !TextLiteralDecoder.TryDecode(
+                            source.LiteralText,
+                            source.LiteralText.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String,
+                            out var decoded,
+                            out _)
+                        || !decoded.IsAscii
+                        || decoded.Utf8Bytes.Length < LlvmTextOptimizationConstants.AsciiToUnicodeLiteralMemcpyThresholdCodeUnits)
+                    {
+                        continue;
+                    }
+
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsPotentialTryConvertAsciiToUnicodeCall(string functionName)
+    {
+        return string.Equals(functionName, "TryConvertAsciiToUnicode", StringComparison.Ordinal)
+               || string.Equals(functionName, "System.Text.TryConvertAsciiToUnicode", StringComparison.Ordinal)
+               || functionName.EndsWith(".TryConvertAsciiToUnicode", StringComparison.Ordinal);
     }
 
     private string MaterializeAggregateBuiltinParameterValue(

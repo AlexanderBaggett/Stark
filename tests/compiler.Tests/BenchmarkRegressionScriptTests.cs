@@ -11,10 +11,10 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/Calls,c,50,1000,0,0,0,10000,900,1000,1100",
-            "benchmarks/micro/Calls,stark,50,1000,200,100,300,10000,700,800,900",
-            "benchmarks/micro/Calls,rust,50,1000,0,0,0,10000,1100,1200,1300",
-            "benchmarks/micro/NoC,stark,50,1000,200,100,300,10000,400,500,600");
+            "benchmarks/micro/Calls,c,50,1000,0,0,0,10000,900,1000,1100,2048",
+            "benchmarks/micro/Calls,stark,50,1000,200,100,300,10000,700,800,900,4096",
+            "benchmarks/micro/Calls,rust,50,1000,0,0,0,10000,1100,1200,1300,3072",
+            "benchmarks/micro/NoC,stark,50,1000,200,100,300,10000,400,500,600,4096");
 
         var result = await RunScriptAsync(
             repositoryRoot,
@@ -26,7 +26,7 @@ public sealed class BenchmarkRegressionScriptTests
 
         var lines = File.ReadAllLines(current);
         Assert.Equal(
-            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,c_avg_ratio",
+            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio",
             lines[0]);
         Assert.EndsWith(",1.000000", lines[1], StringComparison.Ordinal);
         Assert.EndsWith(",0.800000", lines[2], StringComparison.Ordinal);
@@ -41,10 +41,10 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var baseline = files.WriteCsv(
             "baseline.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,4096");
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1075,1150");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1075,1150,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -67,10 +67,10 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var baseline = files.WriteCsv(
             "baseline.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,4096");
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1100,1250,1300");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1100,1250,1300,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -93,8 +93,8 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1800,2100,2300",
-            "benchmarks/micro/StackScalarLoadForwarding,rust,50,1000,0,0,0,10000,900,1000,1100");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1800,2100,2300,4096",
+            "benchmarks/micro/StackScalarLoadForwarding,rust,50,1000,0,0,0,10000,900,1000,1100,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -187,7 +187,7 @@ public sealed class BenchmarkRegressionScriptTests
     private sealed class TemporaryBenchmarkFiles : IDisposable
     {
         private const string Header =
-            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us";
+            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,peak_rss_kib";
 
         private readonly string _directory = Path.Combine(
             Path.GetTempPath(),
