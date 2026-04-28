@@ -353,7 +353,8 @@ internal static class NativeToolchain
                 _ => "-O3"
             };
 
-            if (!OperatingSystem.IsWindows() && CommandExists("ld.lld"))
+            if ((OperatingSystem.IsWindows() && CommandExists("lld-link"))
+                || (!OperatingSystem.IsWindows() && CommandExists("ld.lld")))
             {
                 yield return "-fuse-ld=lld";
             }
@@ -620,15 +621,44 @@ internal static class NativeToolchain
             return false;
         }
 
+        var commandCandidates = BuildCommandCandidates(commandName);
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var candidate = Path.Combine(directory, commandName);
-            if (File.Exists(candidate))
+            foreach (var commandCandidate in commandCandidates)
             {
-                return true;
+                var candidate = Path.Combine(directory, commandCandidate);
+                if (File.Exists(candidate))
+                {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    private static IReadOnlyList<string> BuildCommandCandidates(string commandName)
+    {
+        if (Path.HasExtension(commandName))
+        {
+            return [commandName];
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return [commandName];
+        }
+
+        var candidates = new List<string> { commandName };
+        var extensions = Environment.GetEnvironmentVariable("PATHEXT")?
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            ?? [".COM", ".EXE", ".BAT", ".CMD"];
+
+        foreach (var extension in extensions)
+        {
+            candidates.Add($"{commandName}{extension}");
+        }
+
+        return candidates;
     }
 }

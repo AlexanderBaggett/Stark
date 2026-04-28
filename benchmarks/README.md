@@ -15,11 +15,26 @@ metadata.
 scripts/run-benchmarks.sh
 ```
 
-The runner compiles executable Stark, C, and Rust benchmarks, records executable
-size, performs one warmup execution per binary, and prints CSV rows:
+On Windows, use:
+
+```powershell
+scripts\run-benchmarks.ps1
+```
+
+Both runners compile executable Stark, C, and Rust benchmarks and perform one
+warmup execution per binary.
+
+The Bash runner records executable size plus Stark object/link/toolchain timing
+and prints CSV rows:
 
 ```text
 benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us
+```
+
+The Windows PowerShell runner currently prints:
+
+```text
+benchmark,language,runs,compile_us,min_us,avg_us,max_us
 ```
 
 Each executable Stark benchmark must have same-stem C and Rust counterparts
@@ -94,6 +109,11 @@ Benchmarks marked with `// stark-bench: compile-only` are compiler/codegen
 regression sources rather than executable timing benchmarks. The executable
 runner skips them, while `BenchmarkSourceTests` still verifies that they lower
 successfully.
+
+C counterparts marked with `// stark-bench: skip-c-windows` are skipped by the
+Windows PowerShell runner when C rows are enabled. Use this only for C baselines
+that are currently POSIX-specific; the Stark and Rust rows for the benchmark
+still run normally.
 
 Each run writes:
 

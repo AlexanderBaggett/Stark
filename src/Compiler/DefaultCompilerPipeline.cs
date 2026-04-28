@@ -194,6 +194,7 @@ public static class DefaultCompilerPipeline
             };
 
             var imports = new List<ModuleImportEdge>();
+            var sourceModuleParseCache = new Dictionary<string, SourceModuleParse>(StringComparer.Ordinal);
 
             var pendingImports = new Queue<(string FromModule, ImportDeclarationModel Import)>(
                 syntaxModel.Imports.Select(import => (syntaxModel.ModuleName, import)));
@@ -264,6 +265,11 @@ public static class DefaultCompilerPipeline
                         {
                             var parseResult = StarkSyntax.ParseCompilationUnit(sourceText);
                             var importedSyntax = SyntaxModelFactory.Create(parseResult);
+                            var cachedReference = resolved with { FilePath = filePath ?? resolved.FilePath };
+                            sourceModuleParseCache[resolved.ModuleName] = new SourceModuleParse(
+                                cachedReference,
+                                parseResult,
+                                importedSyntax);
 
                             if (!string.Equals(importedSyntax.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
                             {
@@ -329,6 +335,9 @@ public static class DefaultCompilerPipeline
             context.Artifacts.Set(
                 CompilerArtifactKeys.ModuleGraph,
                 new ModuleGraph(syntaxModel.ModuleName, modules, imports, accessibleModules));
+            context.Artifacts.Set(
+                CompilerArtifactKeys.SourceModuleParseCache,
+                new SourceModuleParseCache(sourceModuleParseCache));
         }
     }
 
@@ -347,6 +356,7 @@ public static class DefaultCompilerPipeline
             var parseResult = context.Artifacts.GetRequired(CompilerArtifactKeys.ParseResult);
             var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
             var moduleGraph = context.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
+            context.Artifacts.TryGet(CompilerArtifactKeys.SourceModuleParseCache, out SourceModuleParseCache? sourceModuleParseCache);
             var resolver = context.Options.ModuleResolver as IModuleSourceResolver;
 
             var modules = new Dictionary<string, LoadedModuleDocument>(StringComparer.Ordinal)
@@ -386,42 +396,75 @@ public static class DefaultCompilerPipeline
                         continue;
                     }
 
+                    if (sourceModuleParseCache is not null
+                        && sourceModuleParseCache.TryGet(module.ModuleName, out var cachedParse)
+                        && cachedParse is not null)
+                    {
+                        AddParsedSourceModule(context, modules, module, cachedParse);
+                        continue;
+                    }
+
                     if (!resolver.TryLoadModuleSource(module, out var sourceText, out var filePath))
                     {
                         continue;
                     }
 
                     var importedParse = StarkSyntax.ParseCompilationUnit(sourceText);
-                    foreach (var diagnostic in importedParse.Diagnostics)
-                    {
-                        context.Diagnostics.Error(
-                            "STK1000",
-                            diagnostic.Message,
-                            Id,
-                            new SourceLocation(filePath ?? module.FilePath, diagnostic.Line, diagnostic.Column));
-                    }
-
-                    var importedBuildResult = SyntaxModelFactory.CreateWithDiagnostics(importedParse, context.Options.TargetInfo);
-                    foreach (var diagnostic in importedBuildResult.Diagnostics)
-                    {
-                        context.Diagnostics.Error(
-                            diagnostic.Code,
-                            diagnostic.Message,
-                            Id,
-                            new SourceLocation(filePath ?? module.FilePath, diagnostic.Line, diagnostic.Column));
-                    }
-
-                    var importedSyntax = importedBuildResult.Model;
-                    modules[module.ModuleName] = new LoadedModuleDocument(
+                    AddParsedSourceModule(
+                        context,
+                        modules,
                         module with { FilePath = filePath ?? module.FilePath },
-                        importedParse,
-                        importedSyntax);
+                        importedParse);
                 }
             }
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.LoadedModules,
                 new LoadedModuleSet(syntaxModel.ModuleName, modules));
+        }
+
+        private void AddParsedSourceModule(
+            CompilerPassContext context,
+            Dictionary<string, LoadedModuleDocument> modules,
+            ResolvedModuleReference graphReference,
+            SourceModuleParse cachedParse)
+        {
+            AddParsedSourceModule(
+                context,
+                modules,
+                graphReference with { FilePath = cachedParse.Reference.FilePath ?? graphReference.FilePath },
+                cachedParse.ParseResult);
+        }
+
+        private void AddParsedSourceModule(
+            CompilerPassContext context,
+            Dictionary<string, LoadedModuleDocument> modules,
+            ResolvedModuleReference reference,
+            ParseResult importedParse)
+        {
+            foreach (var diagnostic in importedParse.Diagnostics)
+            {
+                context.Diagnostics.Error(
+                    "STK1000",
+                    diagnostic.Message,
+                    Id,
+                    new SourceLocation(reference.FilePath, diagnostic.Line, diagnostic.Column));
+            }
+
+            var importedBuildResult = SyntaxModelFactory.CreateWithDiagnostics(importedParse, context.Options.TargetInfo);
+            foreach (var diagnostic in importedBuildResult.Diagnostics)
+            {
+                context.Diagnostics.Error(
+                    diagnostic.Code,
+                    diagnostic.Message,
+                    Id,
+                    new SourceLocation(reference.FilePath, diagnostic.Line, diagnostic.Column));
+            }
+
+            modules[reference.ModuleName] = new LoadedModuleDocument(
+                reference,
+                importedParse,
+                importedBuildResult.Model);
         }
     }
 
