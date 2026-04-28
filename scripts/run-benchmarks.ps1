@@ -241,6 +241,79 @@ function Emit-Row {
     Add-Content -Path $script:ResultsFile -Value $Row
 }
 
+function Add-CRelativeAverageRatios {
+    param([string]$Path)
+
+    $lines = @(Get-Content -LiteralPath $Path)
+    if ($lines.Count -eq 0) {
+        return
+    }
+
+    $header = @($lines[0].Split(","))
+    $benchmarkIndex = [Array]::IndexOf($header, "benchmark")
+    $languageIndex = [Array]::IndexOf($header, "language")
+    $avgIndex = [Array]::IndexOf($header, "avg_us")
+    if ($benchmarkIndex -lt 0 -or $languageIndex -lt 0 -or $avgIndex -lt 0) {
+        throw "Benchmark CSV must contain benchmark, language, and avg_us columns."
+    }
+
+    $ratioIndex = [Array]::IndexOf($header, "c_avg_ratio")
+    $keptIndexes = New-Object System.Collections.Generic.List[int]
+    for ($index = 0; $index -lt $header.Count; $index++) {
+        if ($index -ne $ratioIndex) {
+            $keptIndexes.Add($index)
+        }
+    }
+
+    $cAverages = @{}
+    $rows = New-Object System.Collections.Generic.List[object[]]
+    for ($lineIndex = 1; $lineIndex -lt $lines.Count; $lineIndex++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$lineIndex])) {
+            continue
+        }
+
+        $fields = @($lines[$lineIndex].Split(","))
+        $rows.Add($fields)
+
+        if ($fields.Count -le [Math]::Max($languageIndex, $avgIndex)) {
+            continue
+        }
+
+        [double]$avg = 0
+        if ($fields[$languageIndex] -eq "c" -and
+            [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$avg) -and
+            $avg -gt 0) {
+            $cAverages[$fields[$benchmarkIndex]] = $avg
+        }
+    }
+
+    $output = New-Object System.Collections.Generic.List[string]
+    $output.Add((($keptIndexes | ForEach-Object { $header[$_] }) + @("c_avg_ratio")) -join ",")
+
+    foreach ($fields in $rows) {
+        $keptFields = $keptIndexes | ForEach-Object {
+            if ($_ -lt $fields.Count) {
+                $fields[$_]
+            }
+            else {
+                ""
+            }
+        }
+
+        $ratio = ""
+        [double]$rowAvg = 0
+        if ($fields.Count -gt [Math]::Max($benchmarkIndex, $avgIndex) -and
+            $cAverages.ContainsKey($fields[$benchmarkIndex]) -and
+            [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$rowAvg)) {
+            $ratio = ($rowAvg / [double]$cAverages[$fields[$benchmarkIndex]]).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+        }
+
+        $output.Add(($keptFields + @($ratio)) -join ",")
+    }
+
+    Set-Content -LiteralPath $Path -Value $output
+}
+
 function Write-Status {
     param([string]$Message)
 
@@ -345,6 +418,7 @@ function Write-MachineMetadata {
         "timing_unit=microseconds",
         "stark_filter=$(if ([string]::IsNullOrWhiteSpace($Filter)) { '<none>' } else { $Filter })",
         "benchmark_languages=$Languages",
+        "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
         "stark_compiler_args=$(if ([string]::IsNullOrWhiteSpace($ExtraCompilerArgs)) { '<none>' } else { $ExtraCompilerArgs })",
@@ -590,6 +664,9 @@ try {
             }
         }
     }
+
+    Add-CRelativeAverageRatios $ResultsFile
+    Write-Status "Added c_avg_ratio column using same-benchmark C avg_us baselines."
 }
 finally {
     if (Test-Path -LiteralPath $tmpDir) {

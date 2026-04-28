@@ -20,6 +20,7 @@ results_file="${STARK_BENCH_RESULTS_FILE:-}"
 machine_file="${STARK_BENCH_MACHINE_FILE:-}"
 baseline_file="${STARK_BENCH_BASELINE_FILE:-}"
 regression_checker="${STARK_BENCH_REGRESSION_CHECKER:-${repo_root}/scripts/check-benchmark-regressions.sh}"
+c_ratio_adder="${STARK_BENCH_C_RATIO_ADDER:-${repo_root}/scripts/add-benchmark-c-ratios.sh}"
 c_flags=(-O3 -DNDEBUG -std=c17)
 rust_flags=(-C opt-level=3 -C debug-assertions=no -C overflow-checks=no)
 
@@ -136,6 +137,7 @@ write_machine_metadata() {
     printf 'benchmark_min_regression_delta=%s\n' "${STARK_BENCH_MIN_REGRESSION_DELTA:-${STARK_BENCH_MIN_REGRESSION_DELTA_US:-50}}"
     printf 'benchmark_max_stark_to_c_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-<disabled>}"
     printf 'benchmark_max_stark_to_rust_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-<disabled>}"
+    printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us\n'
     printf 'stark_target=%s\n' "${target:-host-default}"
     printf 'stark_flags=--emit-exe -O3\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
@@ -189,9 +191,10 @@ run_benchmark_executable() {
   if [[ "${run_timeout_seconds}" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
     if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null; then
       return 0
+    else
+      status="$?"
     fi
 
-    status="$?"
     if [[ "${status}" -eq 124 ]]; then
       echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
     else
@@ -419,6 +422,9 @@ for source_path in "${benchmarks[@]}"; do
     done
   fi
 done
+
+"${c_ratio_adder}" "${results_file}"
+echo "Added c_avg_ratio column using same-benchmark C avg_us baselines." >&2
 
 if [[ -n "${baseline_file}" || "${STARK_BENCH_REQUIRE_BASELINE:-0}" == "1" || -n "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-}" || -n "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-}" ]]; then
   regression_args=("${results_file}")
