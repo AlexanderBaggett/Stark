@@ -28,7 +28,7 @@ The Bash runner records executable size plus Stark object/link/toolchain timing
 and writes CSV rows:
 
 ```text
-benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
 ```
 
 The Windows PowerShell runner currently writes:
@@ -54,6 +54,10 @@ benchmarks:
 ```bash
 scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
 ```
+
+The Bash runner also records `runtime_spread_pct`, calculated from one run's
+samples as `(max_us - min_us) / avg_us * 100`. Treat high spread as a warning
+that the average may not be stable enough for a performance conclusion.
 
 Each executable Stark benchmark must have same-stem C and Rust counterparts
 when those languages are selected. For example:
@@ -141,7 +145,8 @@ Each run writes:
 
 - `results-<timestamp>.<unique>.csv`: benchmark path, measured runs, compile
   time, Stark LLVM object-generation time, link/toolchain time, binary size,
-  min/average/max runtime in microseconds, and peak RSS in KiB.
+  min/average/max runtime in microseconds, runtime spread percentage, and peak
+  RSS in KiB.
 - `machine-<timestamp>.<unique>.txt`: repository, host, CPU, memory, OS, and
   compiler metadata needed to interpret the results.
 
@@ -160,7 +165,9 @@ The locked default flags are:
   `micro/DirectCallInlining.stark`, `micro/ExplicitArithmeticRangePruning.stark`,
   `micro/FactDrivenBranchPruning.stark`, `micro/FunctionPointerDevirtualization.stark`,
   `micro/NullBranchPruning.stark`, `micro/TextLiteralLengthPruning.stark`,
-  `micro/StackScalarLoadForwarding.stark`, and `micro/MemoryAccess.stark`
+  `micro/StackScalarLoadForwarding.stark`,
+  `micro/ReadonlyOtherLocalFieldStore.stark`, `micro/DeadStackFieldStore.stark`,
+  and `micro/MemoryAccess.stark`
   cover tight scalar arithmetic, abstraction parity
   between hand-written monomorphic code, law wrappers, and generic wrappers,
   branch dispatch, no-inline call overhead, integer identity rewrites,
@@ -168,7 +175,8 @@ The locked default flags are:
   explicit wrapping and saturating arithmetic range pruning,
   branch/switch pruning from propagated facts, known-function-pointer
   devirtualization, nullability-derived branch pruning, text-literal length
-  pruning, stack-scalar load forwarding, and stack-array access loops.
+  pruning, stack-scalar load forwarding, readonly-call stack-field dead-store
+  narrowing, SROA dead stack-field store removal, and stack-array access loops.
 - `allocator/HeapLocalBucketReuse.stark` exercises heap-local allocation and
   scope cleanup through the default allocator buckets. It includes an additional
   `rust-fixed-batch` baseline that stores `Box` allocations in a fixed
@@ -181,14 +189,17 @@ The locked default flags are:
   `collections/QueueGrowth.stark` are executable growth benchmarks for the
   contiguous owned collections.
 - `collections/ListIteration.stark`, `collections/LinkedListPush.stark`,
-  `collections/LinkedListBuildClear.stark`, `collections/LinkedListChurn.stark`,
-  `collections/LinkedListReservedPush.stark`, and `collections/DictionaryLookup.stark`
+  `collections/LinkedListBuildClear.stark`, `collections/LinkedListPopOnly.stark`,
+  `collections/LinkedListChurn.stark`, `collections/LinkedListReservedPush.stark`,
+  and `collections/DictionaryLookup.stark`
   exercise indexed list iteration, linked-list build-and-drain, linked-list bulk
-  clear, linked-list add/remove churn, explicit Stark node reservation before
-  build-and-drain, and integer-key hash-table lookup. `LinkedListReservedPush`
-  includes the Stark reservation call in total process time; it validates the
-  public performance knob against natural C/Rust linked-list baselines rather
-  than isolating post-reserve hot-loop cost.
+  clear, linked-list prebuild plus back-pop drain, linked-list add/remove churn,
+  explicit Stark node reservation before build-and-drain, and integer-key
+  hash-table lookup. `LinkedListPopOnly` still includes prebuild setup in total
+  process time until the harness supports in-process measured sections.
+  `LinkedListReservedPush` includes the Stark reservation call in total process
+  time; it validates the public performance knob against natural C/Rust
+  linked-list baselines rather than isolating post-reserve hot-loop cost.
   `DictionaryLookup` pre-reserves the Stark dictionary so setup matches the C
   fixed-capacity table and Rust `HashMap::with_capacity` baseline.
 - `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-

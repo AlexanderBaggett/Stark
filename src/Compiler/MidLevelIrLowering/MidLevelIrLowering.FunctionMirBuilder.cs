@@ -7146,7 +7146,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private string? ResolveIndirectArgumentLocal(StarkTypeSymbol parameterType, MidLevelIrOperand argument)
         {
-            if (!RequiresIndirectArgument(parameterType))
+            if (!CanUseOperandAsIndirectArgumentSource(parameterType, argument.Type))
             {
                 return null;
             }
@@ -7165,7 +7165,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? ResolveIndirectArgumentAddress(StarkTypeSymbol parameterType, PlaceTarget? target)
         {
-            if (!RequiresIndirectArgument(parameterType) || target is null)
+            if (target is null
+                || !CanUseOperandAsIndirectArgumentSource(parameterType, target.Type))
             {
                 return null;
             }
@@ -7204,6 +7205,29 @@ internal sealed partial class MidLevelIrLowerer
         {
             return type.BorrowKind != StarkBorrowKind.None
                 || type.InitializationKind != StarkInitializationKind.None;
+        }
+
+        private static bool CanUseOperandAsIndirectArgumentSource(StarkTypeSymbol parameterType, StarkTypeSymbol operandType)
+        {
+            if (!RequiresIndirectArgument(parameterType))
+            {
+                return false;
+            }
+
+            var parameterStorageType = StarkTypeSymbols.WithQualifiers(
+                parameterType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            var operandStorageType = StarkTypeSymbols.WithQualifiers(
+                operandType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+
+            return HasSameStorageType(parameterStorageType, operandStorageType);
         }
 
         private void Emit(

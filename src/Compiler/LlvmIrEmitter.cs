@@ -1807,6 +1807,17 @@ internal sealed class LlvmIrEmitter
                         case SsaValueInstruction valueInstruction:
                             AddStringConstant(valueInstruction.Value, result, ref index);
                             break;
+                        case SsaCopyMemoryInstruction copyMemory:
+                            AddStringConstant(copyMemory.DestinationAddress, result, ref index);
+                            AddStringConstant(copyMemory.SourceAddress, result, ref index);
+                            break;
+                        case SsaStoreIndirectInstruction storeIndirect:
+                            AddStringConstant(storeIndirect.Address, result, ref index);
+                            AddStringConstant(storeIndirect.Value, result, ref index);
+                            break;
+                        case SsaStoreLocalInstruction storeLocal:
+                            AddStringConstant(storeLocal.Value, result, ref index);
+                            break;
                         case SsaStoreGlobalInstruction storeGlobal:
                             AddStringConstant(storeGlobal.Value, result, ref index);
                             break;
@@ -1855,6 +1866,9 @@ internal sealed class LlvmIrEmitter
                 return;
             case SsaStringConstant text:
                 AddStringLiteral(text.LiteralText, text.Type, constants, ref index);
+                return;
+            case SsaTextDataAddressValue textData:
+                AddStringLiteral(textData.LiteralText, textData.TextType, constants, ref index);
                 return;
             case SsaUseRValue use:
                 AddStringConstant(use.Value, constants, ref index);

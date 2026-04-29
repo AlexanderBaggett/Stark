@@ -2262,15 +2262,16 @@ debuggability unless a task explicitly says otherwise.
     - [x] focused 20-run validation on April 28, 2026: Stark `LinkedListReservedPush` averaged 1739 us versus C at 1709 us, ratio 1.018; reservation cost is still included in process-level timing
   - Tradeoff: ergonomic burden; not as good as making the default allocator sane.
 
-- [ ] Split linked-list benchmarks
+- [x] Split linked-list benchmarks
   - [x] keep the current benchmark but rename or clarify it as linked-list build-and-drain rather than push-only
   - [x] add a build-clear benchmark that measures allocation-heavy tail insertion plus bulk cleanup without explicit value-return removal
-  - [ ] add a pop-only benchmark with prebuilt data so removal/free cost is isolated
-    - Note: the current process-level benchmark harness cannot exclude setup time, so this likely needs harness support for in-process measured sections before it can be a true pop-only benchmark.
+  - [x] add a pop-only benchmark with prebuilt data so removal/free cost is isolated
+    - [x] add `benchmarks/collections/LinkedListPopOnly` as a natural C/Rust/Stark prebuild plus back-pop drain scenario; current process-level timing still includes prebuild setup until the harness grows in-process measured sections
   - [x] add a churn/reuse benchmark that alternates push and pop to measure bucket freelist reuse
-  - [ ] report same-run C ratios for each phase so allocator cold-growth costs are not confused with linked-list pointer manipulation costs
+  - [x] report same-run C ratios for each phase so allocator cold-growth costs are not confused with linked-list pointer manipulation costs
     - [x] focused 10-run smoke on April 28, 2026: `LinkedListBuildClear` ratio 1.107, `LinkedListChurn` ratio 1.063, and existing `LinkedListPush` build-and-drain ratio 1.027 versus same-run C baselines
     - [x] focused 20-run validation on April 28, 2026: `LinkedListBuildClear` ratio 1.037, `LinkedListChurn` 0.963, `LinkedListPush` 1.061, and `LinkedListReservedPush` 1.018 versus same-run C baselines
+    - [x] focused 20-run validation on April 28, 2026: `LinkedListPopOnly` averaged 1771 us versus C at 1732 us, for a same-run C ratio of 1.023; Rust averaged 1850 us, ratio 1.068
 
 - [x] Add targeted literal-source specialization for `TryConvertAsciiToUnicode`
   - [x] detect calls shaped like `TryConvertAsciiToUnicode(destination, "literal")` after lowering
@@ -2280,7 +2281,7 @@ debuggability unless a task explicitly says otherwise.
   - [x] refresh `benchmarks/text/AsciiToUnicodeConversion` after the specialization so the benchmark tracks the intended fast path
     - [x] focused 10-run sample on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1577 us versus C at 1535 us, for a same-run C ratio of 1.027
 
-- [ ] Promote `TryConvertAsciiToUnicode` literal specialization into a full SSA optimization feature
+- [x] Promote `TryConvertAsciiToUnicode` literal specialization into a full SSA optimization feature
   - [x] explicitly keep dynamic-source ASCII widening out of this iteration; dynamic `ascii` values and `AsciiView(buffer)` sources should continue using the full builtin unless their source bytes are compile-time known
   - [x] extend the SSA value-fact model with known text literal payload facts
     - [x] record decoded byte payload for proven `ascii` literals
@@ -2294,18 +2295,19 @@ debuggability unless a task explicitly says otherwise.
     - [x] immutable locals and constants initialized from a literal
       - [x] LLVM regression coverage proves the literal call-site specialization still triggers through a `const` carrier
     - [x] phis only when every reachable incoming value is the same literal payload
-  - [ ] move the literal conversion rewrite out of the LLVM emitter and into an SSA rewrite pass
+  - [x] move the literal conversion rewrite out of the LLVM emitter and into an SSA rewrite pass
     - [x] unblock the current emitter-level specialization for forward successor phi nodes by recording the generated split-block exit label and using it in phi incoming labels
-    - [ ] rewrite eligible calls into explicit SSA control-flow blocks before ABI lowering
-    - [ ] preserve exact `TryConvertAsciiToUnicode` semantics: null destination returns `false`, non-null failures clear `destination.Length`, capacity too small returns `false`, null destination data with non-empty source returns `false`, and success stores the converted data and final length
-    - [ ] allow rewritten calls in blocks whose successors have phi nodes by producing normal SSA blocks instead of emitter-local LLVM labels
-    - [ ] keep non-ASCII literals on the full UTF-8 conversion builtin
-  - [ ] add literal-size-aware lowering strategies
+    - [x] rewrite eligible calls into explicit SSA control-flow blocks before ABI lowering
+      - [x] small compile-time-known ASCII literals rewrite to direct SSA scalar stores; larger literals rewrite to `SsaCopyMemoryInstruction` from a readonly UTF-32 text-data address so optimized builds no longer rely on an emitter-only call-site rewrite
+    - [x] preserve exact `TryConvertAsciiToUnicode` semantics: null destination returns `false`, non-null failures clear `destination.Length`, capacity too small returns `false`, null destination data with non-empty source returns `false`, and success stores the converted data and final length
+    - [x] allow rewritten calls in blocks whose successors have phi nodes by producing normal SSA blocks instead of emitter-local LLVM labels
+    - [x] keep non-ASCII literals on the full UTF-8 conversion builtin
+  - [x] add literal-size-aware lowering strategies
     - [x] emit direct constant `i32` stores for small ASCII literals
-    - [x] emit a precomputed UTF-32 readonly constant plus `llvm.memcpy` for larger ASCII literals as an emitter-level first slice while the full SSA rewrite is still pending
+    - [x] emit a precomputed UTF-32 readonly constant plus `llvm.memcpy` for larger ASCII literals through SSA copy lowering
     - [x] choose and document the size threshold with benchmark data
       - [x] current cutoff is 32 code units as a code-size-first threshold; focused April 28, 2026 smokes showed tiny scalar ratio 1.006, medium scalar ratio 1.022, and large `llvm.memcpy` ratio 1.051 versus same-run C, with the large path avoiding 40+ emitted scalar stores
-  - [ ] add correctness coverage for literal specialization
+  - [x] add correctness coverage for literal specialization
     - [x] direct literal call
       - [x] LLVM regression coverage proves small literal calls still specialize to direct stores and large literal calls use `llvm.memcpy`
     - [x] escaped ASCII literal call
@@ -2319,19 +2321,22 @@ debuggability unless a task explicitly says otherwise.
     - [x] null destination data with non-empty source
     - [x] call inside a loop
     - [x] call in a block flowing into forward successor phi nodes
-  - [ ] add performance coverage for literal specialization
+  - [x] add performance coverage for literal specialization
     - [x] tiny literal benchmark
       - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionTinyLiteral` averaged 1731 us versus C at 1720 us, for a same-run C ratio of 1.006
     - [x] medium literal benchmark
       - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1649 us versus C at 1613 us, for a same-run C ratio of 1.022
+      - [x] focused 20-run smoke on April 29, 2026 after the SSA scalar-literal rewrite and benchmark stability column: Stark `AsciiToUnicodeConversion` averaged 1664 us versus C at 1734 us, for a same-run C ratio of 0.960; runtime spread was 17.49% for Stark and 37.02% for C, so keep treating single-run ratios as smoke signals
     - [x] large literal benchmark that exercises the `llvm.memcpy` path
       - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1692 us versus C at 1628 us, for a same-run C ratio of 1.039
       - [x] refreshed 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1696 us versus C at 1613 us, for a same-run C ratio of 1.051
+      - [x] focused 20-run validation on April 29, 2026 after SSA large-literal copy lowering: Stark averaged 1638 us versus C at 1633 us, for a same-run C ratio of 1.003; runtime spread was 15.26% for Stark and 14.88% for C
     - [x] compare the public API literal path against a raw widening-kernel ceiling benchmark
       - [x] add `benchmarks/text/AsciiToUnicodeWideningKernel` to measure direct byte-to-UTF-32 widening without public `Unicode` wrapper checks
       - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeWideningKernel` averaged 1851 us versus C at 1705 us, for a same-run C ratio of 1.086
       - [x] after folding known text length calls, a refreshed 3-run smoke on April 28, 2026 averaged 1620 us versus C at 1626 us, for a same-run C ratio of 0.996
-    - [ ] track `c_avg_ratio`, binary size, and benchmark stability before/after the rewrite
+    - [x] track `c_avg_ratio`, binary size, and benchmark stability before/after the rewrite
+      - [x] Bash benchmark CSV now includes `binary_bytes`, `c_avg_ratio`, and `runtime_spread_pct`; `runtime_spread_pct` is `(max_us - min_us) / avg_us * 100`
 
 - [ ] Add alias-aware memory optimization
   - [ ] add a memory fact pass after inlining and cleanup
@@ -2341,6 +2346,7 @@ debuggability unless a task explicitly says otherwise.
     - [x] add same-block stack aggregate scalar field-path tracking with unknown indirect stores as conservative barriers
     - [x] track nested stack aggregate scalar field paths without confusing sibling paths that share the same leaf field
     - [x] track constant fixed-array element lanes for stack aggregate scalar paths without confusing sibling indices; dynamic element indices remain unknown-memory barriers
+    - [x] treat scalar field/element `copy_memory` operations as exact lane reads/writes when both addresses are provable scalar field paths; aggregate, raw-pointer, and unknown copies remain conservative barriers
   - [ ] use ownership validation, borrow kinds, `noalias`, parameter capture summaries, and function memory-effect summaries to decide which operations may alias
     - [x] use function effect summaries so pure/no-sync direct calls preserve scalar global facts
   - [ ] treat `law`/readonly calls as non-barriers for memory they cannot read or write
@@ -2348,6 +2354,8 @@ debuggability unless a task explicitly says otherwise.
     - [x] preserve scalar global facts across readonly argument-memory calls while keeping stores that such calls may observe through global or pointer-backed arguments
     - [x] preserve scalar stack-field facts across pure scalar direct calls while keeping impure calls conservative
     - [x] keep scalar stack-field dead-store candidates across readonly argument-memory calls when the call receives no local-memory argument
+    - [x] narrow readonly argument-memory call barriers to the local roots actually passed to the call, so pending stores to unrelated stack aggregate fields can still be eliminated
+    - [x] narrow readonly argument-memory call barriers to exact scalar field/element lanes when the call receives a provable field or fixed-array element address, so pending stores to sibling lanes can still be eliminated
   - [ ] eliminate redundant loads when no intervening write can affect the loaded location
     - [x] eliminate redundant non-escaping stack-scalar local loads within a basic block
     - [x] forward non-escaping stack-scalar locals across simple single-predecessor block edges
@@ -2379,6 +2387,9 @@ debuggability unless a task explicitly says otherwise.
     - [x] add SSA regression coverage for overwritten scalar stack-field stores and unknown indirect-store barriers
     - [x] add SSA regression coverage for pure-call preservation and impure-call barriers on scalar stack-field facts
     - [x] add SSA regression coverage for readonly scalar calls and readonly local-memory call barriers on scalar stack-field stores
+    - [x] add SSA regression coverage proving readonly local-memory reads of one stack local do not block dead-store elimination for an unrelated stack local
+    - [x] add SSA regression coverage proving readonly local-memory reads of one scalar field do not block dead-store elimination for a sibling scalar field
+    - [x] add SSA regression coverage proving exact scalar field `copy_memory` operations do not block dead-store elimination for sibling scalar fields
     - [x] add SSA regression coverage for single-predecessor scalar stack-field forwarding and join-block conservatism
     - [x] add pipeline regression coverage proving source-level stack-field loads are forwarded
     - [x] add pipeline regression coverage proving source-level nested stack-field loads are forwarded
@@ -2389,10 +2400,15 @@ debuggability unless a task explicitly says otherwise.
     - [x] add a Stark/C/Rust microbenchmark for scalar stack-field forwarding
     - [x] add a Stark/C/Rust microbenchmark for scalar stack-field forwarding across branch-created single-predecessor blocks
     - [x] add a Stark/C/Rust microbenchmark for nested scalar stack-field forwarding
+    - [x] add a Stark/C/Rust microbenchmark for readonly-call stack-field dead-store narrowing
+      - [x] focused 20-run smoke on April 29, 2026: Stark `ReadonlyOtherLocalFieldStore` averaged 2485 us versus C at 2506 us, for a same-run C ratio of 0.992; runtime spread was 11.67% for Stark and 12.13% for C
 
 - [ ] Add scalar replacement of aggregates before ABI lowering
-  - [ ] add an SROA pass after inlining, memory optimization, and cleanup
+  - [x] add an SROA pass after inlining, memory optimization, and cleanup
+    - [x] first slice runs after alias-aware memory optimization and before branch shaping, then reruns cleanup and constant propagation when it removes aggregate traffic
   - [ ] identify non-escaping stack aggregate locals, temporary aggregate values, and small fixed arrays
+    - [x] identify exact scalar field/fixed-array-element lanes rooted in stack locals for first-slice store liveness
+    - [x] gate first-slice SROA candidates to non-escaping stack aggregate roots; direct field/element address calculations remain eligible, while call/global/return/address-storing escape contexts keep the aggregate intact
   - [ ] split eligible structs, records, fixed arrays, and enum payloads into independent scalar SSA lanes
   - [ ] replace aggregate `insert`/`extract` chains with scalar values
     - [x] fold straight-line aggregate field/index `extract(insert(...))` chains during SSA cleanup
@@ -2400,14 +2416,24 @@ debuggability unless a task explicitly says otherwise.
     - [x] fold aggregate field/index extracts through selects when both selected lanes resolve to the same scalar value
     - [x] rerun trivial cleanup after final select predication so branch-phi aggregate folds do not leave redundant `select(x, x)` values
   - [ ] replace aggregate load/store pairs with lane-level loads/stores when the address does not escape
+    - [x] first slice removes dead scalar field/element stores after alias forwarding proves no later exact-lane read can observe them; unknown raw-pointer loads/stores, aggregate copy, whole-local reads/writes, and impure-call barriers remain conservative
   - [ ] remove `SsaCopyMemoryInstruction` when every copied lane can be forwarded or reconstructed
+    - [x] first slice removes scalar field/fixed-element `SsaCopyMemoryInstruction` writes when both source and destination are exact stack lanes and the destination lane is dead; aggregate-width and unknown-source copies remain conservative
+    - [x] remove aggregate-width `SsaCopyMemoryInstruction` writes to stack locals when the destination aggregate is never read before being overwritten or ending its lifetime; move copies and unknown destinations remain conservative
   - [ ] reconstruct the aggregate only at ABI, FFI, raw-pointer, or escaped-storage boundaries
   - [ ] add tests for struct, record, fixed-array, nested aggregate, enum payload, and escaped aggregate cases
     - [x] add SSA tests for branch-phi struct fields, fixed-array elements, and differing incoming lane conservatism
     - [x] add SSA tests for select-carried struct fields, fixed-array elements, and differing selected lane conservatism
     - [x] add pipeline coverage proving source-level branch-phi aggregate field extraction is removed
+    - [x] add SSA regression coverage for dead scalar stack-field store removal and conservative retention across later exact loads, unknown indirect loads, and unknown calls
+    - [x] add SSA regression coverage for dead exact scalar field copy removal and conservative retention when the copied destination lane is later loaded
+    - [x] add SSA regression coverage for dead aggregate-width copy removal, later field-load retention, and conservative move-copy retention
+    - [x] add SSA regression coverage proving dead store/copy removal stays conservative after aggregate addresses escape
+    - [x] add pipeline coverage proving source-level dead stack-field stores are removed by `sroa-ssa`
   - [ ] add benchmarks for small vector-like structs and data-model examples compared to Rust and C equivalents
     - [x] add a Stark/C/Rust microbenchmark for branch-phi aggregate field forwarding
+    - [x] add a Stark/C/Rust microbenchmark for dead stack-field store removal
+      - [x] focused 20-run validation on April 29, 2026: Stark `DeadStackFieldStore` averaged 2838 us versus C at 3197 us, for a same-run C ratio of 0.888; Rust averaged 3237 us, ratio 1.013
 
 - [ ] Add destination propagation and result-location optimization
   - [ ] run after SROA so scalarized values are preferred over aggregate temporaries

@@ -33,8 +33,10 @@ public static class DefaultCompilerPipeline
             .Add(new DevirtualizeSsaIrPass())
             .Add(new InlineSsaIrPass())
             .Add(new SsaValueFactsPass())
+            .Add(new SpecializeAsciiToUnicodeLiteralsSsaPass())
             .Add(new PruneSsaBranchesPass())
             .Add(new OptimizeSsaMemoryPass())
+            .Add(new ScalarReplaceSsaAggregatesPass())
             .Add(new ShapeSsaBranchesPass())
             .Add(new LowerToAbiPass())
             .Add(new EmitLlvmIrPass())
@@ -3791,6 +3793,37 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class SpecializeAsciiToUnicodeLiteralsSsaPass : ICompilerPass
+    {
+        public string Id => "specialize-ascii-to-unicode-literals-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["value-facts"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
+            var specialized = new SsaAsciiToUnicodeLiteralSpecializer().Optimize(ssa, facts);
+            if (ReferenceEquals(specialized, ssa))
+            {
+                return;
+            }
+
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+        }
+    }
+
     private sealed class PruneSsaBranchesPass : ICompilerPass
     {
         public string Id => "prune-branches";
@@ -3799,7 +3832,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["value-facts"];
+        public IReadOnlyList<string> Dependencies => ["specialize-ascii-to-unicode-literals-ssa"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -3857,6 +3890,39 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class ScalarReplaceSsaAggregatesPass : ICompilerPass
+    {
+        public string Id => "sroa-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["memory-opt-ssa"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var optimized = new SsaScalarReplacementOptimizer(effectModel).Optimize(ssa);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+        }
+    }
+
     private sealed class ShapeSsaBranchesPass : ICompilerPass
     {
         public string Id => "shape-branches";
@@ -3865,7 +3931,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["memory-opt-ssa"];
+        public IReadOnlyList<string> Dependencies => ["sroa-ssa"];
 
         public void Execute(CompilerPassContext context)
         {

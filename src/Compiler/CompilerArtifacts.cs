@@ -2622,6 +2622,12 @@ public sealed record SsaFloatConstant(string LiteralText, StarkTypeSymbol Type)
 public sealed record SsaStringConstant(string LiteralText, StarkTypeSymbol Type)
     : SsaValue(Type, LiteralText);
 
+public sealed record SsaTextDataAddressValue(
+    string LiteralText,
+    StarkTypeSymbol TextType,
+    StarkTypeSymbol Type)
+    : SsaValue(Type, $"&{LiteralText}.data");
+
 public sealed record SsaBoolConstant(bool Value)
     : SsaValue(StarkTypeSymbols.Bool, Value ? "true" : "false");
 

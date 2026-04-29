@@ -2211,6 +2211,172 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void AsciiToUnicodeLiteralSpecializationRewritesSmallLiteralCallsBeforeAbiLowering()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+                public fn bool Run() {
+                    stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut Unicode ownedUnicode = new Unicode() {
+                        Data = &unicodeBuffer[0],
+                        Length = 0,
+                        Capacity = 16
+                    };
+
+                    return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-ascii-to-unicode-literals-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryConvertAsciiToUnicode", StringComparison.Ordinal));
+        Assert.Contains(run.Blocks, static block => block.Label.Contains("ascii2unicode", StringComparison.Ordinal));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreIndirectInstruction>(),
+            static store => store.Value is SsaIntegerConstant integer && integer.Value == new System.Numerics.BigInteger(83));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Phis),
+            static phi => phi.Type.Kind == StarkTypeKind.Bool && phi.Incomings.Count == 3);
+    }
+
+    [Fact]
+    public void AsciiToUnicodeLiteralSpecializationLowersLargeLiteralToSsaCopy()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+                public fn bool Run() {
+                    stack mut i32[-2147483648 2147483647][64] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut Unicode ownedUnicode = new Unicode() {
+                        Data = &unicodeBuffer[0],
+                        Length = 0,
+                        Capacity = 64
+                    };
+
+                    return TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-ascii-to-unicode-literals-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryConvertAsciiToUnicode", StringComparison.Ordinal));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaCopyMemoryInstruction>(),
+            static copy => copy.SourceAddress is SsaTextDataAddressValue
+                           && copy.CopyType is { Kind: StarkTypeKind.FixedArray, FixedLength: 41 });
+    }
+
+    [Fact]
+    public void AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessors()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+                public fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count) {
+                    stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut Unicode ownedUnicode = new Unicode() {
+                        Data = &unicodeBuffer[0],
+                        Length = 0,
+                        Capacity = 16
+                    };
+                    stack mut i32[-2147483648 2147483647] index = 0;
+
+                    while willexit (index < count) {
+                        if (TryConvertAsciiToUnicode(&ownedUnicode, "Stark") == false) {
+                            return -1;
+                        }
+
+                        index = index + 1;
+                    }
+
+                    return index;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "emit-llvm"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+
+        Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm.Text);
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm.Text);
+    }
+
+    [Fact]
+    public void AsciiToUnicodeLiteralSpecializationKeepsNonAsciiLiteralOnBuiltinPath()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+                public fn bool Run() {
+                    stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut Unicode ownedUnicode = new Unicode() {
+                        Data = &unicodeBuffer[0],
+                        Length = 0,
+                        Capacity = 16
+                    };
+
+                    return TryConvertAsciiToUnicode(&ownedUnicode, "caf\u00E9");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-ascii-to-unicode-literals-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryConvertAsciiToUnicode", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FactDrivenSwitchPruningRemovesCasesOutsideKnownInputRange()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -2610,6 +2776,35 @@ public sealed class CompilerPipelineOptimizeSsaTests
         Assert.DoesNotContain(
             instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.Value).OfType<SsaLoadIndirectRValue>(),
             static load => string.Equals(load.Text, "items[0]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ScalarReplacementRemovesDeadStackFieldStoresFromSource()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+
+                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    stack mut Pair pair = new Pair(0, 1);
+                    pair.Left = value;
+                    return value + 1;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "sroa-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var run = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        var instructions = run.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Empty(instructions.OfType<SsaStoreIndirectInstruction>());
     }
 
     [Fact]

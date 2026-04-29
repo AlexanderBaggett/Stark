@@ -8681,6 +8681,33 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FixedArrayToSliceCallArgumentsMaterializeSliceAbiSlots()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Touch(borrow i64[-9223372036854775808 9223372036854775807][] values) {
+                return;
+            }
+
+            fn void Run() {
+                stack mut i64[-9223372036854775808 9223372036854775807][2] values = { 1, 2 };
+                Touch(values);
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("store { ptr, i64 }", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"call fastcc void @Touch\(ptr %slot__tmp\d+_slice\)", llvm);
+        Assert.DoesNotMatch(@"call fastcc void @Touch\(ptr %v\d+\)", llvm);
+    }
+
+    [Fact]
     public void IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadata()
     {
         var result = Compile(

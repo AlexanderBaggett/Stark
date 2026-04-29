@@ -5167,6 +5167,9 @@ internal sealed class LlvmFunctionBodyEmitter
             case SsaGlobalAddressValue globalAddress:
                 alignmentBytes = GetGlobalObjectAlignmentBytes(globalAddress.GlobalName, globalAddress.PointeeType) ?? 1;
                 return alignmentBytes > 1;
+            case SsaTextDataAddressValue textData:
+                alignmentBytes = ResolveStringConstant(textData.LiteralText, textData.TextType).AlignmentBytes;
+                return alignmentBytes > 1;
             case SsaAddressOfLocalRValue addressOfLocal:
                 alignmentBytes = GetLocalObjectAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType) ?? 1;
                 return alignmentBytes > 1;
@@ -6736,6 +6739,7 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaIntegerConstant integer => integer.Value.ToString(),
             SsaFloatConstant floating => FormatFloatLiteral(floating),
             SsaStringConstant text => FormatStringConstantValue(text),
+            SsaTextDataAddressValue textData => FormatStringDataPointer(textData.LiteralText, textData.TextType),
             SsaBoolConstant boolean => boolean.Value ? "true" : "false",
             SsaNullConstant => "null",
             SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}",
@@ -7766,6 +7770,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
         return value switch
         {
+            SsaTextDataAddressValue => true,
             SsaGlobalAddressValue globalAddress => IsImmutableGlobalName(globalAddress.GlobalName),
             SsaValueReference reference => ResolveImmutableMemoryReference(reference, visitedValueNames),
             _ => false
@@ -8979,6 +8984,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
                     break;
                 case SsaStringConstant:
+                case SsaTextDataAddressValue:
                     break;
                 default:
                     AddAddressValueRoots(value, visitedValueNames);

@@ -237,6 +237,7 @@ internal static class ArtifactTextRenderer
             SsaIntegerConstant integer => integer.Value.ToString(),
             SsaFloatConstant floating => floating.LiteralText,
             SsaStringConstant text => text.LiteralText,
+            SsaTextDataAddressValue textData => $"&{textData.LiteralText}.data",
             SsaBoolConstant boolean => boolean.Value ? "true" : "false",
             SsaNullConstant => "null",
             SsaGlobalAddressValue globalAddress => $"@{globalAddress.GlobalName}",

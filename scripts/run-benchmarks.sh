@@ -150,6 +150,7 @@ write_machine_metadata() {
     printf 'benchmark_capture_rss=%s\n' "${capture_rss}"
     printf 'benchmark_peak_rss_unit=KiB\n'
     printf 'benchmark_peak_rss_source=Linux /proc VmHWM sampled while each benchmark process runs when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled, unavailable, or process exits before sampling\n'
+    printf 'benchmark_stability_column=runtime_spread_pct percent spread calculated as (max_us - min_us) / avg_us * 100\n'
     printf 'benchmark_baseline_file=%s\n' "${baseline_file:-<none>}"
     printf 'benchmark_regression_metric=%s\n' "${STARK_BENCH_REGRESSION_METRIC:-avg_us}"
     printf 'benchmark_require_baseline=%s\n' "${STARK_BENCH_REQUIRE_BASELINE:-0}"
@@ -383,12 +384,20 @@ time_executable() {
   local min_us
   local avg_us
   local max_us
+  local runtime_spread_pct
   local binary_bytes
   min_us="$(ns_to_us "${min_ns}")"
   avg_us="$(ns_to_us "$((total_ns / runs))")"
   max_us="$(ns_to_us "${max_ns}")"
+  runtime_spread_pct="$(awk -v min="${min_us}" -v avg="${avg_us}" -v max="${max_us}" 'BEGIN {
+    if (avg <= 0) {
+      printf "0.000000"
+    } else {
+      printf "%.6f", ((max - min) * 100.0) / avg
+    }
+  }')"
   binary_bytes="$(file_size_bytes "${output_path}")"
-  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${peak_rss_kib}")"
+  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
 }
 
 compile_and_time_stark() {
@@ -489,7 +498,7 @@ if [[ -n "${extra_args}" ]]; then
   compiler_args+=(${extra_args})
 fi
 
-emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,peak_rss_kib'
+emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
 
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
