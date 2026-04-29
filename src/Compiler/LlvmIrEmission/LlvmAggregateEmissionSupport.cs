@@ -119,7 +119,10 @@ internal static class LlvmAggregateEmissionSupport
             StarkTypeKind.Float when normalizedType.BitWidth is int bitWidth
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: true, targetInfo),
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(targetInfo),
-            StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Slice => TryGetTargetAwareViewLayout(targetInfo),
+            StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Slice
+                => TryGetTargetAwareViewLayout(targetInfo),
+            StarkTypeKind.Dynamic
+                => TryGetTargetAwareDynamicStorageLayout(targetInfo),
             StarkTypeKind.FixedArray when normalizedType.ElementType is not null && normalizedType.FixedLength is int fixedLength
                 => TryGetTargetAwareFixedArrayLayout(normalizedType.ElementType, fixedLength, targetInfo, namedTypes, enumLayouts, activeNamedTypes),
             StarkTypeKind.Named when normalizedType.NamedType is not null
@@ -173,6 +176,24 @@ internal static class LlvmAggregateEmissionSupport
 
         var alignmentBytes = Math.Max(pointerLayout.AlignmentBytes, lengthLayout.AlignmentBytes);
         var sizeBytes = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+    }
+
+    private static ConcreteTypeLayout? TryGetTargetAwareDynamicStorageLayout(LlvmTargetInfo? targetInfo)
+    {
+        var pointerLayout = TryGetTargetAwarePointerLayout(targetInfo);
+        var lengthLayout = TryGetTargetAwareScalarLayout(64, isFloat: false, targetInfo);
+        if (pointerLayout is null || lengthLayout is null)
+        {
+            return null;
+        }
+
+        var alignmentBytes = Math.Max(pointerLayout.AlignmentBytes, lengthLayout.AlignmentBytes);
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
+        sizeBytes = AlignTo(sizeBytes, lengthLayout.AlignmentBytes);
         sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
         sizeBytes = AlignTo(sizeBytes, alignmentBytes);
         return new ConcreteTypeLayout(sizeBytes, alignmentBytes);

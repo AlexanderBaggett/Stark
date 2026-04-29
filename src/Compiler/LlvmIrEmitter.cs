@@ -883,6 +883,12 @@ internal sealed class LlvmIrEmitter
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
+            SsaDynamicStorageFreeRValue free => [free.Storage],
+            SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageMoveLastRValue moveLast => [moveLast.StorageAddress],
+            SsaDynamicStorageMoveAtRValue moveAt => [moveAt.StorageAddress, moveAt.Index],
             SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
             SsaTextSliceRValue textSlice => [textSlice.TextValue, textSlice.Start, textSlice.Length],
             SsaFieldAddressRValue fieldAddress => [fieldAddress.Address],
@@ -1205,7 +1211,8 @@ internal sealed class LlvmIrEmitter
         MonomorphizationLinkageKind? specializationLinkage = null)
     {
         var functionBuilder = new StringBuilder();
-        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
+        var effectiveEffects = AdjustDefinitionEffectsForBody(effects, ssaFunction);
+        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         var valueFacts = TryGetSsaValueFacts(ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
@@ -1214,7 +1221,7 @@ internal sealed class LlvmIrEmitter
                 availableExternally,
                 function,
                 abiFunction,
-                effects,
+                effectiveEffects,
                 effectiveMemoryEffects,
                 parameterEffects,
                 specializationLinkage,
@@ -1361,12 +1368,28 @@ internal sealed class LlvmIrEmitter
         return new SourceLocation(filePath, line, column);
     }
 
-    private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForAbiLowering(
+    private static FunctionEffectProfile AdjustDefinitionEffectsForBody(
+        FunctionEffectProfile effects,
+        SsaFunction ssaFunction)
+    {
+        return ContainsDynamicStorageAllocatorAccess(ssaFunction)
+            ? effects with
+            {
+                Kind = StarkFunctionKind.Fn,
+                IsPure = false,
+                NoSync = false,
+                NoFree = false
+            }
+            : effects;
+    }
+
+    private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(
         FunctionMemoryEffectSummary? memoryEffects,
         SsaFunction ssaFunction,
         Func<string, string, AbiFunctionSignature?> resolveCallAbi)
     {
-        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi))
+        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi)
+            && !ContainsDynamicStorageAllocatorAccess(ssaFunction))
         {
             return memoryEffects;
         }
@@ -1380,6 +1403,14 @@ internal sealed class LlvmIrEmitter
             ReadsOtherMemory = true,
             WritesOtherMemory = true
         };
+    }
+
+    private static bool ContainsDynamicStorageAllocatorAccess(SsaFunction ssaFunction)
+    {
+        return ssaFunction.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Any(static instruction => instruction.Value is SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue);
     }
 
     private static bool RequiresSyntheticStackTemporaries(
@@ -1721,6 +1752,7 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.FunctionPointer => "ptr",
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
+            StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",
             StarkTypeKind.Ascii => $"%{AsciiStringTypeName}",
             StarkTypeKind.Unicode => $"%{UnicodeStringTypeName}",
             StarkTypeKind.Named when type.NamedType is not null

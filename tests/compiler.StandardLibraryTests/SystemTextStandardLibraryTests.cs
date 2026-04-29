@@ -6,8 +6,204 @@ public sealed class SystemTextStandardLibraryTests
 {
     private readonly StandardLibraryTestSuite _suite = new();
 
+    private const string ExperimentalTextProgram = """
+        import System.Experimental.Text
+        import System.Memory
+        module ExperimentalTextParity
+
+        fn bool Ok(System.Memory.MemoryStatus status) {
+            switch (status) {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool ReadParsedBool(System.Experimental.Text.TextResult<bool> result, bool expected) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<bool>.Ok(var value):
+                    return value == expected;
+                case System.Experimental.Text.TextResult<bool>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool IsInvalidBool(System.Experimental.Text.TextResult<bool> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<bool>.Ok(var value):
+                    return false;
+                case System.Experimental.Text.TextResult<bool>.Err(var error):
+                    switch (error) {
+                        case System.Experimental.Text.TextError.InvalidFormat:
+                            return true;
+                        case System.Experimental.Text.TextError.Overflow:
+                            return false;
+                    }
+            }
+        }
+
+        fn bool AsciiOwnedMatches(
+            mut borrow System.Experimental.Text.OwnedAscii text,
+            i64[0 max] expectedLength,
+            i8[-128 127] expectedFirst,
+            i8[-128 127] expectedLast) {
+            stack i8[-128 127][] view = text.AsSlice();
+            if (text.Length() != expectedLength) {
+                return false;
+            }
+
+            return view[0] == expectedFirst && view[(i64[0 max])(expectedLength - 1)] == expectedLast;
+        }
+
+        fn bool UnicodeOwnedMatches(
+            mut borrow System.Experimental.Text.OwnedUnicode text,
+            i64[0 max] expectedLength,
+            i32[-2147483648 2147483647] expectedFirst,
+            i32[-2147483648 2147483647] expectedLast) {
+            stack i32[-2147483648 2147483647][] view = text.AsSlice();
+            if (text.Length() != expectedLength) {
+                return false;
+            }
+
+            return view[0] == expectedFirst && view[(i64[0 max])(expectedLength - 1)] == expectedLast;
+        }
+
+        fn bool ProbeOwnedAscii() {
+            stack mut System.Experimental.Text.OwnedAscii text = new();
+            if (!Ok(text.Reserve(16)) || !Ok(text.AppendAscii("Score: ")) || !Ok(text.AppendI64(-42)) || !Ok(text.AppendByte((i8[-128 127])33))) {
+                return false;
+            }
+
+            if (text.Length() != 11 || text.Capacity() < 16) {
+                return false;
+            }
+
+            stack i8[-128 127][] view = text.AsSlice();
+            if (view[0] != (i8[-128 127])83 || view[10] != (i8[-128 127])33) {
+                return false;
+            }
+
+            return true;
+        }
+
+        fn bool ProbeOwnedUnicode() {
+            stack mut System.Experimental.Text.OwnedUnicode text = new();
+            if (!Ok(text.Reserve(16)) || !Ok(text.AppendUnicode((unicode)"Value: ")) || !Ok(text.AppendI64(100))) {
+                return false;
+            }
+
+            if (text.Length() != 10 || text.Capacity() < 16) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] view = text.AsSlice();
+            if (view[0] != 86 || view[9] != 48) {
+                return false;
+            }
+
+            stack mut System.Experimental.Text.OwnedUnicode suffix = new();
+            if (!Ok(suffix.AppendAscii(" AZ")) || !Ok(text.AppendSlice(suffix.AsSlice(), suffix.Length()))) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] appended = text.AsSlice();
+            return text.Length() == 13 && appended[10] == 32 && appended[12] == 90;
+        }
+
+        export ffi fn i32[min max] main() {
+            if (!ProbeOwnedAscii()) {
+                return 1;
+            }
+
+            if (!ProbeOwnedUnicode()) {
+                return 2;
+            }
+
+            stack mut System.Experimental.Text.OwnedAscii asciiValue = new();
+            if (!Ok(asciiValue.AppendI64((i32[-2147483648 2147483647])-2147483648))
+                || !AsciiOwnedMatches(asciiValue, 11, (i8[-128 127])45, (i8[-128 127])56)) {
+                return 3;
+            }
+
+            stack mut System.Experimental.Text.OwnedAscii unsignedAscii = new();
+            if (!Ok(unsignedAscii.AppendU64((u64[0 max])18446744073709551615))
+                || !AsciiOwnedMatches(unsignedAscii, 20, (i8[-128 127])49, (i8[-128 127])53)) {
+                return 4;
+            }
+
+            stack mut System.Experimental.Text.OwnedUnicode unicodeValue = new();
+            if (!Ok(unicodeValue.AppendBool(false))
+                || !UnicodeOwnedMatches(unicodeValue, 5, 102, 101)) {
+                return 5;
+            }
+
+            stack mut System.Experimental.Text.OwnedUnicode converted = new();
+            if (!Ok(converted.AppendAscii("AZ"))
+                || !UnicodeOwnedMatches(converted, 2, 65, 90)) {
+                return 6;
+            }
+
+            if (!ReadParsedBool(System.Experimental.Text.ParseBoolAscii("true"), true)
+                || !ReadParsedBool(System.Experimental.Text.ParseBoolUnicode((unicode)"false"), false)
+                || !IsInvalidBool(System.Experimental.Text.ParseBoolAscii("True"))) {
+                return 7;
+            }
+
+            return 0;
+        }
+        """;
+
     [Fact]
     public void StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile() => _suite.StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile();
+
+    [Fact]
+    public void StdLibSourceExperimentalTextLowersThroughDynamicStorage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalTextLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.Text
+                import System.Memory
+                module Demo
+
+                fn bool Ok(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i64[0 max] GrowAndRead() {
+                    stack mut System.Experimental.Text.OwnedAscii text = new();
+                    if (!Ok(text.Reserve(8)) || !Ok(text.AppendAscii("abc")) || !Ok(text.AppendI64(42))) {
+                        return 0;
+                    }
+
+                    stack i8[-128 127][] view = text.AsSlice();
+                    return (i64[0 max])view[4];
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource()
@@ -385,6 +581,65 @@ public sealed class SystemTextStandardLibraryTests
                 new CompilerOptions(ModuleResolver: new FileSystemModuleResolver(packageDirectory)));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalTextExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-text-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalTextProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            await process!.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, await process.StandardOutput.ReadToEndAsync());
+            Assert.Equal(string.Empty, await process.StandardError.ReadToEndAsync());
         }
         finally
         {

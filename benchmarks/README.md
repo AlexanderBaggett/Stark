@@ -188,6 +188,26 @@ The locked default flags are:
 - `collections/ListGrowth.stark`, `collections/StackGrowth.stark`, and
   `collections/QueueGrowth.stark` are executable growth benchmarks for the
   contiguous owned collections.
+- `collections/ExperimentalListGrowth.stark` exercises the
+  `System.Experimental.Collections.List<T>` comparison implementation through
+  its public API so it can be measured directly against the stable raw-pointer
+  list and the natural C/Rust baselines.
+- `collections/ExperimentalStackGrowth.stark` does the same for
+  `System.Experimental.Collections.Stack<T>`, keeping the stack API in the
+  measured path instead of benchmarking only the underlying dynamic storage.
+- `collections/ExperimentalQueueGrowth.stark` measures the safe dense-prefix
+  experimental queue candidate, while
+  `collections/ExperimentalRingQueueGrowth.stark` measures the ring-buffer
+  candidate that uses explicit sparse-slot proof internally. Both use the same
+  natural C/Rust ring queue baselines as `QueueGrowth`.
+- `collections/DynamicListGrowth.stark`,
+  `collections/DynamicQueueGrowth.stark`, and
+  `collections/DynamicDictionaryLookup.stark` exercise equivalent list,
+  queue-like contiguous drain, and integer-key hash-table workloads built
+  directly on `dynamic T` initialized storage and ordinary initialized slices.
+  These benchmarks compare the new language-level storage primitive against
+  the current raw-pointer-backed standard-library implementations and natural
+  C/Rust baselines.
 - `collections/ListIteration.stark`, `collections/LinkedListPush.stark`,
   `collections/LinkedListBuildClear.stark`, `collections/LinkedListPopOnly.stark`,
   `collections/LinkedListChurn.stark`, `collections/LinkedListReservedPush.stark`,
@@ -202,11 +222,25 @@ The locked default flags are:
   linked-list baselines rather than isolating post-reserve hot-loop cost.
   `DictionaryLookup` pre-reserves the Stark dictionary so setup matches the C
   fixed-capacity table and Rust `HashMap::with_capacity` baseline.
+- `collections/ExperimentalLinkedListPush.stark`,
+  `collections/ExperimentalLinkedListBuildClear.stark`,
+  `collections/ExperimentalLinkedListPopOnly.stark`,
+  `collections/ExperimentalLinkedListChurn.stark`, and
+  `collections/ExperimentalLinkedListReservedPush.stark` run the same linked-list
+  scenarios through `System.Experimental.Collections.LinkedList<T>`. The C and
+  Rust files are intentionally the same natural baselines as the stable
+  linked-list benchmarks so the Stark stable-vs-experimental comparison changes
+  only the Stark implementation under test.
 - `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-
   visible owned `ToAscii`/`ToUnicode` conversion and literal-prefix
   concatenation through `System.Memory`.
 - `text/OwnedPathAllocation.stark` is an executable benchmark for allocation-
   visible owned path joining plus path-view inspection helpers.
+- `text/DynamicOwnedTextAllocation.stark` and
+  `text/DynamicOwnedPathAllocation.stark` exercise owned text and path-buffer
+  construction directly on `dynamic T` storage. They checksum written content,
+  not only lengths, so stores cannot be optimized away while comparing the
+  dynamic-storage path against the current standard-library allocation path.
 - `text/AsciiToUnicodeConversionTinyLiteral.stark` is an executable benchmark
   for tiny known-ASCII literals that should lower to direct scalar widening
   stores.

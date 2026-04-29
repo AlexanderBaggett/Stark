@@ -357,7 +357,11 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i64 @LinuxSyscall3Integers(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc void @WriteTcpIPv4Sockaddr(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+        var connectBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef ptr @ConnectTcpIPv4(",
+            "Expected Linux ConnectTcpIPv4 definition.");
+        Assert.Contains("call fastcc i32 @CloseFile(", connectBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -435,7 +439,11 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i64 @LinuxSyscall2HandleInteger(", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxBindSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxListenSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+        var listenBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef ptr @ListenTcpIPv4(",
+            "Expected Linux ListenTcpIPv4 definition.");
+        Assert.Contains("call fastcc i32 @CloseFile(", listenBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@bind(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@listen(", llvm, StringComparison.Ordinal);
     }

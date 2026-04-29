@@ -1369,7 +1369,12 @@ internal static partial class PackageImageLoader
                     return false;
                 }
 
-                text = $"{assignmentTargetText} {(string.IsNullOrEmpty(statement.AssignmentOperator) ? "=" : statement.AssignmentOperator)} {assignmentValueText}";
+                var assignmentOperator = string.IsNullOrEmpty(statement.AssignmentOperator)
+                    ? "="
+                    : statement.AssignmentOperator;
+                text = string.Equals(assignmentOperator, "init =", StringComparison.Ordinal)
+                    ? $"init {assignmentTargetText} = {assignmentValueText}"
+                    : $"{assignmentTargetText} {assignmentOperator} {assignmentValueText}";
                 return true;
 
             case ImportedTemplateTypedBodyStatementKind.Return:
@@ -1597,7 +1602,9 @@ internal static partial class PackageImageLoader
             ? "="
             : expression.AssignmentOperator;
         var valueText = RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal);
-        return $"{targetText} {assignmentOperator} {valueText}";
+        return string.Equals(assignmentOperator, "init =", StringComparison.Ordinal)
+            ? $"init {targetText} = {valueText}"
+            : $"{targetText} {assignmentOperator} {valueText}";
     }
 
     private static string RenderImportedTypedTemplateComparisonChain(

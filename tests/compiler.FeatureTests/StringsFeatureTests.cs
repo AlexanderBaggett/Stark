@@ -291,16 +291,16 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             public finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
             public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
 
-            public fn i64[-9223372036854775808 9223372036854775807] Run() {
-                if (AsciiData("text") == null) {
+            public fn i64[-9223372036854775808 9223372036854775807] Run(ascii asciiText, unicode unicodeText) {
+                if (AsciiData(asciiText) == null) {
                     return -1;
                 }
 
-                if (UnicodeData((unicode)"text") == null) {
+                if (UnicodeData(unicodeText) == null) {
                     return -2;
                 }
 
-                return AsciiLength("text") + UnicodeLength((unicode)"text");
+                return AsciiLength(asciiText) + UnicodeLength(unicodeText);
             }
             """);
 

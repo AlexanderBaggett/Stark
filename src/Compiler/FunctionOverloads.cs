@@ -865,6 +865,7 @@ internal static class FunctionOverloadFacts
                 StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
+                StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
                 _ => coreType
             };
         }
@@ -901,6 +902,8 @@ internal static class FunctionOverloadFacts
                 => StarkTypeSymbols.FixedArray(StripQualifiers(type.ElementType), type.FixedLength),
             StarkTypeKind.Slice when type.ElementType is not null
                 => StarkTypeSymbols.Slice(StripQualifiers(type.ElementType)),
+            StarkTypeKind.Dynamic when type.ElementType is not null
+                => StarkTypeSymbols.Dynamic(StripQualifiers(type.ElementType)),
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
                 => StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(type.NamedType),

@@ -5,6 +5,189 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
+    public void StdLibSourceExperimentalPathLowersThroughDynamicStorage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalPathLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.IO.Path
+                import System.Experimental.Text
+                import System.Memory
+                module Demo
+
+                fn bool Ok(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i64[0 max] BuildAndInspect() {
+                    stack mut System.Experimental.Text.OwnedAscii path = new();
+                    if (!Ok(System.Experimental.IO.Path.TryJoin(path, "alpha/", "/beta.txt"))) {
+                        return 0;
+                    }
+
+                    stack ascii view = path.View();
+                    stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts(view);
+                    return (i64[0 max])(path.Length()
+                        + facts.ExtensionLength()
+                        + facts.BaseNameLength()
+                        + facts.DirectoryNameLength());
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("extractvalue { ptr, i64, i64 }", llvm.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalPathCorrectnessSurfaceCompiles()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalPathCorrectness.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.IO.Path
+                import System.Experimental.Text
+                import System.Memory
+                module Demo
+
+                fn bool Ok(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool IsJoinedPath(ascii value) {
+                    switch (value) {
+                        case "alpha/beta.txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsNormalizedPath(ascii value) {
+                    switch (value) {
+                        case "alpha/beta/gamma.txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsTextExtension(ascii value) {
+                    switch (value) {
+                        case ".txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsBetaBaseName(ascii value) {
+                    switch (value) {
+                        case "beta":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsAlphaDirectory(ascii value) {
+                    switch (value) {
+                        case "alpha":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+                    switch (result) {
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                            return value.Length() == 14 && IsJoinedPath(value.View());
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool IsOwnedNormalizedPath(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+                    switch (result) {
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                            return value.Length() == 20 && IsNormalizedPath(value.View());
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool Probe() {
+                    stack mut System.Experimental.Text.OwnedAscii joined = new();
+                    if (!Ok(System.Experimental.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                        return false;
+                    }
+
+                    stack ascii joinedView = joined.View();
+                    if (!IsJoinedPath(joinedView)) {
+                        return false;
+                    }
+
+                    stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts(joinedView);
+                    if (!IsTextExtension(facts.Extension()) || !IsBetaBaseName(facts.BaseName()) || !IsAlphaDirectory(facts.DirectoryName())) {
+                        return false;
+                    }
+
+                    if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii normalized = new();
+                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt"))) {
+                        return false;
+                    }
+
+                    return IsNormalizedPath(normalized.View())
+                        && IsOwnedJoinedPath(System.Experimental.IO.Path.Join("alpha", "beta.txt"))
+                        && IsOwnedJoinedPath(System.Experimental.IO.Path.Join("alpha/", "/beta.txt"))
+                        && IsOwnedNormalizedPath(System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt"));
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBuffer()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)

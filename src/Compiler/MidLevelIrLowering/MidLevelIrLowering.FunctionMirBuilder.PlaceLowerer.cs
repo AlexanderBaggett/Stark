@@ -26,6 +26,11 @@ internal sealed partial class MidLevelIrLowerer
             return _placeLowerer.BuildAddress(target);
         }
 
+        private bool TryBuildDynamicStorageLengthUpdate(PlaceTarget target, out DynamicStorageLengthUpdate update)
+        {
+            return _placeLowerer.TryBuildDynamicStorageLengthUpdate(target, out update);
+        }
+
         private bool TryResolveAssignmentTargetCore(StarkParser.UnaryExpressionContext expression, out PlaceTarget target)
         {
             target = default!;
@@ -158,6 +163,28 @@ internal sealed partial class MidLevelIrLowerer
                                 ParentType: currentType,
                                 SegmentType: sliceElementType));
                             currentType = sliceElementType;
+                            usesAddressModel = true;
+                            supportsAddressModel = true;
+                            continue;
+                        }
+
+                        if (currentType.Kind == StarkTypeKind.Dynamic && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            var dynamicStorageElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.DynamicStorageIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: dynamicStorageElementType));
+                            currentType = dynamicStorageElementType;
                             usesAddressModel = true;
                             supportsAddressModel = true;
                             continue;
@@ -481,6 +508,26 @@ internal sealed partial class MidLevelIrLowerer
                             continue;
                         }
 
+                        if (currentType.Kind == StarkTypeKind.Dynamic && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            var dynamicStorageElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.DynamicStorageIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: dynamicStorageElementType));
+                            currentType = dynamicStorageElementType;
+                            continue;
+                        }
+
                         if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
                         {
                             var indexOperand = LowerExpressionToOperand(indexExpression);
@@ -605,6 +652,26 @@ internal sealed partial class MidLevelIrLowerer
                                 ParentType: currentType,
                                 SegmentType: sliceElementType));
                             currentType = sliceElementType;
+                            continue;
+                        }
+
+                        if (currentType.Kind == StarkTypeKind.Dynamic && currentType.ElementType is not null)
+                        {
+                            var indexOperand = LowerExpressionToOperand(indexExpression);
+                            if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                            {
+                                return false;
+                            }
+
+                            var dynamicStorageElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                            path.Add(new PlacePathSegment(
+                                PlacePathKind.DynamicStorageIndex,
+                                FieldName: null,
+                                ConstantIndex: null,
+                                IndexOperand: indexOperand,
+                                ParentType: currentType,
+                                SegmentType: dynamicStorageElementType));
+                            currentType = dynamicStorageElementType;
                             continue;
                         }
 
@@ -1039,6 +1106,40 @@ internal sealed partial class MidLevelIrLowerer
                         currentType = segment.SegmentType;
                         currentValue = null;
                         break;
+                    case PlacePathKind.DynamicStorageIndex:
+                        var dynamicValue = currentValue;
+                        if (dynamicValue is null && currentAddress is not null)
+                        {
+                            dynamicValue = EmitTemporary(
+                                new MidLevelIrLoadIndirectRValue(currentAddress, currentType, $"{currentAddress.Text}:load"),
+                                "load");
+                        }
+
+                        if (dynamicValue is null
+                            || dynamicValue.Type.Kind != StarkTypeKind.Dynamic
+                            || dynamicValue.Type.ElementType is null
+                            || segment.IndexOperand is null)
+                        {
+                            return null;
+                        }
+
+                        var dataPointerType = StarkTypeSymbols.RawPointer(dynamicValue.Type.ElementType, isMutable: true);
+                        var dataPointer = LowerKnownFieldAccess(dynamicValue, "Data", 0, dataPointerType, "Data");
+                        currentAddressIsMutable = currentAddressIsMutable
+                            && dataPointer.Type.IsMutablePointer
+                            && CanMutateThroughType(segment.SegmentType);
+                        currentAddress = EmitTemporary(
+                            new MidLevelIrElementAddressRValue(
+                                dataPointer,
+                                segment.SegmentType,
+                                segment.IndexOperand,
+                                ConstantIndex: null,
+                                AddressType(segment.SegmentType, currentAddressIsMutable),
+                                $"{dynamicValue.Text}[{segment.IndexOperand.Text}]"),
+                            "addr");
+                        currentType = segment.SegmentType;
+                        currentValue = null;
+                        break;
                     case PlacePathKind.SliceIndex:
                         var sliceValue = currentValue;
                         if (sliceValue is null && currentAddress is not null)
@@ -1194,6 +1295,70 @@ internal sealed partial class MidLevelIrLowerer
             public MidLevelIrOperand? BuildAddress(PlaceTarget target)
             {
                 return _builder.BuildAddressCore(target);
+            }
+
+            public bool TryBuildDynamicStorageLengthUpdate(PlaceTarget target, out DynamicStorageLengthUpdate update)
+            {
+                update = default!;
+
+                if (target.Path.Count == 0)
+                {
+                    return false;
+                }
+
+                var lastSegment = target.Path[^1];
+                if (lastSegment.Kind == PlacePathKind.SliceIndex
+                    && lastSegment.IndexOperand is not null
+                    && target.RootName is not null
+                    && target.Path.Count == 1
+                    && _builder._dynamicInitSliceProvenanceByLocal.TryGetValue(target.RootName, out var provenance))
+                {
+                    var start = _builder.CoerceOperand(provenance.StartIndex, NonNegativeI64Type) ?? provenance.StartIndex;
+                    var index = _builder.CoerceOperand(lastSegment.IndexOperand, NonNegativeI64Type) ?? lastSegment.IndexOperand;
+                    var initializedIndex = _builder.EmitTemporary(
+                        new MidLevelIrBinaryRValue(
+                            MidLevelIrBinaryOperator.Add,
+                            start,
+                            index,
+                            NonNegativeI64Type,
+                            $"{provenance.StartIndex.Text} + {lastSegment.IndexOperand.Text}"),
+                        "dynamic_index");
+                    if (initializedIndex is null)
+                    {
+                        return false;
+                    }
+
+                    update = new DynamicStorageLengthUpdate(
+                        provenance.StorageAddress,
+                        provenance.StorageType,
+                        initializedIndex);
+                    return true;
+                }
+
+                if (lastSegment.Kind != PlacePathKind.DynamicStorageIndex
+                    || lastSegment.IndexOperand is null
+                    || lastSegment.ParentType.Kind != StarkTypeKind.Dynamic)
+                {
+                    return false;
+                }
+
+                var parentTarget = target with
+                {
+                    Type = lastSegment.ParentType,
+                    Path = target.Path.Take(target.Path.Count - 1).ToArray(),
+                    UsesAddressModel = true
+                };
+                var storageAddress = _builder.BuildAddressCore(parentTarget);
+                if (storageAddress is null)
+                {
+                    return false;
+                }
+
+                update = new DynamicStorageLengthUpdate(
+                    storageAddress,
+                    lastSegment.ParentType,
+                    lastSegment.IndexOperand);
+                return true;
             }
         }
     }

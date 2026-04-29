@@ -19,6 +19,7 @@ internal sealed class OwnershipValidator
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
     private ISet<string>? _currentFunctionGenericParameters;
+    private int _unsafeDepth;
 
     public OwnershipValidator(
         CompilerPassContext context,
@@ -81,12 +82,18 @@ internal sealed class OwnershipValidator
         var functionScope = state.EnterScope();
         var parameterDeclarations = functionDeclaration.ParameterList.parameter();
         var previousGenericParameters = _currentFunctionGenericParameters;
+        var previousUnsafeDepth = _unsafeDepth;
         _currentFunctionGenericParameters = signature.IsGeneric
             ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
             : null;
 
         try
         {
+            if (signature.IsUnsafe)
+            {
+                _unsafeDepth++;
+            }
+
             for (var index = 0; index < signature.Parameters.Count; index++)
             {
                 var parameter = signature.Parameters[index];
@@ -105,6 +112,10 @@ internal sealed class OwnershipValidator
                         : BorrowLifetime.External,
                     DeclarationLocation: declarationLocation),
                     isInitialized: true);
+                if (parameter.Type.Kind == StarkTypeKind.Dynamic)
+                {
+                    state.SetDynamicStoragePrefix(parameter.Name, DynamicStoragePrefixState.Unknown);
+                }
             }
 
             if (functionDeclaration.Body.block() is { } body)
@@ -118,6 +129,7 @@ internal sealed class OwnershipValidator
         finally
         {
             _currentFunctionGenericParameters = previousGenericParameters;
+            _unsafeDepth = previousUnsafeDepth;
         }
     }
 
@@ -155,7 +167,16 @@ internal sealed class OwnershipValidator
 
         if (statement.unsafeStatement() is { } unsafeStatement)
         {
-            CheckBlock(unsafeStatement.block(), state, signature, summary, openScope: true);
+            _unsafeDepth++;
+            try
+            {
+                CheckBlock(unsafeStatement.block(), state, signature, summary, openScope: true);
+            }
+            finally
+            {
+                _unsafeDepth--;
+            }
+
             return;
         }
 
@@ -424,6 +445,7 @@ internal sealed class OwnershipValidator
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
                     isInitialized: true,
                     aggregateState: value.AggregateState);
+                RecordDeclaredDynamicStorageState(declarator.Identifier.GetText(), declaredType, value, state, initializer: null);
             }
             else if (declarator.Initializer is { } initializer)
             {
@@ -440,6 +462,8 @@ internal sealed class OwnershipValidator
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
                     isInitialized: true,
                     aggregateState: value.AggregateState);
+                RecordDeclaredDynamicStorageState(declarator.Identifier.GetText(), declaredType, value, state, initializer);
+                TryRecordDynamicInitSliceState(declarator.Identifier.GetText(), declaredType, initializer, state, summary);
             }
             else
             {
@@ -455,6 +479,143 @@ internal sealed class OwnershipValidator
                     isInitialized: false);
             }
         }
+    }
+
+    private static void RecordDeclaredDynamicStorageState(
+        string name,
+        StarkTypeSymbol declaredType,
+        ExpressionInfo value,
+        FlowState state,
+        StarkParser.VariableInitializerContext? initializer)
+    {
+        if (declaredType.Kind != StarkTypeKind.Dynamic)
+        {
+            return;
+        }
+
+        state.SetDynamicStoragePrefix(
+            name,
+            value.DynamicInitializedPrefix
+                ?? (IsDynamicObjectCreationInitializer(initializer) ? DynamicStoragePrefixState.Empty : DynamicStoragePrefixState.Unknown));
+    }
+
+    private static bool IsDynamicObjectCreationInitializer(StarkParser.VariableInitializerContext? initializer)
+    {
+        return initializer?.expression() is { } expression
+            && TryGetSimpleUnaryExpression(expression) is { } unary
+            && unary.powerExpression()?.postfixExpression()?.primaryExpression().objectCreationExpression() is not null;
+    }
+
+    private void TryRecordDynamicInitSliceState(
+        string name,
+        StarkTypeSymbol declaredType,
+        StarkParser.VariableInitializerContext initializer,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (declaredType.Kind != StarkTypeKind.Slice
+            || declaredType.InitializationKind != StarkInitializationKind.Init
+            || initializer.expression() is not { } expression
+            || TryGetSimpleUnaryExpression(expression) is not { } initUnary
+            || initUnary.INIT() is null
+            || initUnary.unaryOperator() is not null
+            || TryGetSimplePostfixExpression(initUnary.unaryExpression()) is not { } postfix
+            || postfix.postfixPart() is not { Length: > 0 } postfixParts
+            || postfixParts[^1].expressionList()?.expression() is not [var startExpression, _])
+        {
+            return;
+        }
+
+        if (!TryResolveDynamicStorageRoot(postfix, postfixParts.Length - 1, state, out var root))
+        {
+            return;
+        }
+
+        BigInteger? startOffset = null;
+        if (IsDynamicLengthExpression(startExpression, root.RootKey))
+        {
+            if (state.TryGetDynamicStoragePrefix(root.RootKey, out var existing)
+                && existing.InitializedPrefix is { } prefix)
+            {
+                startOffset = prefix;
+            }
+        }
+        else if (TryEvaluateNonNegativeIntegerLiteral(startExpression, out var start)
+            && state.TryGetDynamicStoragePrefix(root.RootKey, out var existing)
+            && existing.InitializedPrefix is { } prefix
+            && start == prefix)
+        {
+            startOffset = start;
+        }
+        else
+        {
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: init slice from dynamic storage '{root.RootKey}[{startExpression.GetText()}, ...]' must start at the current dense initialized prefix. Use '{root.RootKey}.Length' for the spare range start, or use an explicit sparse initialized-slot proof.",
+                Location(startExpression.Start));
+            return;
+        }
+
+        if (state.TryLookup(name, out var local))
+        {
+            state.SetDynamicInitSliceState(
+                local.Id,
+                new DynamicInitSliceState(root.RootKey, startOffset, InitializedCount: BigInteger.Zero));
+        }
+    }
+
+    private bool TryResolveDynamicStorageRoot(
+        StarkParser.PostfixExpressionContext postfix,
+        int postfixPartCount,
+        FlowState state,
+        out DynamicStorageRoot root)
+    {
+        root = default!;
+        if (postfix.primaryExpression().Identifier()?.GetText() is not { } rootName
+            || !state.TryLookup(rootName, out var variable))
+        {
+            return false;
+        }
+
+        var rootKey = variable.Name;
+        var currentType = variable.Type;
+        for (var index = 0; index < postfixPartCount; index++)
+        {
+            var part = postfix.postfixPart(index);
+            if (part.Identifier()?.GetText() is not { } memberName
+                || !TryResolveField(currentType, memberName, out var field))
+            {
+                return false;
+            }
+
+            rootKey = $"{rootKey}.{memberName}";
+            currentType = field.Type;
+        }
+
+        if (currentType.Kind != StarkTypeKind.Dynamic)
+        {
+            return false;
+        }
+
+        root = new DynamicStorageRoot(rootKey, currentType);
+        return true;
+    }
+
+    private bool TryResolveField(StarkTypeSymbol type, string memberName, out FieldSymbol field)
+    {
+        field = default!;
+        if (type.Kind != StarkTypeKind.Named
+            || type.NamedType is null
+            || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
+            || !namedType.Fields.TryGetValue(memberName, out var resolvedField)
+            || resolvedField is null)
+        {
+            return false;
+        }
+
+        field = resolvedField;
+        return true;
     }
 
     private StarkTypeSymbol ResolveLocalDeclarationType(
@@ -689,6 +850,30 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        if (expression.INIT() is not null
+            && expression.ASSIGN() is not null
+            && expression.assignmentOperator() is null)
+        {
+            var initTarget = EvaluateUnaryExpression(
+                expression.unaryExpression(),
+                state,
+                signature,
+                summary,
+                ValueUse.Place,
+                allowFunctionReference: true);
+            var storageType = StarkTypeSymbols.WithQualifiers(initTarget.Type, initializationKind: StarkInitializationKind.None);
+            var initValue = EvaluateAssignmentExpression(
+                expression.assignmentExpression(),
+                state,
+                signature,
+                summary,
+                ValueUse.ForAssignment(storageType),
+                allowFunctionReference: false);
+
+            ApplyAssignment(initTarget, initValue, state, summary, expression.unaryExpression(), isInitializationAssignment: true);
+            return initTarget with { BorrowLifetime = initValue.BorrowLifetime, AggregateState = initValue.AggregateState };
+        }
+
         if (expression.conditionalExpression() is { } conditionalExpression)
         {
             return EvaluateConditionalExpression(conditionalExpression, state, signature, summary, use, allowFunctionReference);
@@ -709,7 +894,7 @@ internal sealed class OwnershipValidator
 
         if (isSimpleAssignment)
         {
-            ApplyAssignment(left, right, state, summary, expression.unaryExpression());
+            ApplyAssignment(left, right, state, summary, expression.unaryExpression(), isInitializationAssignment: false);
             return left with { BorrowLifetime = right.BorrowLifetime, AggregateState = right.AggregateState };
         }
 
@@ -726,11 +911,24 @@ internal sealed class OwnershipValidator
         ExpressionInfo right,
         FlowState state,
         FunctionOwnershipBuilder summary,
-        ParserRuleContext context)
+        ParserRuleContext context,
+        bool isInitializationAssignment)
     {
         if (!left.IsPlace)
         {
             return;
+        }
+
+        if (left.DynamicStorageAccess is { } dynamicAccess)
+        {
+            if (isInitializationAssignment)
+            {
+                MarkDynamicSlotInitialized(dynamicAccess, state, summary);
+            }
+            else
+            {
+                EnsureDynamicSlotInitialized(dynamicAccess, state, summary, forReplacement: true);
+            }
         }
 
         if (left.Variable is { } variable)
@@ -769,7 +967,204 @@ internal sealed class OwnershipValidator
             {
                 state.SetInitialized(variable.Id, borrowLifetime, right.AggregateState);
             }
+
+            if (left.Type.Kind == StarkTypeKind.Dynamic)
+            {
+                if (BuildDynamicRootKey(left) is { } rootKey)
+                {
+                    state.SetDynamicStoragePrefix(rootKey, right.DynamicInitializedPrefix ?? DynamicStoragePrefixState.Unknown);
+                }
+            }
         }
+    }
+
+    private void MarkDynamicSlotInitialized(
+        DynamicStorageIndexAccess access,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (access.InitSliceVariableId is { } initSliceVariableId)
+        {
+            MarkDynamicInitSliceSlotInitialized(access, initSliceVariableId, state, summary);
+            return;
+        }
+
+        if (IsDynamicLengthExpression(access.IndexExpression, access.RootKey))
+        {
+            if (state.TryGetDynamicStoragePrefix(access.RootKey, out var current)
+                && current.InitializedPrefix is { } prefix)
+            {
+                state.SetDynamicStoragePrefix(access.RootKey, new DynamicStoragePrefixState(prefix + BigInteger.One));
+            }
+            else
+            {
+                state.SetDynamicStoragePrefix(access.RootKey, DynamicStoragePrefixState.Unknown);
+            }
+
+            return;
+        }
+
+        if (TryEvaluateNonNegativeIntegerLiteral(access.IndexExpression, out var index)
+            && state.TryGetDynamicStoragePrefix(access.RootKey, out var stateValue)
+            && stateValue.InitializedPrefix is { } initializedPrefix
+            && index == initializedPrefix)
+        {
+            state.SetDynamicStoragePrefix(access.RootKey, new DynamicStoragePrefixState(initializedPrefix + BigInteger.One));
+            return;
+        }
+
+        if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
+        {
+            return;
+        }
+
+        OwnershipError(
+            summary,
+            "STK4205",
+            $"Initialization error: init assignment to dynamic storage '{access.RootKey}[{access.IndexExpression.GetText()}]' must target the next spare slot in the dense initialized prefix. Use '{access.RootKey}.Length' for append, initialize earlier slots first, or use an explicit sparse initialized-slot proof.",
+            access.Location);
+    }
+
+    private void MarkDynamicInitSliceSlotInitialized(
+        DynamicStorageIndexAccess access,
+        int initSliceVariableId,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (!state.TryGetDynamicInitSliceState(initSliceVariableId, out var initSlice))
+        {
+            if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
+            {
+                return;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: init slice assignment '{access.IndexExpression.GetText()}' has no dynamic storage provenance.",
+                access.Location);
+            return;
+        }
+
+        if (!TryEvaluateNonNegativeIntegerLiteral(access.IndexExpression, out var index))
+        {
+            if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
+            {
+                return;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: init slice assignments backed by dynamic storage must be proven in ascending slot order; index '{access.IndexExpression.GetText()}' is not a compile-time slot proof.",
+                access.Location);
+            return;
+        }
+
+        if (index != initSlice.InitializedCount)
+        {
+            if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
+            {
+                return;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: init slice assignment to '{access.RootKey}' expected slot {initSlice.InitializedCount} but found slot {index}. Initialize dynamic spare slots in ascending order, or use an explicit sparse initialized-slot proof.",
+                access.Location);
+            return;
+        }
+
+        var nextCount = initSlice.InitializedCount + BigInteger.One;
+        state.SetDynamicInitSliceState(initSliceVariableId, initSlice with { InitializedCount = nextCount });
+
+        if (initSlice.StartOffset is { } startOffset)
+        {
+            state.SetDynamicStoragePrefix(access.RootKey, new DynamicStoragePrefixState(startOffset + nextCount));
+        }
+        else
+        {
+            state.SetDynamicStoragePrefix(access.RootKey, DynamicStoragePrefixState.Unknown);
+        }
+    }
+
+    private bool TryAcceptUnsafeSparseDynamicInitializationProof(
+        DynamicStorageIndexAccess access,
+        FlowState state)
+    {
+        if (_unsafeDepth == 0)
+        {
+            return false;
+        }
+
+        state.SetDynamicStoragePrefix(access.RootKey, DynamicStoragePrefixState.Unknown);
+        return true;
+    }
+
+    private bool EnsureDynamicSlotInitialized(
+        DynamicStorageIndexAccess access,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        bool forReplacement)
+    {
+        if (access.InitSliceVariableId is not null)
+        {
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: init slice '{access.RootKey}' is write-only; initialized values must be read through an ordinary initialized slice view.",
+                access.Location);
+            return false;
+        }
+
+        if (TryEvaluateNonNegativeIntegerLiteral(access.IndexExpression, out var index)
+            && state.TryGetDynamicStoragePrefix(access.RootKey, out var stateValue)
+            && stateValue.InitializedPrefix is { } initializedPrefix
+            && index < initializedPrefix)
+        {
+            return true;
+        }
+
+        if (_unsafeDepth != 0)
+        {
+            return true;
+        }
+
+        var verb = forReplacement ? "assign to" : "read";
+        OwnershipError(
+            summary,
+            "STK4205",
+            $"Initialization error: cannot {verb} dynamic storage slot '{access.RootKey}[{access.IndexExpression.GetText()}]' without a proof that the slot is initialized. Use an initialized slice view for ranges or an explicit sparse initialized-slot proof for sparse data structures.",
+            access.Location);
+        return false;
+    }
+
+    private static bool TryEvaluateNonNegativeIntegerLiteral(
+        StarkParser.ExpressionContext expression,
+        out BigInteger value)
+    {
+        value = BigInteger.Zero;
+        var text = expression.GetText();
+        return text.Length != 0
+            && text.All(static ch => ch is >= '0' and <= '9')
+            && BigInteger.TryParse(text, out value);
+    }
+
+    private static bool IsDynamicLengthExpression(StarkParser.ExpressionContext expression, string rootKey) =>
+        string.Equals(expression.GetText(), $"{rootKey}.Length", StringComparison.Ordinal);
+
+    private static string? BuildDynamicRootKey(ExpressionInfo value)
+    {
+        if (value.Variable is not { } variable
+            || value.HasIndexProjection)
+        {
+            return null;
+        }
+
+        return value.ProjectionPath is { Length: > 0 } projectionPath
+            ? $"{variable.Name}.{string.Join(".", projectionPath)}"
+            : variable.Name;
     }
 
     private void ValidateAssignedBorrowLifetime(
@@ -1302,6 +1697,17 @@ internal sealed class OwnershipValidator
                 expression);
         }
 
+        if (op == "init")
+        {
+            return EvaluateUnaryExpression(
+                expression.unaryExpression(),
+                state,
+                signature,
+                summary,
+                ValueUse.Place,
+                allowFunctionReference: false);
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
         return ApplyUse(operand with { Variable = null, IsPlace = false, IsIndirectPlace = false }, state, summary, use, expression);
     }
@@ -1339,8 +1745,10 @@ internal sealed class OwnershipValidator
             : ValueUse.ProjectBase;
         var binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, primaryUse, allowFunctionReference || requiresCallableTarget);
 
-        foreach (var postfixPart in expression.postfixPart())
+        var postfixParts = expression.postfixPart();
+        for (var index = 0; index < postfixParts.Length; index++)
         {
+            var postfixPart = postfixParts[index];
             if (postfixPart.argumentList() is { } argumentList)
             {
                 binding = InvokeCall(binding, argumentList, state, summary, use);
@@ -1358,10 +1766,81 @@ internal sealed class OwnershipValidator
                 continue;
             }
 
+            if (index + 1 < postfixParts.Length
+                && postfixParts[index + 1].argumentList() is { } memberArguments
+                && TryApplyDynamicStorageMemberCall(binding, postfixPart.Identifier().GetText(), memberArguments, state, signature, summary, out var dynamicMemberCall))
+            {
+                binding = dynamicMemberCall;
+                use = ValueUse.Read;
+                index++;
+                continue;
+            }
+
             binding = ApplyMemberAccess(binding, postfixPart.Identifier().GetText(), summary, postfixPart);
         }
 
         return ApplyUse(binding, state, summary, use, expression);
+    }
+
+    private bool TryApplyDynamicStorageMemberCall(
+        ExpressionInfo receiver,
+        string memberName,
+        StarkParser.ArgumentListContext arguments,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        out ExpressionInfo result)
+    {
+        result = null!;
+        if (receiver.Type.Kind != StarkTypeKind.Dynamic)
+        {
+            return false;
+        }
+
+        if (string.Equals(memberName, "Reserve", StringComparison.Ordinal)
+            || string.Equals(memberName, "TryReserve", StringComparison.Ordinal))
+        {
+            TryEnsureValueAvailable(receiver, state, summary, ValueUse.Read, arguments.Start);
+            foreach (var argument in arguments.argument())
+            {
+                EvaluateExpression(argument.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            }
+
+            result = new ExpressionInfo(
+                string.Equals(memberName, "TryReserve", StringComparison.Ordinal)
+                    ? StarkTypeSymbols.Bool
+                    : StarkTypeSymbols.Void);
+            return true;
+        }
+
+        if (string.Equals(memberName, "MoveLast", StringComparison.Ordinal)
+            || string.Equals(memberName, "MoveAt", StringComparison.Ordinal))
+        {
+            TryEnsureValueAvailable(receiver, state, summary, ValueUse.Read, arguments.Start);
+            foreach (var argument in arguments.argument())
+            {
+                EvaluateExpression(argument.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            }
+
+            if (BuildDynamicRootKey(receiver) is { } rootKey)
+            {
+                if (state.TryGetDynamicStoragePrefix(rootKey, out var prefixState)
+                    && prefixState.InitializedPrefix is { } prefix
+                    && prefix > BigInteger.Zero)
+                {
+                    state.SetDynamicStoragePrefix(rootKey, new DynamicStoragePrefixState(prefix - BigInteger.One));
+                }
+                else
+                {
+                    state.SetDynamicStoragePrefix(rootKey, DynamicStoragePrefixState.Unknown);
+                }
+            }
+
+            result = new ExpressionInfo(receiver.Type.ElementType ?? StarkTypeSymbols.Error);
+            return true;
+        }
+
+        return false;
     }
 
     private ExpressionInfo EvaluatePrimaryExpression(
@@ -1472,6 +1951,10 @@ internal sealed class OwnershipValidator
                         : BorrowLifetime.External,
                     DeclarationLocation: declarationParameter is null ? null : Location(declarationParameter.Identifier().Symbol)),
                     isInitialized: true);
+                if (parameter.Type.Kind == StarkTypeKind.Dynamic)
+                {
+                    state.SetDynamicStoragePrefix(parameter.Name, DynamicStoragePrefixState.Unknown);
+                }
             }
 
             if (expression.expression() is { } bodyExpression)
@@ -1557,7 +2040,13 @@ internal sealed class OwnershipValidator
             EvaluateObjectInitializerMembers(objectInitializer, type, state, signature, summary);
         }
 
-        return new ExpressionInfo(type, BorrowLifetime: BorrowLifetime.None, AggregateState: CreateInitializedAggregateState(type));
+        return new ExpressionInfo(
+            type,
+            BorrowLifetime: BorrowLifetime.None,
+            AggregateState: CreateInitializedAggregateState(type),
+            DynamicInitializedPrefix: type.Kind == StarkTypeKind.Dynamic
+                ? DynamicStoragePrefixState.Empty
+                : null);
     }
 
     private ExpressionInfo EvaluateEnumConstructorExpression(
@@ -2347,6 +2836,33 @@ internal sealed class OwnershipValidator
         }
 
         var elementType = target.Type.ElementType ?? StarkTypeSymbols.Error;
+        DynamicStorageIndexAccess? dynamicAccess = null;
+        var indexExpressions = expressionList.expression();
+        if (indexExpressions.Length == 1)
+        {
+            if (target.Type.Kind == StarkTypeKind.Dynamic
+                && BuildDynamicRootKey(target) is { } dynamicRootKey)
+            {
+                dynamicAccess = new DynamicStorageIndexAccess(
+                    dynamicRootKey,
+                    target.Type,
+                    indexExpressions[0],
+                    Location(expressionList.Start));
+            }
+            else if (target.Type.Kind == StarkTypeKind.Slice
+                && target.Type.InitializationKind == StarkInitializationKind.Init
+                && target.Variable is { } initSliceVariable
+                && state.TryGetDynamicInitSliceState(initSliceVariable.Id, out var initSlice))
+            {
+                dynamicAccess = new DynamicStorageIndexAccess(
+                    initSlice.RootKey,
+                    StarkTypeSymbols.Dynamic(elementType),
+                    indexExpressions[0],
+                    Location(expressionList.Start),
+                    InitSliceVariableId: initSliceVariable.Id);
+            }
+        }
+
         return new ExpressionInfo(
             elementType,
             Variable: target.Variable,
@@ -2354,7 +2870,8 @@ internal sealed class OwnershipValidator
             IsPlace: target.IsPlace,
             IsIndirectPlace: true,
             ProjectionPath: target.ProjectionPath,
-            HasIndexProjection: true);
+            HasIndexProjection: true,
+            DynamicStorageAccess: dynamicAccess);
     }
 
     private ExpressionInfo ApplyMemberAccess(
@@ -2448,6 +2965,13 @@ internal sealed class OwnershipValidator
         if (TryApplyValueTextConversionMemberAccess(target, memberName, out var valueTextConversion))
         {
             return valueTextConversion;
+        }
+
+        if (target.Type.Kind == StarkTypeKind.Dynamic
+            && (string.Equals(memberName, "Length", StringComparison.Ordinal)
+                || string.Equals(memberName, "Capacity", StringComparison.Ordinal)))
+        {
+            return new ExpressionInfo(NonNegativeI64Type, BorrowLifetime: BorrowLifetime.None);
         }
 
         var namedType = target.Type.NamedType is not null && _typeModel.NamedTypes.TryGetValue(target.Type.NamedType, out var resolved)
@@ -2587,6 +3111,13 @@ internal sealed class OwnershipValidator
             return value;
         }
 
+        if (value.DynamicStorageAccess is { } dynamicAccess
+            && use.Kind != ValueUseKind.Place
+            && !EnsureDynamicSlotInitialized(dynamicAccess, state, summary, forReplacement: false))
+        {
+            return value;
+        }
+
         if (use.Kind != ValueUseKind.Consume || !IsMoveOnly(value.Type))
         {
             return value;
@@ -2594,6 +3125,22 @@ internal sealed class OwnershipValidator
 
         if (value.IsIndirectPlace)
         {
+            if (value.DynamicStorageAccess is { } dynamicMoveAccess)
+            {
+                if (_unsafeDepth != 0)
+                {
+                    state.SetDynamicStoragePrefix(dynamicMoveAccess.RootKey, DynamicStoragePrefixState.Unknown);
+                    return value;
+                }
+
+                OwnershipError(
+                    summary,
+                    "STK4203",
+                    $"Cannot move a non-tail dynamic storage slot of type '{value.Type.DisplayName}' without an explicit sparse initialized-slot proof. Use MoveLast() for dense-prefix tail moves.",
+                    token);
+                return value;
+            }
+
             if (value.Variable is { } projectedVariable
                 && value.ProjectionPath is { Length: 1 } projectionPath
                 && !value.HasIndexProjection)
@@ -3488,6 +4035,9 @@ internal sealed class OwnershipValidator
                 : IsMoveOnly(targetType) ? new(ValueUseKind.Consume, TargetType: targetType) : new(ValueUseKind.Read, TargetType: targetType);
 
         public static ValueUse ForCallArgument(StarkTypeSymbol parameterType) =>
+            parameterType.InitializationKind is StarkInitializationKind.Init or StarkInitializationKind.Out
+                ? Place
+                :
             parameterType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: parameterType)
                 : parameterType.Kind == StarkTypeKind.RawPointer || !IsMoveOnly(parameterType)
@@ -3630,6 +4180,30 @@ internal sealed class OwnershipValidator
             : BorrowLifetime.TemporaryAt(Location(token), "temporary borrow");
     }
 
+    private sealed record DynamicStorageIndexAccess(
+        string RootKey,
+        StarkTypeSymbol StorageType,
+        StarkParser.ExpressionContext IndexExpression,
+        SourceLocation? Location,
+        int? InitSliceVariableId = null);
+
+    private sealed record DynamicInitSliceState(
+        string RootKey,
+        BigInteger? StartOffset,
+        BigInteger InitializedCount);
+
+    private sealed record DynamicStorageRoot(
+        string RootKey,
+        StarkTypeSymbol Type);
+
+    private sealed record DynamicStoragePrefixState(BigInteger? InitializedPrefix)
+    {
+        public static readonly DynamicStoragePrefixState Empty = new(BigInteger.Zero);
+        public static readonly DynamicStoragePrefixState Unknown = new((BigInteger?)null);
+
+        public bool IsKnown => InitializedPrefix is not null;
+    }
+
     private sealed record ExpressionInfo(
         StarkTypeSymbol Type,
         VariableInfo? Variable = null,
@@ -3644,7 +4218,9 @@ internal sealed class OwnershipValidator
         bool HasIndexProjection = false,
         ExpressionInfo? Receiver = null,
         EnumConstructorBinding? EnumConstructor = null,
-        AggregateFieldState? AggregateState = null)
+        AggregateFieldState? AggregateState = null,
+        DynamicStorageIndexAccess? DynamicStorageAccess = null,
+        DynamicStoragePrefixState? DynamicInitializedPrefix = null)
     {
         public ExpressionInfo(StarkTypeSymbol type)
             : this(type, BorrowLifetime: BorrowLifetime.None)
@@ -3678,6 +4254,8 @@ internal sealed class OwnershipValidator
         private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
         private readonly Dictionary<int, VariableInfo> _variables;
         private readonly Dictionary<int, VariableState> _states;
+        private readonly Dictionary<string, DynamicStoragePrefixState> _dynamicStorageStates;
+        private readonly Dictionary<int, DynamicInitSliceState> _dynamicInitSliceStates;
         private readonly Dictionary<int, ScopeFrame> _scopes;
         private int _nextVariableId;
         private int _nextScopeId;
@@ -3687,6 +4265,8 @@ internal sealed class OwnershipValidator
             _namedTypes = namedTypes;
             _variables = new Dictionary<int, VariableInfo>();
             _states = new Dictionary<int, VariableState>();
+            _dynamicStorageStates = new Dictionary<string, DynamicStoragePrefixState>(StringComparer.Ordinal);
+            _dynamicInitSliceStates = new Dictionary<int, DynamicInitSliceState>();
             _scopes = new Dictionary<int, ScopeFrame>();
             CurrentScope = new ScopeFrame(0, null);
             _scopes[0] = CurrentScope;
@@ -3697,6 +4277,8 @@ internal sealed class OwnershipValidator
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             Dictionary<int, VariableInfo> variables,
             Dictionary<int, VariableState> states,
+            Dictionary<string, DynamicStoragePrefixState> dynamicStorageStates,
+            Dictionary<int, DynamicInitSliceState> dynamicInitSliceStates,
             Dictionary<int, ScopeFrame> scopes,
             ScopeFrame currentScope,
             int nextVariableId,
@@ -3705,6 +4287,8 @@ internal sealed class OwnershipValidator
             _namedTypes = namedTypes;
             _variables = variables;
             _states = states;
+            _dynamicStorageStates = dynamicStorageStates;
+            _dynamicInitSliceStates = dynamicInitSliceStates;
             _scopes = scopes;
             CurrentScope = currentScope;
             _nextVariableId = nextVariableId;
@@ -3743,6 +4327,8 @@ internal sealed class OwnershipValidator
                 }
 
                 _states.Remove(variableId);
+                _dynamicInitSliceStates.Remove(variableId);
+                RemoveDynamicStorageStatesForRoot(variable.Name);
                 _variables.Remove(variableId);
             }
 
@@ -3781,6 +4367,34 @@ internal sealed class OwnershipValidator
         }
 
         public bool TryGetState(int variableId, out VariableState state) => _states.TryGetValue(variableId, out state!);
+
+        public bool TryGetDynamicStoragePrefix(string rootKey, out DynamicStoragePrefixState state) =>
+            _dynamicStorageStates.TryGetValue(rootKey, out state!);
+
+        public void SetDynamicStoragePrefix(string rootKey, DynamicStoragePrefixState state)
+        {
+            _dynamicStorageStates[rootKey] = state;
+        }
+
+        public bool TryGetDynamicInitSliceState(int variableId, out DynamicInitSliceState state) =>
+            _dynamicInitSliceStates.TryGetValue(variableId, out state!);
+
+        public void SetDynamicInitSliceState(int variableId, DynamicInitSliceState state)
+        {
+            _dynamicInitSliceStates[variableId] = state;
+        }
+
+        private void RemoveDynamicStorageStatesForRoot(string rootName)
+        {
+            var prefix = $"{rootName}.";
+            foreach (var key in _dynamicStorageStates.Keys
+                         .Where(key => string.Equals(key, rootName, StringComparison.Ordinal)
+                             || key.StartsWith(prefix, StringComparison.Ordinal))
+                         .ToArray())
+            {
+                _dynamicStorageStates.Remove(key);
+            }
+        }
 
         public void SetInitialized(int variableId, BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState = null)
         {
@@ -3865,6 +4479,8 @@ internal sealed class OwnershipValidator
                 _namedTypes,
                 _variables.ToDictionary(static pair => pair.Key, static pair => pair.Value),
                 _states.ToDictionary(static pair => pair.Key, static pair => pair.Value),
+                _dynamicStorageStates.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal),
+                _dynamicInitSliceStates.ToDictionary(static pair => pair.Key, static pair => pair.Value),
                 scopes,
                 currentScope,
                 _nextVariableId,
@@ -3885,6 +4501,9 @@ internal sealed class OwnershipValidator
 
                 _states[id] = VariableState.Merge(left, right, BorrowLifetime.Merge(left.BorrowLifetime, right.BorrowLifetime));
             }
+
+            MergeDynamicStorageStates(thenState, elseState ?? this);
+            MergeDynamicInitSliceStates(thenState, elseState ?? this);
         }
 
         public void MergeBranches(IEnumerable<FlowState> branches)
@@ -3923,6 +4542,9 @@ internal sealed class OwnershipValidator
                     ? VariableState.Initialized(lifetime, aggregateState)
                     : new VariableState(false, mayBeInitialized, lifetime, mayBeInitialized ? UnavailableValueKind.ControlFlow : unavailableKind, aggregateState);
             }
+
+            MergeDynamicStorageStates(branchList);
+            MergeDynamicInitSliceStates(branchList);
         }
 
         public void MergeLoop(FlowState loopState)
@@ -3934,6 +4556,90 @@ internal sealed class OwnershipValidator
                 var after = loopState._states.TryGetValue(id, out var afterState) ? afterState : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
                 _states[id] = VariableState.Merge(before, after, BorrowLifetime.Merge(before.BorrowLifetime, after.BorrowLifetime));
             }
+
+            MergeDynamicStorageStates(this, loopState);
+            MergeDynamicInitSliceStates(this, loopState);
+        }
+
+        private void MergeDynamicStorageStates(params FlowState[] branches)
+        {
+            var snapshots = branches
+                .Select(static branch => branch._dynamicStorageStates.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal))
+                .ToArray();
+            var keys = snapshots.SelectMany(static snapshot => snapshot.Keys).ToHashSet(StringComparer.Ordinal);
+            _dynamicStorageStates.Clear();
+            foreach (var key in keys)
+            {
+                DynamicStoragePrefixState? merged = null;
+                var first = true;
+                foreach (var snapshot in snapshots)
+                {
+                    var state = snapshot.TryGetValue(key, out var value)
+                        ? value
+                        : DynamicStoragePrefixState.Unknown;
+                    merged = first ? state : MergeDynamicStoragePrefix(merged!, state);
+                    first = false;
+                }
+
+                if (merged is not null)
+                {
+                    _dynamicStorageStates[key] = merged;
+                }
+            }
+        }
+
+        private void MergeDynamicInitSliceStates(params FlowState[] branches)
+        {
+            var snapshots = branches
+                .Select(static branch => branch._dynamicInitSliceStates.ToDictionary(static pair => pair.Key, static pair => pair.Value))
+                .ToArray();
+            var ids = snapshots.SelectMany(static snapshot => snapshot.Keys).ToHashSet();
+            _dynamicInitSliceStates.Clear();
+            foreach (var id in ids)
+            {
+                DynamicInitSliceState? merged = null;
+                var first = true;
+                var compatible = true;
+                foreach (var snapshot in snapshots)
+                {
+                    if (!snapshot.TryGetValue(id, out var state))
+                    {
+                        compatible = false;
+                        break;
+                    }
+
+                    if (first)
+                    {
+                        merged = state;
+                        first = false;
+                        continue;
+                    }
+
+                    if (!string.Equals(merged!.RootKey, state.RootKey, StringComparison.Ordinal)
+                        || merged.StartOffset != state.StartOffset
+                        || merged.InitializedCount != state.InitializedCount)
+                    {
+                        compatible = false;
+                        break;
+                    }
+                }
+
+                if (compatible && merged is not null)
+                {
+                    _dynamicInitSliceStates[id] = merged;
+                }
+            }
+        }
+
+        private static DynamicStoragePrefixState MergeDynamicStoragePrefix(
+            DynamicStoragePrefixState left,
+            DynamicStoragePrefixState right)
+        {
+            return left.InitializedPrefix is { } leftPrefix
+                && right.InitializedPrefix is { } rightPrefix
+                && leftPrefix == rightPrefix
+                    ? new DynamicStoragePrefixState(leftPrefix)
+                    : DynamicStoragePrefixState.Unknown;
         }
 
         public bool ScopeContains(int ownerScopeId, int targetScopeId)

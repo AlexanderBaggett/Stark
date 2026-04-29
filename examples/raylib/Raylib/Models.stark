@@ -215,7 +215,7 @@ public fn void DrawBillboardPro(Camera camera, Texture2D texture, Rectangle sour
     return;
 }
 
-public ffi fn void UploadMesh(rawmutptr<Mesh> mesh, bool dynamic);
+public ffi fn void UploadMesh(rawmutptr<Mesh> mesh, bool isDynamic);
 internal ffi fn void stark_raylib_UpdateMeshBuffer(rawptr<Mesh> mesh, i32[min max] index, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset);
 public fn void UpdateMeshBuffer(Mesh mesh, i32[min max] index, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset) {
     stark_raylib_UpdateMeshBuffer(&mesh, index, data, dataSize, offset);
@@ -435,4 +435,3 @@ public fn RayCollision GetRayCollisionQuad(Ray ray, Vector3 p1, Vector3 p2, Vect
     stark_raylib_GetRayCollisionQuad(&result, &ray, &p1, &p2, &p3, &p4);
     return result;
 }
-

@@ -657,8 +657,52 @@ internal static partial class PackageImageBuilder
     {
         publishedStatement = null!;
 
+        if (statement.expressionStatement()?.expression().assignmentExpression() is { } initAssignmentExpression
+            && initAssignmentExpression.INIT() is not null
+            && initAssignmentExpression.ASSIGN() is not null
+            && initAssignmentExpression.assignmentOperator() is null
+            && TryBuildPublishedTypedTemplateAssignmentTarget(
+                module,
+                initAssignmentExpression.unaryExpression(),
+                namedTypes,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var initAssignmentTargetName,
+                out var initAssignmentTarget)
+            && TryBuildPublishedTypedTemplateAssignmentExpression(
+                module,
+                initAssignmentExpression.assignmentExpression(),
+                namedTypes,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                directCallOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var initAssignmentValue))
+        {
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "assignment",
+                Expression: initAssignmentValue,
+                Name: initAssignmentTargetName,
+                AssignmentOperator: "init =",
+                TargetExpression: initAssignmentTarget);
+            return true;
+        }
+
         if (statement.expressionStatement()?.expression() is { } expressionStatementExpression
             && expressionStatementExpression.assignmentExpression().assignmentOperator() is null
+            && expressionStatementExpression.assignmentExpression().INIT() is null
             && TryBuildPublishedTypedTemplateExpression(
                 module,
                 expressionStatementExpression,
@@ -1904,6 +1948,53 @@ internal static partial class PackageImageBuilder
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
         publishedExpression = null!;
+
+        if (assignmentExpression.INIT() is not null
+            && assignmentExpression.ASSIGN() is not null
+            && assignmentExpression.assignmentOperator() is null)
+        {
+            if (assignmentExpression.unaryExpression() is not { } initAssignmentTargetUnary
+                || !TryBuildPublishedTypedTemplateAssignmentTarget(
+                    module,
+                    initAssignmentTargetUnary,
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var initAssignmentTargetName,
+                    out var initAssignmentTarget)
+                || !TryBuildPublishedTypedTemplateAssignmentExpression(
+                    module,
+                    assignmentExpression.assignmentExpression(),
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    directCallOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var initAssignmentValue))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "assignment",
+                Name: initAssignmentTargetName,
+                AssignmentOperator: "init =",
+                Arguments: [initAssignmentValue],
+                TargetExpression: initAssignmentTarget);
+            return true;
+        }
 
         if (assignmentExpression.assignmentOperator() is { } assignmentOperator)
         {
@@ -4013,6 +4104,19 @@ internal static partial class PackageImageBuilder
             typeReference = new StarkPackageTypeReference(
                 "rawpointer",
                 IsMutablePointer: rawPointerType.RAWMUTPTR() is not null,
+                ElementType: elementType);
+            return true;
+        }
+
+        if (type.dynamicType() is { } dynamicType)
+        {
+            if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, dynamicType.type_(), out var elementType))
+            {
+                return false;
+            }
+
+            typeReference = new StarkPackageTypeReference(
+                "dynamic",
                 ElementType: elementType);
             return true;
         }

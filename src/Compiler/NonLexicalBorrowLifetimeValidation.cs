@@ -681,6 +681,69 @@ internal sealed class NonLexicalBorrowLifetimeValidator
 
                 yield break;
 
+            case MidLevelIrDynamicStorageAllocationRValue allocation:
+                foreach (var name in CollectBorrowLocalUses(allocation.Capacity, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
+            case MidLevelIrDynamicStorageFreeRValue free:
+                foreach (var name in CollectBorrowLocalUses(free.Storage, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
+            case MidLevelIrDynamicStorageReserveRValue reserve:
+                foreach (var name in CollectBorrowLocalUses(reserve.StorageAddress, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                foreach (var name in CollectBorrowLocalUses(reserve.AdditionalCapacity, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
+            case MidLevelIrDynamicStorageTryReserveRValue reserve:
+                foreach (var name in CollectBorrowLocalUses(reserve.StorageAddress, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                foreach (var name in CollectBorrowLocalUses(reserve.AdditionalCapacity, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
+            case MidLevelIrDynamicStorageMoveLastRValue moveLast:
+                foreach (var name in CollectBorrowLocalUses(moveLast.StorageAddress, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
+            case MidLevelIrDynamicStorageMoveAtRValue moveAt:
+                foreach (var name in CollectBorrowLocalUses(moveAt.StorageAddress, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                foreach (var name in CollectBorrowLocalUses(moveAt.Index, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
             case MidLevelIrFieldAddressRValue fieldAddress:
                 foreach (var name in CollectBorrowLocalUses(fieldAddress.Address, borrowLocals))
                 {

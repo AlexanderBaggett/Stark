@@ -1,0 +1,143 @@
+module Benchmarks.Text.DynamicOwnedPathAllocation
+
+fn bool IsSeparator(i8[0 127] value) {
+    return value == 47;
+}
+
+fn void AppendByte(mut borrow dynamic i8[0 127] path, i8[0 127] value) {
+    path.Reserve(1);
+    init path[path.Length] = value;
+}
+
+fn void AppendAlpha(mut borrow dynamic i8[0 127] path) {
+    path.Reserve(5);
+    init path[path.Length] = 97;
+    init path[path.Length] = 108;
+    init path[path.Length] = 112;
+    init path[path.Length] = 104;
+    init path[path.Length] = 97;
+}
+
+fn void AppendBetaTxt(mut borrow dynamic i8[0 127] path) {
+    path.Reserve(8);
+    init path[path.Length] = 98;
+    init path[path.Length] = 101;
+    init path[path.Length] = 116;
+    init path[path.Length] = 97;
+    init path[path.Length] = 46;
+    init path[path.Length] = 116;
+    init path[path.Length] = 120;
+    init path[path.Length] = 116;
+}
+
+fn void JoinAlphaBeta(mut borrow dynamic i8[0 127] path, bool leftHasTrailingSeparator, bool rightHasLeadingSeparator) {
+    AppendAlpha(path);
+
+    if (leftHasTrailingSeparator) {
+        AppendByte(path, 47);
+    }
+
+    if (!leftHasTrailingSeparator && !rightHasLeadingSeparator) {
+        AppendByte(path, 47);
+    }
+
+    if (!leftHasTrailingSeparator && rightHasLeadingSeparator) {
+        AppendByte(path, 47);
+    }
+
+    AppendBetaTxt(path);
+}
+
+fn i64[min max] PathFactsChecksum(borrow i8[0 127][] path, i64[0 max] length) {
+    stack mut i64[0 max] end = length;
+    stack mut bool trimmingTrailingSeparators = true;
+    while willexit (trimmingTrailingSeparators) {
+        if (end > 1) {
+            if (IsSeparator(path[(i64[0 max])(end - 1)])) {
+                end -= 1;
+            } else {
+                trimmingTrailingSeparators = false;
+            }
+        } else {
+            trimmingTrailingSeparators = false;
+        }
+    }
+
+    stack mut i64[min max] separator = -1;
+    stack mut i64[0 max] index = end;
+    while willexit (index > 0) {
+        stack i64[0 max] candidate = (i64[0 max])(index - 1);
+        if (IsSeparator(path[candidate])) {
+            separator = (i64[min max])candidate;
+            index = 0;
+        } else {
+            index -= 1;
+        }
+    }
+
+    stack mut i64[0 max] segmentStart = 0;
+    if (separator >= 0) {
+        segmentStart = (i64[0 max])(separator + 1);
+    }
+
+    stack mut i64[0 max] directoryLength = 0;
+    if (separator == 0) {
+        directoryLength = 1;
+    } else if (separator > 0) {
+        directoryLength = (i64[0 max])separator;
+    }
+
+    stack mut i64[0 max] extensionStart = end;
+    stack mut bool hasExtension = false;
+    index = end;
+    while willexit (index > segmentStart + 1) {
+        stack i64[0 max] candidate = (i64[0 max])(index - 1);
+        if (path[candidate] == 46) {
+            extensionStart = candidate;
+            hasExtension = true;
+            index = 0;
+        } else {
+            index -= 1;
+        }
+    }
+
+    stack mut i64[0 max] extensionLength = 0;
+    if (hasExtension) {
+        extensionLength = end - extensionStart;
+    }
+
+    stack mut i64[0 max] baseNameEnd = end;
+    if (hasExtension) {
+        baseNameEnd = extensionStart;
+    }
+
+    stack mut i64[0 max] baseNameLength = 0;
+    if (segmentStart < end) {
+        baseNameLength = baseNameEnd - segmentStart;
+    }
+
+    return (i64[min max])length
+        + (i64[min max])extensionLength
+        + (i64[min max])baseNameLength
+        + (i64[min max])directoryLength;
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 2000] i = 0; i < 2000; i += 1) {
+        stack mut dynamic i8[0 127] first = new(14);
+        JoinAlphaBeta(first, false, false);
+        checksum += PathFactsChecksum(first[0, first.Length], first.Length);
+
+        stack mut dynamic i8[0 127] second = new(14);
+        JoinAlphaBeta(second, true, true);
+        checksum += PathFactsChecksum(second[0, second.Length], second.Length);
+    }
+
+    if (checksum != 108000) {
+        return 3;
+    }
+
+    return 0;
+}

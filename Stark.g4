@@ -320,10 +320,15 @@ typeQualifier
     ;
 
 nonArrayType
-    : rawPointerType
+    : dynamicType
+    | rawPointerType
     | functionPointerType
     | integerType
     | simpleType
+    ;
+
+dynamicType
+    : DYNAMIC type_
     ;
 
 rawPointerType
@@ -547,7 +552,8 @@ expression
     ;
 
 assignmentExpression
-    : conditionalExpression
+    : INIT unaryExpression ASSIGN assignmentExpression
+    | conditionalExpression
     | unaryExpression assignmentOperator assignmentExpression
     ;
 
@@ -615,6 +621,7 @@ multiplicativeExpression
 
 unaryExpression
     : powerExpression
+    | INIT unaryExpression
     | LPAREN conversionType RPAREN unaryExpression
     | unaryOperator unaryExpression
     ;
@@ -809,6 +816,7 @@ FROZEN      : 'frozen';
 SHARED      : 'shared';
 OUT         : 'out';
 INIT        : 'init';
+DYNAMIC     : 'dynamic';
 RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
 FNPTR       : 'fnptr';

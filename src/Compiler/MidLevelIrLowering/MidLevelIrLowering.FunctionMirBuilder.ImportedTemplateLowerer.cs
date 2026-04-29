@@ -389,6 +389,7 @@ internal sealed partial class MidLevelIrLowerer
             var assignmentOperator = string.IsNullOrEmpty(assignmentOperatorText)
                 ? "="
                 : assignmentOperatorText;
+            var isInitializationAssignment = string.Equals(assignmentOperator, "init =", StringComparison.Ordinal);
             PlaceTarget target;
             string assignmentTargetText;
 
@@ -435,9 +436,12 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            var assignmentText = $"{assignmentTargetText} {assignmentOperator} {RenderImportedTypedTemplateExpressionCore(valueExpression)}";
+            var valueText = RenderImportedTypedTemplateExpressionCore(valueExpression);
+            var assignmentText = isInitializationAssignment
+                ? $"init {assignmentTargetText} = {valueText}"
+                : $"{assignmentTargetText} {assignmentOperator} {valueText}";
             MidLevelIrOperand assignedValue;
-            if (assignmentOperator == "=")
+            if (assignmentOperator == "=" || isInitializationAssignment)
             {
                 var loweredAssignedValue = LowerImportedTypedTemplateExpressionCore(valueExpression, target.Type);
                 if (loweredAssignedValue is null)
@@ -2826,7 +2830,10 @@ internal sealed partial class MidLevelIrLowerer
             var assignmentOperator = string.IsNullOrEmpty(expression.AssignmentOperator)
                 ? "="
                 : expression.AssignmentOperator;
-            return $"{targetText} {assignmentOperator} {RenderImportedTypedTemplateExpressionCore(expression.Args[0])}";
+            var valueText = RenderImportedTypedTemplateExpressionCore(expression.Args[0]);
+            return string.Equals(assignmentOperator, "init =", StringComparison.Ordinal)
+                ? $"init {targetText} = {valueText}"
+                : $"{targetText} {assignmentOperator} {valueText}";
         }
 
         private static string RenderImportedTypedTemplateComparisonChain(ImportedTemplateTypedBodyExpressionSummary expression)

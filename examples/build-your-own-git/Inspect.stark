@@ -15,33 +15,34 @@ finite law i32[min max] MetadataNameCode(System.FileSystem.FileSystemEntryKind k
         return 0;
     }
 
-    stack rawptr<i8[min max]> data = name.Data;
-    if (kind == System.FileSystem.FileSystemEntryKind.File && name.Length == 4) {
-        if (*(&data[0]) == (i8[min max])72
-            && *(&data[1]) == (i8[min max])69
-            && *(&data[2]) == (i8[min max])65
-            && *(&data[3]) == (i8[min max])68) {
+    stack i64[min max] length = name.Length;
+    stack ascii view = System.Text.AsciiView(name);
+    if (kind == System.FileSystem.FileSystemEntryKind.File && length == 4) {
+        if (view[0] == 'H'
+            && view[1] == 'E'
+            && view[2] == 'A'
+            && view[3] == 'D') {
             return 1;
         }
     }
 
-    if (kind == System.FileSystem.FileSystemEntryKind.Directory && name.Length == 7) {
-        if (*(&data[0]) == (i8[min max])111
-            && *(&data[1]) == (i8[min max])98
-            && *(&data[2]) == (i8[min max])106
-            && *(&data[3]) == (i8[min max])101
-            && *(&data[4]) == (i8[min max])99
-            && *(&data[5]) == (i8[min max])116
-            && *(&data[6]) == (i8[min max])115) {
+    if (kind == System.FileSystem.FileSystemEntryKind.Directory && length == 7) {
+        if (view[0] == 'o'
+            && view[1] == 'b'
+            && view[2] == 'j'
+            && view[3] == 'e'
+            && view[4] == 'c'
+            && view[5] == 't'
+            && view[6] == 's') {
             return 2;
         }
     }
 
-    if (kind == System.FileSystem.FileSystemEntryKind.Directory && name.Length == 4) {
-        if (*(&data[0]) == (i8[min max])114
-            && *(&data[1]) == (i8[min max])101
-            && *(&data[2]) == (i8[min max])102
-            && *(&data[3]) == (i8[min max])115) {
+    if (kind == System.FileSystem.FileSystemEntryKind.Directory && length == 4) {
+        if (view[0] == 'r'
+            && view[1] == 'e'
+            && view[2] == 'f'
+            && view[3] == 's') {
             return 3;
         }
     }

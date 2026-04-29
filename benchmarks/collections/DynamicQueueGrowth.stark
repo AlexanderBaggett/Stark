@@ -1,0 +1,26 @@
+module Benchmarks.Collections.DynamicQueueGrowth
+
+export ffi fn i32[min max] main() {
+    stack mut dynamic i32[0 max] queue = new();
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
+        queue.Reserve(1);
+        init queue[queue.Length] = i;
+    }
+
+    if (queue.Length != 4096 || queue.Capacity < 4096) {
+        return 2;
+    }
+
+    stack i32[0 max][] items = queue[0, queue.Length];
+    for willexit (stack mut i32[0 4096] head = 0; head < 4096; head += 1) {
+        checksum += (i64[min max])items[head];
+    }
+
+    if (checksum != 8386560) {
+        return 4;
+    }
+
+    return 0;
+}

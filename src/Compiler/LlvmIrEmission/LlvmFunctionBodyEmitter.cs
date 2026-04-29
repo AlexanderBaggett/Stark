@@ -16,6 +16,15 @@ internal sealed class LlvmFunctionBodyEmitter
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
     private const string HeapFreeHelperName = "__stark_heap_free";
+    private const string RuntimeAllocateHelperName = "__stark_runtime_alloc";
+    private const string RuntimeReallocateHelperName = "__stark_runtime_realloc";
+    private const string RuntimeTryReallocateHelperName = "__stark_runtime_try_realloc";
+    private const string RuntimeFreeHelperName = "__stark_runtime_free";
+    private const string DynamicStorageAllocateHelperName = "__stark_dynamic_alloc";
+    private const string DynamicStorageReserveHelperName = "__stark_dynamic_reserve";
+    private const string DynamicStorageTryReserveHelperName = "__stark_dynamic_try_reserve";
+    private const string DynamicStorageMoveLastPointerHelperName = "__stark_dynamic_move_last_ptr";
+    private const string DynamicStorageMoveAtToOutHelperName = "__stark_dynamic_move_at_to_out";
     private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
@@ -375,11 +384,25 @@ internal sealed class LlvmFunctionBodyEmitter
             return true;
         }
 
-        var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(plan.DestinationBase, plan.ElementType);
-        var sourceAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(plan.SourceBase, plan.ElementType);
+        var destinationPointer = EmitOptimizedRawPointerLoopBasePointer(
+            plan.DestinationBase,
+            plan.DestinationBaseIsSlice,
+            "rawptr_loop_destination");
+        var sourcePointer = EmitOptimizedRawPointerLoopBasePointer(
+            plan.SourceBase,
+            plan.SourceBaseIsSlice,
+            "rawptr_loop_source");
+        var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
+            plan.DestinationBase,
+            plan.ElementType,
+            plan.DestinationBaseIsSlice);
+        var sourceAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
+            plan.SourceBase,
+            plan.ElementType,
+            plan.SourceBaseIsSlice);
         var scopedNoAliasMetadata = GetOptimizedRawPointerLoopScopedNoAliasMetadataSuffix(plan.DestinationBase, plan.SourceBase);
         AppendLine(
-            $"  call void @llvm.memcpy.p0.p0.i64(ptr{destinationAlignment} {FormatValue(plan.DestinationBase)}, ptr{sourceAlignment} {FormatValue(plan.SourceBase)}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
+            $"  call void @llvm.memcpy.p0.p0.i64(ptr{destinationAlignment} {destinationPointer}, ptr{sourceAlignment} {sourcePointer}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
         return true;
     }
 
@@ -396,11 +419,25 @@ internal sealed class LlvmFunctionBodyEmitter
             return true;
         }
 
-        var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(plan.DestinationBase, plan.ElementType);
-        var sourceAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(plan.SourceBase, plan.ElementType);
+        var destinationPointer = EmitOptimizedRawPointerLoopBasePointer(
+            plan.DestinationBase,
+            plan.DestinationBaseIsSlice,
+            "rawptr_loop_destination");
+        var sourcePointer = EmitOptimizedRawPointerLoopBasePointer(
+            plan.SourceBase,
+            plan.SourceBaseIsSlice,
+            "rawptr_loop_source");
+        var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
+            plan.DestinationBase,
+            plan.ElementType,
+            plan.DestinationBaseIsSlice);
+        var sourceAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
+            plan.SourceBase,
+            plan.ElementType,
+            plan.SourceBaseIsSlice);
         var scopedNoAliasMetadata = GetOptimizedRawPointerLoopScopedNoAliasMetadataSuffix(plan.DestinationBase, plan.SourceBase);
         AppendLine(
-            $"  call void @llvm.memmove.p0.p0.i64(ptr{destinationAlignment} {FormatValue(plan.DestinationBase)}, ptr{sourceAlignment} {FormatValue(plan.SourceBase)}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
+            $"  call void @llvm.memmove.p0.p0.i64(ptr{destinationAlignment} {destinationPointer}, ptr{sourceAlignment} {sourcePointer}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
         return true;
     }
 
@@ -417,10 +454,17 @@ internal sealed class LlvmFunctionBodyEmitter
             return true;
         }
 
-        var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(plan.DestinationBase, plan.ElementType);
+        var destinationPointer = EmitOptimizedRawPointerLoopBasePointer(
+            plan.DestinationBase,
+            plan.DestinationBaseIsSlice,
+            "rawptr_loop_destination");
+        var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
+            plan.DestinationBase,
+            plan.ElementType,
+            plan.DestinationBaseIsSlice);
         var scopedNoAliasMetadata = GetOptimizedRawPointerLoopScopedNoAliasMetadataSuffix(plan.DestinationBase);
         AppendLine(
-            $"  call void @llvm.memset.p0.i64(ptr{destinationAlignment} {FormatValue(plan.DestinationBase)}, i8 {FormatValue(plan.FillValue)}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
+            $"  call void @llvm.memset.p0.i64(ptr{destinationAlignment} {destinationPointer}, i8 {FormatValue(plan.FillValue)}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
         return true;
     }
 
@@ -488,8 +532,117 @@ internal sealed class LlvmFunctionBodyEmitter
         return true;
     }
 
-    private string GetOptimizedRawPointerLoopArgumentAlignmentFragment(SsaValue pointer, StarkTypeSymbol elementType)
+    private string EmitOptimizedRawPointerLoopBasePointer(SsaValue? baseValue, bool isSlice, string purpose)
     {
+        if (baseValue is null)
+        {
+            throw new UnsupportedBodyEmissionException("Optimized memory loop is missing a base pointer.");
+        }
+
+        if (!isSlice)
+        {
+            return FormatValue(baseValue);
+        }
+
+        var sliceValue = EmitOptimizedRawPointerLoopSliceValue(baseValue, purpose);
+        var dataPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_data"))}";
+        AppendLine($"  {dataPointer} = extractvalue {MapType(baseValue.Type)} {sliceValue}, 0");
+        return dataPointer;
+    }
+
+    private string EmitOptimizedRawPointerLoopSliceValue(SsaValue slice, string purpose)
+    {
+        if (slice is SsaValueReference reference
+            && _valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            switch (definition)
+            {
+                case SsaUseRValue use:
+                    return EmitOptimizedRawPointerLoopSliceValue(use.Value, purpose);
+                case SsaLoadIndirectRValue load:
+                {
+                    var address = EmitOptimizedRawPointerLoopAddress(load.Address, $"{purpose}_slice");
+                    var loaded = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_slice"))}";
+                    AppendLine($"  {loaded} = load {MapType(load.Type)}, ptr {address}{GetKnownPointerAlignmentSuffix(load.Address, load.Type)}");
+                    return loaded;
+                }
+            }
+        }
+
+        return FormatValue(slice);
+    }
+
+    private string EmitOptimizedRawPointerLoopAddress(SsaValue address, string purpose)
+    {
+        if (address is SsaValueReference reference
+            && _valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            switch (definition)
+            {
+                case SsaUseRValue use:
+                    return EmitOptimizedRawPointerLoopAddress(use.Value, purpose);
+                case SsaAddressOfParameterRValue addressOfParameter:
+                    return EmitOptimizedRawPointerLoopAddressOfParameter(addressOfParameter, purpose);
+                case SsaAddressOfLocalRValue addressOfLocal:
+                    return EmitOptimizedRawPointerLoopAddressOfLocal(addressOfLocal, purpose);
+            }
+        }
+
+        return FormatValue(address);
+    }
+
+    private string EmitOptimizedRawPointerLoopAddressOfParameter(SsaAddressOfParameterRValue addressOfParameter, string purpose)
+    {
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal));
+        if (parameter is null)
+        {
+            throw new UnsupportedBodyEmissionException($"Unknown SSA parameter '{addressOfParameter.ParameterName}' for optimized memory loop.");
+        }
+
+        var result = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_addr"))}";
+        if (parameter.Kind == AbiParameterKind.IndirectIn)
+        {
+            AppendLine(
+                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
+            return result;
+        }
+
+        EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
+        AppendLine(
+            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
+        return result;
+    }
+
+    private string EmitOptimizedRawPointerLoopAddressOfLocal(SsaAddressOfLocalRValue addressOfLocal, string purpose)
+    {
+        EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+        var result = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_addr"))}";
+        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr %{EscapeIdentifier($"slot_{addressOfLocal.LocalName}")}, i32 0");
+        return result;
+    }
+
+    private string GetOptimizedRawPointerLoopArgumentAlignmentFragment(
+        SsaValue? pointer,
+        StarkTypeSymbol elementType,
+        bool isSlice = false)
+    {
+        if (pointer is null)
+        {
+            return string.Empty;
+        }
+
+        if (isSlice)
+        {
+            var sliceAlignment = TryGetKnownSliceDataAlignmentBytes(
+                    pointer,
+                    new HashSet<string>(StringComparer.Ordinal),
+                    out var sliceAlignmentBytes)
+                ? GetLeafAlignmentBytes(sliceAlignmentBytes, elementType)
+                : GetTypeAlignmentBytes(elementType);
+            return GetArgumentAlignmentFragment(sliceAlignment);
+        }
+
         var alignmentBytes = GetKnownPointerAlignmentBytes(pointer, elementType)
             ?? GetBoundedRawPointerParameterAlignmentBytes(pointer, elementType);
         return GetArgumentAlignmentFragment(alignmentBytes);
@@ -721,7 +874,8 @@ internal sealed class LlvmFunctionBodyEmitter
                 temporaryElementType,
                 tryGetConcreteTypeLayout,
                 out var sourceBase,
-                out var sourceElementType)
+                out var sourceElementType,
+                out var sourceBaseIsSlice)
             || !TryMatchTemporaryToRawPointerCopyLoop(
                 temporaryToDestinationLoop,
                 temporaryLocalName,
@@ -729,6 +883,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 tryGetConcreteTypeLayout,
                 out var destinationBase,
                 out var destinationElementType,
+                out var destinationBaseIsSlice,
                 out var location)
             || NormalizeAggregateType(sourceElementType) != NormalizeAggregateType(destinationElementType)
             || NormalizeAggregateType(sourceElementType) != NormalizeAggregateType(temporaryElementType)
@@ -749,9 +904,11 @@ internal sealed class LlvmFunctionBodyEmitter
             temporaryElementType,
             new SsaIntegerConstant(sourceCount, StarkTypeSymbols.Integer(64, BigInteger.Zero, sourceCount)),
             location,
-            preheader.Id,
-            exit.Id,
-            skippedBlockIds);
+            DestinationBaseIsSlice: destinationBaseIsSlice,
+            SourceBaseIsSlice: sourceBaseIsSlice,
+            PreheaderBlockId: preheader.Id,
+            ExitBlockId: exit.Id,
+            SkippedBlockIds: skippedBlockIds);
         return true;
     }
 
@@ -913,6 +1070,18 @@ internal sealed class LlvmFunctionBodyEmitter
                 SsaMakeSliceFromPointerRValue makeSlice =>
                     ReferencesSkippedDefinition(makeSlice.Pointer)
                     || ReferencesSkippedDefinition(makeSlice.Length),
+                SsaDynamicStorageAllocationRValue allocation => ReferencesSkippedDefinition(allocation.Capacity),
+                SsaDynamicStorageFreeRValue free => ReferencesSkippedDefinition(free.Storage),
+                SsaDynamicStorageReserveRValue reserve =>
+                    ReferencesSkippedDefinition(reserve.StorageAddress)
+                    || ReferencesSkippedDefinition(reserve.AdditionalCapacity),
+                SsaDynamicStorageTryReserveRValue reserve =>
+                    ReferencesSkippedDefinition(reserve.StorageAddress)
+                    || ReferencesSkippedDefinition(reserve.AdditionalCapacity),
+                SsaDynamicStorageMoveLastRValue moveLast => ReferencesSkippedDefinition(moveLast.StorageAddress),
+                SsaDynamicStorageMoveAtRValue moveAt =>
+                    ReferencesSkippedDefinition(moveAt.StorageAddress)
+                    || ReferencesSkippedDefinition(moveAt.Index),
                 SsaLoadSliceElementRValue loadSlice =>
                     ReferencesSkippedDefinition(loadSlice.Slice)
                     || ReferencesSkippedDefinition(loadSlice.Index),
@@ -1004,7 +1173,8 @@ internal sealed class LlvmFunctionBodyEmitter
                 temporaryElementType,
                 tryGetConcreteTypeLayout,
                 out var sourceBase,
-                out var sourceElementType)
+                out var sourceElementType,
+                out var sourceBaseIsSlice)
             || !TryMatchTemporaryToRawPointerCopyLoop(
                 temporaryToDestinationLoop,
                 temporaryLocalName,
@@ -1012,6 +1182,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 tryGetConcreteTypeLayout,
                 out var destinationBase,
                 out var destinationElementType,
+                out var destinationBaseIsSlice,
                 out var location)
             || NormalizeAggregateType(sourceElementType) != NormalizeAggregateType(destinationElementType)
             || NormalizeAggregateType(sourceElementType) != NormalizeAggregateType(temporaryElementType)
@@ -1031,7 +1202,9 @@ internal sealed class LlvmFunctionBodyEmitter
             null,
             temporaryElementType,
             new SsaIntegerConstant(sourceCount, StarkTypeSymbols.Integer(64, BigInteger.Zero, sourceCount)),
-            location);
+            location,
+            DestinationBaseIsSlice: destinationBaseIsSlice,
+            SourceBaseIsSlice: sourceBaseIsSlice);
         return true;
     }
 
@@ -1239,6 +1412,21 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaMakeSliceFromPointerRValue makeSlice =>
                 ValueReferencesLocal(makeSlice.Pointer, localName, definitions, visitedValueNames)
                 || ValueReferencesLocal(makeSlice.Length, localName, definitions, visitedValueNames),
+            SsaDynamicStorageAllocationRValue allocation =>
+                ValueReferencesLocal(allocation.Capacity, localName, definitions, visitedValueNames),
+            SsaDynamicStorageFreeRValue free =>
+                ValueReferencesLocal(free.Storage, localName, definitions, visitedValueNames),
+            SsaDynamicStorageReserveRValue reserve =>
+                ValueReferencesLocal(reserve.StorageAddress, localName, definitions, visitedValueNames)
+                || ValueReferencesLocal(reserve.AdditionalCapacity, localName, definitions, visitedValueNames),
+            SsaDynamicStorageTryReserveRValue reserve =>
+                ValueReferencesLocal(reserve.StorageAddress, localName, definitions, visitedValueNames)
+                || ValueReferencesLocal(reserve.AdditionalCapacity, localName, definitions, visitedValueNames),
+            SsaDynamicStorageMoveLastRValue moveLast =>
+                ValueReferencesLocal(moveLast.StorageAddress, localName, definitions, visitedValueNames),
+            SsaDynamicStorageMoveAtRValue moveAt =>
+                ValueReferencesLocal(moveAt.StorageAddress, localName, definitions, visitedValueNames)
+                || ValueReferencesLocal(moveAt.Index, localName, definitions, visitedValueNames),
             SsaLoadSliceElementRValue loadSlice =>
                 ValueReferencesLocal(loadSlice.Slice, localName, definitions, visitedValueNames)
                 || ValueReferencesLocal(loadSlice.Index, localName, definitions, visitedValueNames),
@@ -1353,14 +1541,15 @@ internal sealed class LlvmFunctionBodyEmitter
         StarkTypeSymbol temporaryElementType,
         Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
         out SsaValue sourceBase,
-        out StarkTypeSymbol sourceElementType)
+        out StarkTypeSymbol sourceElementType,
+        out bool sourceBaseIsSlice)
     {
         sourceBase = null!;
         sourceElementType = StarkTypeSymbols.Error;
+        sourceBaseIsSlice = false;
         if (!TryGetSingleStore(loop.Body, out var store)
             || store.Value is not SsaValueReference loadReference
             || !loop.ValueDefinitions.TryGetValue(loadReference.Name, out var loadDefinition)
-            || loadDefinition is not SsaLoadIndirectRValue load
             || !TryMatchFixedArrayLocalIndexedElementAddress(
                 store.Address,
                 temporaryLocalName,
@@ -1369,19 +1558,20 @@ internal sealed class LlvmFunctionBodyEmitter
                 out var storedElementType,
                 out var temporaryAddressName,
                 out var temporaryRootAddressName)
-            || !TryMatchRawPointerIndexedElementAddress(
-                load.Address,
+            || !TryMatchMemoryLoopLoad(
+                loadDefinition,
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
-                requireMutablePointer: false,
                 out sourceBase,
                 out sourceElementType,
-                out var sourceAddressName)
+                out var sourceAddressName,
+                out sourceBaseIsSlice,
+                out var sourceSupportValueNames)
             || NormalizeAggregateType(storedElementType) != NormalizeAggregateType(temporaryElementType)
             || NormalizeAggregateType(sourceElementType) != NormalizeAggregateType(temporaryElementType)
             || NormalizeAggregateType(store.ValueType) != NormalizeAggregateType(temporaryElementType)
-            || NormalizeAggregateType(load.Type) != NormalizeAggregateType(temporaryElementType)
+            || NormalizeAggregateType(store.Value.Type) != NormalizeAggregateType(temporaryElementType)
             || !CanUseRawPointerMemcpyElement(temporaryElementType)
             || tryGetConcreteTypeLayout(NormalizeAggregateType(temporaryElementType)) is not { } elementLayout
             || !CanRepresentRawPointerLoopByteLength(loop.Count, elementLayout, loop.ValueDefinitions))
@@ -1392,10 +1582,19 @@ internal sealed class LlvmFunctionBodyEmitter
         var allowedValueNames = new HashSet<string>(StringComparer.Ordinal)
         {
             temporaryAddressName,
-            sourceAddressName,
             loadReference.Name,
             loop.UpdateValueName
         };
+        if (!string.IsNullOrEmpty(sourceAddressName))
+        {
+            allowedValueNames.Add(sourceAddressName);
+        }
+
+        foreach (var valueName in sourceSupportValueNames)
+        {
+            allowedValueNames.Add(valueName);
+        }
+
         if (!string.IsNullOrEmpty(temporaryRootAddressName))
         {
             allowedValueNames.Add(temporaryRootAddressName);
@@ -1411,16 +1610,18 @@ internal sealed class LlvmFunctionBodyEmitter
         Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
         out SsaValue destinationBase,
         out StarkTypeSymbol destinationElementType,
+        out bool destinationBaseIsSlice,
         out SourceLocation? location)
     {
         destinationBase = null!;
         destinationElementType = StarkTypeSymbols.Error;
+        destinationBaseIsSlice = false;
         location = null;
         if (!TryGetSingleStore(loop.Body, out var store)
             || store.Value is not SsaValueReference loadReference
             || !loop.ValueDefinitions.TryGetValue(loadReference.Name, out var loadDefinition)
             || loadDefinition is not SsaLoadIndirectRValue load
-            || !TryMatchRawPointerIndexedElementAddress(
+            || !TryMatchMemoryLoopIndexedElementAddress(
                 store.Address,
                 loop.InductionValueName,
                 loop.ValueDefinitions,
@@ -1428,7 +1629,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 requireMutablePointer: true,
                 out destinationBase,
                 out destinationElementType,
-                out var destinationAddressName)
+                out var destinationAddressName,
+                out destinationBaseIsSlice,
+                out var destinationSupportValueNames)
             || !TryMatchFixedArrayLocalIndexedElementAddress(
                 load.Address,
                 temporaryLocalName,
@@ -1455,6 +1658,11 @@ internal sealed class LlvmFunctionBodyEmitter
             loadReference.Name,
             loop.UpdateValueName
         };
+        foreach (var valueName in destinationSupportValueNames)
+        {
+            allowedValueNames.Add(valueName);
+        }
+
         if (!string.IsNullOrEmpty(temporaryRootAddressName))
         {
             allowedValueNames.Add(temporaryRootAddressName);
@@ -1615,8 +1823,7 @@ internal sealed class LlvmFunctionBodyEmitter
         if (!TryGetSingleStore(loop.Body, out var store)
             || store.Value is not SsaValueReference loadReference
             || !loop.ValueDefinitions.TryGetValue(loadReference.Name, out var loadDefinition)
-            || loadDefinition is not SsaLoadIndirectRValue load
-            || !TryMatchRawPointerIndexedElementAddress(
+            || !TryMatchMemoryLoopIndexedElementAddress(
                 store.Address,
                 loop.InductionValueName,
                 loop.ValueDefinitions,
@@ -1624,21 +1831,24 @@ internal sealed class LlvmFunctionBodyEmitter
                 requireMutablePointer: true,
                 out var destinationBase,
                 out var destinationElementType,
-                out var destinationAddressName)
-            || !TryMatchRawPointerIndexedElementAddress(
-                load.Address,
+                out var destinationAddressName,
+                out var destinationBaseIsSlice,
+                out var destinationSupportValueNames)
+            || !TryMatchMemoryLoopLoad(
+                loadDefinition,
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
-                requireMutablePointer: false,
                 out var sourceBase,
                 out var sourceElementType,
-                out var sourceAddressName)
+                out var sourceAddressName,
+                out var sourceBaseIsSlice,
+                out var sourceSupportValueNames)
             || NormalizeAggregateType(destinationElementType) != NormalizeAggregateType(sourceElementType)
             || NormalizeAggregateType(store.ValueType) != NormalizeAggregateType(destinationElementType)
-            || NormalizeAggregateType(load.Type) != NormalizeAggregateType(destinationElementType)
+            || NormalizeAggregateType(store.Value.Type) != NormalizeAggregateType(destinationElementType)
             || AreEquivalentEntryValues(destinationBase, sourceBase, loop.ValueDefinitions, loop.NonEntryValueNames)
-            || !HaveNoAliasProofForMemcpy(loop.Function, destinationBase, sourceBase, parameterEffects)
+            || !HaveNoAliasProofForMemcpy(loop.Function, destinationBase, sourceBase, loop.ValueDefinitions, parameterEffects)
             || !CanUseRawPointerMemcpyElement(destinationElementType)
             || tryGetConcreteTypeLayout(NormalizeAggregateType(destinationElementType)) is not { } elementLayout
             || !CanRepresentRawPointerLoopByteLength(loop.Count, elementLayout, loop.ValueDefinitions))
@@ -1649,10 +1859,19 @@ internal sealed class LlvmFunctionBodyEmitter
         var allowedValueNames = new HashSet<string>(StringComparer.Ordinal)
         {
             destinationAddressName,
-            sourceAddressName,
             loadReference.Name,
             loop.UpdateValueName
         };
+        if (!string.IsNullOrEmpty(sourceAddressName))
+        {
+            allowedValueNames.Add(sourceAddressName);
+        }
+
+        foreach (var valueName in destinationSupportValueNames.Concat(sourceSupportValueNames))
+        {
+            allowedValueNames.Add(valueName);
+        }
+
         if (!BodyContainsOnlyAllowedInstructions(loop.Body, allowedValueNames))
         {
             return false;
@@ -1665,7 +1884,9 @@ internal sealed class LlvmFunctionBodyEmitter
             null,
             destinationElementType,
             loop.Count,
-            store.Location);
+            store.Location,
+            DestinationBaseIsSlice: destinationBaseIsSlice,
+            SourceBaseIsSlice: sourceBaseIsSlice);
         return true;
     }
 
@@ -1676,7 +1897,7 @@ internal sealed class LlvmFunctionBodyEmitter
     {
         plan = null!;
         if (!TryGetSingleStore(loop.Body, out var store)
-            || !TryMatchRawPointerIndexedElementAddress(
+            || !TryMatchMemoryLoopIndexedElementAddress(
                 store.Address,
                 loop.InductionValueName,
                 loop.ValueDefinitions,
@@ -1684,7 +1905,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 requireMutablePointer: true,
                 out var destinationBase,
                 out var destinationElementType,
-                out var destinationAddressName)
+                out var destinationAddressName,
+                out var destinationBaseIsSlice,
+                out var destinationSupportValueNames)
             || NormalizeAggregateType(store.ValueType) != NormalizeAggregateType(destinationElementType)
             || NormalizeAggregateType(store.Value.Type) != NormalizeAggregateType(destinationElementType)
             || !TryResolveEntryAvailableValue(store.Value, loop.ValueDefinitions, loop.NonEntryValueNames, out var fillValue)
@@ -1701,6 +1924,11 @@ internal sealed class LlvmFunctionBodyEmitter
             destinationAddressName,
             loop.UpdateValueName
         };
+        foreach (var valueName in destinationSupportValueNames)
+        {
+            allowedValueNames.Add(valueName);
+        }
+
         if (!BodyContainsOnlyAllowedInstructions(loop.Body, allowedValueNames))
         {
             return false;
@@ -1713,7 +1941,8 @@ internal sealed class LlvmFunctionBodyEmitter
             fillValue,
             destinationElementType,
             loop.Count,
-            store.Location);
+            store.Location,
+            DestinationBaseIsSlice: destinationBaseIsSlice);
         return true;
     }
 
@@ -1772,6 +2001,223 @@ internal sealed class LlvmFunctionBodyEmitter
         elementType = rawElementType;
         addressResultName = addressReference.Name;
         return true;
+    }
+
+    private static bool TryMatchMemoryLoopIndexedElementAddress(
+        SsaValue address,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames,
+        bool requireMutablePointer,
+        out SsaValue baseValue,
+        out StarkTypeSymbol elementType,
+        out string addressResultName,
+        out bool baseIsSlice,
+        out IReadOnlyList<string> supportValueNames)
+    {
+        if (TryMatchRawPointerIndexedElementAddress(
+                address,
+                inductionValueName,
+                definitions,
+                nonEntryValueNames,
+                requireMutablePointer,
+                out baseValue,
+                out elementType,
+                out addressResultName))
+        {
+            baseIsSlice = false;
+            supportValueNames = [];
+            return true;
+        }
+
+        return TryMatchSliceIndexedElementAddress(
+            address,
+            inductionValueName,
+            definitions,
+            requireMutablePointer,
+            out baseValue,
+            out elementType,
+            out addressResultName,
+            out baseIsSlice,
+            out supportValueNames);
+    }
+
+    private static bool TryMatchMemoryLoopLoad(
+        SsaRValue loadDefinition,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames,
+        out SsaValue sourceBase,
+        out StarkTypeSymbol sourceElementType,
+        out string sourceAddressName,
+        out bool sourceBaseIsSlice,
+        out IReadOnlyList<string> sourceSupportValueNames)
+    {
+        switch (loadDefinition)
+        {
+            case SsaLoadIndirectRValue load:
+                return TryMatchMemoryLoopIndexedElementAddress(
+                    load.Address,
+                    inductionValueName,
+                    definitions,
+                    nonEntryValueNames,
+                    requireMutablePointer: false,
+                    out sourceBase,
+                    out sourceElementType,
+                    out sourceAddressName,
+                    out sourceBaseIsSlice,
+                    out sourceSupportValueNames);
+            case SsaLoadSliceElementRValue loadSlice:
+                return TryMatchSliceIndexedElement(
+                    loadSlice.Slice,
+                    loadSlice.Index,
+                    inductionValueName,
+                    definitions,
+                    requireMutablePointer: false,
+                    out sourceBase,
+                    out sourceElementType,
+                    out sourceBaseIsSlice,
+                    out sourceSupportValueNames,
+                    out sourceAddressName);
+            default:
+                sourceBase = null!;
+                sourceElementType = StarkTypeSymbols.Error;
+                sourceAddressName = string.Empty;
+                sourceBaseIsSlice = false;
+                sourceSupportValueNames = [];
+                return false;
+        }
+    }
+
+    private static bool TryMatchSliceIndexedElementAddress(
+        SsaValue address,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        bool requireMutablePointer,
+        out SsaValue baseSlice,
+        out StarkTypeSymbol elementType,
+        out string addressResultName,
+        out bool baseIsSlice,
+        out IReadOnlyList<string> supportValueNames)
+    {
+        baseSlice = null!;
+        elementType = StarkTypeSymbols.Error;
+        addressResultName = string.Empty;
+        baseIsSlice = false;
+        supportValueNames = [];
+
+        if (address is not SsaValueReference addressReference
+            || !definitions.TryGetValue(addressReference.Name, out var definition)
+            || definition is not SsaSliceElementAddressRValue sliceElementAddress
+            || !TryMatchSliceIndexedElement(
+                sliceElementAddress.Slice,
+                sliceElementAddress.Index,
+                inductionValueName,
+                definitions,
+                requireMutablePointer,
+                out baseSlice,
+                out elementType,
+                out baseIsSlice,
+                out supportValueNames,
+                out _))
+        {
+            return false;
+        }
+
+        addressResultName = addressReference.Name;
+        return true;
+    }
+
+    private static bool TryMatchSliceIndexedElement(
+        SsaValue slice,
+        SsaValue index,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        bool requireMutablePointer,
+        out SsaValue baseSlice,
+        out StarkTypeSymbol elementType,
+        out bool baseIsSlice,
+        out IReadOnlyList<string> supportValueNames,
+        out string addressResultName)
+    {
+        baseSlice = null!;
+        elementType = StarkTypeSymbols.Error;
+        baseIsSlice = false;
+        supportValueNames = [];
+        addressResultName = string.Empty;
+
+        if (slice.Type.Kind != StarkTypeKind.Slice
+            || slice.Type.ElementType is not { } sliceElementType
+            || requireMutablePointer
+                && !slice.Type.IsMutableView
+                && slice.Type.InitializationKind == StarkInitializationKind.None
+            || !IsInductionValue(index, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal))
+            || !TryResolveLoopInvariantSliceBase(slice, definitions, out baseSlice, out supportValueNames))
+        {
+            return false;
+        }
+
+        elementType = sliceElementType;
+        baseIsSlice = true;
+        return true;
+    }
+
+    private static bool TryResolveLoopInvariantSliceBase(
+        SsaValue slice,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaValue baseSlice,
+        out IReadOnlyList<string> supportValueNames)
+    {
+        baseSlice = null!;
+        supportValueNames = [];
+        if (slice is not SsaValueReference sliceReference
+            || !definitions.TryGetValue(sliceReference.Name, out var definition)
+            || definition is not SsaLoadIndirectRValue load
+            || load.Type.Kind != StarkTypeKind.Slice
+            || !TryMatchLoopInvariantSliceHeaderAddress(
+                load.Address,
+                definitions,
+                out var addressSupportValueNames))
+        {
+            return false;
+        }
+
+        var supportNames = new List<string>(addressSupportValueNames.Count + 1) { sliceReference.Name };
+        supportNames.AddRange(addressSupportValueNames);
+        baseSlice = slice;
+        supportValueNames = supportNames;
+        return true;
+    }
+
+    private static bool TryMatchLoopInvariantSliceHeaderAddress(
+        SsaValue address,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out IReadOnlyList<string> supportValueNames)
+    {
+        supportValueNames = [];
+        if (address is not SsaValueReference addressReference
+            || !definitions.TryGetValue(addressReference.Name, out var definition))
+        {
+            return false;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use
+                when TryMatchLoopInvariantSliceHeaderAddress(use.Value, definitions, out var nestedSupport):
+            {
+                var names = new List<string>(nestedSupport.Count + 1) { addressReference.Name };
+                names.AddRange(nestedSupport);
+                supportValueNames = names;
+                return true;
+            }
+            case SsaAddressOfParameterRValue:
+            case SsaAddressOfLocalRValue:
+                supportValueNames = [addressReference.Name];
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static bool BodyContainsOnlyAllowedInstructions(SsaBasicBlock body, ISet<string> allowedValueNames)
@@ -1997,10 +2443,11 @@ internal sealed class LlvmFunctionBodyEmitter
         SsaFunction function,
         SsaValue destinationBase,
         SsaValue sourceBase,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
-        return TryResolveParameterName(function, destinationBase, out var destinationParameter)
-            && TryResolveParameterName(function, sourceBase, out var sourceParameter)
+        return TryResolveParameterName(function, destinationBase, definitions, out var destinationParameter)
+            && TryResolveParameterName(function, sourceBase, definitions, out var sourceParameter)
             && !string.Equals(destinationParameter, sourceParameter, StringComparison.Ordinal)
             && ParameterHasNoAliasProof(function, destinationParameter, parameterEffects)
             && ParameterHasNoAliasProof(function, sourceParameter, parameterEffects);
@@ -2009,6 +2456,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private static bool TryResolveParameterName(
         SsaFunction function,
         SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
         out string parameterName)
     {
         if (value is SsaValueReference reference)
@@ -2022,10 +2470,68 @@ internal sealed class LlvmFunctionBodyEmitter
                     return true;
                 }
             }
+
+            if (definitions.TryGetValue(reference.Name, out var definition))
+            {
+                return TryResolveParameterName(function, definition, definitions, out parameterName);
+            }
         }
 
         parameterName = string.Empty;
         return false;
+    }
+
+    private static bool TryResolveParameterName(
+        SsaFunction function,
+        SsaRValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string parameterName)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryResolveParameterName(function, use.Value, definitions, out parameterName);
+            case SsaLoadIndirectRValue load:
+                return TryResolveParameterNameFromAddress(function, load.Address, definitions, out parameterName);
+            default:
+                parameterName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool TryResolveParameterNameFromAddress(
+        SsaFunction function,
+        SsaValue address,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string parameterName)
+    {
+        switch (address)
+        {
+            case SsaValueReference reference when definitions.TryGetValue(reference.Name, out var definition):
+                return TryResolveParameterNameFromAddress(function, definition, definitions, out parameterName);
+            default:
+                parameterName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool TryResolveParameterNameFromAddress(
+        SsaFunction function,
+        SsaRValue address,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string parameterName)
+    {
+        switch (address)
+        {
+            case SsaUseRValue use:
+                return TryResolveParameterNameFromAddress(function, use.Value, definitions, out parameterName);
+            case SsaAddressOfParameterRValue addressOfParameter:
+                parameterName = addressOfParameter.ParameterName;
+                return true;
+            default:
+                parameterName = string.Empty;
+                return false;
+        }
     }
 
     private static bool ParameterHasNoAliasProof(
@@ -2129,6 +2635,8 @@ internal sealed class LlvmFunctionBodyEmitter
         StarkTypeSymbol ElementType,
         SsaValue Count,
         SourceLocation? Location,
+        bool DestinationBaseIsSlice = false,
+        bool SourceBaseIsSlice = false,
         int? PreheaderBlockId = null,
         int? ExitBlockId = null,
         IReadOnlyList<int>? SkippedBlockIds = null);
@@ -2506,6 +3014,24 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaMakeSliceFromPointerRValue makeSlice:
                 EmitMakeSliceFromPointer(result, makeSlice);
+                return;
+            case SsaDynamicStorageAllocationRValue allocation:
+                EmitDynamicStorageAllocation(result, allocation);
+                return;
+            case SsaDynamicStorageFreeRValue free:
+                EmitDynamicStorageFree(free);
+                return;
+            case SsaDynamicStorageReserveRValue reserve:
+                EmitDynamicStorageReserve(reserve);
+                return;
+            case SsaDynamicStorageTryReserveRValue reserve:
+                EmitDynamicStorageTryReserve(result, reserve);
+                return;
+            case SsaDynamicStorageMoveLastRValue moveLast:
+                EmitDynamicStorageMoveLast(result, moveLast);
+                return;
+            case SsaDynamicStorageMoveAtRValue moveAt:
+                EmitDynamicStorageMoveAt(result, moveAt);
                 return;
             case SsaLoadSliceElementRValue loadSlice:
                 EmitLoadSliceElement(result, loadSlice, instruction.ScopedNoAliasGroups, instruction.LoopAccessGroups);
@@ -5213,6 +5739,13 @@ internal sealed class LlvmFunctionBodyEmitter
                 alignmentBytes = Math.Min(baseAlignmentBytes, fieldAlignmentBytes);
                 return alignmentBytes > 1;
             }
+            case SsaExtractFieldRValue { FieldIndex: 0, Target.Type.Kind: StarkTypeKind.Dynamic } extractField
+                when string.Equals(extractField.FieldName, "Data", StringComparison.Ordinal)
+                     && extractField.Target.Type.ElementType is { } dynamicElementType:
+            {
+                alignmentBytes = GetTypeAlignmentBytes(dynamicElementType) ?? 1;
+                return alignmentBytes > 1;
+            }
             case SsaElementAddressRValue elementAddress:
             {
                 if (!TryGetKnownPointerAlignmentBytesCore(elementAddress.Address, elementAddress.AggregateType, visitedValueNames, out var baseAlignmentBytes))
@@ -5572,16 +6105,6 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     case SsaUseRValue use when NormalizeAggregateType(use.Type) == normalizedExpectedType:
                         return TryResolveAggregateSourceAddress(use.Value, expectedType, visitedValueNames, out sourceAddress);
-                    case SsaLoadLocalRValue loadLocal when NormalizeAggregateType(loadLocal.Type) == normalizedExpectedType:
-                        EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
-                        sourceAddress = $"%{EscapeIdentifier($"slot_{loadLocal.LocalName}")}";
-                        return true;
-                    case SsaLoadGlobalRValue loadGlobal when NormalizeAggregateType(loadGlobal.Type) == normalizedExpectedType:
-                        sourceAddress = $"@{EscapeIdentifier(ResolveGlobalSymbolName(loadGlobal.GlobalName))}";
-                        return true;
-                    case SsaLoadIndirectRValue loadIndirect when NormalizeAggregateType(loadIndirect.Type) == normalizedExpectedType:
-                        sourceAddress = FormatValue(loadIndirect.Address);
-                        return true;
                     default:
                         sourceAddress = string.Empty;
                         return false;
@@ -5916,6 +6439,12 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaExtractIndexRValue extractIndex => IsNamedReference(extractIndex.Target, valueName),
             SsaInsertIndexRValue insertIndex => IsNamedReference(insertIndex.Target, valueName) || IsNamedReference(insertIndex.Value, valueName),
             SsaMakeSliceFromPointerRValue makeSlice => IsNamedReference(makeSlice.Pointer, valueName) || IsNamedReference(makeSlice.Length, valueName),
+            SsaDynamicStorageAllocationRValue allocation => IsNamedReference(allocation.Capacity, valueName),
+            SsaDynamicStorageFreeRValue free => IsNamedReference(free.Storage, valueName),
+            SsaDynamicStorageReserveRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.AdditionalCapacity, valueName),
+            SsaDynamicStorageTryReserveRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.AdditionalCapacity, valueName),
+            SsaDynamicStorageMoveLastRValue moveLast => IsNamedReference(moveLast.StorageAddress, valueName),
+            SsaDynamicStorageMoveAtRValue moveAt => IsNamedReference(moveAt.StorageAddress, valueName) || IsNamedReference(moveAt.Index, valueName),
             SsaLoadSliceElementRValue loadSlice => IsNamedReference(loadSlice.Slice, valueName) || IsNamedReference(loadSlice.Index, valueName),
             SsaTextSliceRValue textSlice => IsNamedReference(textSlice.TextValue, valueName) || IsNamedReference(textSlice.Start, valueName) || IsNamedReference(textSlice.Length, valueName),
             SsaFieldAddressRValue fieldAddress => IsNamedReference(fieldAddress.Address, valueName),
@@ -6194,6 +6723,12 @@ internal sealed class LlvmFunctionBodyEmitter
         return normalizedType.Kind switch
         {
             StarkTypeKind.FixedArray when normalizedType.ElementType is not null => normalizedType.ElementType,
+            StarkTypeKind.Dynamic when normalizedType.ElementType is not null && index == 0
+                => StarkTypeSymbols.RawPointer(normalizedType.ElementType, isMutable: true),
+            StarkTypeKind.Dynamic when index == 1
+                => StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Dynamic when index == 2
+                => StarkTypeSymbols.Integer(64),
             StarkTypeKind.Named when ResolveNamedTypeSymbol(normalizedType) is { } namedType
                                        && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
                                        && index >= 0
@@ -6284,6 +6819,563 @@ internal sealed class LlvmFunctionBodyEmitter
         var withPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_p0")}";
         AppendLine($"  {withPointer} = insertvalue {MapType(makeSlice.Type)} zeroinitializer, ptr {FormatValue(makeSlice.Pointer)}, 0");
         AppendLine($"  {result} = insertvalue {MapType(makeSlice.Type)} {withPointer}, {MapType(makeSlice.Length.Type)} {FormatValue(makeSlice.Length)}, 1");
+    }
+
+    private void EmitDynamicStorageAllocation(string result, SsaDynamicStorageAllocationRValue allocation)
+    {
+        if (allocation.Type.Kind != StarkTypeKind.Dynamic
+            || allocation.Type.ElementType is not { } elementType)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage allocation requires a dynamic type, but found '{allocation.Type.DisplayName}'.");
+        }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(elementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage allocation requires a concrete element layout for '{elementType.DisplayName}'.");
+        }
+
+        var resultType = MapType(allocation.Type);
+        var capacityI64 = EmitUnsignedIntegerAsI64(allocation.Capacity, "dynamic_capacity");
+        var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        if (!CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            AppendLine(
+                $"  {result} = call {resultType} @{DynamicStorageAllocateHelperName}(i64 noundef {capacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+            return;
+        }
+
+        var zeroLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_zero"));
+        var checkLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_check"));
+        var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_overflow"));
+        var allocateLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_allocate"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_done"));
+        var capacityIsZero = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_is_zero"))}";
+        var allocatedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_value"))}";
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_ptr"))}";
+        var withLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_length"))}";
+        var allocatedPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_ptr"))}";
+        var overflowProfile = _context.GetMetadataTupleRef([
+            "!\"branch_weights\"",
+            $"i32 {TrapEdgeUnlikelyWeight}",
+            $"i32 {NormalEdgeLikelyWeight}"
+        ]);
+
+        AppendLine($"  {capacityIsZero} = icmp eq i64 {capacityI64}, 0");
+        AppendLine($"  br i1 {capacityIsZero}, label %{zeroLabel}, label %{checkLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{zeroLabel}:");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{checkLabel}:");
+
+        if (maxCount < long.MaxValue)
+        {
+            var tooLarge = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_too_large"))}";
+            AppendLine($"  {tooLarge} = icmp ugt i64 {capacityI64}, {maxCount.ToString(CultureInfo.InvariantCulture)}");
+            AppendLine($"  br i1 {tooLarge}, label %{trapLabel}, label %{allocateLabel}, !prof {overflowProfile}");
+            AppendLine(string.Empty);
+            AppendLine($"{trapLabel}:");
+            AppendLine("  call void @llvm.trap()");
+            AppendLine("  unreachable");
+            AppendLine(string.Empty);
+            AppendLine($"{allocateLabel}:");
+        }
+        else
+        {
+            AppendLine($"  br label %{allocateLabel}");
+            AppendLine(string.Empty);
+            AppendLine($"{allocateLabel}:");
+        }
+
+        var allocatorCount = EmitI64AsAllocatorSize(capacityI64, "dynamic_alloc_count");
+        var byteLength = allocatorCount;
+        if (elementLayout.SizeBytes != 1)
+        {
+            byteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_bytes"))}";
+            AppendLine($"  {byteLength} = mul {AllocatorSizeType} {allocatorCount}, {elementLayout.SizeBytes}");
+        }
+
+        AppendLine(
+            $"  {allocatedPointer} = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
+        AppendLine($"  {withPointer} = insertvalue {resultType} zeroinitializer, ptr {allocatedPointer}, 0");
+        AppendLine($"  {withLength} = insertvalue {resultType} {withPointer}, i64 0, 1");
+        AppendLine($"  {allocatedValue} = insertvalue {resultType} {withLength}, i64 {capacityI64}, 2");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi {resultType} [ zeroinitializer, %{zeroLabel} ], [ {allocatedValue}, %{allocateLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageFree(SsaDynamicStorageFreeRValue free)
+    {
+        if (free.Storage.Type.Kind != StarkTypeKind.Dynamic)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage free requires a dynamic value, but found '{free.Storage.Type.DisplayName}'.");
+        }
+
+        var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_free_ptr"))}";
+        AppendLine($"  {pointer} = extractvalue {MapType(free.Storage.Type)} {FormatValue(free.Storage)}, 0");
+        AppendLine($"  call void @{RuntimeFreeHelperName}(ptr {pointer})");
+    }
+
+    private void EmitDynamicStorageReserve(SsaDynamicStorageReserveRValue reserve)
+    {
+        if (reserve.StorageType.Kind != StarkTypeKind.Dynamic
+            || reserve.StorageType.ElementType is not { } elementType)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage reserve requires a dynamic type, but found '{reserve.StorageType.DisplayName}'.");
+        }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(elementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage reserve requires a concrete element layout for '{elementType.DisplayName}'.");
+        }
+
+        var storageType = MapType(reserve.StorageType);
+        var storageAddress = FormatValue(reserve.StorageAddress);
+        var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_reserve_additional");
+        var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        if (!CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            AppendLine(
+                $"  call void @{DynamicStorageReserveHelperName}(ptr {storageAddress}, i64 noundef {additionalI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+            return;
+        }
+
+        var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_current"))}";
+        var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_ptr"))}";
+        var length = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_length"))}";
+        var capacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_capacity"))}";
+        var needed = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_needed"))}";
+        var neededOverflow = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_needed_overflow"))}";
+        var enoughCapacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_enough"))}";
+        var doubled = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_doubled"))}";
+        var canDouble = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_can_double"))}";
+        var doubledOrMax = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_doubled_or_max"))}";
+        var capacitySmall = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_capacity_small"))}";
+        var minimumGrowth = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_minimum"))}";
+        var neededLarger = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_needed_larger"))}";
+        var newCapacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_new_capacity"))}";
+        var checkLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_check"));
+        var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_overflow"));
+        var growLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_grow"));
+        var reallocLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_realloc"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_done"));
+        var overflowProfile = _context.GetMetadataTupleRef([
+            "!\"branch_weights\"",
+            $"i32 {TrapEdgeUnlikelyWeight}",
+            $"i32 {NormalEdgeLikelyWeight}"
+        ]);
+
+        AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
+        AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
+        AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
+        AppendLine($"  {capacity} = extractvalue {storageType} {current}, 2");
+        AppendLine($"  {needed} = add i64 {length}, {additionalI64}");
+        AppendLine($"  {neededOverflow} = icmp ult i64 {needed}, {length}");
+        AppendLine($"  br i1 {neededOverflow}, label %{trapLabel}, label %{checkLabel}, !prof {overflowProfile}");
+        AppendLine(string.Empty);
+        AppendLine($"{trapLabel}:");
+        AppendLine("  call void @llvm.trap()");
+        AppendLine("  unreachable");
+        AppendLine(string.Empty);
+        AppendLine($"{checkLabel}:");
+        AppendLine($"  {enoughCapacity} = icmp ule i64 {needed}, {capacity}");
+        AppendLine($"  br i1 {enoughCapacity}, label %{doneLabel}, label %{growLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{growLabel}:");
+        AppendLine($"  {doubled} = shl i64 {capacity}, 1");
+        AppendLine($"  {canDouble} = icmp ule i64 {capacity}, 9223372036854775807");
+        AppendLine($"  {doubledOrMax} = select i1 {canDouble}, i64 {doubled}, i64 -1");
+        AppendLine($"  {capacitySmall} = icmp ult i64 {capacity}, 2");
+        AppendLine($"  {minimumGrowth} = select i1 {capacitySmall}, i64 4, i64 {doubledOrMax}");
+        AppendLine($"  {neededLarger} = icmp ugt i64 {needed}, {minimumGrowth}");
+        AppendLine($"  {newCapacity} = select i1 {neededLarger}, i64 {needed}, i64 {minimumGrowth}");
+
+        if (maxCount < ulong.MaxValue)
+        {
+            var tooLarge = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_too_large"))}";
+            AppendLine($"  {tooLarge} = icmp ugt i64 {newCapacity}, {maxCount.ToString(CultureInfo.InvariantCulture)}");
+            AppendLine($"  br i1 {tooLarge}, label %{trapLabel}, label %{reallocLabel}, !prof {overflowProfile}");
+            AppendLine(string.Empty);
+            AppendLine($"{reallocLabel}:");
+        }
+
+        var oldAllocatorCount = EmitI64AsAllocatorSize(capacity, "dynamic_reserve_old_count");
+        var newAllocatorCount = EmitI64AsAllocatorSize(newCapacity, "dynamic_reserve_new_count");
+        var oldByteLength = oldAllocatorCount;
+        var newByteLength = newAllocatorCount;
+        if (elementLayout.SizeBytes != 1)
+        {
+            oldByteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_old_bytes"))}";
+            newByteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_new_bytes"))}";
+            AppendLine($"  {oldByteLength} = mul {AllocatorSizeType} {oldAllocatorCount}, {elementLayout.SizeBytes}");
+            AppendLine($"  {newByteLength} = mul {AllocatorSizeType} {newAllocatorCount}, {elementLayout.SizeBytes}");
+        }
+
+        var newPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_new_ptr"))}";
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_with_ptr"))}";
+        var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_reserve_updated"))}";
+        AppendLine(
+            $"  {newPointer} = call nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr {pointer}, {AllocatorSizeType} noundef {oldByteLength}, {AllocatorSizeType} noundef {newByteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
+        AppendLine($"  {withPointer} = insertvalue {storageType} {current}, ptr {newPointer}, 0");
+        AppendLine($"  {updated} = insertvalue {storageType} {withPointer}, i64 {newCapacity}, 2");
+        AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageTryReserve(string result, SsaDynamicStorageTryReserveRValue reserve)
+    {
+        if (reserve.StorageType.Kind != StarkTypeKind.Dynamic
+            || reserve.StorageType.ElementType is not { } elementType)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage TryReserve requires a dynamic type, but found '{reserve.StorageType.DisplayName}'.");
+        }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(elementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage TryReserve requires a concrete element layout for '{elementType.DisplayName}'.");
+        }
+
+        var storageType = MapType(reserve.StorageType);
+        var storageAddress = FormatValue(reserve.StorageAddress);
+        var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_try_reserve_additional");
+        var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        if (!CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            AppendLine(
+                $"  {result} = call i1 @{DynamicStorageTryReserveHelperName}(ptr {storageAddress}, i64 noundef {additionalI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+            return;
+        }
+
+        var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_current"))}";
+        var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_ptr"))}";
+        var length = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_length"))}";
+        var capacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity"))}";
+        var needed = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_needed"))}";
+        var neededOverflow = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_needed_overflow"))}";
+        var enoughCapacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_enough"))}";
+        var doubled = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_doubled"))}";
+        var canDouble = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_can_double"))}";
+        var doubledOrMax = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_doubled_or_max"))}";
+        var capacitySmall = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_small"))}";
+        var minimumGrowth = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_minimum"))}";
+        var neededLarger = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_needed_larger"))}";
+        var newCapacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_new_capacity"))}";
+        var nullPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_null"))}";
+        var checkLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_check"));
+        var failLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_failed"));
+        var growLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_grow"));
+        var reallocLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_realloc"));
+        var updateLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_update"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_done"));
+        var failureProfile = _context.GetMetadataTupleRef([
+            "!\"branch_weights\"",
+            $"i32 {TrapEdgeUnlikelyWeight}",
+            $"i32 {NormalEdgeLikelyWeight}"
+        ]);
+
+        AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
+        AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
+        AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
+        AppendLine($"  {capacity} = extractvalue {storageType} {current}, 2");
+        AppendLine($"  {needed} = add i64 {length}, {additionalI64}");
+        AppendLine($"  {neededOverflow} = icmp ult i64 {needed}, {length}");
+        AppendLine($"  br i1 {neededOverflow}, label %{failLabel}, label %{checkLabel}, !prof {failureProfile}");
+        AppendLine(string.Empty);
+        AppendLine($"{checkLabel}:");
+        AppendLine($"  {enoughCapacity} = icmp ule i64 {needed}, {capacity}");
+        AppendLine($"  br i1 {enoughCapacity}, label %{doneLabel}, label %{growLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{growLabel}:");
+        AppendLine($"  {doubled} = shl i64 {capacity}, 1");
+        AppendLine($"  {canDouble} = icmp ule i64 {capacity}, 9223372036854775807");
+        AppendLine($"  {doubledOrMax} = select i1 {canDouble}, i64 {doubled}, i64 -1");
+        AppendLine($"  {capacitySmall} = icmp ult i64 {capacity}, 2");
+        AppendLine($"  {minimumGrowth} = select i1 {capacitySmall}, i64 4, i64 {doubledOrMax}");
+        AppendLine($"  {neededLarger} = icmp ugt i64 {needed}, {minimumGrowth}");
+        AppendLine($"  {newCapacity} = select i1 {neededLarger}, i64 {needed}, i64 {minimumGrowth}");
+
+        if (maxCount < ulong.MaxValue)
+        {
+            var tooLarge = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_too_large"))}";
+            AppendLine($"  {tooLarge} = icmp ugt i64 {newCapacity}, {maxCount.ToString(CultureInfo.InvariantCulture)}");
+            AppendLine($"  br i1 {tooLarge}, label %{failLabel}, label %{reallocLabel}, !prof {failureProfile}");
+            AppendLine(string.Empty);
+            AppendLine($"{reallocLabel}:");
+        }
+
+        var oldAllocatorCount = EmitI64AsAllocatorSize(capacity, "dynamic_try_reserve_old_count");
+        var newAllocatorCount = EmitI64AsAllocatorSize(newCapacity, "dynamic_try_reserve_new_count");
+        var oldByteLength = oldAllocatorCount;
+        var newByteLength = newAllocatorCount;
+        if (elementLayout.SizeBytes != 1)
+        {
+            oldByteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_old_bytes"))}";
+            newByteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_new_bytes"))}";
+            AppendLine($"  {oldByteLength} = mul {AllocatorSizeType} {oldAllocatorCount}, {elementLayout.SizeBytes}");
+            AppendLine($"  {newByteLength} = mul {AllocatorSizeType} {newAllocatorCount}, {elementLayout.SizeBytes}");
+        }
+
+        var newPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_new_ptr"))}";
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_with_ptr"))}";
+        var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_updated"))}";
+        AppendLine(
+            $"  {newPointer} = call ptr @{RuntimeTryReallocateHelperName}(ptr {pointer}, {AllocatorSizeType} noundef {oldByteLength}, {AllocatorSizeType} noundef {newByteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
+        AppendLine($"  {nullPointer} = icmp eq ptr {newPointer}, null");
+        AppendLine($"  br i1 {nullPointer}, label %{failLabel}, label %{updateLabel}, !prof {failureProfile}");
+        AppendLine(string.Empty);
+        AppendLine($"{updateLabel}:");
+        AppendLine($"  {withPointer} = insertvalue {storageType} {current}, ptr {newPointer}, 0");
+        AppendLine($"  {updated} = insertvalue {storageType} {withPointer}, i64 {newCapacity}, 2");
+        AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{failLabel}:");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi i1 [ true, %{checkLabel} ], [ true, %{updateLabel} ], [ false, %{failLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageMoveLast(string result, SsaDynamicStorageMoveLastRValue moveLast)
+    {
+        if (moveLast.StorageType.Kind != StarkTypeKind.Dynamic
+            || moveLast.StorageType.ElementType is not { } elementType)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage MoveLast requires a dynamic type, but found '{moveLast.StorageType.DisplayName}'.");
+        }
+
+        if (NormalizeAggregateType(elementType) != NormalizeAggregateType(moveLast.Type))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage MoveLast result type '{moveLast.Type.DisplayName}' does not match element type '{elementType.DisplayName}'.");
+        }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(elementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage MoveLast requires a concrete element layout for '{elementType.DisplayName}'.");
+        }
+
+        var storageType = MapType(moveLast.StorageType);
+        var elementLlvmType = MapType(moveLast.Type);
+        var storageAddress = FormatValue(moveLast.StorageAddress);
+        if (!CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            var elementPointerFallback = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_ptr_fallback"))}";
+            AppendLine(
+                $"  {elementPointerFallback} = call nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr {storageAddress}, i64 noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)})");
+            AppendLine($"  {result} = load {elementLlvmType}, ptr {elementPointerFallback}, align {Math.Max(1, elementLayout.AlignmentBytes)}");
+            return;
+        }
+
+        var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_current"))}";
+        var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_ptr"))}";
+        var length = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_length"))}";
+        var isEmpty = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_is_empty"))}";
+        var newLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_new_length"))}";
+        var elementPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_element_ptr"))}";
+        var movedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_value"))}";
+        var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_updated"))}";
+        var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_empty"));
+        var moveLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_do"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_done"));
+        var emptyProfile = _context.GetMetadataTupleRef([
+            "!\"branch_weights\"",
+            $"i32 {TrapEdgeUnlikelyWeight}",
+            $"i32 {NormalEdgeLikelyWeight}"
+        ]);
+
+        AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
+        AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
+        AppendLine($"  {isEmpty} = icmp eq i64 {length}, 0");
+        AppendLine($"  br i1 {isEmpty}, label %{trapLabel}, label %{moveLabel}, !prof {emptyProfile}");
+        AppendLine(string.Empty);
+        AppendLine($"{trapLabel}:");
+        AppendLine("  call void @llvm.trap()");
+        AppendLine("  unreachable");
+        AppendLine(string.Empty);
+        AppendLine($"{moveLabel}:");
+        AppendLine($"  {newLength} = sub i64 {length}, 1");
+        AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
+        AppendLine($"  {elementPointer} = getelementptr {elementLlvmType}, ptr {pointer}, i64 {newLength}");
+        AppendLine($"  {movedValue} = load {elementLlvmType}, ptr {elementPointer}, align {Math.Max(1, elementLayout.AlignmentBytes)}");
+        AppendLine($"  {updated} = insertvalue {storageType} {current}, i64 {newLength}, 1");
+        AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{moveLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageMoveAt(string result, SsaDynamicStorageMoveAtRValue moveAt)
+    {
+        if (moveAt.StorageType.Kind != StarkTypeKind.Dynamic
+            || moveAt.StorageType.ElementType is not { } elementType)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage MoveAt requires a dynamic type, but found '{moveAt.StorageType.DisplayName}'.");
+        }
+
+        if (NormalizeAggregateType(elementType) != NormalizeAggregateType(moveAt.Type))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage MoveAt result type '{moveAt.Type.DisplayName}' does not match element type '{elementType.DisplayName}'.");
+        }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(elementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage MoveAt requires a concrete element layout for '{elementType.DisplayName}'.");
+        }
+
+        var storageType = MapType(moveAt.StorageType);
+        var elementLlvmType = MapType(moveAt.Type);
+        var storageAddress = FormatValue(moveAt.StorageAddress);
+        var indexI64 = EmitUnsignedIntegerAsI64(moveAt.Index, "dynamic_move_at_index");
+        var elementAlignment = Math.Max(1, elementLayout.AlignmentBytes);
+        if (!CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            var outSlot = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_slot"))}";
+            _entryStaticAllocas.Add($"  {outSlot} = alloca {elementLlvmType}, align {elementAlignment}");
+            AppendLine(
+                $"  call void @{DynamicStorageMoveAtToOutHelperName}(ptr {storageAddress}, i64 noundef {indexI64}, ptr {outSlot}, i64 noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)})");
+            AppendLine($"  {result} = load {elementLlvmType}, ptr {outSlot}, align {elementAlignment}");
+            return;
+        }
+
+        var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_current"))}";
+        var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_ptr"))}";
+        var length = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_length"))}";
+        var inBounds = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_in_bounds"))}";
+        var newLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_new_length"))}";
+        var elementPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_element_ptr"))}";
+        var movedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_value"))}";
+        var hasTail = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_has_tail"))}";
+        var nextIndex = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_next_index"))}";
+        var sourcePointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_source_ptr"))}";
+        var tailCount = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_tail_count"))}";
+        var tailBytes = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_tail_bytes"))}";
+        var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_updated"))}";
+        var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_bad_index"));
+        var moveLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_do"));
+        var shiftLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_shift"));
+        var updateLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_update"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_done"));
+        var boundsProfile = _context.GetMetadataTupleRef([
+            "!\"branch_weights\"",
+            $"i32 {NormalEdgeLikelyWeight}",
+            $"i32 {TrapEdgeUnlikelyWeight}"
+        ]);
+
+        AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
+        AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
+        AppendLine($"  {inBounds} = icmp ult i64 {indexI64}, {length}");
+        AppendLine($"  br i1 {inBounds}, label %{moveLabel}, label %{trapLabel}, !prof {boundsProfile}");
+        AppendLine(string.Empty);
+        AppendLine($"{trapLabel}:");
+        AppendLine("  call void @llvm.trap()");
+        AppendLine("  unreachable");
+        AppendLine(string.Empty);
+        AppendLine($"{moveLabel}:");
+        AppendLine($"  {newLength} = sub i64 {length}, 1");
+        AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
+        AppendLine($"  {elementPointer} = getelementptr {elementLlvmType}, ptr {pointer}, i64 {indexI64}");
+        AppendLine($"  {movedValue} = load {elementLlvmType}, ptr {elementPointer}, align {elementAlignment}");
+        AppendLine($"  {hasTail} = icmp ult i64 {indexI64}, {newLength}");
+        AppendLine($"  br i1 {hasTail}, label %{shiftLabel}, label %{updateLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{shiftLabel}:");
+        AppendLine($"  {nextIndex} = add i64 {indexI64}, 1");
+        AppendLine($"  {sourcePointer} = getelementptr {elementLlvmType}, ptr {pointer}, i64 {nextIndex}");
+        AppendLine($"  {tailCount} = sub i64 {newLength}, {indexI64}");
+        AppendLine($"  {tailBytes} = mul i64 {tailCount}, {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}");
+        AppendLine($"  call void @llvm.memmove.p0.p0.i64(ptr align {elementAlignment} {elementPointer}, ptr align {elementAlignment} {sourcePointer}, i64 {tailBytes}, i1 false)");
+        AppendLine($"  br label %{updateLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{updateLabel}:");
+        AppendLine($"  {updated} = insertvalue {storageType} {current}, i64 {newLength}, 1");
+        AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{updateLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private string EmitUnsignedIntegerAsI64(SsaValue value, string purpose)
+    {
+        if (value.Type.Kind != StarkTypeKind.Integer || value.Type.BitWidth is not int bitWidth)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage capacity must be an integer, but found '{value.Type.DisplayName}'.");
+        }
+
+        if (bitWidth == 64)
+        {
+            return FormatValue(value);
+        }
+
+        if (bitWidth is <= 0 or > 64)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage capacity width '{bitWidth}' is not supported.");
+        }
+
+        var converted = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+        AppendLine($"  {converted} = zext {MapType(value.Type)} {FormatValue(value)} to i64");
+        return converted;
+    }
+
+    private string EmitI64AsAllocatorSize(string value, string purpose)
+    {
+        return AllocatorSizeType switch
+        {
+            "i64" => value,
+            "i32" => EmitTruncatedAllocatorSize(value, purpose),
+            _ => throw new UnsupportedBodyEmissionException(
+                $"Allocator size type '{AllocatorSizeType}' is not supported for dynamic storage.")
+        };
+    }
+
+    private string EmitTruncatedAllocatorSize(string value, string purpose)
+    {
+        var converted = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+        AppendLine($"  {converted} = trunc i64 {value} to {AllocatorSizeType}");
+        return converted;
+    }
+
+    private ulong GetMaximumDynamicStorageElementCount(int elementSizeBytes)
+    {
+        var maxAllocatorSize = AllocatorSizeType switch
+        {
+            "i64" => ulong.MaxValue,
+            "i32" => uint.MaxValue,
+            _ => throw new UnsupportedBodyEmissionException(
+                $"Allocator size type '{AllocatorSizeType}' is not supported for dynamic storage.")
+        };
+
+        return maxAllocatorSize / (ulong)elementSizeBytes;
     }
 
     private void EmitLoadSliceElement(
@@ -6731,6 +7823,21 @@ internal sealed class LlvmFunctionBodyEmitter
             : FormatBlockLabel(blockId);
     }
 
+    private void RecordCurrentBlockExitLabel(string label)
+    {
+        if (_currentBlock is not null)
+        {
+            _blockExitLabels[_currentBlock.Id] = label;
+        }
+    }
+
+    private static string FormatUnsignedI64Constant(ulong value)
+    {
+        return value <= long.MaxValue
+            ? value.ToString(CultureInfo.InvariantCulture)
+            : unchecked((long)value).ToString(CultureInfo.InvariantCulture);
+    }
+
     private string FormatValue(SsaValue value)
     {
         return value switch
@@ -6811,6 +7918,11 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         foreach (var root in CollectFreshResultScopedNoAliasRoots())
+        {
+            roots.TryAdd(root.Key, root);
+        }
+
+        foreach (var root in CollectDynamicLocalScopedNoAliasRoots())
         {
             roots.TryAdd(root.Key, root);
         }
@@ -6928,6 +8040,30 @@ internal sealed class LlvmFunctionBodyEmitter
                         $"fresh.{valueInstruction.ResultName}"));
                 }
             }
+        }
+
+        return roots;
+    }
+
+    private IReadOnlyList<ScopedNoAliasRoot> CollectDynamicLocalScopedNoAliasRoots()
+    {
+        var roots = new List<ScopedNoAliasRoot>();
+        foreach (var instruction in _ssaFunction.Blocks.SelectMany(static block => block.Instructions))
+        {
+            if (instruction is not SsaAllocateLocalInstruction { LocalType.Kind: StarkTypeKind.Dynamic } allocateLocal)
+            {
+                continue;
+            }
+
+            var rootKey = CreateScopedAliasDynamicLocalRootKey(allocateLocal.LocalName);
+            if (_scopedNoAliasUnsafeAddressRoots.Contains(rootKey))
+            {
+                continue;
+            }
+
+            roots.Add(new ScopedNoAliasRoot(
+                rootKey,
+                $"dynamic.{allocateLocal.LocalName}"));
         }
 
         return roots;
@@ -7144,6 +8280,8 @@ internal sealed class LlvmFunctionBodyEmitter
         {
             case SsaUseRValue use:
                 return TryResolveScopedNoAliasRoot(use.Value, visitedValueNames, out rootKey, allowedRootKeys);
+            case SsaExtractFieldRValue { FieldName: "Data", Target.Type.Kind: StarkTypeKind.Dynamic } extractField:
+                return TryResolveScopedNoAliasDynamicRoot(extractField.Target, visitedValueNames, out rootKey, allowedRootKeys);
             case SsaAddressOfParameterRValue addressOfParameter:
                 return TryUseScopedNoAliasRoot(
                     CreateScopedAliasParameterRootKey(addressOfParameter.ParameterName),
@@ -7155,6 +8293,55 @@ internal sealed class LlvmFunctionBodyEmitter
                 return TryResolveScopedNoAliasRoot(elementAddress.Address, visitedValueNames, out rootKey, allowedRootKeys);
             case SsaSliceElementAddressRValue sliceElementAddress:
                 return TryResolveScopedNoAliasSliceRoot(sliceElementAddress.Slice, visitedValueNames, out rootKey, allowedRootKeys);
+            default:
+                rootKey = string.Empty;
+                return false;
+        }
+    }
+
+    private bool TryResolveScopedNoAliasDynamicRoot(
+        SsaValue value,
+        ISet<string> visitedValueNames,
+        out string rootKey,
+        ISet<string>? allowedRootKeys = null)
+    {
+        switch (value)
+        {
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name))
+                {
+                    rootKey = string.Empty;
+                    return false;
+                }
+
+                if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return TryResolveScopedNoAliasDynamicRoot(definition, visitedValueNames, out rootKey, allowedRootKeys);
+                }
+
+                rootKey = string.Empty;
+                return false;
+            default:
+                rootKey = string.Empty;
+                return false;
+        }
+    }
+
+    private bool TryResolveScopedNoAliasDynamicRoot(
+        SsaRValue value,
+        ISet<string> visitedValueNames,
+        out string rootKey,
+        ISet<string>? allowedRootKeys = null)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryResolveScopedNoAliasDynamicRoot(use.Value, visitedValueNames, out rootKey, allowedRootKeys);
+            case SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Dynamic } loadLocal:
+                return TryUseScopedNoAliasRoot(
+                    CreateScopedAliasDynamicLocalRootKey(loadLocal.LocalName),
+                    out rootKey,
+                    allowedRootKeys);
             default:
                 rootKey = string.Empty;
                 return false;
@@ -7760,6 +8947,8 @@ internal sealed class LlvmFunctionBodyEmitter
     private static string CreateScopedAliasParameterRootKey(string parameterName) => $"param:{parameterName}";
 
     private static string CreateScopedAliasFreshResultRootKey(string resultName) => $"fresh-result:{resultName}";
+
+    private static string CreateScopedAliasDynamicLocalRootKey(string localName) => $"dynamic-local:{localName}";
 
     private bool IsImmutableMemoryReference(SsaValue value, ISet<string> visitedValueNames)
     {
@@ -8398,6 +9587,27 @@ internal sealed class LlvmFunctionBodyEmitter
                 case SsaMakeSliceFromPointerRValue makeSlice:
                     VisitValue(makeSlice.Pointer);
                     VisitValue(makeSlice.Length);
+                    break;
+                case SsaDynamicStorageAllocationRValue allocation:
+                    VisitValue(allocation.Capacity);
+                    break;
+                case SsaDynamicStorageFreeRValue free:
+                    VisitValue(free.Storage);
+                    break;
+                case SsaDynamicStorageReserveRValue reserve:
+                    VisitValue(reserve.StorageAddress);
+                    VisitValue(reserve.AdditionalCapacity);
+                    break;
+                case SsaDynamicStorageTryReserveRValue reserve:
+                    VisitValue(reserve.StorageAddress);
+                    VisitValue(reserve.AdditionalCapacity);
+                    break;
+                case SsaDynamicStorageMoveLastRValue moveLast:
+                    VisitValue(moveLast.StorageAddress);
+                    break;
+                case SsaDynamicStorageMoveAtRValue moveAt:
+                    VisitValue(moveAt.StorageAddress);
+                    VisitValue(moveAt.Index);
                     break;
                 case SsaLoadSliceElementRValue loadSlice:
                     VisitValue(loadSlice.Slice);
@@ -9141,6 +10351,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 case SsaUseRValue use:
                     AddAddressValueRoots(use.Value, visitedValueNames);
                     break;
+                case SsaExtractFieldRValue { FieldName: "Data", Target.Type.Kind: StarkTypeKind.Dynamic } extractField:
+                    AddDynamicValueRoot(extractField.Target, visitedValueNames);
+                    break;
                 case SsaAddressOfParameterRValue addressOfParameter:
                     roots.Add(CreateScopedAliasParameterRootKey(addressOfParameter.ParameterName));
                     break;
@@ -9191,6 +10404,38 @@ internal sealed class LlvmFunctionBodyEmitter
                     break;
                 default:
                     AddAddressValueRoots(value, visitedValueNames);
+                    break;
+            }
+        }
+
+        void AddDynamicValueRoot(SsaValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaValueReference reference:
+                    if (!visitedValueNames.Add(reference.Name))
+                    {
+                        return;
+                    }
+
+                    if (valueDefinitions.TryGetValue(reference.Name, out var definition))
+                    {
+                        AddDynamicRValueRoot(definition, visitedValueNames);
+                    }
+
+                    break;
+            }
+        }
+
+        void AddDynamicRValueRoot(SsaRValue value, ISet<string> visitedValueNames)
+        {
+            switch (value)
+            {
+                case SsaUseRValue use:
+                    AddDynamicValueRoot(use.Value, visitedValueNames);
+                    break;
+                case SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Dynamic } loadLocal:
+                    roots.Add(CreateScopedAliasDynamicLocalRootKey(loadLocal.LocalName));
                     break;
             }
         }

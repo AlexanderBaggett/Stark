@@ -1,0 +1,42 @@
+import System.Experimental.Collections
+import System.Memory
+module Benchmarks.Collections.ExperimentalLinkedListPopOnly
+
+finite law bool Ok(MemoryStatus status) {
+    switch (status) {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut System.Experimental.Collections.LinkedList<i32[0 max]> values = new();
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
+        if (!Ok(values.AddLast(i))) {
+            return 1;
+        }
+    }
+
+    if (values.Count() != 4096) {
+        return 2;
+    }
+
+    stack mut i32[0 max] value = 0;
+    while willexit (!values.IsEmpty()) {
+        if (!values.TryRemoveLast(value)) {
+            return 3;
+        }
+
+        checksum += (i64[min max])value;
+    }
+
+    if (checksum != 8386560) {
+        return 4;
+    }
+
+    return 0;
+}

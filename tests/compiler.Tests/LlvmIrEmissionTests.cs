@@ -54,6 +54,337 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                init values[0] = 7;
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("@__stark_runtime_alloc", llvm);
+        Assert.Contains("@__stark_runtime_free", llvm);
+        Assert.Contains("insertvalue { ptr, i64, i64 }", llvm);
+        Assert.Contains("extractvalue { ptr, i64, i64 }", llvm);
+        Assert.Contains("getelementptr", llvm);
+        Assert.Contains("i32 1", llvm);
+        Assert.Contains("store i64", llvm);
+
+        var runSignature = Regex.Match(llvm, @"define fastcc[^\n]+ @Run\(\)[^\n]*").Value;
+        Assert.Contains("memory(readwrite", runSignature);
+        Assert.DoesNotContain("nofree", runSignature);
+        Assert.DoesNotContain("nosync", runSignature);
+    }
+
+    [Fact]
+    public void DynamicStorageElementLoadsAndStoresCarryElementAlignment()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i64[0 max] values = new(2);
+                init values[0] = 7;
+                init values[1] = 11;
+                return values[1];
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.True(Regex.Matches(runBody, @"store i64 %v\d+, ptr %v\d+, align 8").Count >= 2, runBody);
+        Assert.Matches(@"load i64, ptr %v\d+, align 8", runBody);
+    }
+
+    [Fact]
+    public void DynamicStorageReserveEmitsDirectReallocatePath()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                values.Reserve(8);
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("@__stark_runtime_realloc", llvm);
+        Assert.Contains("dynamic_reserve_needed", llvm);
+        Assert.Contains("extractvalue { ptr, i64, i64 }", llvm);
+        Assert.Contains("insertvalue { ptr, i64, i64 }", llvm);
+        Assert.Contains("store { ptr, i64, i64 }", llvm);
+    }
+
+    [Fact]
+    public void DynamicStorageTryReserveEmitsDirectFallibleReallocatePath()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                if (!values.TryReserve(8)) {
+                    return 0;
+                }
+
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm);
+        Assert.Contains("define weak_odr hidden ptr @__stark_runtime_try_alloc", llvm);
+        Assert.Contains("define weak_odr hidden i1 @__stark_dynamic_try_reserve", llvm);
+        Assert.Contains("dynamic_try_reserve_needed", runBody);
+        Assert.Contains("call ptr @__stark_runtime_try_realloc", runBody);
+        Assert.Contains("phi i1", runBody);
+        Assert.Contains("dynamic_try_reserve_failed", runBody);
+    }
+
+    [Fact]
+    public void DynamicStorageInitSliceWritesCommitOwnerLength()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack init i32[0 max][] spare = init values[values.Length, 2];
+                init spare[0] = 7;
+                init spare[1] = 8;
+                return values.Length;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\(\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.True(
+            Regex.Matches(runBody, @"store i64 %v\d+, ptr %v\d+").Count >= 2,
+            runBody);
+    }
+
+    [Fact]
+    public void OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignment()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i64[0 max] values = new(4);
+                stack init i64[0 max][] spare = init values[values.Length, 2];
+                init spare[0] = 7;
+                return values.Length;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\(\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        var slicePointer = Regex.Match(
+            runBody,
+            @"insertvalue \{ ptr, i64 \} zeroinitializer, ptr (?<pointer>%v\d+), 0");
+        Assert.True(slicePointer.Success, runBody);
+
+        var pointerName = slicePointer.Groups["pointer"].Value;
+        var definitionIndex = runBody.IndexOf($"{pointerName} = getelementptr", StringComparison.Ordinal);
+        Assert.True(definitionIndex >= 0 && definitionIndex < slicePointer.Index, runBody);
+        Assert.Matches(@"getelementptr inbounds nuw i64, ptr %v\d+_data, i8 0", runBody);
+        Assert.Matches(@"store i64 7, ptr %v\d+, align 8", runBody);
+    }
+
+    [Fact]
+    public void InitSliceParametersCarryWriteOnlyContract()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Fill(init i64[0 max][] dest) {
+                init dest[0] = 1;
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var fillHeader = ExtractDefinitionHeader(llvm, "Fill");
+
+        Assert.Contains(
+            "ptr noundef nonnull noalias writeonly nocapture dereferenceable(16) align 8 %arg_dest",
+            fillHeader);
+    }
+
+    [Fact]
+    public void DynamicStorageMoveLastEmitsDirectLengthUpdateAndLoad()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i64[0 max] values = new(2);
+                init values[0] = 10;
+                init values[1] = 20;
+                stack i64[0 max] moved = values.MoveLast();
+                return moved + values.Length;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_move_is_empty", llvm);
+        Assert.Contains("dynamic_move_new_length", llvm);
+        Assert.Contains("call void @llvm.trap()", llvm);
+        Assert.Contains("getelementptr i64", llvm);
+        Assert.Contains("load i64", llvm);
+        Assert.Contains("store { ptr, i64, i64 }", llvm);
+    }
+
+    [Fact]
+    public void DynamicStorageMoveAtEmitsDirectLengthUpdateLoadAndMemmove()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i64[0 max] values = new(3);
+                init values[0] = 10;
+                init values[1] = 20;
+                init values[2] = 30;
+                stack i64[0 max] moved = values.MoveAt(0);
+                return moved + values[0] + values.Length;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_move_at_in_bounds", runBody);
+        Assert.Contains("dynamic_move_at_new_length", runBody);
+        Assert.Contains("call void @llvm.memmove.p0.p0.i64", runBody);
+        Assert.Contains("store { ptr, i64, i64 }", runBody);
+    }
+
+    [Fact]
+    public void UnsafeDynamicStorageNonTailMoveEmitsDirectElementLoad()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token {
+                i64[0 max] Value;
+            }
+
+            fn i64[0 max] Run() {
+                stack mut dynamic Token values = new(2);
+                init values[0] = new Token() { Value = 10 };
+                init values[1] = new Token() { Value = 20 };
+                unsafe {
+                    stack Token moved = values[0];
+                    return moved.Value;
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\(\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.DoesNotContain("dynamic_move_is_empty", runBody);
+        Assert.DoesNotContain("dynamic_move_new_length", runBody);
+        Assert.Contains("getelementptr", runBody);
+        Assert.Contains("load %Token", runBody);
+    }
+
+    [Fact]
+    public void AggregateLoadedFromDynamicSlotKeepsSnapshotAfterSlotReplacement()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Slot {
+                Empty,
+                Full(i32[0 max]),
+            }
+
+            fn i32[0 max] Run() {
+                stack mut dynamic Slot slots = new(1);
+                init slots[0] = Slot.Full(7);
+                unsafe {
+                    stack Slot snapshot = slots[0];
+                    slots[0] = Slot.Empty;
+                    switch (snapshot) {
+                        case Slot.Full(var value):
+                            return value;
+                        case Slot.Empty:
+                            return 0;
+                    }
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\(\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        var snapshotLoad = Regex.Match(runBody, @"(?<value>%v\d+) = load %Slot, ptr %v\d+");
+        Assert.True(snapshotLoad.Success, runBody);
+        Assert.Contains($"extractvalue %Slot {snapshotLoad.Groups["value"].Value}, 0", runBody);
+        Assert.Contains($"extractvalue %Slot {snapshotLoad.Groups["value"].Value}, 1", runBody);
+    }
+
+    [Fact]
     public void SmallRangeUnsignedIntegerOperationsUseUnsignedLlvmOpcodes()
     {
         var result = Compile(
@@ -1161,6 +1492,32 @@ public sealed class LlvmIrEmissionTests
         Assert.Matches(@"!\d+ = distinct !\{!\d+, !""stark\.noalias\.Sum""\}", llvm);
         Assert.Matches(@"!\d+ = distinct !\{!\d+, !\d+, !""stark\.noalias\.Sum\.param\.left""\}", llvm);
         Assert.Matches(@"!\d+ = distinct !\{!\d+, !\d+, !""stark\.noalias\.Sum\.param\.right""\}", llvm);
+    }
+
+    [Fact]
+    public void DynamicLocalStorageAccessesEmitScopedNoAliasMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i64[0 max] left = new(2);
+                stack mut dynamic i64[0 max] right = new(2);
+                init left[0] = 10;
+                init right[0] = 20;
+                return left[0] + right[0];
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!\"stark.noalias.Run.dynamic.left\"", llvm);
+        Assert.Contains("!\"stark.noalias.Run.dynamic.right\"", llvm);
+        Assert.Matches(@"store i64 .* ptr %v\d+, align 8, !alias\.scope !\d+, !noalias !\d+", llvm);
+        Assert.Matches(@"load i64, ptr %v\d+, align 8, !range !\d+, !alias\.scope !\d+, !noalias !\d+", llvm);
     }
 
     [Fact]
@@ -9087,6 +9444,94 @@ public sealed class LlvmIrEmissionTests
         Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i32 %arg_count to i64", llvm);
         Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %arg_output, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InitSliceByteFillLoopLowersToMemset()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Fill(init i8[-128 127][] output, i8[-128 127] value, i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    init output[index] = value;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i32 %arg_count to i64", llvm);
+        Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %abi_rawptr_loop_destination_data_\d+, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("%v0_phi = phi", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DisjointInitSliceCopyLoopLowersToMemcpy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                disjoint borrow i32[-2147483648 2147483647][] input,
+                disjoint init i32[-2147483648 2147483647][] output,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    init output[index] = input[index];
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %abi_rawptr_loop_count_\d+, 4", llvm);
+        Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %abi_rawptr_loop_destination_data_\d+, ptr align 4 %abi_rawptr_loop_source_data_\d+, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("%v0_phi = phi", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InitSliceOverlapSafeTemporaryCopyLowersToMemmove()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void CopyOverlapSafe(
+                borrow i32[-2147483648 2147483647][] input,
+                init i32[-2147483648 2147483647][] output) {
+                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    temporary[index] = input[index];
+                }
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    init output[index] = temporary[index];
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %abi_rawptr_loop_destination_data_\d+, ptr align 4 %abi_rawptr_loop_source_data_\d+, i64 16, i1 false\)", llvm);
+        Assert.DoesNotContain("%slot_temporary", llvm, StringComparison.Ordinal);
     }
 
     [Fact]

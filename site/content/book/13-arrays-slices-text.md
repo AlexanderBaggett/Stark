@@ -1,5 +1,5 @@
 +++
-title = "13. Arrays, Slices, Text, and Views"
+title = "13. Arrays, Slices, Dynamic Storage, Text, and Views"
 weight = 130
 book_part = "Part II: Stark's Core Language"
 book_status = "draft"
@@ -23,10 +23,10 @@ title = "Standard Library Examples"
 href = "/reference/examples/standard-library/StandardLibrary.stark"
 +++
 
-# Arrays, Slices, Text, and Views
+# Arrays, Slices, Dynamic Storage, Text, and Views
 
-Arrays, slices, and text all deal with contiguous data, but they do not have the
-same ownership story. Stark keeps that distinction visible.
+Arrays, slices, dynamic storage, and text all deal with contiguous data, but
+they do not have the same ownership story. Stark keeps that distinction visible.
 
 {{< stark-sample "assets/book/samples/arrays-text-views.stark" >}}
 
@@ -67,6 +67,34 @@ stack i32[min max][] view = values;
 ```
 
 That is the Stark rule in miniature: if storage exists, make it visible.
+
+## Dynamic Storage Owns Growable Capacity
+
+`dynamic T` is owned, growable storage for elements of `T`. It has a visible
+`Length`, a visible `Capacity`, and spare slots that can be initialized without
+turning the implementation into public raw pointer code.
+
+{{< stark-sample "assets/book/samples/dynamic-storage.stark" >}}
+
+The important operations are direct:
+
+- `Reserve(additional)` preserves initialized elements and makes room for more
+- `TryReserve(additional)` does the same growth work but returns `false` instead
+  of trapping when capacity or allocation fails
+- `init items[index] = value` constructs an element in spare storage
+- `items[0, items.Length]` creates a normal initialized slice view
+- `MoveLast()` moves the tail element out and decrements `Length`
+- `MoveAt(index)` moves one initialized element out, shifts the later suffix
+  left, and decrements `Length`
+
+This is the safe shape for vector-like storage. The compiler can see the owner,
+the initialized prefix, the spare-capacity writes, and the element type.
+
+The same storage shape works for collection backing stores, byte builders, and
+path/text buffers. The public surface can stay slice-shaped while the
+implementation keeps spare capacity private:
+
+{{< stark-sample "assets/book/samples/dynamic-storage-patterns.stark" >}}
 
 ## Text Views
 

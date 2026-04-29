@@ -127,6 +127,636 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
+    private const string ExperimentalListParityProgram = """
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool TooLarge(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return false;
+                case MemoryStatus.Err(var error):
+                    return error == MemoryError.TooLarge;
+            }
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut System.Collections.List<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.List<i32[0 max]> experimental = new();
+
+            if (!Ok(stable.Reserve(0)) || !Ok(experimental.Reserve(0))) {
+                return 1;
+            }
+
+            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                if (!Ok(stable.Push(i)) || !Ok(experimental.Push(i))) {
+                    return 2;
+                }
+            }
+
+            if (stable.Count() != experimental.Count() || stable.Capacity() < stable.Count() || experimental.Capacity() < experimental.Count()) {
+                return 3;
+            }
+
+            stable.GetMut(10) = 111;
+            experimental.GetMut(10) = 111;
+            stable.AsMutableSlice()[11] = 222;
+            experimental.AsMutableSlice()[11] = 222;
+
+            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                if (stable.Get(i) != experimental.Get(i) || stable.AsSlice()[i] != experimental.AsSlice()[i]) {
+                    return 4;
+                }
+            }
+
+            stack mut i64[min max] checksum = 0;
+            while willexit (experimental.Count() > 0) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue)) {
+                    return 5;
+                }
+
+                if (stableValue != experimentalValue) {
+                    return 6;
+                }
+
+                checksum += (i64[min max])stableValue;
+            }
+
+            if (stable.Count() != 0 || experimental.Count() != 0 || checksum != 8440) {
+                return 7;
+            }
+
+            if (!TooLarge(stable.Reserve(9223372036854775807)) || !TooLarge(experimental.Reserve(9223372036854775807))) {
+                return 8;
+            }
+
+            {
+                stack mut System.Collections.List<Resource> stableDrops = new();
+                if (!Ok(stableDrops.Push(new Resource() { Value = 1 })) || !Ok(stableDrops.Push(new Resource() { Value = 2 }))) {
+                    return 9;
+                }
+
+                stableDrops.Clear();
+                if (DropCounter != 3) {
+                    return 10;
+                }
+            }
+
+            if (DropCounter != 3) {
+                return 11;
+            }
+
+            {
+                stack mut System.Experimental.Collections.List<Resource> experimentalDrops = new();
+                if (!Ok(experimentalDrops.Push(new Resource() { Value = 4 })) || !Ok(experimentalDrops.Push(new Resource() { Value = 5 }))) {
+                    return 12;
+                }
+
+                experimentalDrops.Clear();
+                if (DropCounter != 12) {
+                    return 13;
+                }
+            }
+
+            if (DropCounter != 12) {
+                return 14;
+            }
+
+            {
+                stack mut System.Experimental.Collections.List<Resource> scopedDrops = new();
+                if (!Ok(scopedDrops.Push(new Resource() { Value = 6 })) || !Ok(scopedDrops.Push(new Resource() { Value = 7 }))) {
+                    return 15;
+                }
+            }
+
+            if (DropCounter != 25) {
+                return 16;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string ExperimentalStackParityProgram = """
+        import System.Collections
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        static mut i32[min max] DropCounter = 0;
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut System.Collections.Stack<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.Stack<i32[0 max]> experimental = new();
+
+            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                if (!Ok(stable.Push(i)) || !Ok(experimental.Push(i))) {
+                    return 1;
+                }
+
+                if (stable.Peek() != experimental.Peek()) {
+                    return 2;
+                }
+            }
+
+            if (stable.Count() != experimental.Count() || stable.IsEmpty() != experimental.IsEmpty()) {
+                return 3;
+            }
+
+            stack mut i64[min max] checksum = 0;
+            while willexit (!experimental.IsEmpty()) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue)) {
+                    return 4;
+                }
+
+                if (stableValue != experimentalValue) {
+                    return 5;
+                }
+
+                checksum += (i64[min max])stableValue;
+            }
+
+            if (!stable.IsEmpty() || !experimental.IsEmpty() || checksum != 8128) {
+                return 6;
+            }
+
+            {
+                stack mut System.Collections.Stack<Resource> stableDrops = new();
+                if (!Ok(stableDrops.Push(new Resource() { Value = 1 })) || !Ok(stableDrops.Push(new Resource() { Value = 2 }))) {
+                    return 7;
+                }
+
+                stableDrops.Clear();
+                if (DropCounter != 3) {
+                    return 8;
+                }
+            }
+
+            if (DropCounter != 3) {
+                return 9;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Stack<Resource> experimentalDrops = new();
+                if (!Ok(experimentalDrops.Push(new Resource() { Value = 4 })) || !Ok(experimentalDrops.Push(new Resource() { Value = 5 }))) {
+                    return 10;
+                }
+
+                experimentalDrops.Clear();
+                if (DropCounter != 12) {
+                    return 11;
+                }
+            }
+
+            if (DropCounter != 12) {
+                return 12;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Stack<Resource> scopedDrops = new();
+                if (!Ok(scopedDrops.Push(new Resource() { Value = 6 })) || !Ok(scopedDrops.Push(new Resource() { Value = 7 }))) {
+                    return 13;
+                }
+            }
+
+            if (DropCounter != 25) {
+                return 14;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string ExperimentalQueueParityProgram = """
+        import System.Collections
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        static mut i32[min max] DropCounter = 0;
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool TooLarge(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return false;
+                case MemoryStatus.Err(var error):
+                    return error == MemoryError.TooLarge;
+            }
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut System.Collections.Queue<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.Queue<i32[0 max]> experimental = new();
+
+            if (!Ok(stable.Reserve(0)) || !Ok(experimental.Reserve(0))) {
+                return 1;
+            }
+
+            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(experimental.Enqueue(i))) {
+                    return 2;
+                }
+
+                if (stable.Peek() != experimental.Peek()) {
+                    return 3;
+                }
+            }
+
+            if (stable.Count() != experimental.Count() || stable.IsEmpty() != experimental.IsEmpty()) {
+                return 4;
+            }
+
+            stack mut i64[min max] checksum = 0;
+            while willexit (!experimental.IsEmpty()) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryDequeue(stableValue) || !experimental.TryDequeue(experimentalValue)) {
+                    return 5;
+                }
+
+                if (stableValue != experimentalValue) {
+                    return 6;
+                }
+
+                checksum += (i64[min max])stableValue;
+            }
+
+            if (!stable.IsEmpty() || !experimental.IsEmpty() || checksum != 8128) {
+                return 7;
+            }
+
+            if (!TooLarge(stable.Reserve(9223372036854775807)) || !TooLarge(experimental.Reserve(9223372036854775807))) {
+                return 8;
+            }
+
+            {
+                stack mut System.Collections.Queue<Resource> stableDrops = new();
+                if (!Ok(stableDrops.Enqueue(new Resource() { Value = 1 })) || !Ok(stableDrops.Enqueue(new Resource() { Value = 2 }))) {
+                    return 9;
+                }
+
+                stableDrops.Clear();
+                if (DropCounter != 3) {
+                    return 10;
+                }
+            }
+
+            if (DropCounter != 3) {
+                return 11;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Queue<Resource> experimentalDrops = new();
+                if (!Ok(experimentalDrops.Enqueue(new Resource() { Value = 4 })) || !Ok(experimentalDrops.Enqueue(new Resource() { Value = 5 }))) {
+                    return 12;
+                }
+
+                experimentalDrops.Clear();
+                if (DropCounter != 12) {
+                    return 13;
+                }
+            }
+
+            if (DropCounter != 12) {
+                return 14;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Queue<Resource> scopedDrops = new();
+                if (!Ok(scopedDrops.Enqueue(new Resource() { Value = 6 })) || !Ok(scopedDrops.Enqueue(new Resource() { Value = 7 }))) {
+                    return 15;
+                }
+            }
+
+            if (DropCounter != 25) {
+                return 16;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string ExperimentalRingQueueCandidateProgram = """
+        import System.Collections
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        static mut i32[min max] DropCounter = 0;
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut System.Collections.Queue<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.RingQueue<i32[0 max]> ring = new();
+
+            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
+                    return 1;
+                }
+            }
+
+            stack mut i64[min max] checksum = 0;
+            for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] ringValue = 0;
+                if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue)) {
+                    return 2;
+                }
+
+                if (stableValue != ringValue) {
+                    return 3;
+                }
+
+                checksum += (i64[min max])stableValue;
+            }
+
+            for willexit (stack mut i32[0 128] i = 64; i < 128; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
+                    return 4;
+                }
+            }
+
+            if (stable.Count() != ring.Count() || ring.Capacity() < ring.Count()) {
+                return 5;
+            }
+
+            while willexit (!ring.IsEmpty()) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] ringValue = 0;
+                if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue)) {
+                    return 6;
+                }
+
+                if (stableValue != ringValue) {
+                    return 7;
+                }
+
+                checksum += (i64[min max])stableValue;
+            }
+
+            if (!stable.IsEmpty() || !ring.IsEmpty() || checksum != 8128) {
+                return 8;
+            }
+
+            {
+                stack mut System.Experimental.Collections.RingQueue<Resource> ringDrops = new();
+                if (!Ok(ringDrops.Enqueue(new Resource() { Value = 1 })) || !Ok(ringDrops.Enqueue(new Resource() { Value = 2 }))) {
+                    return 9;
+                }
+
+                ringDrops.Clear();
+                if (DropCounter != 3) {
+                    return 10;
+                }
+            }
+
+            if (DropCounter != 3) {
+                return 11;
+            }
+
+            {
+                stack mut System.Experimental.Collections.RingQueue<Resource> scopedDrops = new();
+                if (!Ok(scopedDrops.Enqueue(new Resource() { Value = 4 })) || !Ok(scopedDrops.Enqueue(new Resource() { Value = 5 }))) {
+                    return 12;
+                }
+            }
+
+            if (DropCounter != 12) {
+                return 13;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string ExperimentalLinkedListParityProgram = """
+        import System.Collections
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        static mut i32[min max] DropCounter = 0;
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut System.Collections.LinkedList<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.LinkedList<i32[0 max]> experimental = new();
+
+            if (!Ok(stable.ReserveNodes(4)) || !Ok(experimental.ReserveNodes(4))) {
+                return 1;
+            }
+
+            if (stable.Count() != 0 || experimental.Count() != 0 || !stable.IsEmpty() || !experimental.IsEmpty()) {
+                return 2;
+            }
+
+            if (!Ok(stable.AddLast(1)) || !Ok(experimental.AddLast(1))) {
+                return 3;
+            }
+
+            if (!Ok(stable.AddLast(2)) || !Ok(experimental.AddLast(2))) {
+                return 4;
+            }
+
+            if (!Ok(stable.AddFirst(0)) || !Ok(experimental.AddFirst(0))) {
+                return 5;
+            }
+
+            if (stable.Count() != experimental.Count() || stable.IsEmpty() != experimental.IsEmpty()) {
+                return 6;
+            }
+
+            stack mut i32[0 max] stableValue = 0;
+            stack mut i32[0 max] experimentalValue = 0;
+            if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue)) {
+                return 7;
+            }
+
+            if (stableValue != 0 || experimentalValue != 0) {
+                return 8;
+            }
+
+            if (!stable.TryRemoveLast(stableValue) || !experimental.TryRemoveLast(experimentalValue)) {
+                return 9;
+            }
+
+            if (stableValue != 2 || experimentalValue != 2) {
+                return 10;
+            }
+
+            if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue)) {
+                return 11;
+            }
+
+            if (stableValue != 1 || experimentalValue != 1 || !stable.IsEmpty() || !experimental.IsEmpty()) {
+                return 12;
+            }
+
+            stack mut i64[min max] checksum = 0;
+            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
+                if (!Ok(stable.AddLast(i)) || !Ok(experimental.AddLast(i))) {
+                    return 13;
+                }
+
+                if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue)) {
+                    return 14;
+                }
+
+                if (stableValue != experimentalValue) {
+                    return 15;
+                }
+
+                checksum += (i64[min max])experimentalValue;
+            }
+
+            if (!stable.IsEmpty() || !experimental.IsEmpty() || checksum != 2016) {
+                return 16;
+            }
+
+            {
+                stack mut System.Experimental.Collections.LinkedList<Resource> drops = new();
+                if (!Ok(drops.AddLast(new Resource() { Value = 1 })) || !Ok(drops.AddFirst(new Resource() { Value = 2 }))) {
+                    return 17;
+                }
+
+                drops.Clear();
+                if (DropCounter != 3) {
+                    return 18;
+                }
+            }
+
+            if (DropCounter != 3) {
+                return 19;
+            }
+
+            {
+                stack mut System.Experimental.Collections.LinkedList<Resource> scopedDrops = new();
+                if (!Ok(scopedDrops.AddLast(new Resource() { Value = 4 })) || !Ok(scopedDrops.AddLast(new Resource() { Value = 5 }))) {
+                    return 20;
+                }
+            }
+
+            if (DropCounter != 12) {
+                return 21;
+            }
+
+            return 0;
+        }
+        """;
+
     [Fact]
     public void StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface()
     {
@@ -258,6 +888,170 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void StdLibSourceExperimentalCollectionsExposeDynamicComparisonTypes()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalCollectionsSurface.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.Collections
+                import System.Memory
+                module Demo
+
+                fn bool Ok(MemoryStatus status) {
+                    switch (status) {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool UseExperimentalCollections() {
+                    stack mut System.Experimental.Collections.List<i32[0 max]> values = new();
+                    if (!Ok(values.Push(10))) {
+                        return false;
+                    }
+
+                    values.GetMut(0) = 11;
+                    values.AsMutableSlice()[0] = 12;
+                    if (values.Get(0) != 12 || values.AsSlice()[0] != 12) {
+                        return false;
+                    }
+
+                    stack mut i32[0 max] popped = 0;
+                    if (!values.TryPop(popped) || popped != 12 || values.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Collections.Stack<i32[0 max]> stackValues = new();
+                    if (!Ok(stackValues.Push(20)) || stackValues.Peek() != 20) {
+                        return false;
+                    }
+
+                    if (!stackValues.TryPop(popped) || popped != 20 || stackValues.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Collections.Queue<i32[0 max]> queueValues = new();
+                    if (!Ok(queueValues.Enqueue(30)) || queueValues.Peek() != 30) {
+                        return false;
+                    }
+
+                    if (!queueValues.TryDequeue(popped) || popped != 30 || queueValues.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Collections.RingQueue<i32[0 max]> ringValues = new();
+                    if (!Ok(ringValues.Enqueue(40)) || !Ok(ringValues.Enqueue(41))) {
+                        return false;
+                    }
+
+                    if (!ringValues.TryDequeue(popped) || popped != 40 || ringValues.Count() != 1) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Collections.LinkedList<i32[0 max]> linkedValues = new();
+                    if (!Ok(linkedValues.ReserveNodes(2)) || !Ok(linkedValues.AddFirst(50)) || !Ok(linkedValues.AddLast(51))) {
+                        return false;
+                    }
+
+                    if (!linkedValues.TryRemoveFirst(popped) || popped != 50 || linkedValues.Count() != 1) {
+                        return false;
+                    }
+
+                    if (!linkedValues.TryRemoveLast(popped) || popped != 51 || linkedValues.Count() != 0) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+                    stack i32[0 max] dictionaryKey = 3;
+                    if (!Ok(dictionary.Reserve(8)) || !Ok(dictionary.Set(dictionaryKey, 33))) {
+                        return false;
+                    }
+
+                    stack mut i32[0 max] found = 0;
+                    if (!dictionary.ContainsKey(dictionaryKey) || !dictionary.TryGet(dictionaryKey, found) || found != 33) {
+                        return false;
+                    }
+
+                    if (!Ok(dictionary.Set(dictionaryKey, 44))) {
+                        return false;
+                    }
+
+                    if (!dictionary.TryGet(dictionaryKey, found) || found != 44) {
+                        return false;
+                    }
+
+                    return dictionary.Remove(dictionaryKey) && !dictionary.ContainsKey(dictionaryKey) && dictionary.Count() == 0;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalListLowersThroughDynamicStorage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalListLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.Collections
+                import System.Memory
+                module Demo
+
+                fn bool Ok(MemoryStatus status) {
+                    switch (status) {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i64[0 max] GrowAndSlice() {
+                    stack mut System.Experimental.Collections.List<i32[0 max]> values = new();
+                    if (!Ok(values.Reserve(8))) {
+                        return 0;
+                    }
+
+                    for willexit (stack mut i32[0 8] i = 0; i < 8; i += 1) {
+                        if (!Ok(values.Push(i))) {
+                            return 0;
+                        }
+                    }
+
+                    values.AsMutableSlice()[3] = 99;
+                    return (i64[0 max])values.AsSlice()[3];
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("dynamic_try_reserve_needed", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("extractvalue { ptr, i64, i64 }", llvm.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StdLibSourceDictionaryGrowthLowersThroughSharedCapacityHelper()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -335,6 +1129,256 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         try
         {
             await File.WriteAllTextAsync(appPath, CollectionsGrowthMoveDropProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalListMatchesStableListExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-list-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalListParityProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalStackMatchesStableStackExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-stack-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalStackParityProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalQueueMatchesStableQueueExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-queue-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalQueueParityProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalRingQueueCandidateExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-ring-queue-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalRingQueueCandidateProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalLinkedListMatchesStableLinkedListExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-linked-list-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalLinkedListParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();

@@ -266,9 +266,33 @@ public static class DefaultCompilerPipeline
                         else if (resolver is IModuleSourceResolver sourceResolver
                                  && sourceResolver.TryLoadModuleSource(resolved, out var sourceText, out var filePath))
                         {
-                            var parseResult = StarkSyntax.ParseCompilationUnit(sourceText);
-                            var importedSyntax = SyntaxModelFactory.Create(parseResult);
                             var cachedReference = resolved with { FilePath = filePath ?? resolved.FilePath };
+                            var parseResult = StarkSyntax.ParseCompilationUnit(sourceText);
+                            foreach (var diagnostic in parseResult.Diagnostics)
+                            {
+                                context.Diagnostics.Error(
+                                    "STK1000",
+                                    diagnostic.Message,
+                                    Id,
+                                    new SourceLocation(cachedReference.FilePath, diagnostic.Line, diagnostic.Column));
+                            }
+
+                            if (!parseResult.Succeeded)
+                            {
+                                continue;
+                            }
+
+                            var buildResult = SyntaxModelFactory.CreateWithDiagnostics(parseResult, context.Options.TargetInfo);
+                            foreach (var diagnostic in buildResult.Diagnostics)
+                            {
+                                context.Diagnostics.Error(
+                                    diagnostic.Code,
+                                    diagnostic.Message,
+                                    Id,
+                                    new SourceLocation(cachedReference.FilePath, diagnostic.Line, diagnostic.Column));
+                            }
+
+                            var importedSyntax = buildResult.Model;
                             sourceModuleParseCache[resolved.ModuleName] = new SourceModuleParse(
                                 cachedReference,
                                 parseResult,

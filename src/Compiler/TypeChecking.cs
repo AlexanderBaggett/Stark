@@ -6488,6 +6488,33 @@ internal sealed class TypeChecker
         bool allowFunctionReference,
         StarkTypeSymbol? expectedType = null)
     {
+        if (expression.INIT() is not null
+            && expression.ASSIGN() is not null
+            && expression.assignmentOperator() is null)
+        {
+            var initTarget = MakeInitDestinationBinding(
+                EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: true),
+                expression.unaryExpression());
+            var storageType = StarkTypeSymbols.WithQualifiers(initTarget.Type, initializationKind: StarkInitializationKind.None);
+            var initValue = EvaluateAssignmentExpression(
+                expression.assignmentExpression(),
+                scope,
+                allowFunctionReference: false,
+                storageType);
+
+            if (!initTarget.IsAssignable)
+            {
+                ReportError(
+                    "STK3007",
+                    initTarget.AssignmentErrorMessage ?? "The left side of 'init =' must be an initialization destination.",
+                    expression.unaryExpression());
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            EnsureAssignmentTargetCompatible(initTarget, initValue.Type, expression.assignmentExpression());
+            return initTarget;
+        }
+
         if (expression.conditionalExpression() is { } conditionalExpression)
         {
             return EvaluateConditionalExpression(conditionalExpression, scope, allowFunctionReference, expectedType);
@@ -6844,6 +6871,12 @@ internal sealed class TypeChecker
             return new ExpressionBinding(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
         }
 
+        if (expression.INIT() is not null && expression.unaryOperator() is null)
+        {
+            var initOperand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false, expectedType);
+            return MakeInitDestinationBinding(initOperand, expression);
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
         var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
 
@@ -6953,7 +6986,16 @@ internal sealed class TypeChecker
 
             if (index + 1 < postfixParts.Length
                 && postfixParts[index + 1].argumentList() is { } memberArguments
-                && TryGetPublishedTemplateMemberCallBinding(binding, memberArguments, out var publishedMemberCall))
+                && TryInvokeDynamicStorageMemberCall(binding, postfixPart.Identifier().GetText(), memberArguments, scope, postfixPart, out var dynamicMemberCall))
+            {
+                binding = dynamicMemberCall;
+                index++;
+                continue;
+            }
+
+            if (index + 1 < postfixParts.Length
+                && postfixParts[index + 1].argumentList() is { } publishedMemberArguments
+                && TryGetPublishedTemplateMemberCallBinding(binding, publishedMemberArguments, out var publishedMemberCall))
             {
                 binding = publishedMemberCall;
                 continue;
@@ -6988,6 +7030,147 @@ internal sealed class TypeChecker
         }
 
         return binding;
+    }
+
+    private bool TryInvokeDynamicStorageMemberCall(
+        ExpressionBinding receiver,
+        string memberName,
+        StarkParser.ArgumentListContext arguments,
+        Scope scope,
+        ParserRuleContext context,
+        out ExpressionBinding result)
+    {
+        result = null!;
+        if (receiver.Type.Kind != StarkTypeKind.Dynamic)
+        {
+            return false;
+        }
+
+        if (string.Equals(memberName, "MoveLast", StringComparison.Ordinal))
+        {
+            if (!receiver.IsAddressMutable)
+            {
+                ReportError(
+                    "STK3007",
+                    receiver.AssignmentErrorMessage ?? $"Dynamic storage MoveLast requires a mutable dynamic owner, but {DescribeExpressionTarget(receiver)} is not mutable.",
+                    context);
+            }
+
+            var moveLastArguments = arguments.argument();
+            if (moveLastArguments.Length != 0)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Dynamic storage MoveLast expects no arguments but received {moveLastArguments.Length}.",
+                    arguments);
+            }
+
+            var elementType = receiver.Type.ElementType ?? StarkTypeSymbols.Error;
+            result = new ExpressionBinding(
+                elementType,
+                NamedType: ResolveNamedTypeSymbol(elementType),
+                DiagnosticName: "dynamic storage MoveLast result");
+            return true;
+        }
+
+        if (string.Equals(memberName, "MoveAt", StringComparison.Ordinal))
+        {
+            if (!receiver.IsAddressMutable)
+            {
+                ReportError(
+                    "STK3007",
+                    receiver.AssignmentErrorMessage ?? $"Dynamic storage MoveAt requires a mutable dynamic owner, but {DescribeExpressionTarget(receiver)} is not mutable.",
+                    context);
+            }
+
+            var moveAtArguments = arguments.argument();
+            if (moveAtArguments.Length != 1)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Dynamic storage MoveAt expects one index argument but received {moveAtArguments.Length}.",
+                    arguments);
+            }
+            else
+            {
+                var index = EvaluateExpression(
+                    moveAtArguments[0].expression(),
+                    scope,
+                    allowFunctionReference: false,
+                    NonNegativeI64Type);
+                if (index.Type.Kind != StarkTypeKind.Integer)
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Dynamic storage MoveAt index must be an integer, but found '{index.Type.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(64), index.Type)}",
+                        moveAtArguments[0].expression());
+                }
+                else if (!IsProvablyNonNegativeIntegerType(index.Type))
+                {
+                    ReportError(
+                        "STK3002",
+                        "Dynamic storage MoveAt index must be provably non-negative.",
+                        moveAtArguments[0].expression());
+                }
+            }
+
+            var elementType = receiver.Type.ElementType ?? StarkTypeSymbols.Error;
+            result = new ExpressionBinding(
+                elementType,
+                NamedType: ResolveNamedTypeSymbol(elementType),
+                DiagnosticName: "dynamic storage MoveAt result");
+            return true;
+        }
+
+        var isReserve = string.Equals(memberName, "Reserve", StringComparison.Ordinal);
+        var isTryReserve = string.Equals(memberName, "TryReserve", StringComparison.Ordinal);
+        if (!isReserve && !isTryReserve)
+        {
+            return false;
+        }
+
+        var methodResultType = isTryReserve ? StarkTypeSymbols.Bool : StarkTypeSymbols.Void;
+        result = new ExpressionBinding(methodResultType, DiagnosticName: $"dynamic storage {memberName}");
+
+        if (!receiver.IsAddressMutable)
+        {
+            ReportError(
+                "STK3007",
+                receiver.AssignmentErrorMessage ?? $"Dynamic storage {memberName} requires a mutable dynamic owner, but {DescribeExpressionTarget(receiver)} is not mutable.",
+                context);
+        }
+
+        var suppliedArguments = arguments.argument();
+        if (suppliedArguments.Length != 1)
+        {
+            ReportError(
+                "STK3009",
+                $"Dynamic storage {memberName} expects one additional-capacity argument but received {suppliedArguments.Length}.",
+                arguments);
+            return true;
+        }
+
+        var additional = EvaluateExpression(
+            suppliedArguments[0].expression(),
+            scope,
+            allowFunctionReference: false,
+            NonNegativeI64Type);
+        if (additional.Type.Kind != StarkTypeKind.Integer)
+        {
+            ReportError(
+                "STK3002",
+                $"Dynamic storage {memberName} additional capacity must be an integer, but found '{additional.Type.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(64), additional.Type)}",
+                suppliedArguments[0].expression());
+        }
+        else if (!IsProvablyNonNegativeIntegerType(additional.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Dynamic storage {memberName} additional capacity must be provably non-negative.",
+                suppliedArguments[0].expression());
+        }
+
+        return true;
     }
 
     private bool TryEvaluateUnsafeRawSliceConstructionPrefix(
@@ -7336,6 +7519,11 @@ internal sealed class TypeChecker
 
         if (expectedType.Kind != StarkTypeKind.Named || expectedType.NamedType is null)
         {
+            if (expectedType.Kind == StarkTypeKind.Dynamic && expectedType.ElementType is not null)
+            {
+                return expectedType;
+            }
+
             ReportError(
                 "STK3002",
                 $"Target-typed object creation requires a named target type, but got '{expectedType.DisplayName}'.",
@@ -9247,6 +9435,11 @@ internal sealed class TypeChecker
 
     private ExpressionBinding ApplyIndex(ExpressionBinding target, StarkParser.ExpressionListContext indexes, Scope scope, ParserRuleContext context)
     {
+        if (target.Type.Kind == StarkTypeKind.Dynamic && target.Type.ElementType is not null)
+        {
+            return ApplyDynamicIndex(target, indexes, scope, context);
+        }
+
         if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
         {
             var indexExpressions = indexes.expression();
@@ -9347,15 +9540,17 @@ internal sealed class TypeChecker
 
             if (currentType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Slice && currentType.ElementType is not null)
             {
+                var containerInitializationKind = currentType.InitializationKind;
                 currentIsAddressMutable = currentType.Kind == StarkTypeKind.Slice
                     ? currentIsAddressMutable
-                        && currentType.IsMutableView
+                        && (currentType.IsMutableView || currentType.InitializationKind != StarkInitializationKind.None)
                         && currentType.AccessKind != StarkAccessKind.Frozen
                     : currentIsAddressMutable
                         && currentType.AccessKind != StarkAccessKind.Frozen;
                 currentType = currentUsesFrozenProjectionSemantics
                     ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
                     : ProjectFrozenView(currentType, currentType.ElementType);
+                currentType = ApplyProjectedInitializationKind(currentType, containerInitializationKind);
                 currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
                 currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
                     || currentType.AccessKind == StarkAccessKind.Frozen;
@@ -9516,6 +9711,11 @@ internal sealed class TypeChecker
             return valueTextConversion;
         }
 
+        if (target.Type.Kind == StarkTypeKind.Dynamic)
+        {
+            return ApplyDynamicMemberAccess(target, memberName, context);
+        }
+
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
@@ -9630,6 +9830,113 @@ internal sealed class TypeChecker
 
         ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private ExpressionBinding ApplyDynamicMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
+    {
+        if (!string.Equals(memberName, "Length", StringComparison.Ordinal)
+            && !string.Equals(memberName, "Capacity", StringComparison.Ordinal))
+        {
+            ReportError("STK3005", $"Type '{target.Type.DisplayName}' does not contain a field named '{memberName}'.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var memberType = NonNegativeI64Type;
+        return new ExpressionBinding(
+            memberType,
+            IsAssignable: false,
+            NamedType: ResolveNamedTypeSymbol(memberType),
+            DiagnosticName: string.Equals(memberName, "Length", StringComparison.Ordinal)
+                ? "dynamic storage length"
+                : "dynamic storage capacity",
+            RootGlobalName: target.RootGlobalName,
+            RootGlobalBindingKind: target.RootGlobalBindingKind,
+            HasConstProvenance: HasConstProvenance(target),
+            MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
+                ? $"{memoryRootKey}.{memberName}"
+                : null,
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+    }
+
+    private ExpressionBinding ApplyDynamicIndex(
+        ExpressionBinding target,
+        StarkParser.ExpressionListContext indexes,
+        Scope scope,
+        ParserRuleContext context)
+    {
+        var indexExpressions = indexes.expression();
+        if (indexExpressions.Length is not (1 or 2))
+        {
+            ReportError("STK3008", "Dynamic storage indexing supports either one integer index or two integer expressions: start and count.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        foreach (var indexExpression in indexExpressions)
+        {
+            var indexType = EvaluateExpression(indexExpression, scope, allowFunctionReference: false).Type;
+            if (indexType.Kind != StarkTypeKind.Integer)
+            {
+                ReportError(
+                    "STK3002",
+                    $"Dynamic storage indexing on {DescribeExpressionTarget(target)} expects integer operands but found '{indexType.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(32), indexType)}",
+                    indexExpression);
+            }
+        }
+
+        var elementType = UsesFrozenProjectionSemantics(target)
+            ? StarkTypeSymbols.FreezeReachableView(target.Type.ElementType!)
+            : ProjectFrozenView(target.Type, target.Type.ElementType!);
+        var isAddressMutable = target.IsAddressMutable
+            && target.Type.AccessKind != StarkAccessKind.Frozen
+            && elementType.AccessKind != StarkAccessKind.Frozen;
+        var memoryRootKey = target.MemoryRootKey;
+
+        if (indexExpressions.Length == 1)
+        {
+            return new ExpressionBinding(
+                elementType,
+                IsAssignable: isAddressMutable,
+                NamedType: ResolveNamedTypeSymbol(elementType),
+                DiagnosticName: target.DiagnosticName is null ? "dynamic storage element" : $"dynamic storage element of {target.DiagnosticName}",
+                IsAddressable: target.IsAddressable,
+                IsAddressMutable: isAddressMutable,
+                RootGlobalName: target.RootGlobalName,
+                RootGlobalBindingKind: target.RootGlobalBindingKind,
+                AssignmentErrorMessage: target.RootGlobalBindingKind is not null
+                    && target.RootGlobalName is not null
+                    && !isAddressMutable
+                    ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, "dynamic storage element")
+                    : target.Type.AccessKind == StarkAccessKind.Frozen
+                        ? DescribeFrozenMutationError("dynamic storage element")
+                    : target.AssignmentErrorMessage,
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target)
+                    || elementType.AccessKind == StarkAccessKind.Frozen,
+                HasConstProvenance: HasConstProvenance(target),
+                MemoryRootKey: memoryRootKey is { } elementMemoryRootKey
+                    ? AppendMemoryRootIndexKey(elementMemoryRootKey, indexExpressions[0])
+                    : null,
+                MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+        }
+
+        var sliceType = StarkTypeSymbols.ApplyQualifiers(
+            StarkTypeSymbols.Slice(elementType),
+            isMutableView: isAddressMutable);
+        return new ExpressionBinding(
+            sliceType,
+            IsAssignable: false,
+            NamedType: ResolveNamedTypeSymbol(sliceType),
+            DiagnosticName: target.DiagnosticName is null ? "dynamic storage range" : $"dynamic storage range of {target.DiagnosticName}",
+            IsAddressable: true,
+            IsAddressMutable: isAddressMutable,
+            RootGlobalName: target.RootGlobalName,
+            RootGlobalBindingKind: target.RootGlobalBindingKind,
+            UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target)
+                || elementType.AccessKind == StarkAccessKind.Frozen,
+            HasConstProvenance: HasConstProvenance(target),
+            MemoryRootKey: memoryRootKey is { } rangeMemoryRootKey
+                ? AppendMemoryRootTextRangeKey(rangeMemoryRootKey, indexExpressions[0], indexExpressions[1], scope)
+                : null,
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
     }
 
     private bool TryApplyValueTextConversionMemberAccess(
@@ -10396,6 +10703,7 @@ internal sealed class TypeChecker
                 StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(monomorphizedElement, strippedType.FixedLength),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(monomorphizedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(monomorphizedElement, strippedType.IsMutablePointer),
+                StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(monomorphizedElement),
                 _ => strippedType
             };
             monomorphizedType = StarkTypeSymbols.WithQualifiers(
@@ -10778,6 +11086,7 @@ internal sealed class TypeChecker
                     StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(newElement, coreType.FixedLength),
                     StarkTypeKind.Slice => StarkTypeSymbols.Slice(newElement),
                     StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(newElement, coreType.IsMutablePointer),
+                    StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(newElement),
                     _ => coreType
                 };
             }
@@ -11453,6 +11762,44 @@ internal sealed class TypeChecker
         }
     }
 
+    private ExpressionBinding MakeInitDestinationBinding(ExpressionBinding operand, ParserRuleContext context)
+    {
+        if (!operand.IsAddressable)
+        {
+            ReportError(
+                "STK3002",
+                $"Initialization destination '{operand.DiagnosticName ?? operand.Type.DisplayName}' must be addressable storage.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (!operand.IsAddressMutable)
+        {
+            ReportError(
+                "STK3002",
+                operand.AssignmentErrorMessage
+                    ?? $"Initialization destination '{operand.DiagnosticName ?? operand.Type.DisplayName}' must be mutable.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var initType = StarkTypeSymbols.WithQualifiers(
+            operand.Type,
+            initializationKind: StarkInitializationKind.Init,
+            isMutableView: operand.Type.Kind == StarkTypeKind.Slice || operand.Type.IsMutableView);
+        return operand with
+        {
+            Type = initType,
+            IsAssignable = true,
+            NamedType = ResolveNamedTypeSymbol(initType),
+            IsAddressable = true,
+            IsAddressMutable = true,
+            DiagnosticName = operand.DiagnosticName is null
+                ? "initialization destination"
+                : $"initialization destination for {operand.DiagnosticName}"
+        };
+    }
+
     private ConstructorShape? CheckObjectCreationArguments(
         StarkParser.ArgumentListContext? arguments,
         ParserRuleContext diagnosticContext,
@@ -11461,6 +11808,43 @@ internal sealed class TypeChecker
     {
         var suppliedArguments = arguments?.argument() ?? [];
         var argumentCount = suppliedArguments.Length;
+
+        if (createdType.Kind == StarkTypeKind.Dynamic)
+        {
+            if (argumentCount > 1)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Dynamic storage creation expects zero arguments or one capacity argument, but received {argumentCount}.",
+                    diagnosticContext);
+                return null;
+            }
+
+            if (argumentCount == 1)
+            {
+                var capacity = EvaluateExpression(
+                    suppliedArguments[0].expression(),
+                    scope,
+                    allowFunctionReference: false,
+                    NonNegativeI64Type);
+                if (capacity.Type.Kind != StarkTypeKind.Integer)
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Dynamic storage capacity must be an integer, but found '{capacity.Type.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(64), capacity.Type)}",
+                        suppliedArguments[0].expression());
+                }
+                else if (!IsProvablyNonNegativeIntegerType(capacity.Type))
+                {
+                    ReportError(
+                        "STK3002",
+                        "Dynamic storage capacity must be provably non-negative.",
+                        suppliedArguments[0].expression());
+                }
+            }
+
+            return null;
+        }
 
         if (createdType.Kind != StarkTypeKind.Named || createdType.NamedType is null)
         {
@@ -12037,9 +12421,22 @@ internal sealed class TypeChecker
 
     private static StarkTypeSymbol ProjectProjectionType(ExpressionBinding source, StarkTypeSymbol projectedType)
     {
-        return UsesFrozenProjectionSemantics(source)
+        var projected = UsesFrozenProjectionSemantics(source)
             ? StarkTypeSymbols.FreezeReachableView(projectedType)
             : ProjectFrozenView(source.Type, projectedType);
+        return ApplyProjectedInitializationKind(projected, source.Type.InitializationKind);
+    }
+
+    private static StarkTypeSymbol ApplyProjectedInitializationKind(
+        StarkTypeSymbol projectedType,
+        StarkInitializationKind initializationKind)
+    {
+        return initializationKind == StarkInitializationKind.None
+            ? projectedType
+            : StarkTypeSymbols.WithQualifiers(
+                projectedType,
+                initializationKind: initializationKind,
+                isMutableView: projectedType.Kind == StarkTypeKind.Slice || projectedType.IsMutableView);
     }
 
     private static StarkTypeSymbol ProjectFrozenView(StarkTypeSymbol sourceType, StarkTypeSymbol projectedType)

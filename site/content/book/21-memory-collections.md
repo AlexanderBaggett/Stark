@@ -25,6 +25,24 @@ This chapter teaches owned heap-backed library values.
 
 {{< stark-sample "assets/book/stdlib-samples/memory-collections.stark" >}}
 
+## Dynamic Storage As The Language Primitive
+
+The language-level primitive for growable owned storage is `dynamic T`.
+Collections can use it when they need a typed backing allocation, an initialized
+element prefix, and explicit spare capacity without exposing raw pointers in
+their public implementation shape.
+
+`dynamic T` is not a replacement for collection APIs. It is the lower-level
+storage contract those APIs can build on:
+
+- the owner value tracks `Length` and `Capacity`
+- initialized elements are the dense prefix `0..Length`
+- spare capacity is written through `init T` or `init T[]`
+- destruction drops exactly initialized elements and skips spare capacity
+
+That gives collection internals room to be fast while keeping allocation and
+initialization visible to the compiler.
+
 ## `System.Memory`
 
 `System.Memory` defines the allocation vocabulary used by heap-backed standard

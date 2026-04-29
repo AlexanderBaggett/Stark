@@ -211,6 +211,13 @@ internal static class GenericTemplateBodyComplexityEstimator
 
     private static int EstimateAssignmentExpression(StarkParser.AssignmentExpressionContext assignmentExpression)
     {
+        if (assignmentExpression.INIT() is not null)
+        {
+            return 1
+                + EstimateUnaryExpression(assignmentExpression.unaryExpression())
+                + EstimateAssignmentExpression(assignmentExpression.assignmentExpression());
+        }
+
         if (assignmentExpression.assignmentOperator() is not null)
         {
             return 1

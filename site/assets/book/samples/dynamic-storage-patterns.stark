@@ -1,0 +1,91 @@
+module Book.DynamicStoragePatterns
+
+struct IntList {
+    dynamic i32[0 max] Items;
+}
+
+fn void PushInt(mut borrow IntList self, i32[0 max] value) {
+    if (self.Items.Length == self.Items.Capacity) {
+        self.Items.Reserve(1);
+    }
+
+    init self.Items[self.Items.Length] = value;
+}
+
+fn i32[0 max] Sum(borrow IntList self) {
+    stack i32[0 max][] values = self.Items[0, self.Items.Length];
+    stack mut i64[0 max] index = 0;
+    stack mut i32[0 max] total = 0;
+
+    while willexit (index < self.Items.Length) {
+        total += values[index];
+        index += 1;
+    }
+
+    return total;
+}
+
+struct ByteBuffer {
+    dynamic u8[0 255] Bytes;
+}
+
+fn void PushByte(mut borrow ByteBuffer self, u8[0 255] value) {
+    if (self.Bytes.Length == self.Bytes.Capacity) {
+        self.Bytes.Reserve(1);
+    }
+
+    init self.Bytes[self.Bytes.Length] = value;
+}
+
+fn void AppendStark(mut borrow ByteBuffer self) {
+    PushByte(self, (u8[0 255])83);
+    PushByte(self, (u8[0 255])116);
+    PushByte(self, (u8[0 255])97);
+    PushByte(self, (u8[0 255])114);
+    PushByte(self, (u8[0 255])107);
+}
+
+fn void AppendCachePath(mut borrow ByteBuffer self) {
+    PushByte(self, (u8[0 255])47);
+    PushByte(self, (u8[0 255])99);
+    PushByte(self, (u8[0 255])97);
+    PushByte(self, (u8[0 255])99);
+    PushByte(self, (u8[0 255])104);
+    PushByte(self, (u8[0 255])101);
+    PushByte(self, (u8[0 255])47);
+    PushByte(self, (u8[0 255])115);
+    PushByte(self, (u8[0 255])116);
+    PushByte(self, (u8[0 255])97);
+    PushByte(self, (u8[0 255])114);
+    PushByte(self, (u8[0 255])107);
+}
+
+fn retborrow u8[0 255][] ViewBytes(borrow ByteBuffer self) {
+    return self.Bytes[0, self.Bytes.Length];
+}
+
+export ffi fn i32[min max] main() {
+    stack mut IntList values = new();
+    PushInt(values, 10);
+    PushInt(values, 32);
+
+    if (Sum(values) != 42) {
+        return 1;
+    }
+
+    stack mut ByteBuffer text = new();
+    AppendStark(text);
+    stack u8[0 255][] textBytes = ViewBytes(text);
+    if (text.Bytes.Length != 5 || textBytes[0] != (u8[0 255])83 || textBytes[4] != (u8[0 255])107) {
+        return 2;
+    }
+
+    stack mut ByteBuffer path = new();
+    AppendCachePath(path);
+    stack u8[0 255][] pathBytes = ViewBytes(path);
+    if (path.Bytes.Length != 12 || pathBytes[0] != (u8[0 255])47 || pathBytes[11] != (u8[0 255])107) {
+        return 3;
+    }
+
+    return 0;
+}

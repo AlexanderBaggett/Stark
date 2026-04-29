@@ -132,7 +132,7 @@ Common consequences include:
 - constrained destruction and explicit shared-state rules can justify `nounwind`, `nosync`, and `nofree`
 - `finite` reasoning can justify `willreturn` and `mustprogress`
 - `out` and `init` contracts can justify `initializes(...)`, writable-destination reasoning, and `dead_on_return`
-- stronger slice, bounded raw pointer, and array qualifiers can justify `align`, better range reasoning, and more aggressive loop/vectorization facts
+- stronger slice, dynamic storage, bounded raw pointer, and array qualifiers can justify `align`, better range reasoning, and more aggressive loop/vectorization facts
 
 These are compiler outputs, not language syntax.
 They are emitted only when the implementation can prove them from the source rules plus body analysis.
@@ -189,7 +189,77 @@ Bounded raw pointer regions produce these backend facts:
 
 Raw pointer region expressions inside `where disjoint(...)` and `if disjoint(...)` are lowered as first-class region facts, not as runtime slice aggregates. Their range comparisons use byte intervals derived from base pointer, start offset, element size, and count.
 
-### 2.4 Independent Loops
+### 2.4 Dynamic Storage and Initialization Views
+
+`dynamic T` is the compiler-owned representation for owned capacity-bearing element storage. It is a source-level value with allocation provenance, capacity, element type, initialized-region facts, and destructor obligations. It is not a standard-library wrapper over raw pointers, and safe Stark code does not recover a public raw pointer from it.
+
+The semantic model separates three regions:
+
+- the dynamic owner value, which moves by ownership and releases its backing allocation at drop
+- the initialized element region, which can be observed through `T[]`, `borrow T`, `borrow mut T`, and ordinary element access
+- the spare element region, which can be observed only through `init T` or `init T[]` destinations
+
+`init T` and `init T[]` are write-only initialization destinations. A load from an `init` destination is invalid. An `init` store constructs a value, marks the destination initialized for the surrounding control-flow proof, and starts any required lifetime. For dynamic storage, ordinary `init` writes extend the dense initialized prefix: the compiler accepts the current `Length`, the next visible compile-time slot, or an initialization view whose previous slots were already initialized. `MoveLast()` transfers the tail initialized element out of dynamic storage, decrements the owner length, and marks the former tail slot spare. `MoveAt(index)` transfers one initialized element out, shifts the later initialized suffix left with overlap-safe move semantics, decrements the owner length, and marks the former tail slot spare. Non-tail moves that do not use `MoveAt` require an explicit sparse initialized-slot proof before the compiler can preserve safe initialized-length facts. Dynamic owner destruction walks exactly the initialized prefix, runs element drops when `T` needs runtime destruction, skips spare capacity, and then releases the backing allocation.
+
+Sparse initialized-slot proofs are represented by unsafe proof boundaries. Inside an unsafe boundary, ownership validation accepts dynamic slot reads, replacements, non-tail moves, and initialization writes whose initialized-slot fact is supplied by the programmer rather than by the visible dense prefix. Accepting that proof demotes the compiler-visible dynamic prefix to unknown, so the fact cannot leak into later safe code. Dense-prefix operations keep the stronger exact prefix state and remain the performance-oriented default.
+
+Dynamic storage preserves the performance shape of low-level buffer code while giving the compiler stronger facts than ordinary raw pointers:
+
+- the backing allocation carries element type, capacity, alignment, and allocator provenance
+- `0 <= initializedLength <= capacity` facts are explicit at reserve, slice, move, drop, and initialization sites
+- initialized slices derived from dynamic storage inherit the dynamic root, length range, alignment, and readonly/mutable provenance
+- spare initialization views derived from dynamic storage inherit the dynamic root, element count, alignment, write-only authority, and initialized-on-write contract
+- reserve operations preserve the initialized prefix and may reallocate the backing storage without exposing a raw pointer escape
+- `TryReserve(additional)` has the same prefix-preservation contract as `Reserve(additional)`, but lowers through fallible allocator helpers and returns `false` instead of trapping on capacity overflow, byte-size overflow, or allocation failure
+- tail moves preserve the dense initialized prefix by loading the old last element and committing `initializedLength - 1` to the dynamic owner
+- indexed dense-prefix moves preserve the dense initialized prefix by loading the removed element, lowering the suffix shift to `llvm.memmove`, and committing `initializedLength - 1` to the dynamic owner
+- raw pointer escapes from dynamic storage are not part of the safe surface and demote optimizer facts at the unsafe or FFI boundary that performs the escape
+
+LLVM lowering uses the direct representation the target and ABI require, normally an owned header containing a backing pointer plus capacity/allocation metadata. Dynamic operations do not introduce virtual dispatch or mandatory runtime metadata lookups. The compiler emits ordinary pointer arithmetic for proven element accesses and uses the source initialization facts to decide which operations may read, write, move, drop, or skip memory.
+
+Backend facts from dynamic storage include:
+
+- fresh dynamic allocations receive allocation facts such as `noalias`, `nonnull`, `noundef`, `align`, `dereferenceable`, and `allocsize` when the request is nonzero and the allocator contract proves them
+- dynamic reallocation is conservative about `noalias` when the runtime may return the original block
+- initialized element accesses use `inbounds` GEP only when the index is proven within the initialized range
+- spare initialization writes lower as write-only stores and can feed `initializes(...)`-style facts when the byte range is known
+- dynamic owner drops use the stored initialized length as the loop bound, so destructible elements are destroyed without scanning spare capacity
+- eligible bulk initialization loops over `init T[]` lower to `llvm.memset` or vectorized stores when representation rules allow it
+- eligible bulk moves/copies from initialized dynamic ranges to disjoint initialization ranges lower to `llvm.memcpy`; overlap-preserving forms lower to `llvm.memmove`
+- independent loops over initialized slices or initialization views can carry `!llvm.access.group`, `!llvm.loop.parallel_accesses`, scoped `!alias.scope`, and `!noalias` metadata when source disjointness proves non-overlap
+
+Sparse data structures use explicit source facts for initialized slots. When the compiler can see the initialized range or slot identity, reads, moves, and drops are safe. When a data structure keeps a dynamic sparse state that the type checker cannot prove from control flow, the proof boundary is explicit and unsafe; it does not require converting the storage to a raw pointer. Code that uses an unsafe sparse proof is responsible for preserving the runtime dynamic owner invariant before ordinary safe code observes or drops the owner.
+
+### 2.5 Standard Library Comparison Implementations
+
+The standard library keeps stable public modules under their ordinary names,
+such as `System.Collections`, while new-feature rewrites live under
+`System.Experimental.*` modules. The comparison modules are source-visible and
+imported explicitly by benchmarks or tests, but they are not re-exported from
+the root `System` module.
+
+This keeps current APIs stable while letting benchmarks select old and new
+implementations side by side:
+
+```stark
+import System.Collections
+import System.Experimental.Collections
+```
+
+Comparison modules use the same operation names where the source contract is
+the same, but their fully qualified type names are distinct. For example,
+`System.Collections.List<T>` remains the current raw-pointer-backed public
+collection, while `System.Experimental.Collections.List<T>` is the
+dynamic-storage comparison collection.
+
+Dynamic-storage comparison types inherit the language-level dynamic storage
+contract. `dynamic T.TryReserve(additional)` returns an explicit success bit,
+preserves the initialized prefix on success, and leaves the owner unchanged on
+failure. Comparison modules use it to map capacity overflow, byte-size overflow,
+and allocation failure into `System.Memory.MemoryStatus` without exposing raw
+pointers or relying on trapping allocator paths.
+
+### 2.6 Independent Loops
 
 `independent` on a `while` or `for` loop means loop iterations have no loop-carried memory dependencies. The loop body may still use induction variables, local scalar temporaries, and immutable reads, but a memory write in one iteration may not be read or written by another iteration.
 
@@ -204,7 +274,7 @@ The contract is semantic, not a hint. If a loop marked `independent` contains a 
 
 The accepted memory-backed subset requires a single mutable integer induction variable incremented by exactly one. Slice and fixed-array memory accesses use the simple form `root[index]`; bounded raw pointer memory accesses may also use the raw pointer spelling `*(&root[index])`. Field projections are accepted when they are rooted at the per-iteration element, such as `root[index].field`, and their field path participates in the memory-root key used for dependency checks. Structured `if` statements are accepted when their condition and every branch satisfy the same dependency-validation subset. In all cases, `index` is the loop induction variable, and write/read root pairs are either the same indexed root or proven disjoint by source facts, bounded raw pointer region facts, borrow exclusivity, or an enclosing `if disjoint(...)` fact. Law calls with scalar returns are allowed after their argument memory reads have been validated; calls with unproven memory effects report `STK3027`. Accepted independent loops carry their loop contract and access groups through MIR/SSA, emit LLVM `!llvm.access.group` on covered memory operations, and attach `!llvm.loop.mustprogress` plus `!llvm.loop.parallel_accesses` metadata on the loop backedge. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member projections that are not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and unsupported calls remain outside the accepted subset.
 
-### 2.5 Const Parameters
+### 2.7 Const Parameters
 
 `const` on a parameter means the reachable object graph has const provenance and is deeply immutable. It is stronger than `frozen`, which is a borrow-duration readonly view. A const parameter describes memory that safe Stark code cannot mutate at any point through any reachable path.
 

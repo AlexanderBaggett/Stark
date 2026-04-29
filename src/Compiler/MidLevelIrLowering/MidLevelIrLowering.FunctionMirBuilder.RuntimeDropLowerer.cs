@@ -112,6 +112,11 @@ internal sealed partial class MidLevelIrLowerer
                     && RequiresRuntimeDropCore(type.ElementType, visiting);
             }
 
+            if (type.Kind == StarkTypeKind.Dynamic)
+            {
+                return true;
+            }
+
             if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
             {
                 return false;
@@ -216,6 +221,20 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
+            if (type.Kind == StarkTypeKind.Dynamic)
+            {
+                if (type.ElementType is { } elementType)
+                {
+                    EmitDynamicStorageElementDropsCore(operand, type, elementType);
+                }
+
+                Emit(
+                    MidLevelIrStatementKind.Evaluate,
+                    $"drop {operand.Text}",
+                    value: new MidLevelIrDynamicStorageFreeRValue(operand, $"drop {operand.Text}"));
+                return;
+            }
+
             var temporary = CreateTemporaryLocal(type, "drop");
             EmitOperandAssignment(temporary, operand, operand.Text);
 
@@ -240,6 +259,75 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             EmitStructFieldDropsCore(temporary, type, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private void EmitDynamicStorageElementDropsCore(
+            MidLevelIrOperand storage,
+            StarkTypeSymbol storageType,
+            StarkTypeSymbol elementType)
+        {
+            if (!RequiresRuntimeDropCore(elementType))
+            {
+                return;
+            }
+
+            var dataPointerType = StarkTypeSymbols.RawPointer(elementType, isMutable: true);
+            var dataPointer = LowerKnownFieldAccess(storage, "Data", 0, dataPointerType, "Data");
+            var length = LowerKnownFieldAccess(storage, "Length", 1, NonNegativeI64Type, "Length");
+            var index = CreateTemporaryLocal(NonNegativeI64Type, "dynamic_drop_index");
+            EmitOperandAssignment(index, length, length.Text);
+
+            var conditionBlock = CreateBlock("dynamic_drop_cond");
+            var bodyBlock = CreateBlock("dynamic_drop_body");
+            var exitBlock = CreateBlock("dynamic_drop_exit");
+
+            EnsureGoto(conditionBlock.Id);
+
+            CurrentBlock = conditionBlock;
+            var hasElement = EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.GreaterThan,
+                    index,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.Zero, NonNegativeI64Type),
+                    StarkTypeSymbols.Bool,
+                    $"{index.Text} > 0"),
+                "cmp");
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [bodyBlock.Id, exitBlock.Id],
+                ConditionText: $"{storage.Text}.Length > 0",
+                Condition: hasElement);
+
+            CurrentBlock = bodyBlock;
+            var nextIndex = EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Subtract,
+                    index,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.One, NonNegativeI64Type),
+                    NonNegativeI64Type,
+                    $"{index.Text} - 1"),
+                "dynamic_drop_index");
+            EmitOperandAssignment(index, nextIndex, nextIndex.Text);
+
+            var elementAddress = EmitRequiredTemporary(
+                new MidLevelIrElementAddressRValue(
+                    dataPointer,
+                    elementType,
+                    index,
+                    ConstantIndex: null,
+                    AddressType(elementType, isMutable: true),
+                    $"{storage.Text}[{index.Text}]"),
+                "addr");
+            var elementValue = EmitRequiredTemporary(
+                new MidLevelIrLoadIndirectRValue(
+                    elementAddress,
+                    elementType,
+                    $"{storage.Text}[{index.Text}]"),
+                "drop");
+            EmitRuntimeDropFromOperandCore(elementValue, elementType);
+            EnsureGoto(conditionBlock.Id);
+
+            CurrentBlock = exitBlock;
         }
 
         private void EmitStructFieldDropsCore(
@@ -457,6 +545,11 @@ internal sealed partial class MidLevelIrLowerer
                     targetType: assignment.TargetType,
                     value: new MidLevelIrUseRValue(assignment.ResultValue),
                     address: assignment.Address);
+                if (assignment.DynamicLengthUpdate is not null)
+                {
+                    EmitDynamicStorageLengthUpdateCore(assignment.DynamicLengthUpdate, assignment.Text);
+                }
+
                 RecordMoveFromOperandCore(assignment.ResultValue, assignment.TargetType);
                 return;
             }
@@ -469,6 +562,47 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             RecordMoveFromOperandCore(assignment.ResultValue, assignment.TargetType);
+        }
+
+        private void EmitDynamicStorageLengthUpdateCore(DynamicStorageLengthUpdate update, string text)
+        {
+            var lengthType = NonNegativeI64Type;
+            var lengthAddress = EmitTemporary(
+                new MidLevelIrFieldAddressRValue(
+                    update.StorageAddress,
+                    update.StorageType,
+                    "Length",
+                    1,
+                    AddressType(lengthType, isMutable: true),
+                    $"{update.StorageAddress.Text}.Length"),
+                "addr");
+            if (lengthAddress is null)
+            {
+                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
+                return;
+            }
+
+            var index = CoerceOperand(update.InitializedIndex, lengthType) ?? update.InitializedIndex;
+            var initializedLength = EmitTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Add,
+                    index,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.One, lengthType),
+                    lengthType,
+                    $"{update.InitializedIndex.Text} + 1"),
+                "dynamic_len");
+            if (initializedLength is null)
+            {
+                MarkUnsupported(reason: "Dynamic storage initialization could not compute the initialized length.");
+                return;
+            }
+
+            Emit(
+                MidLevelIrStatementKind.StoreIndirect,
+                $"{text}: length",
+                targetType: lengthType,
+                value: new MidLevelIrUseRValue(initializedLength),
+                address: lengthAddress);
         }
 
         private sealed class RuntimeDropLowerer
