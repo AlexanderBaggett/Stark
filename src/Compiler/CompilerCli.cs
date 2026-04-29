@@ -764,7 +764,7 @@ internal static class CompilerCli
                 await stderr.WriteAsync(toolchainResult.StandardError);
             }
 
-            var manifestPath = DeriveLibraryManifestPath(toolchainResult.OutputPath);
+            var manifestPath = DeriveLibraryManifestPath(toolchainResult.OutputPath, inputPath, result);
             var manifest = PackageImageBuilder.Create(
                 result,
                 toolchainResult.OutputPath,
@@ -2604,11 +2604,29 @@ internal static class CompilerCli
         return Path.GetFullPath($"libstark{extension}");
     }
 
-    private static string DeriveLibraryManifestPath(string libraryOutputPath)
+    private static string DeriveLibraryManifestPath(string libraryOutputPath, string? inputPath, CompilationResult result)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(libraryOutputPath)) ?? Environment.CurrentDirectory;
-        var baseName = Path.GetFileNameWithoutExtension(libraryOutputPath);
+        var emittedLibraryFileName = Path.GetFileName(libraryOutputPath);
+        var canonicalLibraryFileName = ResolvePackageLibraryFileName(null, inputPath, result);
+        var baseName = GetLibraryPackageImageBaseName(emittedLibraryFileName, canonicalLibraryFileName);
         return Path.Combine(directory, $"{baseName}.starkpkg.json");
+    }
+
+    private static string GetLibraryPackageImageBaseName(string emittedLibraryFileName, string canonicalLibraryFileName)
+    {
+        var emittedBaseName = Path.GetFileNameWithoutExtension(emittedLibraryFileName);
+        var canonicalBaseName = Path.GetFileNameWithoutExtension(canonicalLibraryFileName);
+
+        if (OperatingSystem.IsWindows()
+            && canonicalBaseName.StartsWith("lib", StringComparison.OrdinalIgnoreCase)
+            && emittedLibraryFileName.EndsWith(".lib", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(emittedBaseName, canonicalBaseName["lib".Length..], StringComparison.OrdinalIgnoreCase))
+        {
+            return canonicalBaseName;
+        }
+
+        return emittedBaseName;
     }
 
     private static string ResolvePackageLibraryFileName(string? requestedLibraryFile, string? inputPath, CompilationResult result)

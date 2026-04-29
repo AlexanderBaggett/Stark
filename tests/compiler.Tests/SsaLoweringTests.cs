@@ -879,6 +879,113 @@ public sealed class SsaLoweringTests
             });
     }
 
+    [Fact]
+    public void RuntimeDisjointTrueBranchCarriesScopedNoAliasFactsIntoSsaMemoryOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run(
+                rawmutptr<i32[-2147483648 2147483647]> left,
+                rawmutptr<i32[-2147483648 2147483647]> right) {
+                if disjoint(left, right) {
+                    *left = 7;
+                    return *right;
+                }
+
+                *left = 1;
+                return *right;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetSsa(result).Functions);
+        var trueBranch = Assert.Single(function.Blocks, static block => block.Label.Contains("if_then", StringComparison.Ordinal));
+        var falsePath = Assert.Single(function.Blocks, static block => block.Label.Contains("if_join", StringComparison.Ordinal));
+
+        var trueStore = Assert.Single(trueBranch.Instructions.OfType<SsaStoreIndirectInstruction>());
+        var trueLoad = Assert.Single(
+            trueBranch.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+        var trueStoreGroup = Assert.Single(trueStore.ScopedNoAliasGroups ?? []);
+        var trueLoadGroup = Assert.Single(trueLoad.ScopedNoAliasGroups ?? []);
+
+        Assert.Equal(trueStoreGroup, trueLoadGroup);
+        Assert.Contains("param:left", trueStoreGroup.RootKeys);
+        Assert.Contains("param:right", trueStoreGroup.RootKeys);
+
+        var falseStore = Assert.Single(falsePath.Instructions.OfType<SsaStoreIndirectInstruction>());
+        var falseLoad = Assert.Single(
+            falsePath.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaLoadIndirectRValue);
+
+        Assert.Null(falseStore.ScopedNoAliasGroups);
+        Assert.Null(falseLoad.ScopedNoAliasGroups);
+    }
+
+    [Fact]
+    public void IndependentForLoopsPreserveLoopContractsInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 10] Run() {
+                stack mut i32[0 10] sum = 0;
+                for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+                    sum += index;
+                }
+
+                return sum;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+
+        Assert.Contains(
+            function.Blocks.Select(static block => block.Terminator),
+            static terminator => terminator.LoopContracts is { Count: > 0 }
+                && terminator.LoopContracts.Contains("independent", StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void IndependentSliceLoopsCarryAccessGroupsInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Add(
+                disjoint borrow i32[-2147483648 2147483647][] left,
+                disjoint borrow i32[-2147483648 2147483647][] right,
+                disjoint borrow mut i32[-2147483648 2147483647][] output,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    output[index] = left[index] + right[index];
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaLoadIndirectRValue,
+                LoopAccessGroups.Count: > 0
+            });
+        Assert.Contains(
+            function.Blocks.Select(static block => block.Terminator),
+            static terminator => terminator.LoopAccessGroups is { Count: > 0 });
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

@@ -231,6 +231,64 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void DisjointParameterContractsFlowIntoSemanticNoAliasFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void TouchPrefix(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+
+            fn void TouchWhere(borrow mut Box left, borrow mut Box right) where disjoint(left, right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var prefixParameters = validation.Functions["TouchPrefix"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.True(prefixParameters["left"].GuaranteedNoAlias);
+        Assert.True(prefixParameters["right"].GuaranteedNoAlias);
+
+        var whereParameters = validation.Functions["TouchWhere"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.True(whereParameters["left"].GuaranteedNoAlias);
+        Assert.True(whereParameters["right"].GuaranteedNoAlias);
+    }
+
+    [Fact]
+    public void ConstParameterQualifierFlowsIntoSemanticReadonlyFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var parameter = Assert.Single(validation.Functions["Inspect"].Parameters!);
+        Assert.Equal("ptr", parameter.Name);
+        Assert.True(parameter.GuaranteedReadOnly);
+    }
+
+    [Fact]
     public void TransitiveCallEffectsFlowIntoSemanticSummaries()
     {
         var result = Compile(

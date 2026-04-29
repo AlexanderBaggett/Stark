@@ -991,7 +991,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void FrozenRawPointerLoadsEmitInvariantMetadata()
+    public void FrozenRawPointerLoadsDoNotEmitInvariantMetadataWithoutConstProvenance()
     {
         var result = Compile(
             """
@@ -1011,7 +1011,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load %Big, ptr %arg_box, !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load %Big, ptr %arg_box, !invariant\.load !\d+", llvm);
     }
 
     [Fact]
@@ -4197,8 +4197,8 @@ public sealed class LlvmIrEmissionTests
             options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvmRaw(result);
-        var runIndex = llvm.IndexOf("define fastcc noundef i64 @Run", StringComparison.Ordinal);
+        var llvm = NormalizeLlvm(GetLlvmRaw(result));
+        var runIndex = llvm.IndexOf("define fastcc i64 @Run", StringComparison.Ordinal);
         Assert.True(runIndex >= 0);
 
         var entryIndex = llvm.IndexOf("bb0:", runIndex, StringComparison.Ordinal);
@@ -7786,6 +7786,860 @@ public sealed class LlvmIrEmissionTests
         };
     }
 
+    [Fact]
+    public void RuntimeDisjointRawPointerConditionEmitsByteRangeComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 1] Check(rawptr<i32[-2147483648 2147483647]> left, rawptr<i32[-2147483648 2147483647]> right) {
+                if disjoint(left, right) {
+                    return 1;
+                }
+
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = NormalizeLlvm(GetLlvmRaw(result));
+
+        Assert.Contains("getelementptr i8, ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("or i1", llvm, StringComparison.Ordinal);
+        Assert.Contains("br i1", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeDisjointRawPointerRegionsUseElementCounts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Check(
+                rawptr<i32[-2147483648 2147483647]>[count] left,
+                rawptr<i32[-2147483648 2147483647]>[count] right,
+                i32[0 10] count) {
+                if disjoint(left[0, count], right[0, count]) {
+                    return true;
+                }
+
+                return false;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"getelementptr(?: inbounds nuw)? i32, ptr", llvm);
+        Assert.Matches(@"mul(?: nuw nsw)? i64", llvm);
+        Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("or i1", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeDisjointBorrowConditionEmitsAddressRangeComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn i32[0 1] Check(borrow Box left, borrow Box right) {
+                if disjoint(left, right) {
+                    return 1;
+                }
+
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("getelementptr i8, ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("or i1", llvm, StringComparison.Ordinal);
+        Assert.Contains("br i1", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeDisjointSliceConditionUsesViewDataAndLength()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Check(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
+                if disjoint(left, right) {
+                    return true;
+                }
+
+                return false;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("extractvalue", llvm, StringComparison.Ordinal);
+        Assert.Contains("getelementptr i8, ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("or i1", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeDisjointTrueBranchEmitsScopedNoAliasMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Check(
+                rawmutptr<i32[-2147483648 2147483647]> left,
+                rawmutptr<i32[-2147483648 2147483647]> right) {
+                if disjoint(left, right) {
+                    *left = 7;
+                    return *right;
+                }
+
+                return *right;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("stark.noalias.Check.runtime-disjoint-0.param.left", llvm, StringComparison.Ordinal);
+        Assert.Contains("stark.noalias.Check.runtime-disjoint-0.param.right", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", llvm);
+        Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", llvm);
+    }
+
+    [Fact]
+    public void DisjointRawPointerParametersEmitNoAliasAttributes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Touch");
+
+        Assert.Contains("ptr noundef noalias nocapture %arg_left", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef noalias nocapture %arg_right", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Touch(rawptr<i32[-2147483648 2147483647]>[4] input) {
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Touch");
+
+        Assert.Contains("ptr noundef nonnull dereferenceable(16) align 4 readonly nocapture %arg_input", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DisjointRawPointerParameterAccessesEmitScopedNoAliasMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Touch(
+                disjoint rawmutptr<i32[-2147483648 2147483647]> left,
+                disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+                *left = 11;
+                return *right;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("stark.noalias.Touch.param.left", llvm, StringComparison.Ordinal);
+        Assert.Contains("stark.noalias.Touch.param.right", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", llvm);
+        Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", llvm);
+    }
+
+    [Fact]
+    public void ConstRawPointerParametersEmitReadonlyAttributes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Inspect");
+
+        Assert.Contains("ptr noundef readonly nocapture %arg_ptr", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConstRawPointerParameterLoadsEmitInvariantMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Read(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                return *ptr;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+    }
+
+    [Fact]
+    public void RawSlicesPreserveRuntimeDisjointScopedNoAliasMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] CopyFirst(
+                rawmutptr<i32[-2147483648 2147483647]>[count] left,
+                rawptr<i32[-2147483648 2147483647]>[count] right,
+                i32[1 10] count) {
+                if disjoint(left[0, count], right[0, count]) {
+                    unsafe {
+                        stack mut mut i32[-2147483648 2147483647][] leftView = slice(left, count);
+                        stack i32[-2147483648 2147483647][] rightView = slice(right, count);
+                        leftView[0] = rightView[0];
+                        return rightView[0];
+                    }
+                }
+
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("stark.noalias.CopyFirst.runtime-disjoint-0.param.left", llvm, StringComparison.Ordinal);
+        Assert.Contains("stark.noalias.CopyFirst.runtime-disjoint-0.param.right", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", llvm);
+        Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", llvm);
+    }
+
+    [Fact]
+    public void RawSlicesFromConstPointersPreserveInvariantLoadMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Read(
+                const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+                i32[1 10] count) {
+                unsafe {
+                    stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
+                    return view[0];
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+    }
+
+    [Fact]
+    public void RawSlicesFromConstPointerLocalsPreserveInvariantLoadMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Read(
+                const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+                i32[1 10] count) {
+                stack rawptr<frozen i32[-2147483648 2147483647]> local = pointer;
+                unsafe {
+                    stack frozen i32[-2147483648 2147483647][] view = slice(local, count);
+                    return view[0];
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+    }
+
+    [Fact]
+    public void IndependentScalarLoopsEmitMustProgressLoopMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 10] Run() {
+                stack mut i32[0 10] value = 0;
+                while willexit independent (value < 4) {
+                    value += 1;
+                }
+
+                return value;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!llvm.loop !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentForLoopsEmitMustProgressLoopMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 10] Run() {
+                stack mut i32[0 10] sum = 0;
+                for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+                    sum += index;
+                }
+
+                return sum;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!llvm.loop !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentSliceLoopsEmitAccessGroupAndParallelLoopMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Add(
+                disjoint borrow i32[-2147483648 2147483647][] left,
+                disjoint borrow i32[-2147483648 2147483647][] right,
+                disjoint borrow mut i32[-2147483648 2147483647][] output,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    output[index] = left[index] + right[index];
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!llvm.access.group !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void SelectPositive(
+                disjoint borrow i32[-2147483648 2147483647][] left,
+                disjoint borrow i32[-2147483648 2147483647][] right,
+                disjoint borrow mut i32[-2147483648 2147483647][] output,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    if (left[index] > 0) {
+                        output[index] = left[index];
+                    } else {
+                        output[index] = right[index];
+                    }
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!llvm.access.group !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentSliceLoopsWithMemberProjectionsEmitAccessGroupAndParallelLoopMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Cell {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Copy(
+                disjoint borrow Cell[] input,
+                disjoint borrow mut Cell[] output,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    output[index].Value = input[index].Value;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!llvm.access.group !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentBoundedRawPointerLoopsEmitAccessGroupAndParallelLoopMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                disjoint rawptr<i32[-2147483648 2147483647]>[count] input,
+                disjoint rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count)
+                where disjoint(input[0, count], output[0, count]) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = *(&input[index]);
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("!llvm.access.group !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentBoundedRawPointerLoopsUseRuntimeRegionFactsForParallelMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                rawptr<i32[-2147483648 2147483647]>[count] input,
+                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count) {
+                if disjoint(input[0, count], output[0, count]) {
+                    for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                        *(&output[index]) = *(&input[index]);
+                    }
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("!llvm.access.group !", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerCopyLoopLowersToMemcpyWhenNoAliasIsProven()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                rawptr<i32[-2147483648 2147483647]>[count] input,
+                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count)
+                where disjoint(input[0, count], output[0, count]) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = *(&input[index]);
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i32 %arg_count to i64", llvm);
+        Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %abi_rawptr_loop_count_\d+, 4", llvm);
+        Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
+        Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(.*\), !alias\.scope !\d+", llvm);
+        Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerCopyLoopInsideNontrivialFunctionLowersToMemcpy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                rawptr<i32[-2147483648 2147483647]>[count] input,
+                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count)
+                where disjoint(input[0, count], output[0, count]) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = *(&input[index]);
+                }
+
+                if (count > 0) {
+                    *(&output[0]) = 17;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerCopyLoopWithoutNoAliasProofKeepsScalarLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                rawptr<i32[-2147483648 2147483647]>[count] input,
+                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count) {
+                for willexit (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = *(&input[index]);
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%v\d+ = load i32, ptr %v\d+", llvm);
+        Assert.Matches(@"store i32 %v\d+, ptr %v\d+", llvm);
+    }
+
+    [Fact]
+    public void BoundedRawPointerCopyLoopInsideNontrivialFunctionWithoutNoAliasProofKeepsScalarLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                rawptr<i32[-2147483648 2147483647]>[count] input,
+                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count) {
+                for willexit (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = *(&input[index]);
+                }
+
+                if (count > 0) {
+                    *(&output[0]) = 17;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%v\d+ = load i32, ptr %v\d+", llvm);
+        Assert.Matches(@"store i32 %v\d+, ptr %v\d+", llvm);
+    }
+
+    [Fact]
+    public void BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmove()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void CopyOverlapSafe(
+                rawptr<i32[-2147483648 2147483647]>[4] input,
+                rawmutptr<i32[-2147483648 2147483647]>[4] output) {
+                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    temporary[index] = *(&input[index]);
+                }
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    *(&output[index]) = temporary[index];
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false\)", llvm);
+        Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("%slot_temporary", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerOverlapSafeTemporaryCopyInsideNontrivialFunctionLowersToMemmove()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void CopyOverlapSafe(
+                rawptr<i32[-2147483648 2147483647]>[4] input,
+                rawmutptr<i32[-2147483648 2147483647]>[4] output) {
+                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    temporary[index] = *(&input[index]);
+                }
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    *(&output[index]) = temporary[index];
+                }
+
+                *(&output[0]) = 17;
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false\)", llvm);
+        Assert.Contains("store i32 17", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerOverlapSafeTemporaryCopyWithTemporaryEpilogueUseKeepsScalarLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void CopyOverlapSafe(
+                rawptr<i32[-2147483648 2147483647]>[4] input,
+                rawmutptr<i32[-2147483648 2147483647]>[4] output) {
+                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    temporary[index] = *(&input[index]);
+                }
+
+                for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+                    *(&output[index]) = temporary[index];
+                }
+
+                *(&output[0]) = temporary[0];
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("@llvm.memmove.p0.p0.i64", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%v\d+ = load i32, ptr %v\d+", llvm);
+        Assert.Matches(@"store i32 %v\d+, ptr %v\d+", llvm);
+    }
+
+    [Fact]
+    public void BoundedRawPointerByteFillLoopLowersToMemset()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Fill(
+                rawmutptr<i8[-128 127]>[count] output,
+                i8[-128 127] value,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = value;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i32 %arg_count to i64", llvm);
+        Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %arg_output, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerByteFillLoopInsideNontrivialFunctionLowersToMemset()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Fill(
+                rawmutptr<i8[-128 127]>[count] output,
+                i8[-128 127] value,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    *(&output[index]) = value;
+                }
+
+                if (count > 0) {
+                    *(&output[0]) = 0;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %arg_output, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IndependentBoundedRawPointerFillAndTransformLoopsEmitParallelMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Fill(rawmutptr<i64[-9223372036854775808 9223372036854775807]>[32] output, i64[-9223372036854775808 9223372036854775807] value) {
+                for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+                    *(&output[index]) = value;
+                }
+
+                return;
+            }
+
+            fn void Transform(
+                disjoint rawptr<i64[-9223372036854775808 9223372036854775807]>[32] input,
+                disjoint rawmutptr<i64[-9223372036854775808 9223372036854775807]>[32] output)
+                where disjoint(input[0, 32], output[0, 32]) {
+                for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+                    *(&output[index]) = *(&input[index]) + 1;
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.True(Regex.Matches(llvm, "!\\\"llvm.loop.parallel_accesses\\\"").Count >= 2, llvm);
+        Assert.True(Regex.Matches(llvm, "!llvm.access.group !").Count >= 2, llvm);
+        Assert.Contains("!\"llvm.loop.mustprogress\"", llvm, StringComparison.Ordinal);
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);
@@ -7842,10 +8696,11 @@ public sealed class LlvmIrEmissionTests
 
     private static string NormalizeLlvm(string llvm)
     {
-        var normalized = Regex.Replace(llvm, @"\bnoundef\b", string.Empty, RegexOptions.CultureInvariant);
+        var normalized = llvm.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        normalized = Regex.Replace(normalized, @"\bnoundef\b", string.Empty, RegexOptions.CultureInvariant);
         return Regex.Replace(
             normalized,
-            @"^(?:define|declare)\b[^\r\n]*$",
+            @"^(?:define|declare)\b[^\n]*$",
             static match =>
             {
                 var line = Regex.Replace(match.Value, @" {2,}", " ", RegexOptions.CultureInvariant);

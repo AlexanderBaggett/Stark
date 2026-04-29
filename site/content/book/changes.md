@@ -88,3 +88,12 @@ This page records user-facing changes to the published Stark Book.
   Stark enums are not automatic `export`/FFI representations.
 - Added a checked negative raw-pointer mutability sample showing that readonly
   raw access cannot be strengthened into mutable raw access.
+- Added a checked memory-separation sample showing an `if disjoint(...)` fast
+  path with an overlap-safe fallback.
+- Added const-parameter provenance and current `independent` loop-contract
+  boundary notes to the performance model chapter.
+- Added bounded raw pointer region coverage to the FFI/raw-pointer and
+  performance chapters, including region expressions, unsafe raw slice
+  construction, and independent raw-pointer loop contracts.
+- Added a checked bounded raw pointer sample covering copy, fill, transform,
+  and overlap-safe fallback paths.

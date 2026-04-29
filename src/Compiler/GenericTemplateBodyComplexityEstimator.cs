@@ -51,8 +51,13 @@ internal static class GenericTemplateBodyComplexityEstimator
             var elseCost = ifStatement.statement().Length > 1
                 ? EstimateStatement(ifStatement.statement(1))
                 : 0;
+            var conditionCost = ifStatement.expression() is { } condition
+                ? EstimateExpression(condition)
+                : ifStatement.disjointRuntimeCondition() is { } disjointCondition
+                    ? disjointCondition.expressionList().expression().Sum(EstimateExpression)
+                    : 0;
             return 2
-                + EstimateExpression(ifStatement.expression())
+                + conditionCost
                 + EstimateStatement(ifStatement.statement(0))
                 + elseCost;
         }

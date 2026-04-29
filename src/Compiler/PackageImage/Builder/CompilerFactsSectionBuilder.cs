@@ -68,7 +68,8 @@ internal static partial class PackageImageBuilder
                     parameter.LlvmName,
                     BuildPublishedAbiTypeReference(parameter.SourceType, module),
                     BuildPublishedAbiTypeReference(parameter.LlvmType, module),
-                    parameter.Kind.ToString().ToLowerInvariant()))
+                    parameter.Kind.ToString().ToLowerInvariant(),
+                    parameter.RawPointerElementCountExpression))
                 .ToArray(),
             IsFfi: abiFunction.IsFfi,
             SourceName: abiFunction.SourceName,

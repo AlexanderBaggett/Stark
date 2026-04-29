@@ -337,7 +337,8 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (statement.ifStatement() is { } ifStatement)
                 {
-                    if (!TryEvaluateExpression(ifStatement.expression(), moduleName, state, activeCalls, out var condition)
+                    if (ifStatement.expression() is not { } conditionExpression
+                        || !TryEvaluateExpression(conditionExpression, moduleName, state, activeCalls, out var condition)
                         || condition.Kind != CompileTimeConstantKind.Bool)
                     {
                         return false;

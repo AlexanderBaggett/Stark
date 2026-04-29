@@ -680,15 +680,19 @@ internal sealed class TypeChecker
                     var parameters = new List<TypedParameterSymbol>();
                     foreach (var parameter in functionSyntax.ParameterList.parameter())
                     {
-                        var parameterType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
+                        var parameterType = ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression);
                         ValidateRuntimeValueType(parameterType, parameter.type_(), $"parameter '{parameter.Identifier().GetText()}'");
                         if (isAbiBoundary)
                         {
                             ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
                         }
 
-                        parameters.Add(new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType));
+                        parameters.Add(CreateTypedParameterSymbol(parameter, parameterType, rawPointerElementCountExpression));
                     }
+
+                    ValidateParameterContractPrefixes(functionSyntax.ParameterList.parameter());
+                    ValidateBoundedRawPointerParameterCounts(functionSyntax.ParameterList.parameter(), parameters);
+                    ValidateParameterDisjointContracts(functionSyntax, parameters);
 
                     if (declarationModel.Function?.Asm is not null)
                     {
@@ -707,7 +711,8 @@ internal sealed class TypeChecker
                         Kind: functionSyntax.DeclaredKind,
                         IsUnsafe: functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                         IsVarargs: isVarargs,
-                        BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default);
+                        BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default,
+                        DisjointParameterGroups: declarationModel.Function?.DisjointGroups);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                 }
                 finally
@@ -1028,10 +1033,420 @@ internal sealed class TypeChecker
         return parameters
             .Select(parameter =>
             {
-                var parameterType = ResolveType(parameter.type_(), genericParameters, currentModuleName);
-                return new TypedParameterSymbol(parameter.Identifier().GetText(), parameterType);
+                var parameterType = ResolveParameterType(parameter.type_(), genericParameters, currentModuleName, out var rawPointerElementCountExpression);
+                return CreateTypedParameterSymbol(parameter, parameterType, rawPointerElementCountExpression);
             })
             .ToArray();
+    }
+
+    private void ValidateBoundedRawPointerParameterCounts(
+        IReadOnlyList<StarkParser.ParameterContext> parameterSyntaxes,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var parameterSymbols = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        foreach (var parameterSyntax in parameterSyntaxes)
+        {
+            var name = parameterSyntax.Identifier().GetText();
+            if (!parameterSymbols.TryGetValue(name, out var parameter)
+                || parameter.RawPointerElementCountExpression is null
+                || !TryGetBoundedRawPointerElementCountExpression(parameterSyntax.type_(), out var countExpression))
+            {
+                continue;
+            }
+
+            ValidateBoundedRawPointerCountExpression(name, countExpression, parameterSymbols);
+        }
+    }
+
+    private bool ValidateBoundedRawPointerCountExpression(
+        string parameterName,
+        StarkParser.ExpressionContext expression,
+        IReadOnlyDictionary<string, TypedParameterSymbol> parameterSymbols)
+    {
+        if (TryGetSimpleParameterExpression(expression, out var boundName))
+        {
+            if (!parameterSymbols.TryGetValue(boundName, out var boundParameter))
+            {
+                ReportError(
+                    "STK3014",
+                    $"Bounded raw pointer parameter '{parameterName}' references unknown count parameter '{boundName}'.",
+                    expression);
+                return false;
+            }
+
+            if (boundParameter.Type.Kind != StarkTypeKind.Integer)
+            {
+                ReportError(
+                    "STK3014",
+                    $"Bounded raw pointer parameter '{parameterName}' count '{boundName}' must be an integer parameter, but found '{boundParameter.Type.DisplayName}'.",
+                    expression);
+                return false;
+            }
+
+            if (!IsProvablyNonNegativeIntegerType(boundParameter.Type))
+            {
+                ReportError(
+                    "STK3014",
+                    $"Bounded raw pointer parameter '{parameterName}' count '{boundName}' must be provably non-negative.",
+                    expression);
+                return false;
+            }
+
+            return true;
+        }
+
+        if (CompileTimeExpressionEvaluator.TryEvaluateInteger(
+                expression,
+                out var constant,
+                CreateCompileTimeEvaluationServices(Scope.CreateRoot(_globals))))
+        {
+            if (constant >= BigInteger.Zero)
+            {
+                return true;
+            }
+
+            ReportError(
+                "STK3014",
+                $"Bounded raw pointer parameter '{parameterName}' count '{expression.GetText()}' must be non-negative.",
+                expression);
+            return false;
+        }
+
+        ReportError(
+            "STK3014",
+            $"Bounded raw pointer parameter '{parameterName}' count must be a non-negative integer parameter or compile-time integer constant.",
+            expression);
+        return false;
+    }
+
+    private static bool TryGetBoundedRawPointerElementCountExpression(
+        StarkParser.Type_Context type,
+        out StarkParser.ExpressionContext countExpression)
+    {
+        countExpression = null!;
+        if (type.nonArrayType().rawPointerType() is null
+            || type.arraySuffix() is not [var suffix]
+            || suffix.expression() is not { } expression)
+        {
+            return false;
+        }
+
+        countExpression = expression;
+        return true;
+    }
+
+    private static TypedParameterSymbol CreateTypedParameterSymbol(
+        StarkParser.ParameterContext parameter,
+        StarkTypeSymbol parameterType,
+        string? rawPointerElementCountExpression)
+    {
+        return new TypedParameterSymbol(
+            parameter.Identifier().GetText(),
+            parameterType,
+            IsDisjoint: ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+            IsConst: ParameterHasPrefix(parameter, StarkParser.CONST),
+            RawPointerElementCountExpression: rawPointerElementCountExpression);
+    }
+
+    private static VariableSymbol CreateParameterVariableSymbol(TypedParameterSymbol parameter)
+    {
+        return new VariableSymbol(
+            parameter.Name,
+            parameter.Type,
+            IsMutable: false,
+            IsConstant: false,
+            UsesFrozenProjectionSemantics: parameter.IsConst,
+            HasConstProvenance: parameter.IsConst,
+            RawPointerElementCountExpression: parameter.RawPointerElementCountExpression);
+    }
+
+    private static bool ParameterHasPrefix(StarkParser.ParameterContext parameter, int tokenType)
+    {
+        return parameter.parameterContractPrefix()
+            .Any(prefix => prefix.Start.Type == tokenType);
+    }
+
+    private void ValidateParameterContractPrefixes(IReadOnlyList<StarkParser.ParameterContext> parameters)
+    {
+        foreach (var parameter in parameters)
+        {
+            var disjointPrefixes = parameter.parameterContractPrefix()
+                .Where(static prefix => prefix.Start.Type == StarkParser.DISJOINT)
+                .ToArray();
+            if (disjointPrefixes.Length > 1)
+            {
+                ReportError(
+                    "STK3028",
+                    $"Parameter '{parameter.Identifier().GetText()}' may specify 'disjoint' at most once.",
+                    disjointPrefixes[1]);
+            }
+
+            var constPrefixes = parameter.parameterContractPrefix()
+                .Where(static prefix => prefix.Start.Type == StarkParser.CONST)
+                .ToArray();
+            if (constPrefixes.Length > 1)
+            {
+                ReportError(
+                    "STK3028",
+                    $"Parameter '{parameter.Identifier().GetText()}' may specify 'const' at most once.",
+                    constPrefixes[1]);
+            }
+        }
+    }
+
+    private void ValidateParameterDisjointContracts(
+        DeclaredFunctionSyntax functionSyntax,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var parameterSymbols = new Dictionary<string, TypedParameterSymbol>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+        {
+            parameterSymbols.TryAdd(parameter.Name, parameter);
+        }
+
+        foreach (var parameter in functionSyntax.ParameterList.parameter())
+        {
+            var name = parameter.Identifier().GetText();
+            if (ParameterHasPrefix(parameter, StarkParser.DISJOINT)
+                && parameterSymbols.TryGetValue(name, out var symbol)
+                && !CanRuntimeDisjointTest(symbol.Type))
+            {
+                ReportError(
+                    "STK3028",
+                    $"Parameter '{name}' may specify 'disjoint' only for memory-backed types such as slices, text views, borrows, initialization views, or raw pointers, but found '{symbol.Type.DisplayName}'.",
+                    parameter);
+            }
+        }
+
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.disjointContract())
+            {
+                var operands = contract.expressionList().expression();
+                if (operands.Length < 2)
+                {
+                    ReportError(
+                        "STK3029",
+                        "'where disjoint(...)' contracts require at least two parameter or region operands.",
+                        contract);
+                }
+
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var operand in operands)
+                {
+                    if (!TryGetDisjointContractRootName(operand, out var name, out var regionStart, out var regionLength))
+                    {
+                        ReportError(
+                            "STK3029",
+                            "Disjoint contract operands must be parameter names or raw pointer regions of the form 'parameter[start, count]'.",
+                            operand);
+                        continue;
+                    }
+
+                    if (!parameterSymbols.TryGetValue(name, out var symbol))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Disjoint contract references unknown parameter '{name}'.",
+                            operand);
+                    }
+                    else if (!CanRuntimeDisjointTest(symbol.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Disjoint contract references parameter '{name}' with non-memory-backed type '{symbol.Type.DisplayName}'. Disjoint contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            operand);
+                    }
+                    else if (regionStart is not null
+                             && !ValidateRawPointerRegionContractOperand(name, symbol, regionStart, regionLength!, parameterSymbols, operand))
+                    {
+                        continue;
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Disjoint contract repeats parameter '{name}'.",
+                            operand);
+                    }
+                }
+            }
+        }
+    }
+
+    private static IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> GetParameterMemoryContractClauses(
+        ParserRuleContext declaration)
+    {
+        return declaration switch
+        {
+            StarkParser.FunctionDeclarationContext functionDeclaration => functionDeclaration.parameterMemoryContractClause(),
+            StarkParser.MethodDeclarationContext methodDeclaration => methodDeclaration.parameterMemoryContractClause(),
+            StarkParser.TraitMethodDeclarationContext traitMethodDeclaration => traitMethodDeclaration.parameterMemoryContractClause(),
+            StarkParser.DoctrineMethodDeclarationContext doctrineMethodDeclaration => doctrineMethodDeclaration.parameterMemoryContractClause(),
+            _ => []
+        };
+    }
+
+    private static bool TryGetDisjointContractRootName(
+        StarkParser.ExpressionContext expression,
+        out string rootName,
+        out StarkParser.ExpressionContext? regionStart,
+        out StarkParser.ExpressionContext? regionLength)
+    {
+        rootName = string.Empty;
+        regionStart = null;
+        regionLength = null;
+
+        if (TryGetSimpleParameterExpression(expression, out rootName))
+        {
+            return true;
+        }
+
+        if (!TryGetRawPointerRegionExpression(expression, out rootName, out regionStart, out regionLength))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool ValidateRawPointerRegionContractOperand(
+        string rootName,
+        TypedParameterSymbol symbol,
+        StarkParser.ExpressionContext regionStart,
+        StarkParser.ExpressionContext regionLength,
+        IReadOnlyDictionary<string, TypedParameterSymbol> parameterSymbols,
+        ParserRuleContext diagnosticContext)
+    {
+        if (symbol.Type.Kind != StarkTypeKind.RawPointer)
+        {
+            ReportError(
+                "STK3029",
+                $"Disjoint contract region '{diagnosticContext.GetText()}' requires raw pointer parameter '{rootName}', but found '{symbol.Type.DisplayName}'.",
+                diagnosticContext);
+            return false;
+        }
+
+        var validStart = ValidateDisjointRegionIndexContractExpression(regionStart, parameterSymbols);
+        var validLength = ValidateDisjointRegionIndexContractExpression(regionLength, parameterSymbols);
+        return validStart && validLength;
+    }
+
+    private bool ValidateDisjointRegionIndexContractExpression(
+        StarkParser.ExpressionContext expression,
+        IReadOnlyDictionary<string, TypedParameterSymbol> parameterSymbols)
+    {
+        if (TryGetSimpleParameterExpression(expression, out var name)
+            && parameterSymbols.TryGetValue(name, out var parameter)
+            && parameter.Type.Kind == StarkTypeKind.Integer)
+        {
+            if (IsProvablyNonNegativeIntegerType(parameter.Type))
+            {
+                return true;
+            }
+
+            ReportError(
+                "STK3029",
+                $"Disjoint raw pointer region bound '{expression.GetText()}' must be provably non-negative.",
+                expression);
+            return false;
+        }
+
+        if (CompileTimeExpressionEvaluator.TryEvaluateInteger(
+                expression,
+                out var literal,
+                CreateCompileTimeEvaluationServices(Scope.CreateRoot(_globals)))
+            && literal >= BigInteger.Zero)
+        {
+            return true;
+        }
+
+        ReportError(
+            "STK3029",
+            $"Disjoint raw pointer region bound '{expression.GetText()}' must be a non-negative integer parameter or compile-time integer constant.",
+            expression);
+        return false;
+    }
+
+    private bool TryCheckRawPointerRegionDisjointOperand(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        out string? rootKey,
+        out bool matchedRegion)
+    {
+        rootKey = null;
+        matchedRegion = false;
+
+        if (!TryGetRawPointerRegionExpression(expression, out var rootName, out var startExpression, out var lengthExpression))
+        {
+            return false;
+        }
+
+        matchedRegion = true;
+        if (!scope.TryLookup(rootName, out var symbol))
+        {
+            ReportError("STK3025", $"Runtime disjoint region references unknown value '{rootName}'.", expression);
+            return false;
+        }
+
+        if (symbol.Type.Kind != StarkTypeKind.RawPointer)
+        {
+            ReportError(
+                "STK3025",
+                $"Runtime disjoint region '{expression.GetText()}' requires a raw pointer root, but found '{symbol.Type.DisplayName}'.",
+                expression);
+            return false;
+        }
+
+        var startType = EvaluateExpression(startExpression, scope, allowFunctionReference: false).Type;
+        var lengthType = EvaluateExpression(lengthExpression, scope, allowFunctionReference: false).Type;
+        var valid = true;
+        if (startType.Kind != StarkTypeKind.Integer)
+        {
+            valid = false;
+            ReportError(
+                "STK3025",
+                $"Runtime disjoint raw pointer region start must be an integer, but found '{startType.DisplayName}'.",
+                startExpression);
+        }
+
+        if (lengthType.Kind != StarkTypeKind.Integer)
+        {
+            valid = false;
+            ReportError(
+                "STK3025",
+                $"Runtime disjoint raw pointer region length must be an integer, but found '{lengthType.DisplayName}'.",
+                lengthExpression);
+        }
+
+        if (startType.Kind == StarkTypeKind.Integer
+            && !IsProvablyNonNegativeIntegerType(startType))
+        {
+            valid = false;
+            ReportError(
+                "STK3025",
+                "Runtime disjoint raw pointer region start must be provably non-negative.",
+                startExpression);
+        }
+
+        if (lengthType.Kind == StarkTypeKind.Integer
+            && !IsProvablyNonNegativeIntegerType(lengthType))
+        {
+            valid = false;
+            ReportError(
+                "STK3025",
+                "Runtime disjoint raw pointer region length must be provably non-negative.",
+                lengthExpression);
+        }
+
+        if (!valid)
+        {
+            return false;
+        }
+
+        var baseRootKey = symbol.MemoryRootKey ?? rootName;
+        rootKey = AppendMemoryRootTextRangeKey(baseRootKey, startExpression, lengthExpression, scope) ?? baseRootKey;
+        return true;
     }
 
     private void CheckConstructorBodies()
@@ -1110,7 +1525,7 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                scope.Declare(new VariableSymbol(parameter.Name, parameter.Type, IsMutable: false, IsConstant: false));
+                scope.Declare(CreateParameterVariableSymbol(parameter));
             }
 
             var previousGenericParameters = _currentFunctionGenericParameters;
@@ -1156,6 +1571,7 @@ internal sealed class TypeChecker
                         IsMutable: false,
                         IsConstant: true,
                         BindingKind: GlobalBindingKind.Const,
+                        HasConstProvenance: true,
                         ConstantValue: TryEvaluateCompileTimeConstant(
                             declarator.variableInitializer(),
                             Scope.CreateRoot(_globals),
@@ -1346,8 +1762,9 @@ internal sealed class TypeChecker
                 var scope = Scope.CreateRoot(_globals);
                 foreach (var parameter in signature.Parameters)
                 {
-                    scope.Declare(new VariableSymbol(parameter.Name, parameter.Type, IsMutable: false, IsConstant: false));
+                    scope.Declare(CreateParameterVariableSymbol(parameter));
                 }
+                AddParameterDisjointFacts(scope, signature.DisjointGroups);
 
                 var previousGenericParameters = _currentFunctionGenericParameters;
                 var previousFunctionName = _currentFunctionName;
@@ -1570,8 +1987,23 @@ internal sealed class TypeChecker
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            EnsureBoolean(EvaluateExpression(ifStatement.expression(), scope, allowFunctionReference: false).Type, ifStatement.expression(), "if conditions must be of type 'bool'");
-            CheckStatement(ifStatement.statement(0), new Scope(scope), returnType);
+            IReadOnlyList<string>? trueBranchDisjointRoots = null;
+            if (ifStatement.expression() is { } condition)
+            {
+                EnsureBoolean(EvaluateExpression(condition, scope, allowFunctionReference: false).Type, condition, "if conditions must be of type 'bool'");
+            }
+            else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
+            {
+                trueBranchDisjointRoots = CheckDisjointRuntimeCondition(disjointCondition, scope);
+            }
+
+            var thenScope = new Scope(scope);
+            if (trueBranchDisjointRoots is { Count: >= 2 })
+            {
+                thenScope.AddDisjointFact(trueBranchDisjointRoots);
+            }
+
+            CheckStatement(ifStatement.statement(0), thenScope, returnType);
             if (ifStatement.statement().Length > 1)
             {
                 CheckStatement(ifStatement.statement(1), new Scope(scope), returnType);
@@ -1614,6 +2046,11 @@ internal sealed class TypeChecker
         if (statement.whileStatement() is { } whileStatement)
         {
             EnsureBoolean(EvaluateExpression(whileStatement.expression(), scope, allowFunctionReference: false).Type, whileStatement.expression(), "while conditions must be of type 'bool'");
+            CheckLoopContracts(
+                whileStatement.loopContract(),
+                whileStatement.statement(),
+                scope,
+                condition: whileStatement.expression());
             CheckStatement(whileStatement.statement(), new Scope(scope), returnType);
             return;
         }
@@ -1653,6 +2090,14 @@ internal sealed class TypeChecker
                 }
             }
 
+            CheckLoopContracts(
+                forStatement.loopContract(),
+                forStatement.statement(),
+                loopScope,
+                forStatement: forStatement,
+                condition: forStatement.forCondition()?.expression(),
+                iteratorExpressions: forStatement.forIterator()?.expressionList().expression());
+
             CheckStatement(forStatement.statement(), loopScope, returnType);
             return;
         }
@@ -1684,6 +2129,1388 @@ internal sealed class TypeChecker
         {
             EvaluateExpression(expressionStatement.expression(), scope, allowFunctionReference: false);
         }
+    }
+
+    private IReadOnlyList<string>? CheckDisjointRuntimeCondition(StarkParser.DisjointRuntimeConditionContext condition, Scope scope)
+    {
+        var expressions = condition.expressionList().expression();
+        if (expressions.Length < 2)
+        {
+            ReportError(
+                "STK3025",
+                "Runtime disjoint checks require at least two operands.",
+                condition);
+            return null;
+        }
+
+        var isValid = true;
+        var rootKeys = new List<string>(expressions.Length);
+        foreach (var expression in expressions)
+        {
+            if (TryCheckRawPointerRegionDisjointOperand(expression, scope, out var regionRootKey, out var matchedRegion))
+            {
+                if (regionRootKey is { Length: > 0 })
+                {
+                    rootKeys.Add(regionRootKey);
+                }
+
+                continue;
+            }
+
+            if (matchedRegion)
+            {
+                isValid = false;
+                continue;
+            }
+
+            var binding = EvaluateExpression(expression, scope, allowFunctionReference: false);
+            if (!CanRuntimeDisjointTest(binding.Type))
+            {
+                isValid = false;
+                ReportError(
+                    "STK3025",
+                    $"Runtime disjoint checks currently require memory-backed operands such as slices, text views, borrows, or raw pointers, but found '{binding.Type.DisplayName}'.",
+                    expression);
+            }
+
+            if (TryGetMemoryArgumentRoot(binding, expression, scope, out var root)
+                || TryGetMemoryArgumentRoot(expression, binding.Type, scope, out root))
+            {
+                if (root.AliasRootKeys is { Count: > 0 } aliasRootKeys)
+                {
+                    rootKeys.AddRange(aliasRootKeys);
+                }
+                else
+                {
+                    rootKeys.Add(root.RootKey);
+                }
+            }
+        }
+
+        if (!isValid)
+        {
+            return null;
+        }
+
+        var distinctRootKeys = rootKeys
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return distinctRootKeys.Length >= 2 ? distinctRootKeys : null;
+    }
+
+    private void CheckLoopContracts(
+        IReadOnlyList<StarkParser.LoopContractContext> contracts,
+        StarkParser.StatementContext body,
+        Scope scope,
+        StarkParser.ForStatementContext? forStatement = null,
+        StarkParser.ExpressionContext? condition = null,
+        IReadOnlyList<StarkParser.ExpressionContext>? iteratorExpressions = null)
+    {
+        if (contracts.Count == 0)
+        {
+            return;
+        }
+
+        if (TryValidateConservativeIndependentLoop(body, scope, condition, iteratorExpressions, out var reason))
+        {
+            return;
+        }
+
+        if (forStatement is not null
+            && TryValidateConservativeIndependentMemoryForLoop(forStatement, scope, out reason))
+        {
+            return;
+        }
+
+        var detail = string.IsNullOrWhiteSpace(reason)
+            ? string.Empty
+            : $" This loop uses {reason}.";
+        foreach (var contract in contracts)
+        {
+            ReportError(
+                "STK3027",
+                $"Loop 'independent' contracts currently support scalar-local loops and a canonical memory-backed subset;{detail} This loop is outside the accepted dependency-validation subset.",
+                contract);
+        }
+    }
+
+    private bool TryValidateConservativeIndependentLoop(
+        StarkParser.StatementContext body,
+        Scope scope,
+        StarkParser.ExpressionContext? condition,
+        IReadOnlyList<StarkParser.ExpressionContext>? iteratorExpressions,
+        out string reason)
+    {
+        if (condition is not null
+            && !TryValidateIndependentPureExpression(condition, scope, out reason))
+        {
+            return false;
+        }
+
+        if (iteratorExpressions is not null)
+        {
+            foreach (var iteratorExpression in iteratorExpressions)
+            {
+                if (!TryValidateIndependentLoopExpressionStatement(iteratorExpression, scope, out reason))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return TryValidateIndependentLoopStatement(body, scope, out reason);
+    }
+
+    private bool TryValidateConservativeIndependentMemoryForLoop(
+        StarkParser.ForStatementContext? forStatement,
+        Scope scope,
+        out string reason)
+    {
+        if (forStatement is null)
+        {
+            reason = "memory dependency validation is currently implemented only for canonical for loops";
+            return false;
+        }
+
+        if (!TryGetIndependentForInductionVariable(forStatement, scope, out var inductionName, out reason))
+        {
+            return false;
+        }
+
+        if (forStatement.forCondition()?.expression() is { } condition
+            && !TryValidateIndependentPureExpression(condition, scope, out reason))
+        {
+            return false;
+        }
+
+        if (forStatement.forIterator()?.expressionList().expression() is not [var iteratorExpression]
+            || !TryValidateIndependentUnitIncrement(iteratorExpression, inductionName, scope, out reason))
+        {
+            return false;
+        }
+
+        var accesses = new List<IndependentLoopMemoryAccess>();
+        if (!TryValidateIndependentMemoryLoopStatement(forStatement.statement(), scope, inductionName, accesses, out reason))
+        {
+            return false;
+        }
+
+        if (accesses.Count == 0)
+        {
+            reason = "no memory accesses were found for memory dependency validation";
+            return false;
+        }
+
+        if (!TryValidateIndependentRawPointerAccessBounds(forStatement, scope, inductionName, accesses, out reason))
+        {
+            return false;
+        }
+
+        var loopExclusiveUpperBoundText = forStatement.forCondition()?.expression() is { } loopCondition
+            && TryGetIndependentLoopExclusiveUpperBound(loopCondition, inductionName, out var upperBoundText)
+                ? upperBoundText
+                : null;
+
+        return TryValidateIndependentLoopMemoryAccesses(accesses, scope, loopExclusiveUpperBoundText, out reason);
+    }
+
+    private bool TryValidateIndependentRawPointerAccessBounds(
+        StarkParser.ForStatementContext forStatement,
+        Scope scope,
+        string inductionName,
+        IReadOnlyList<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        var rawPointerAccesses = accesses
+            .Where(access => scope.TryLookup(access.DisplayName, out var symbol)
+                             && symbol.Type.Kind == StarkTypeKind.RawPointer
+                             && symbol.RawPointerElementCountExpression is not null)
+            .ToArray();
+        if (rawPointerAccesses.Length == 0)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (!TryGetIndependentForInitializerExpression(forStatement, out var initializerExpression)
+            || !CompileTimeExpressionEvaluator.TryEvaluateInteger(
+                initializerExpression,
+                out var initialValue,
+                CreateCompileTimeEvaluationServices(scope))
+            || initialValue != BigInteger.Zero)
+        {
+            reason = "bounded raw pointer independent loops must start the induction variable at zero";
+            return false;
+        }
+
+        if (forStatement.forCondition()?.expression() is not { } condition
+            || !TryGetIndependentLoopExclusiveUpperBound(condition, inductionName, out var upperBoundText))
+        {
+            reason = "bounded raw pointer independent loops must use a canonical 'index < count' condition";
+            return false;
+        }
+
+        foreach (var access in rawPointerAccesses)
+        {
+            if (!scope.TryLookup(access.DisplayName, out var symbol)
+                || symbol.RawPointerElementCountExpression is not { } countExpression
+                || !CanProveExclusiveUpperBoundWithinRawPointerCount(upperBoundText, countExpression, scope))
+            {
+                reason = $"bounded raw pointer access root '{access.DisplayName}' is not proven in range for the loop induction variable";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static bool TryGetIndependentForInitializerExpression(
+        StarkParser.ForStatementContext forStatement,
+        out StarkParser.ExpressionContext expression)
+    {
+        expression = null!;
+        if (forStatement.forInitializer()?.localForVariableDeclaration()?.variableDeclarators().variableDeclarator() is not [var declarator]
+            || declarator.variableInitializer()?.expression() is not { } initializerExpression)
+        {
+            return false;
+        }
+
+        expression = initializerExpression;
+        return true;
+    }
+
+    private static bool TryGetIndependentLoopExclusiveUpperBound(
+        StarkParser.ExpressionContext expression,
+        string inductionName,
+        out string upperBoundText)
+    {
+        upperBoundText = string.Empty;
+        if (!TryGetSingleRelationalExpression(expression, out var relational)
+            || relational.shiftExpression() is not [var left, var right]
+            || ExtractOperators<StarkParser.ShiftExpressionContext>(relational) is not [var op])
+        {
+            return false;
+        }
+
+        if (op == "<"
+            && string.Equals(NormalizeExpressionText(left.GetText()), inductionName, StringComparison.Ordinal))
+        {
+            upperBoundText = NormalizeExpressionText(right.GetText());
+            return true;
+        }
+
+        if (op == ">"
+            && string.Equals(NormalizeExpressionText(right.GetText()), inductionName, StringComparison.Ordinal))
+        {
+            upperBoundText = NormalizeExpressionText(left.GetText());
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetSingleRelationalExpression(
+        StarkParser.ExpressionContext expression,
+        out StarkParser.RelationalExpressionContext relational)
+    {
+        relational = null!;
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return false;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return false;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (ExtractOperators<StarkParser.RelationalExpressionContext>(equality).Count != 0
+            || equality.relationalExpression().Length != 1)
+        {
+            return false;
+        }
+
+        relational = equality.relationalExpression(0);
+        return true;
+    }
+
+    private static bool CanProveExclusiveUpperBoundWithinRawPointerCount(
+        string upperBoundText,
+        string countExpression,
+        Scope scope)
+    {
+        var normalizedCount = NormalizeExpressionText(countExpression);
+        if (string.Equals(upperBoundText, normalizedCount, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return TryResolveMemoryRootIndexRange(upperBoundText, scope, out _, out var upperMax)
+            && TryResolveMemoryRootIndexRange(normalizedCount, scope, out var countMin, out _)
+            && upperMax <= countMin;
+    }
+
+    private bool TryGetIndependentForInductionVariable(
+        StarkParser.ForStatementContext forStatement,
+        Scope scope,
+        out string inductionName,
+        out string reason)
+    {
+        inductionName = string.Empty;
+        if (forStatement.forInitializer()?.localForVariableDeclaration() is not { } declaration
+            || declaration.MUT() is null
+            || declaration.variableDeclarators().variableDeclarator() is not [var declarator])
+        {
+            reason = "memory-backed independent loops must declare exactly one mutable scalar induction variable in the for initializer";
+            return false;
+        }
+
+        var storageClass = declaration.storageClass().GetText();
+        if (!IsIndependentScalarLocalStorageClass(storageClass))
+        {
+            reason = "the induction variable must use stack or register scalar storage";
+            return false;
+        }
+
+        var declaredType = ResolveType(declaration.type_(), _currentFunctionGenericParameters, _currentFunctionModuleName);
+        if (!IsIndependentScalarLocalType(declaredType)
+            || declaredType.Kind != StarkTypeKind.Integer)
+        {
+            reason = "the induction variable must use an integer scalar type";
+            return false;
+        }
+
+        if (declarator.variableInitializer() is not { } initializer)
+        {
+            reason = "the induction variable must have a pure scalar initializer";
+            return false;
+        }
+
+        if (!TryValidateIndependentVariableInitializer(initializer, scope, out reason))
+        {
+            reason = string.IsNullOrWhiteSpace(reason)
+                ? "the induction variable must have a pure scalar initializer"
+                : reason;
+            return false;
+        }
+
+        inductionName = declarator.Identifier().GetText();
+        return true;
+    }
+
+    private bool TryValidateIndependentUnitIncrement(
+        StarkParser.ExpressionContext expression,
+        string inductionName,
+        Scope scope,
+        out string reason)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator()?.GetText() != "+="
+            || !TryGetDirectAssignmentTargetName(assignment.unaryExpression(), out var targetName)
+            || !string.Equals(targetName, inductionName, StringComparison.Ordinal)
+            || !TryValidateIndependentPureAssignmentExpression(assignment.assignmentExpression(), scope, out reason)
+            || !IsLiteralOneExpression(assignment.assignmentExpression()))
+        {
+            reason = "memory-backed independent loops must increment the induction variable by exactly one with 'index += 1'";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentMemoryLoopStatement(
+        StarkParser.StatementContext statement,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        if (statement.emptyStatement() is not null)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (statement.block() is { } block)
+        {
+            var blockScope = new Scope(scope);
+            foreach (var nestedStatement in block.statement())
+            {
+                if (!TryValidateIndependentMemoryLoopStatement(nestedStatement, blockScope, inductionName, accesses, out reason))
+                {
+                    return false;
+                }
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        if (statement.localVariableDeclaration() is { } localVariableDeclaration)
+        {
+            return TryValidateIndependentMemoryLocalVariableDeclaration(localVariableDeclaration, scope, inductionName, accesses, out reason);
+        }
+
+        if (statement.localConstantDeclaration() is { } localConstantDeclaration)
+        {
+            return TryValidateIndependentLocalConstantDeclaration(localConstantDeclaration, scope, out reason);
+        }
+
+        if (statement.expressionStatement() is { } expressionStatement)
+        {
+            return TryValidateIndependentMemoryLoopExpressionStatement(expressionStatement.expression(), scope, inductionName, accesses, out reason);
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            return TryValidateIndependentMemoryIfStatement(ifStatement, scope, inductionName, accesses, out reason);
+        }
+
+        reason = statement switch
+        {
+            _ when statement.unsafeStatement() is not null => "unsafe blocks are outside the first supported subset",
+            _ when statement.switchStatement() is not null => "switch statements are outside the first supported subset",
+            _ when statement.whileStatement() is not null => "nested loops are outside the first supported subset",
+            _ when statement.forStatement() is not null => "nested loops are outside the first supported subset",
+            _ when statement.returnStatement() is not null => "early exits are outside the first supported subset",
+            _ when statement.breakStatement() is not null => "early exits are outside the first supported subset",
+            _ when statement.continueStatement() is not null => "early exits are outside the first supported subset",
+            _ => "the loop body uses an unsupported statement form"
+        };
+        return false;
+    }
+
+    private bool TryValidateIndependentMemoryIfStatement(
+        StarkParser.IfStatementContext ifStatement,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        IReadOnlyList<string>? trueBranchDisjointRoots = null;
+        if (ifStatement.expression() is { } condition)
+        {
+            if (!TryValidateIndependentMemoryExpression(condition, scope, inductionName, accesses, out reason))
+            {
+                return false;
+            }
+        }
+        else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
+        {
+            trueBranchDisjointRoots = CheckDisjointRuntimeCondition(disjointCondition, scope);
+        }
+        else
+        {
+            reason = "conditional memory-backed independent loop bodies need a boolean or disjoint condition";
+            return false;
+        }
+
+        var thenScope = new Scope(scope);
+        if (trueBranchDisjointRoots is { Count: >= 2 })
+        {
+            thenScope.AddDisjointFact(trueBranchDisjointRoots);
+        }
+
+        if (!TryValidateIndependentMemoryLoopStatement(ifStatement.statement(0), thenScope, inductionName, accesses, out reason))
+        {
+            return false;
+        }
+
+        if (ifStatement.statement().Length > 1
+            && !TryValidateIndependentMemoryLoopStatement(ifStatement.statement(1), new Scope(scope), inductionName, accesses, out reason))
+        {
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentMemoryLocalVariableDeclaration(
+        StarkParser.LocalVariableDeclarationContext declaration,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        var storageClass = declaration.storageClass().GetText();
+        if (!IsIndependentScalarLocalStorageClass(storageClass))
+        {
+            reason = "local declarations inside independent loops must use stack or register scalar storage";
+            return false;
+        }
+
+        var declaredType = ResolveType(declaration.type_(), _currentFunctionGenericParameters, _currentFunctionModuleName);
+        if (!IsIndependentScalarLocalType(declaredType))
+        {
+            reason = "local declarations inside independent loops must use scalar local types";
+            return false;
+        }
+
+        foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
+        {
+            if (declarator.variableStorageCapacity() is not null)
+            {
+                reason = "local declarations inside independent loops cannot declare variable-sized storage";
+                return false;
+            }
+
+            if (declarator.variableInitializer()?.expression() is not { } initializerExpression)
+            {
+                reason = "memory-backed independent loop locals need scalar expression initializers";
+                return false;
+            }
+
+            if (!TryValidateIndependentMemoryExpression(initializerExpression, scope, inductionName, accesses, out reason))
+            {
+                reason = string.IsNullOrWhiteSpace(reason)
+                    ? "memory-backed independent loop locals need scalar expression initializers"
+                    : reason;
+                return false;
+            }
+
+            scope.Declare(new VariableSymbol(
+                declarator.Identifier().GetText(),
+                declaredType,
+                IsMutable: declaration.MUT() is not null,
+                IsConstant: false));
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentMemoryLoopExpressionStatement(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is null)
+        {
+            return TryValidateIndependentMemoryExpression(expression, scope, inductionName, accesses, out reason);
+        }
+
+        var targetAccesses = new List<IndependentLoopMemoryAccess>();
+        if (!TryValidateIndependentMemoryAssignmentTarget(assignment.unaryExpression(), scope, inductionName, targetAccesses, out reason))
+        {
+            return false;
+        }
+
+        var valueAccesses = new List<IndependentLoopMemoryAccess>();
+        if (!TryValidateIndependentMemoryAssignmentExpression(assignment.assignmentExpression(), scope, inductionName, valueAccesses, out reason))
+        {
+            return false;
+        }
+
+        accesses.AddRange(targetAccesses);
+        accesses.AddRange(valueAccesses);
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentMemoryAssignmentTarget(
+        StarkParser.UnaryExpressionContext target,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        if (TryCreateIndependentLoopRawPointerDereferenceAccess(target, scope, inductionName, isWrite: true, out var rawPointerAccess, out reason))
+        {
+            accesses.Add(rawPointerAccess);
+            return true;
+        }
+
+        if (TryValidateIndependentAssignmentTarget(target, scope, out reason))
+        {
+            return true;
+        }
+
+        if (target.powerExpression()?.postfixExpression() is { } postfix
+            && TryCreateIndependentLoopMemoryAccess(postfix, scope, inductionName, isWrite: true, out var access, out reason))
+        {
+            accesses.Add(access);
+            return true;
+        }
+
+        reason = string.IsNullOrWhiteSpace(reason)
+            ? "assignments must target mutable scalar locals or memory at the loop induction index"
+            : reason;
+        return false;
+    }
+
+    private bool TryValidateIndependentMemoryAssignmentExpression(
+        StarkParser.AssignmentExpressionContext expression,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        if (expression.assignmentOperator() is not null)
+        {
+            reason = "nested assignments are outside the first supported subset";
+            return false;
+        }
+
+        return TryValidateIndependentMemoryTree(expression, scope, inductionName, accesses, out reason);
+    }
+
+    private bool TryValidateIndependentMemoryExpression(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        return TryValidateIndependentMemoryAssignmentExpression(expression.assignmentExpression(), scope, inductionName, accesses, out reason);
+    }
+
+    private bool TryValidateIndependentMemoryTree(
+        ParserRuleContext context,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        switch (context)
+        {
+            case StarkParser.AssignmentExpressionContext assignment when assignment.assignmentOperator() is not null:
+                reason = "nested assignments are outside the first supported subset";
+                return false;
+
+            case StarkParser.UnaryExpressionContext unary
+                when TryCreateIndependentLoopRawPointerDereferenceAccess(unary, scope, inductionName, isWrite: false, out var access, out reason):
+                accesses.Add(access);
+                return true;
+
+            case StarkParser.UnaryExpressionContext unary when unary.unaryOperator()?.AND() is not null:
+                reason = "address-of expressions would introduce memory facts";
+                return false;
+
+            case StarkParser.UnaryExpressionContext unary when unary.unaryOperator()?.STAR() is not null:
+                reason = "pointer dereferences are memory operations outside the supported independent subset";
+                return false;
+
+            case StarkParser.PostfixExpressionContext postfix:
+                return TryValidateIndependentMemoryPostfixExpression(postfix, scope, inductionName, accesses, out reason);
+
+            case StarkParser.PrimaryExpressionContext primary when primary.Identifier() is { } identifier:
+                return TryValidateIndependentIdentifier(identifier.GetText(), scope, out reason);
+
+            case StarkParser.LiteralContext literal:
+                if (literal.StringLiteral() is not null
+                    || literal.CharacterLiteral() is not null
+                    || literal.NULL() is not null)
+                {
+                    reason = "only integer, floating-point, and boolean literals are in the first supported subset";
+                    return false;
+                }
+
+                reason = string.Empty;
+                return true;
+        }
+
+        for (var i = 0; i < context.ChildCount; i++)
+        {
+            if (context.GetChild(i) is ParserRuleContext child
+                && !TryValidateIndependentMemoryTree(child, scope, inductionName, accesses, out reason))
+            {
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentMemoryPostfixExpression(
+        StarkParser.PostfixExpressionContext postfix,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        var parts = postfix.postfixPart();
+        if (parts.Length == 0)
+        {
+            if (postfix.primaryExpression().Identifier() is { } identifier)
+            {
+                return TryValidateIndependentIdentifier(identifier.GetText(), scope, out reason);
+            }
+
+            return TryValidateIndependentMemoryTree(postfix.primaryExpression(), scope, inductionName, accesses, out reason);
+        }
+
+        if (parts is [var callPart]
+            && callPart.argumentList() is { } argumentList
+            && postfix.primaryExpression().Identifier()?.GetText() is { } functionName)
+        {
+            return TryValidateIndependentMemoryLawCall(functionName, argumentList, scope, inductionName, accesses, out reason);
+        }
+
+        if (parts.Any(static part => part.argumentList() is not null))
+        {
+            reason = "calls are outside the first supported independent memory subset";
+            return false;
+        }
+
+        if (TryCreateIndependentLoopMemoryAccess(postfix, scope, inductionName, isWrite: false, out var access, out reason))
+        {
+            accesses.Add(access);
+            return true;
+        }
+
+        if (parts.Any(static part => part.DOT() is not null))
+        {
+            reason = "member projections in independent memory loops must be rooted at root[index]";
+            return false;
+        }
+
+        return false;
+    }
+
+    private bool TryValidateIndependentMemoryLawCall(
+        string functionName,
+        StarkParser.ArgumentListContext argumentList,
+        Scope scope,
+        string inductionName,
+        List<IndependentLoopMemoryAccess> accesses,
+        out string reason)
+    {
+        if (!TryGetFunctionOverloads(functionName, out var overloads)
+            || overloads.Count == 0
+            || overloads.Any(static overload => !FunctionKindFacts.IsLaw(overload.Kind))
+            || overloads.Any(static overload => !IsIndependentScalarLocalType(overload.ReturnType)))
+        {
+            reason = "calls inside memory-backed independent loops must resolve to law functions with scalar return values";
+            return false;
+        }
+
+        foreach (var argument in argumentList.argument())
+        {
+            if (!TryValidateIndependentMemoryExpression(argument.expression(), scope, inductionName, accesses, out reason))
+            {
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryCreateIndependentLoopMemoryAccess(
+        StarkParser.PostfixExpressionContext postfix,
+        Scope scope,
+        string inductionName,
+        bool isWrite,
+        out IndependentLoopMemoryAccess access,
+        out string reason)
+    {
+        access = default;
+        var parts = postfix.postfixPart();
+        if (postfix.primaryExpression().Identifier()?.GetText() is not { } rootName
+            || parts.Length == 0
+            || parts[0] is not { } indexPart
+            || indexPart.LBRACK() is null
+            || indexPart.expressionList()?.expression() is not [var indexExpression])
+        {
+            reason = "memory accesses in independent loops must use the simple form root[index] or root[index].field";
+            return false;
+        }
+
+        for (var partIndex = 1; partIndex < parts.Length; partIndex++)
+        {
+            if (parts[partIndex].DOT() is null
+                || parts[partIndex].Identifier()?.GetText() is not { Length: > 0 })
+            {
+                reason = "memory accesses in independent loops may only project fields after root[index]";
+                return false;
+            }
+        }
+
+        if (!string.Equals(NormalizeExpressionText(indexExpression.GetText()), inductionName, StringComparison.Ordinal))
+        {
+            reason = "memory accesses in independent loops must use the loop induction variable as their element index";
+            return false;
+        }
+
+        if (!scope.TryLookup(rootName, out var symbol)
+            || !IsIndependentLoopMemoryRootType(symbol))
+        {
+            reason = $"memory access root '{rootName}' is not a supported memory-backed loop operand";
+            return false;
+        }
+
+        var rootKey = AppendMemoryRootIndexKey(symbol.MemoryRootKey ?? rootName, indexExpression)
+            ?? $"{symbol.MemoryRootKey ?? rootName}[{NormalizeExpressionText(indexExpression.GetText())}]";
+        for (var partIndex = 1; partIndex < parts.Length; partIndex++)
+        {
+            rootKey = $"{rootKey}.{parts[partIndex].Identifier().GetText()}";
+        }
+
+        access = new IndependentLoopMemoryAccess(
+            rootKey,
+            rootName,
+            isWrite,
+            postfix);
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryCreateIndependentLoopRawPointerDereferenceAccess(
+        StarkParser.UnaryExpressionContext expression,
+        Scope scope,
+        string inductionName,
+        bool isWrite,
+        out IndependentLoopMemoryAccess access,
+        out string reason)
+    {
+        access = default;
+        if (expression.unaryOperator()?.STAR() is null
+            || expression.unaryExpression() is not { } addressOfExpression
+            || !TryGetAddressOfIndexedPostfixExpression(addressOfExpression, out var postfix))
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        if (!TryCreateIndependentLoopMemoryAccess(postfix, scope, inductionName, isWrite, out access, out reason))
+        {
+            return false;
+        }
+
+        if (!scope.TryLookup(access.DisplayName, out var symbol)
+            || symbol.Type.Kind != StarkTypeKind.RawPointer
+            || symbol.RawPointerElementCountExpression is null)
+        {
+            reason = $"raw pointer root '{access.DisplayName}' must be a bounded raw pointer parameter";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static bool TryValidateIndependentLoopMemoryAccesses(
+        IReadOnlyList<IndependentLoopMemoryAccess> accesses,
+        Scope scope,
+        string? loopExclusiveUpperBoundText,
+        out string reason)
+    {
+        for (var leftIndex = 0; leftIndex < accesses.Count; leftIndex++)
+        {
+            var left = accesses[leftIndex];
+            for (var rightIndex = leftIndex + 1; rightIndex < accesses.Count; rightIndex++)
+            {
+                var right = accesses[rightIndex];
+                if (!left.IsWrite && !right.IsWrite)
+                {
+                    continue;
+                }
+
+                var leftRootKey = GetIndependentLoopAccessComparisonRootKey(left, scope, loopExclusiveUpperBoundText);
+                var rightRootKey = GetIndependentLoopAccessComparisonRootKey(right, scope, loopExclusiveUpperBoundText);
+                if (string.Equals(leftRootKey, rightRootKey, StringComparison.Ordinal)
+                    || scope.HasDisjointFact(leftRootKey, rightRootKey))
+                {
+                    continue;
+                }
+
+                reason = $"memory roots '{left.DisplayName}' and '{right.DisplayName}' are not proven disjoint";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static string GetIndependentLoopAccessComparisonRootKey(
+        IndependentLoopMemoryAccess access,
+        Scope scope,
+        string? loopExclusiveUpperBoundText)
+    {
+        if (loopExclusiveUpperBoundText is null
+            || !scope.TryLookup(access.DisplayName, out var symbol)
+            || symbol.Type.Kind != StarkTypeKind.RawPointer
+            || symbol.RawPointerElementCountExpression is null
+            || !TryParseMemoryRootPath(access.RootKey, out var path)
+            || !TryBuildZeroBasedExclusiveRangeRootKey(path.BaseName, loopExclusiveUpperBoundText, scope, out var rangeRootKey))
+        {
+            return access.RootKey;
+        }
+
+        return $"{rangeRootKey}{BuildMemoryRootSuffix(path, startSegmentIndex: 1)}";
+    }
+
+    private static bool TryBuildZeroBasedExclusiveRangeRootKey(
+        string rootKey,
+        string exclusiveUpperBoundText,
+        Scope scope,
+        out string rangeRootKey)
+    {
+        rangeRootKey = string.Empty;
+        if (!TryResolveMemoryRootIndexRange(exclusiveUpperBoundText, scope, out _, out var upperMax)
+            || upperMax <= BigInteger.Zero)
+        {
+            return false;
+        }
+
+        rangeRootKey = $"{rootKey}[0..{(upperMax - BigInteger.One).ToString(CultureInfo.InvariantCulture)}]";
+        return true;
+    }
+
+    private static bool TryGetDirectAssignmentTargetName(StarkParser.UnaryExpressionContext target, out string name)
+    {
+        name = string.Empty;
+        if (target.unaryOperator() is not null
+            || target.powerExpression()?.postfixExpression() is not { } postfix
+            || postfix.postfixPart().Length != 0
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier)
+        {
+            return false;
+        }
+
+        name = identifier;
+        return true;
+    }
+
+    private static bool IsLiteralOneExpression(StarkParser.AssignmentExpressionContext expression)
+    {
+        return string.Equals(NormalizeExpressionText(expression.GetText()), "1", StringComparison.Ordinal);
+    }
+
+    private static bool IsIndependentLoopMemoryRootType(VariableSymbol symbol)
+    {
+        var type = symbol.Type;
+        if (type.Kind == StarkTypeKind.RawPointer)
+        {
+            return symbol.RawPointerElementCountExpression is not null;
+        }
+
+        return type.Kind is StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.FixedArray
+            || type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None;
+    }
+
+    private bool TryValidateIndependentLoopStatement(
+        StarkParser.StatementContext statement,
+        Scope scope,
+        out string reason)
+    {
+        if (statement.emptyStatement() is not null)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (statement.block() is { } block)
+        {
+            var blockScope = new Scope(scope);
+            foreach (var nestedStatement in block.statement())
+            {
+                if (!TryValidateIndependentLoopStatement(nestedStatement, blockScope, out reason))
+                {
+                    return false;
+                }
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        if (statement.localVariableDeclaration() is { } localVariableDeclaration)
+        {
+            return TryValidateIndependentLocalVariableDeclaration(localVariableDeclaration, scope, out reason);
+        }
+
+        if (statement.localConstantDeclaration() is { } localConstantDeclaration)
+        {
+            return TryValidateIndependentLocalConstantDeclaration(localConstantDeclaration, scope, out reason);
+        }
+
+        if (statement.expressionStatement() is { } expressionStatement)
+        {
+            return TryValidateIndependentLoopExpressionStatement(expressionStatement.expression(), scope, out reason);
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            if (ifStatement.disjointRuntimeCondition() is not null)
+            {
+                reason = "runtime disjoint tests are memory-backed checks";
+                return false;
+            }
+
+            if (ifStatement.expression() is not { } condition)
+            {
+                reason = "runtime disjoint tests are memory-backed checks";
+                return false;
+            }
+
+            if (!TryValidateIndependentPureExpression(condition, scope, out reason))
+            {
+                return false;
+            }
+
+            if (!TryValidateIndependentLoopStatement(ifStatement.statement(0), new Scope(scope), out reason))
+            {
+                return false;
+            }
+
+            if (ifStatement.statement().Length > 1
+                && !TryValidateIndependentLoopStatement(ifStatement.statement(1), new Scope(scope), out reason))
+            {
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        reason = statement switch
+        {
+            _ when statement.unsafeStatement() is not null => "unsafe blocks are outside the first supported subset",
+            _ when statement.switchStatement() is not null => "switch statements are outside the first supported subset",
+            _ when statement.whileStatement() is not null => "nested loops are outside the first supported subset",
+            _ when statement.forStatement() is not null => "nested loops are outside the first supported subset",
+            _ when statement.returnStatement() is not null => "early exits are outside the first supported subset",
+            _ when statement.breakStatement() is not null => "early exits are outside the first supported subset",
+            _ when statement.continueStatement() is not null => "early exits are outside the first supported subset",
+            _ => "the loop body uses an unsupported statement form"
+        };
+        return false;
+    }
+
+    private bool TryValidateIndependentLocalVariableDeclaration(
+        StarkParser.LocalVariableDeclarationContext declaration,
+        Scope scope,
+        out string reason)
+    {
+        var storageClass = declaration.storageClass().GetText();
+        if (!IsIndependentScalarLocalStorageClass(storageClass))
+        {
+            reason = "local declarations inside independent loops must use stack or register scalar storage";
+            return false;
+        }
+
+        var declaredType = ResolveType(declaration.type_(), _currentFunctionGenericParameters, _currentFunctionModuleName);
+        if (!IsIndependentScalarLocalType(declaredType))
+        {
+            reason = "local declarations inside independent loops must use scalar local types";
+            return false;
+        }
+
+        foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
+        {
+            if (declarator.variableStorageCapacity() is not null)
+            {
+                reason = "local declarations inside independent loops cannot declare variable-sized storage";
+                return false;
+            }
+
+            if (declarator.variableInitializer() is { } initializer
+                && !TryValidateIndependentVariableInitializer(initializer, scope, out reason))
+            {
+                return false;
+            }
+
+            scope.Declare(new VariableSymbol(
+                declarator.Identifier().GetText(),
+                declaredType,
+                IsMutable: declaration.MUT() is not null,
+                IsConstant: false));
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentLocalConstantDeclaration(
+        StarkParser.LocalConstantDeclarationContext declaration,
+        Scope scope,
+        out string reason)
+    {
+        if (declaration.type_() is null && declaration.INTEGER_TYPE() is null)
+        {
+            reason = "local constants inside independent loops must declare a scalar type explicitly";
+            return false;
+        }
+
+        var declaredType = declaration.type_() is { } type
+            ? ResolveType(type, _currentFunctionGenericParameters, _currentFunctionModuleName)
+            : ResolveConstIntegerStorageType(declaration.INTEGER_TYPE()!.Symbol);
+        if (!IsIndependentScalarLocalType(declaredType))
+        {
+            reason = "local constants inside independent loops must use scalar local types";
+            return false;
+        }
+
+        foreach (var declarator in declaration.constantDeclarators().constantDeclarator())
+        {
+            if (!TryValidateIndependentVariableInitializer(declarator.variableInitializer(), scope, out reason))
+            {
+                return false;
+            }
+
+            scope.Declare(new VariableSymbol(
+                declarator.Identifier().GetText(),
+                declaredType,
+                IsMutable: false,
+                IsConstant: true));
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentVariableInitializer(
+        StarkParser.VariableInitializerContext initializer,
+        Scope scope,
+        out string reason)
+    {
+        if (initializer.expression() is { } expression)
+        {
+            return TryValidateIndependentPureExpression(expression, scope, out reason);
+        }
+
+        reason = "object and array initializers are outside the first supported subset";
+        return false;
+    }
+
+    private bool TryValidateIndependentLoopExpressionStatement(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        out string reason)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is null)
+        {
+            return TryValidateIndependentPureExpression(expression, scope, out reason);
+        }
+
+        if (!TryValidateIndependentAssignmentTarget(assignment.unaryExpression(), scope, out reason))
+        {
+            return false;
+        }
+
+        return TryValidateIndependentPureAssignmentExpression(assignment.assignmentExpression(), scope, out reason);
+    }
+
+    private bool TryValidateIndependentAssignmentTarget(
+        StarkParser.UnaryExpressionContext target,
+        Scope scope,
+        out string reason)
+    {
+        if (target.unaryOperator()?.AND() is not null)
+        {
+            reason = "address-of expressions would introduce memory facts";
+            return false;
+        }
+
+        if (target.unaryOperator()?.STAR() is not null)
+        {
+            reason = "pointer dereferences are memory operations";
+            return false;
+        }
+
+        if (target.powerExpression()?.postfixExpression() is not { } postfix
+            || postfix.postfixPart().Length != 0
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } name)
+        {
+            reason = "assignments must target mutable scalar locals directly";
+            return false;
+        }
+
+        if (!scope.TryLookup(name, out var symbol)
+            || symbol.BindingKind is not null
+            || !symbol.IsMutable
+            || !IsIndependentScalarLocalType(symbol.Type))
+        {
+            reason = "assignments must target mutable scalar locals directly";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateIndependentPureExpression(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        out string reason)
+    {
+        return TryValidateIndependentPureAssignmentExpression(expression.assignmentExpression(), scope, out reason);
+    }
+
+    private bool TryValidateIndependentPureAssignmentExpression(
+        StarkParser.AssignmentExpressionContext expression,
+        Scope scope,
+        out string reason)
+    {
+        if (expression.assignmentOperator() is not null)
+        {
+            reason = "nested assignments are outside the first supported subset";
+            return false;
+        }
+
+        return TryValidateIndependentPureTree(expression, scope, out reason);
+    }
+
+    private bool TryValidateIndependentPureTree(
+        ParserRuleContext context,
+        Scope scope,
+        out string reason)
+    {
+        switch (context)
+        {
+            case StarkParser.AssignmentExpressionContext assignment when assignment.assignmentOperator() is not null:
+                reason = "nested assignments are outside the first supported subset";
+                return false;
+
+            case StarkParser.UnaryExpressionContext unary when unary.unaryOperator()?.AND() is not null:
+                reason = "address-of expressions would introduce memory facts";
+                return false;
+
+            case StarkParser.UnaryExpressionContext unary when unary.unaryOperator()?.STAR() is not null:
+                reason = "pointer dereferences are memory operations";
+                return false;
+
+            case StarkParser.PostfixPartContext postfix when postfix.argumentList() is not null:
+                reason = "calls are outside the first supported subset";
+                return false;
+
+            case StarkParser.PostfixPartContext postfix when postfix.LBRACK() is not null:
+                reason = "indexed access is a memory projection";
+                return false;
+
+            case StarkParser.PostfixPartContext postfix when postfix.DOT() is not null:
+                reason = "member access is a memory projection";
+                return false;
+
+            case StarkParser.PrimaryExpressionContext primary when primary.SIZEOF() is not null || primary.ALIGNOF() is not null:
+                reason = string.Empty;
+                return true;
+
+            case StarkParser.PrimaryExpressionContext primary when primary.lambdaExpression() is not null:
+                reason = "lambda expressions are outside the first supported subset";
+                return false;
+
+            case StarkParser.PrimaryExpressionContext primary when primary.objectCreationExpression() is not null:
+                reason = "object creation is outside the first supported subset";
+                return false;
+
+            case StarkParser.PrimaryExpressionContext primary when primary.enumConstructorExpression() is not null
+                                                             || primary.genericEnumCaseReference() is not null:
+                reason = "enum construction is outside the first supported subset";
+                return false;
+
+            case StarkParser.PrimaryExpressionContext primary when primary.qualifiedName() is not null:
+                reason = "qualified names are outside the first supported subset";
+                return false;
+
+            case StarkParser.PrimaryExpressionContext primary when primary.Identifier() is { } identifier:
+                return TryValidateIndependentIdentifier(identifier.GetText(), scope, out reason);
+
+            case StarkParser.LiteralContext literal:
+                if (literal.StringLiteral() is not null
+                    || literal.CharacterLiteral() is not null
+                    || literal.NULL() is not null)
+                {
+                    reason = "only integer, floating-point, and boolean literals are in the first supported subset";
+                    return false;
+                }
+
+                reason = string.Empty;
+                return true;
+        }
+
+        for (var i = 0; i < context.ChildCount; i++)
+        {
+            if (context.GetChild(i) is ParserRuleContext child
+                && !TryValidateIndependentPureTree(child, scope, out reason))
+            {
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static bool TryValidateIndependentIdentifier(
+        string name,
+        Scope scope,
+        out string reason)
+    {
+        if (!scope.TryLookup(name, out var symbol)
+            || symbol.BindingKind is not null
+            || !IsIndependentScalarLocalType(symbol.Type))
+        {
+            reason = "expressions must use scalar local values only";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static bool IsIndependentScalarLocalType(StarkTypeSymbol type)
+    {
+        return type.BorrowKind == StarkBorrowKind.None
+            && type.AccessKind == StarkAccessKind.None
+            && type.InitializationKind == StarkInitializationKind.None
+            && type.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer or StarkTypeKind.Float;
+    }
+
+    private static bool IsIndependentScalarLocalStorageClass(string storageClass)
+    {
+        return string.Equals(storageClass, "stack", StringComparison.Ordinal)
+            || string.Equals(storageClass, "register", StringComparison.Ordinal);
+    }
+
+    private static bool CanRuntimeDisjointTest(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            || type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None;
     }
 
     private void ValidateImplementedSwitchShape(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
@@ -3260,8 +5087,21 @@ internal sealed class TypeChecker
                     declarator.variableInitializer());
             }
 
-            CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
-            scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false));
+            var initializer = declarator.variableInitializer()!;
+            var initializerBinding = CheckVariableInitializer(initializer, declaredType, scope);
+            var provenance = TryCreateImmutableLocalMemoryProvenance(declaredType, isMutable, initializerBinding, scope);
+            var hasConstProvenance = !isMutable
+                && initializerBinding is not null
+                && HasConstProvenance(initializerBinding);
+            scope.Declare(new VariableSymbol(
+                declarator.Identifier().GetText(),
+                declaredType,
+                IsMutable: isMutable,
+                IsConstant: false,
+                HasConstProvenance: hasConstProvenance,
+                MemoryRootKey: provenance?.RootKey,
+                MemoryRootIsIndependentStorage: provenance?.IsIndependentStorage == true,
+                RawPointerElementCountExpression: provenance?.RawPointerElementCountExpression));
         }
     }
 
@@ -4149,13 +5989,19 @@ internal sealed class TypeChecker
             IsAddressMutable: isAddressMutable,
             RootGlobalName: target.RootGlobalName,
             RootGlobalBindingKind: target.RootGlobalBindingKind,
+            UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+            HasConstProvenance: HasConstProvenance(target),
             AssignmentErrorMessage: target.RootGlobalBindingKind is not null
                 && target.RootGlobalName is not null
                 && !isAssignable
                 ? DescribeGlobalMutationError(target.RootGlobalName, target.RootGlobalBindingKind.Value, $"member '{publishedFieldAccess.FieldName}'")
                 : target.Type.AccessKind == StarkAccessKind.Frozen
                     ? DescribeFrozenMutationError($"member '{publishedFieldAccess.FieldName}'")
-                    : target.AssignmentErrorMessage);
+                    : target.AssignmentErrorMessage,
+            MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
+                ? $"{memoryRootKey}.{publishedFieldAccess.FieldName}"
+                : null,
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
         return true;
     }
 
@@ -4433,25 +6279,81 @@ internal sealed class TypeChecker
         }
     }
 
-    private void CheckVariableInitializer(StarkParser.VariableInitializerContext initializer, StarkTypeSymbol declaredType, Scope scope)
+    private ExpressionBinding? CheckVariableInitializer(StarkParser.VariableInitializerContext initializer, StarkTypeSymbol declaredType, Scope scope)
     {
         if (initializer.expression() is { } expression)
         {
-            var valueType = EvaluateExpression(expression, scope, allowFunctionReference: false, expectedType: declaredType).Type;
-            EnsureAssignmentCompatible(variableName: null, declaredType, valueType, expression, isConstant: false);
-            return;
+            var value = EvaluateExpression(expression, scope, allowFunctionReference: false, expectedType: declaredType);
+            EnsureAssignmentCompatible(variableName: null, declaredType, value.Type, expression, isConstant: false);
+            return value;
         }
 
         if (initializer.objectInitializer() is { } objectInitializer)
         {
             CheckObjectInitializer(objectInitializer, declaredType, scope, preInitializedMembers: null);
-            return;
+            return null;
         }
 
         if (initializer.arrayInitializer() is { } arrayInitializer)
         {
             CheckArrayInitializer(arrayInitializer, declaredType, scope);
         }
+
+        return null;
+    }
+
+    private static LocalMemoryProvenance? TryCreateImmutableLocalMemoryProvenance(
+        StarkTypeSymbol declaredType,
+        bool isMutable,
+        ExpressionBinding? initializerBinding,
+        Scope scope)
+    {
+        if (isMutable
+            || initializerBinding?.MemoryRootKey is not { Length: > 0 } rootKey
+            || !CanPreserveImmutableLocalMemoryProvenance(declaredType, initializerBinding.Type))
+        {
+            return null;
+        }
+
+        return new LocalMemoryProvenance(
+            rootKey,
+            initializerBinding.MemoryRootIsIndependentStorage,
+            TryGetProvenancePreservingRawPointerCountExpression(rootKey, declaredType, initializerBinding.Type, scope));
+    }
+
+    private static bool CanPreserveImmutableLocalMemoryProvenance(
+        StarkTypeSymbol declaredType,
+        StarkTypeSymbol initializerType)
+    {
+        if (declaredType.Kind is StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+        {
+            return initializerType.Kind is StarkTypeKind.FixedArray
+                or StarkTypeKind.Slice
+                or StarkTypeKind.Ascii
+                or StarkTypeKind.Unicode;
+        }
+
+        return declaredType.Kind == StarkTypeKind.RawPointer
+            && initializerType.Kind == StarkTypeKind.RawPointer;
+    }
+
+    private static string? TryGetProvenancePreservingRawPointerCountExpression(
+        string rootKey,
+        StarkTypeSymbol declaredType,
+        StarkTypeSymbol initializerType,
+        Scope scope)
+    {
+        if (declaredType.Kind != StarkTypeKind.RawPointer
+            || initializerType.Kind != StarkTypeKind.RawPointer
+            || !TryParseMemoryRootPath(rootKey, out var path)
+            || path.Segments.Count != 0
+            || !scope.TryLookup(path.BaseName, out var rootSymbol)
+            || rootSymbol.Type.Kind != StarkTypeKind.RawPointer)
+        {
+            return null;
+        }
+
+        return rootSymbol.RawPointerElementCountExpression;
     }
 
     private IReadOnlyList<ObjectInitializerMemberTypingRecord> CheckObjectInitializer(
@@ -4926,6 +6828,19 @@ internal sealed class TypeChecker
                     TextLiteralKind: convertedOperand.TextLiteralKind);
             }
 
+            if (targetType.Kind == StarkTypeKind.RawPointer
+                && convertedOperand.Type.Kind == StarkTypeKind.RawPointer)
+            {
+                return new ExpressionBinding(
+                    targetType,
+                    NamedType: ResolveNamedTypeSymbol(targetType),
+                    UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(convertedOperand)
+                        || targetType.ElementType is { AccessKind: StarkAccessKind.Frozen },
+                    HasConstProvenance: HasConstProvenance(convertedOperand),
+                    MemoryRootKey: convertedOperand.MemoryRootKey,
+                    MemoryRootIsIndependentStorage: convertedOperand.MemoryRootIsIndependentStorage);
+            }
+
             return new ExpressionBinding(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
         }
 
@@ -4979,19 +6894,32 @@ internal sealed class TypeChecker
         bool allowFunctionReference,
         StarkTypeSymbol? expectedType)
     {
-        var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
-        var binding = TryGetPublishedTemplateEnumCallBinding(expression, out var publishedEnumCall)
-            ? publishedEnumCall
-            : TryGetPublishedTemplateDirectCallBinding(expression, out var publishedBinding)
-            ? publishedBinding
-            : EvaluatePrimaryExpression(
-                expression.primaryExpression(),
-                scope,
-                allowFunctionReference || requiresCallableTarget,
-                expression.postfixPart().Length == 0 ? expectedType : null);
-
         var postfixParts = expression.postfixPart();
-        for (var index = 0; index < postfixParts.Length; index++)
+        var firstUnhandledPostfixIndex = 0;
+        ExpressionBinding binding;
+        if (TryEvaluateUnsafeRawSliceConstructionPrefix(
+                expression,
+                scope,
+                out var rawSliceBinding,
+                out firstUnhandledPostfixIndex))
+        {
+            binding = rawSliceBinding;
+        }
+        else
+        {
+            var requiresCallableTarget = postfixParts.Any(static part => part.argumentList() is not null);
+            binding = TryGetPublishedTemplateEnumCallBinding(expression, out var publishedEnumCall)
+                ? publishedEnumCall
+                : TryGetPublishedTemplateDirectCallBinding(expression, out var publishedBinding)
+                ? publishedBinding
+                : EvaluatePrimaryExpression(
+                    expression.primaryExpression(),
+                    scope,
+                    allowFunctionReference || requiresCallableTarget,
+                    postfixParts.Length == 0 ? expectedType : null);
+        }
+
+        for (var index = firstUnhandledPostfixIndex; index < postfixParts.Length; index++)
         {
             var postfixPart = postfixParts[index];
             if (postfixPart.argumentList() is { } argumentList)
@@ -5060,6 +6988,176 @@ internal sealed class TypeChecker
         }
 
         return binding;
+    }
+
+    private bool TryEvaluateUnsafeRawSliceConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        Scope scope,
+        out ExpressionBinding binding,
+        out int firstUnhandledPostfixIndex)
+    {
+        binding = null!;
+        firstUnhandledPostfixIndex = 0;
+        if (!string.Equals(expression.primaryExpression().Identifier()?.GetText(), "slice", StringComparison.Ordinal)
+            || expression.postfixPart().Length == 0
+            || expression.postfixPart()[0] is not { } callPart
+            || callPart.argumentList() is not { } arguments)
+        {
+            return false;
+        }
+
+        firstUnhandledPostfixIndex = 1;
+        if (_unsafeDepth == 0)
+        {
+            ReportError("STK3024", "Unsafe raw slice construction 'slice(pointer, count)' requires an unsafe context.", callPart);
+        }
+
+        var argumentList = arguments.argument();
+        if (argumentList.Length != 2)
+        {
+            ReportError(
+                "STK3009",
+                $"Raw slice construction expects 2 arguments but received {argumentList.Length}.",
+                arguments);
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var pointer = EvaluateExpression(argumentList[0].expression(), scope, allowFunctionReference: false);
+        var length = EvaluateExpression(argumentList[1].expression(), scope, allowFunctionReference: false);
+        BigInteger lengthMin = default;
+        BigInteger lengthMax = default;
+        var lengthHasRange = length.Type.Kind == StarkTypeKind.Integer
+            && TryGetEffectiveIntegerRange(length.Type, out lengthMin, out lengthMax);
+        var pointerType = UsesFrozenProjectionSemantics(pointer)
+            ? StarkTypeSymbols.FreezeReachableView(pointer.Type)
+            : pointer.Type;
+        var pointerIsCompileTimeNull = IsCompileTimeNullExpression(argumentList[0].expression(), scope, pointerType);
+        if (pointer.Type.Kind == StarkTypeKind.Null)
+        {
+            if (lengthHasRange && lengthMin > BigInteger.Zero)
+            {
+                ReportError(
+                    "STK3029",
+                    "Raw slice construction cannot use null with a provably positive element count.",
+                    argumentList[0].expression());
+            }
+            else
+            {
+                ReportError(
+                    "STK3002",
+                    $"Raw slice construction expects a raw pointer as its first argument, but found '{pointer.Type.DisplayName}'.",
+                    argumentList[0].expression());
+            }
+
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        if (pointerType.Kind != StarkTypeKind.RawPointer
+            || pointerType.ElementType is not { } elementType)
+        {
+            ReportError(
+                "STK3002",
+                $"Raw slice construction expects a raw pointer as its first argument, but found '{pointer.Type.DisplayName}'.",
+                argumentList[0].expression());
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        if (length.Type.Kind != StarkTypeKind.Integer)
+        {
+            ReportError(
+                "STK3002",
+                $"Raw slice construction expects an integer count as its second argument, but found '{length.Type.DisplayName}'.",
+                argumentList[1].expression());
+        }
+        else if (!IsProvablyNonNegativeIntegerType(length.Type))
+        {
+            ReportError(
+                "STK3002",
+                "Raw slice construction count must be provably non-negative.",
+                argumentList[1].expression());
+        }
+
+        if (pointerIsCompileTimeNull
+            && lengthHasRange
+            && lengthMin > BigInteger.Zero)
+        {
+            ReportError(
+                "STK3029",
+                "Raw slice construction cannot use null with a provably positive element count.",
+                argumentList[0].expression());
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        if (pointer.MemoryRootKey is null
+            && !(pointerIsCompileTimeNull
+                 && lengthHasRange
+                 && lengthMax == BigInteger.Zero))
+        {
+            ReportError(
+                "STK3029",
+                "Raw slice construction requires a compiler-visible raw pointer root; calls, integer casts, and other hidden-root expressions cannot produce a provenance-preserving slice.",
+                argumentList[0].expression());
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var hasFrozenSliceProvenance = UsesFrozenProjectionSemantics(pointer)
+            || elementType.AccessKind == StarkAccessKind.Frozen;
+        var sliceElementType = hasFrozenSliceProvenance
+            ? StarkTypeSymbols.WithQualifiers(elementType, accessKind: StarkAccessKind.None, isMutableView: false)
+            : elementType;
+        var sliceType = StarkTypeSymbols.ApplyQualifiers(
+            StarkTypeSymbols.Slice(sliceElementType),
+            isMutableView: pointerType.IsMutablePointer);
+        if (hasFrozenSliceProvenance)
+        {
+            sliceType = StarkTypeSymbols.FreezeReachableView(sliceType);
+        }
+
+        binding = new ExpressionBinding(
+            sliceType,
+            IsAssignable: false,
+            NamedType: ResolveNamedTypeSymbol(sliceType),
+            DiagnosticName: $"raw slice '{expression.GetText()}'",
+            UsesFrozenProjectionSemantics: hasFrozenSliceProvenance,
+            HasConstProvenance: HasConstProvenance(pointer),
+            MemoryRootKey: pointer.MemoryRootKey,
+            MemoryRootIsIndependentStorage: pointer.MemoryRootIsIndependentStorage);
+        return true;
+    }
+
+    private bool IsCompileTimeNullExpression(
+        StarkParser.ExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol targetType)
+    {
+        if (CompileTimeExpressionEvaluator.TryEvaluate(
+                expression,
+                out var constant,
+                CreateCompileTimeEvaluationServices(scope))
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced))
+        {
+            constant = coerced;
+
+            if (constant.Kind == CompileTimeConstantKind.Null)
+            {
+                return true;
+            }
+        }
+
+        var normalizedText = NormalizeExpressionText(expression.GetText());
+        return string.Equals(normalizedText, "null", StringComparison.Ordinal)
+            || normalizedText.EndsWith(")null", StringComparison.Ordinal);
     }
 
     private ExpressionBinding EvaluatePrimaryExpression(
@@ -5745,7 +7843,7 @@ internal sealed class TypeChecker
         {
             EnsureReceiverArgumentCompatible(
                 target.Function.DisplaySourceName,
-                target.Function.Parameters[0].Type,
+                target.Function.Parameters[0],
                 target.Receiver,
                 arguments);
         }
@@ -5754,8 +7852,25 @@ internal sealed class TypeChecker
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
             var argument = argumentBindings[index];
-            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter.Type, argument, arguments.argument(index).expression());
+            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter, argument, arguments.argument(index).expression());
         }
+
+        ValidateBoundedRawPointerCallArguments(
+            target.Function,
+            receiverOffset,
+            arguments,
+            argumentBindings,
+            target.Function.DisplaySourceName,
+            scope);
+
+        ValidateDisjointCallArguments(
+            target.Function,
+            target.Receiver,
+            receiverOffset,
+            arguments,
+            argumentBindings,
+            target.Function.DisplaySourceName,
+            scope);
 
         if (target.Function.IsVarargs)
         {
@@ -5796,6 +7911,1217 @@ internal sealed class TypeChecker
         }
 
         return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"call to '{target.Function.DisplaySourceName}'");
+    }
+
+    private void ValidateBoundedRawPointerCallArguments(
+        TypedFunctionSignature function,
+        int receiverOffset,
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        string displayFunctionName,
+        Scope scope)
+    {
+        var explicitArguments = arguments.argument();
+        for (var argumentIndex = 0; argumentIndex < Math.Min(explicitArguments.Length, argumentBindings.Count); argumentIndex++)
+        {
+            var parameterIndex = argumentIndex + receiverOffset;
+            if (parameterIndex < 0 || parameterIndex >= function.Parameters.Count)
+            {
+                continue;
+            }
+
+            var parameter = function.Parameters[parameterIndex];
+            if (parameter.Type.Kind != StarkTypeKind.RawPointer
+                || parameter.RawPointerElementCountExpression is not { Length: > 0 } countExpression)
+            {
+                continue;
+            }
+
+            var argument = argumentBindings[argumentIndex];
+            if (!TryResolveRawPointerParameterCountRange(
+                    countExpression,
+                    function,
+                    receiverOffset,
+                    argumentBindings,
+                    out var countMin,
+                    out var countMax))
+            {
+                continue;
+            }
+
+            if (argument.Type.Kind == StarkTypeKind.Null)
+            {
+                if (countMin > BigInteger.Zero)
+                {
+                    ReportError(
+                        "STK3029",
+                        $"Call to '{displayFunctionName}' passes null for bounded raw pointer parameter '{parameter.Name}', but its element count is provably positive.",
+                        explicitArguments[argumentIndex].expression());
+                }
+
+                continue;
+            }
+
+            if (_unsafeDepth != 0 || countMax <= BigInteger.Zero)
+            {
+                continue;
+            }
+
+            var requestedCountExpression = TryResolveRawPointerParameterCountArgumentText(
+                countExpression,
+                function,
+                receiverOffset,
+                explicitArguments);
+            if (!TryProveBoundedRawPointerArgumentStorage(
+                    argument,
+                    explicitArguments[argumentIndex].expression(),
+                    scope,
+                    requestedCountExpression,
+                    countMax,
+                    out var reason))
+            {
+                ReportError(
+                    "STK3029",
+                    $"Call to '{displayFunctionName}' passes argument {argumentIndex + 1} to bounded raw pointer parameter '{parameter.Name}', but safe code must prove the argument is valid for {countMax.ToString(CultureInfo.InvariantCulture)} contiguous element(s). {reason}",
+                    explicitArguments[argumentIndex].expression());
+            }
+        }
+    }
+
+    private static string? TryResolveRawPointerParameterCountArgumentText(
+        string countExpression,
+        TypedFunctionSignature function,
+        int receiverOffset,
+        IReadOnlyList<StarkParser.ArgumentContext> explicitArguments)
+    {
+        var normalized = NormalizeExpressionText(countExpression);
+        if (BigInteger.TryParse(normalized, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            return normalized;
+        }
+
+        var parameterIndex = -1;
+        for (var index = 0; index < function.Parameters.Count; index++)
+        {
+            if (string.Equals(function.Parameters[index].Name, normalized, StringComparison.Ordinal))
+            {
+                parameterIndex = index;
+                break;
+            }
+        }
+
+        var argumentIndex = parameterIndex - receiverOffset;
+        return argumentIndex >= 0 && argumentIndex < explicitArguments.Count
+            ? NormalizeExpressionText(explicitArguments[argumentIndex].expression().GetText())
+            : null;
+    }
+
+    private static bool TryProveBoundedRawPointerArgumentStorage(
+        ExpressionBinding argument,
+        ParserRuleContext diagnosticContext,
+        Scope scope,
+        string? requestedCountExpression,
+        BigInteger requestedCountMax,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (argument.MemoryRootKey is not { Length: > 0 } rootKey
+            || !TryParseMemoryRootPath(rootKey, out var path)
+            || !scope.TryLookup(path.BaseName, out var rootSymbol))
+        {
+            reason = "The argument does not have a compiler-visible storage root; use a bounded raw pointer parameter, a fixed-array element address, or wrap the assertion in an unsafe block.";
+            return false;
+        }
+
+        path = ResolveMemoryRootPathIndexRanges(path, scope);
+        if (TryGetFixedArrayRemainingElementCount(rootSymbol.Type, path, out var fixedArrayRemaining))
+        {
+            if (fixedArrayRemaining >= requestedCountMax)
+            {
+                return true;
+            }
+
+            reason = $"The fixed-array root '{path.BaseName}' only proves {fixedArrayRemaining.ToString(CultureInfo.InvariantCulture)} remaining contiguous element(s).";
+            return false;
+        }
+
+        if (rootSymbol.Type.Kind == StarkTypeKind.RawPointer
+            && rootSymbol.RawPointerElementCountExpression is { Length: > 0 } sourceCountExpression
+            && TryProveBoundedRawPointerCountCoversRequest(
+                sourceCountExpression,
+                path,
+                scope,
+                requestedCountExpression,
+                requestedCountMax))
+        {
+            return true;
+        }
+
+        reason = $"The storage rooted at '{path.BaseName}' is not proven to cover the requested bounded raw pointer region.";
+        return false;
+    }
+
+    private static bool TryGetFixedArrayRemainingElementCount(
+        StarkTypeSymbol rootType,
+        MemoryRootPath path,
+        out BigInteger remainingCount)
+    {
+        remainingCount = default;
+        if (rootType.Kind != StarkTypeKind.FixedArray
+            || rootType.FixedLength is not int fixedLength
+            || path.Segments.Count != 1
+            || path.Segments[0] is not { Kind: MemoryRootSegmentKind.Index, RangeMax: { } indexMax })
+        {
+            return false;
+        }
+
+        remainingCount = new BigInteger(fixedLength) - indexMax;
+        if (remainingCount < BigInteger.Zero)
+        {
+            remainingCount = BigInteger.Zero;
+        }
+
+        return true;
+    }
+
+    private static bool TryProveBoundedRawPointerCountCoversRequest(
+        string sourceCountExpression,
+        MemoryRootPath path,
+        Scope scope,
+        string? requestedCountExpression,
+        BigInteger requestedCountMax)
+    {
+        var normalizedSourceCount = NormalizeExpressionText(sourceCountExpression);
+        if (path.Segments.Count == 0)
+        {
+            return string.Equals(normalizedSourceCount, requestedCountExpression, StringComparison.Ordinal)
+                || TryResolveRawPointerCountExpressionRange(normalizedSourceCount, scope, out var sourceMin, out _)
+                    && sourceMin >= requestedCountMax;
+        }
+
+        if (path.Segments.Count != 1
+            || path.Segments[0] is not { Kind: MemoryRootSegmentKind.Index, RangeMax: { } indexMax })
+        {
+            return false;
+        }
+
+        if (indexMax == BigInteger.Zero
+            && string.Equals(normalizedSourceCount, requestedCountExpression, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return TryResolveRawPointerCountExpressionRange(normalizedSourceCount, scope, out var rangedSourceMin, out _)
+            && rangedSourceMin - indexMax >= requestedCountMax;
+    }
+
+    private static bool TryResolveRawPointerCountExpressionRange(
+        string countExpression,
+        Scope scope,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        var normalized = NormalizeExpressionText(countExpression);
+        if (BigInteger.TryParse(normalized, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
+        {
+            min = literal;
+            max = literal;
+            return true;
+        }
+
+        if (TryReadIdentifier(normalized, 0, out var identifier, out var end)
+            && end == normalized.Length
+            && scope.TryLookup(identifier, out var symbol)
+            && symbol.Type.Kind == StarkTypeKind.Integer
+            && TryGetEffectiveIntegerRange(symbol.Type, out min, out max))
+        {
+            return true;
+        }
+
+        min = default;
+        max = default;
+        return false;
+    }
+
+    private static bool TryResolveRawPointerParameterCountRange(
+        string countExpression,
+        TypedFunctionSignature function,
+        int receiverOffset,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        var normalized = NormalizeExpressionText(countExpression);
+        if (BigInteger.TryParse(normalized, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
+        {
+            min = literal;
+            max = literal;
+            return true;
+        }
+
+        var parameterIndex = -1;
+        for (var index = 0; index < function.Parameters.Count; index++)
+        {
+            if (string.Equals(function.Parameters[index].Name, normalized, StringComparison.Ordinal))
+            {
+                parameterIndex = index;
+                break;
+            }
+        }
+
+        if (parameterIndex < receiverOffset)
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        var argumentIndex = parameterIndex - receiverOffset;
+        if (argumentIndex < 0
+            || argumentIndex >= argumentBindings.Count
+            || !TryGetEffectiveIntegerRange(argumentBindings[argumentIndex].Type, out min, out max))
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        return true;
+    }
+
+    private void ValidateDisjointCallArguments(
+        TypedFunctionSignature function,
+        ExpressionBinding? receiver,
+        int receiverOffset,
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        string displayFunctionName,
+        Scope scope)
+    {
+        if (function.DisjointGroups.Count == 0)
+        {
+            return;
+        }
+
+        var explicitArguments = arguments.argument();
+        if (explicitArguments.Length == 0)
+        {
+            return;
+        }
+
+        var memoryArgumentsByParameterName = new Dictionary<string, DisjointMemoryArgument>(StringComparer.Ordinal);
+        if (receiver is not null
+            && receiverOffset == 1
+            && function.Parameters.Count > 0
+            && CanRuntimeDisjointTest(function.Parameters[0].Type))
+        {
+            memoryArgumentsByParameterName[function.Parameters[0].Name] = TryGetMemoryArgumentRoot(
+                receiver,
+                arguments,
+                scope,
+                out var receiverRoot)
+                ? new DisjointMemoryArgument(arguments, receiverRoot)
+                : new DisjointMemoryArgument(arguments, null);
+        }
+
+        for (var argumentIndex = 0; argumentIndex < explicitArguments.Length; argumentIndex++)
+        {
+            var parameterIndex = argumentIndex + receiverOffset;
+            if (parameterIndex < 0
+                || parameterIndex >= function.Parameters.Count
+                || argumentIndex >= argumentBindings.Count)
+            {
+                continue;
+            }
+
+            var parameter = function.Parameters[parameterIndex];
+            if (!CanRuntimeDisjointTest(parameter.Type))
+            {
+                continue;
+            }
+
+            var expression = explicitArguments[argumentIndex].expression();
+            memoryArgumentsByParameterName[parameter.Name] =
+                TryGetMemoryArgumentRoot(argumentBindings[argumentIndex], expression, scope, out var root)
+                || TryGetMemoryArgumentRoot(expression, argumentBindings[argumentIndex].Type, scope, out root)
+                ? new DisjointMemoryArgument(expression, root)
+                : new DisjointMemoryArgument(expression, null);
+        }
+
+        foreach (var group in function.DisjointGroups)
+        {
+            var parameterNames = group.ParameterNames
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            for (var leftIndex = 0; leftIndex < parameterNames.Length; leftIndex++)
+            {
+                if (!memoryArgumentsByParameterName.TryGetValue(parameterNames[leftIndex], out var left))
+                {
+                    continue;
+                }
+
+                for (var rightIndex = leftIndex + 1; rightIndex < parameterNames.Length; rightIndex++)
+                {
+                    if (!memoryArgumentsByParameterName.TryGetValue(parameterNames[rightIndex], out var right))
+                    {
+                        continue;
+                    }
+
+                    if (left.Root is not { } leftRoot
+                        || right.Root is not { } rightRoot)
+                    {
+                        if (_unsafeDepth == 0)
+                        {
+                            ReportError(
+                                "STK3030",
+                                $"Call to '{displayFunctionName}' violates disjoint parameter contract: parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' require a compiler-visible non-overlap proof, but one or both arguments do not have a statically identifiable memory root.",
+                                right.Expression);
+                        }
+
+                        continue;
+                    }
+
+                    if (!DisjointCallArgumentsMayOverlap(
+                            leftRoot,
+                            rightRoot,
+                            scope,
+                            requireProof: _unsafeDepth == 0,
+                            out var overlapRootKey))
+                    {
+                        continue;
+                    }
+
+                    ReportError(
+                        "STK3030",
+                        $"Call to '{displayFunctionName}' violates disjoint parameter contract: parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' may receive overlapping memory rooted at '{overlapRootKey}'.",
+                        rightRoot.Expression);
+                }
+            }
+        }
+    }
+
+    private static void AddParameterDisjointFacts(Scope scope, IReadOnlyList<ParameterDisjointGroup> disjointGroups)
+    {
+        foreach (var group in disjointGroups)
+        {
+            scope.AddDisjointFact(group.ParameterNames);
+        }
+    }
+
+    private static bool TryGetObviousMemoryArgumentRootKey(
+        StarkParser.ExpressionContext expression,
+        out string rootKey)
+    {
+        rootKey = NormalizeExpressionText(expression.GetText());
+        while (rootKey.Length > 1 && rootKey[0] == '&')
+        {
+            rootKey = NormalizeExpressionText(rootKey[1..]);
+        }
+
+        return IsSimpleMemoryRootText(rootKey);
+    }
+
+    private static bool TryGetMemoryArgumentRoot(
+        StarkParser.ExpressionContext expression,
+        StarkTypeSymbol argumentType,
+        Scope scope,
+        out MemoryArgumentRoot root)
+    {
+        root = default;
+        if (!TryGetObviousMemoryArgumentRootKey(expression, out var rootKey))
+        {
+            return false;
+        }
+
+        var normalizedExpressionText = NormalizeExpressionText(expression.GetText());
+        var wasAddressOf = normalizedExpressionText.Length > 1 && normalizedExpressionText[0] == '&';
+        return TryCreateMemoryArgumentRoot(
+            rootKey,
+            expression,
+            argumentType,
+            wasAddressOf,
+            hasProvenIndependentStorage: false,
+            scope,
+            out root);
+    }
+
+    private static bool TryGetMemoryArgumentRoot(
+        ExpressionBinding binding,
+        ParserRuleContext diagnosticContext,
+        Scope scope,
+        out MemoryArgumentRoot root)
+    {
+        root = default;
+        if (binding.MemoryRootKey is not { Length: > 0 } rootKey)
+        {
+            return false;
+        }
+
+        return TryCreateMemoryArgumentRoot(
+            rootKey,
+            diagnosticContext,
+            binding.Type,
+            wasAddressOf: false,
+            binding.MemoryRootIsIndependentStorage,
+            scope,
+            out root);
+    }
+
+    private static bool TryCreateMemoryArgumentRoot(
+        string rootKey,
+        ParserRuleContext diagnosticContext,
+        StarkTypeSymbol argumentType,
+        bool wasAddressOf,
+        bool hasProvenIndependentStorage,
+        Scope scope,
+        out MemoryArgumentRoot root)
+    {
+        root = default;
+        var baseName = TryParseMemoryRootPath(rootKey, out var parsedPath)
+            ? parsedPath.BaseName
+            : TryReadIdentifier(rootKey, 0, out var parsedBaseName, out _)
+                ? parsedBaseName
+                : string.Empty;
+        if (baseName.Length == 0)
+        {
+            return false;
+        }
+
+        var aliasRootKeys = new List<string>();
+        if (diagnosticContext is StarkParser.ExpressionContext expression
+            && TryGetObviousMemoryArgumentRootKey(expression, out var expressionRootKey)
+            && !string.Equals(expressionRootKey, rootKey, StringComparison.Ordinal))
+        {
+            aliasRootKeys.Add(expressionRootKey);
+        }
+
+        root = new MemoryArgumentRoot(
+            rootKey,
+            baseName,
+            diagnosticContext,
+            argumentType,
+            wasAddressOf,
+            scope.TryLookup(baseName, out _),
+            hasProvenIndependentStorage,
+            ResolveMemoryRootPathIndexRanges(
+                string.IsNullOrEmpty(parsedPath.BaseName)
+                    ? new MemoryRootPath(baseName, [])
+                    : parsedPath,
+                scope),
+            aliasRootKeys.Count == 0 ? null : aliasRootKeys);
+        return true;
+    }
+
+    private static bool DisjointCallArgumentsMayOverlap(
+        MemoryArgumentRoot left,
+        MemoryArgumentRoot right,
+        Scope scope,
+        bool requireProof,
+        out string overlapRootKey)
+    {
+        if (HasDisjointFact(scope, left, right))
+        {
+            overlapRootKey = string.Empty;
+            return false;
+        }
+
+        if (MemoryArgumentRootsAreProvenDisjoint(left, right))
+        {
+            overlapRootKey = string.Empty;
+            return false;
+        }
+
+        if (ObviousMemoryArgumentRootsMayOverlap(left.RootKey, right.RootKey, out overlapRootKey))
+        {
+            return true;
+        }
+
+        if (HaveProvenIndependentStorageRoots(left, right))
+        {
+            overlapRootKey = string.Empty;
+            return false;
+        }
+
+        if (!requireProof)
+        {
+            overlapRootKey = string.Empty;
+            return false;
+        }
+
+        overlapRootKey = $"{left.RootKey} or {right.RootKey}";
+        return true;
+    }
+
+    private static bool HasDisjointFact(Scope scope, MemoryArgumentRoot left, MemoryArgumentRoot right)
+    {
+        foreach (var leftRootKey in GetDisjointQueryRootKeys(left))
+        {
+            foreach (var rightRootKey in GetDisjointQueryRootKeys(right))
+            {
+                if (scope.HasDisjointFact(leftRootKey, rightRootKey))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> GetDisjointQueryRootKeys(MemoryArgumentRoot root)
+    {
+        yield return root.RootKey;
+        if (root.AliasRootKeys is null)
+        {
+            yield break;
+        }
+
+        foreach (var aliasRootKey in root.AliasRootKeys)
+        {
+            yield return aliasRootKey;
+        }
+    }
+
+    private static bool HaveProvenIndependentStorageRoots(MemoryArgumentRoot left, MemoryArgumentRoot right)
+    {
+        return !string.Equals(left.BaseName, right.BaseName, StringComparison.Ordinal)
+            && HasProvenIndependentStorageRoot(left)
+            && HasProvenIndependentStorageRoot(right);
+    }
+
+    private static bool HasProvenIndependentStorageRoot(MemoryArgumentRoot root)
+    {
+        if (root.HasProvenIndependentStorage)
+        {
+            return true;
+        }
+
+        if (!root.BaseHasNamedStorage)
+        {
+            return false;
+        }
+
+        if (root.WasAddressOf)
+        {
+            return true;
+        }
+
+        if (root.ArgumentType.InitializationKind != StarkInitializationKind.None)
+        {
+            return true;
+        }
+
+        if (root.ArgumentType.BorrowKind != StarkBorrowKind.None)
+        {
+            return root.ArgumentType.IsMutableView;
+        }
+
+        return root.ArgumentType.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
+    }
+
+    private static bool ObviousMemoryArgumentRootsMayOverlap(
+        string leftRootKey,
+        string rightRootKey,
+        out string overlapRootKey)
+    {
+        if (TryParseMemoryRootPath(leftRootKey, out var leftPath)
+            && TryParseMemoryRootPath(rightRootKey, out var rightPath))
+        {
+            return MemoryRootPathsMayOverlap(leftPath, rightPath, out overlapRootKey);
+        }
+
+        if (string.Equals(leftRootKey, rightRootKey, StringComparison.Ordinal))
+        {
+            overlapRootKey = leftRootKey;
+            return true;
+        }
+
+        if (IsMemoryRootAncestor(leftRootKey, rightRootKey))
+        {
+            overlapRootKey = leftRootKey;
+            return true;
+        }
+
+        if (IsMemoryRootAncestor(rightRootKey, leftRootKey))
+        {
+            overlapRootKey = rightRootKey;
+            return true;
+        }
+
+        overlapRootKey = string.Empty;
+        return false;
+    }
+
+    private static bool MemoryArgumentRootsAreProvenDisjoint(
+        MemoryArgumentRoot left,
+        MemoryArgumentRoot right)
+    {
+        return string.Equals(left.Path.BaseName, right.Path.BaseName, StringComparison.Ordinal)
+            && !MemoryRootPathsMayOverlap(left.Path, right.Path, out _);
+    }
+
+    private static bool MemoryRootPathsMayOverlap(
+        MemoryRootPath left,
+        MemoryRootPath right,
+        out string overlapRootKey)
+    {
+        if (!string.Equals(left.BaseName, right.BaseName, StringComparison.Ordinal))
+        {
+            overlapRootKey = string.Empty;
+            return false;
+        }
+
+        var sharedSegmentCount = Math.Min(left.Segments.Count, right.Segments.Count);
+        for (var index = 0; index < sharedSegmentCount; index++)
+        {
+            var leftSegment = left.Segments[index];
+            var rightSegment = right.Segments[index];
+            if (leftSegment.Equals(rightSegment))
+            {
+                continue;
+            }
+
+            if (leftSegment.Kind == MemoryRootSegmentKind.Field
+                && rightSegment.Kind == MemoryRootSegmentKind.Field)
+            {
+                overlapRootKey = string.Empty;
+                return false;
+            }
+
+            if (leftSegment.Kind == MemoryRootSegmentKind.Index
+                && rightSegment.Kind == MemoryRootSegmentKind.Index
+                && MemoryRootIndexRangesAreDisjoint(leftSegment, rightSegment))
+            {
+                overlapRootKey = string.Empty;
+                return false;
+            }
+
+            overlapRootKey = BuildMemoryRootPrefix(left, index);
+            return true;
+        }
+
+        overlapRootKey = BuildMemoryRootPrefix(left, sharedSegmentCount);
+        return true;
+    }
+
+    private static bool IsMemoryRootAncestor(string ancestorRootKey, string descendantRootKey)
+    {
+        return descendantRootKey.Length > ancestorRootKey.Length
+            && descendantRootKey.StartsWith(ancestorRootKey, StringComparison.Ordinal)
+            && descendantRootKey[ancestorRootKey.Length] is '.' or '[';
+    }
+
+    private static bool IsSameOrDescendantMemoryRoot(string candidateRootKey, string ancestorRootKey)
+    {
+        return string.Equals(candidateRootKey, ancestorRootKey, StringComparison.Ordinal)
+            || IsMemoryRootAncestor(ancestorRootKey, candidateRootKey);
+    }
+
+    private static bool TryParseMemoryRootPath(string rootKey, out MemoryRootPath path)
+    {
+        path = default;
+        if (!TryReadIdentifier(rootKey, 0, out var baseName, out var position))
+        {
+            return false;
+        }
+
+        var segments = new List<MemoryRootSegment>();
+        while (position < rootKey.Length)
+        {
+            if (rootKey[position] == '.')
+            {
+                if (!TryReadIdentifier(rootKey, position + 1, out var fieldName, out position))
+                {
+                    return false;
+                }
+
+                segments.Add(new MemoryRootSegment(MemoryRootSegmentKind.Field, fieldName));
+                continue;
+            }
+
+            if (rootKey[position] == '[')
+            {
+                var closeBracket = rootKey.IndexOf(']', position + 1);
+                if (closeBracket <= position + 1)
+                {
+                    return false;
+                }
+
+                var indexText = rootKey[(position + 1)..closeBracket];
+                if (indexText.Contains('[', StringComparison.Ordinal)
+                    || indexText.Contains(']', StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (TryParseNonNegativeInteger(indexText, out var literalIndex))
+                {
+                    segments.Add(new MemoryRootSegment(
+                        MemoryRootSegmentKind.Index,
+                        indexText,
+                        literalIndex,
+                        literalIndex));
+                }
+                else if (TryParseMemoryRootIndexRangeText(indexText, out var rangeMin, out var rangeMax))
+                {
+                    segments.Add(new MemoryRootSegment(
+                        MemoryRootSegmentKind.Index,
+                        indexText,
+                        rangeMin,
+                        rangeMax));
+                }
+                else
+                {
+                    segments.Add(new MemoryRootSegment(MemoryRootSegmentKind.Index, indexText));
+                }
+
+                position = closeBracket + 1;
+                continue;
+            }
+
+            return false;
+        }
+
+        path = new MemoryRootPath(baseName, segments);
+        return true;
+    }
+
+    private static MemoryRootPath ResolveMemoryRootPathIndexRanges(MemoryRootPath path, Scope scope)
+    {
+        if (path.Segments.Count == 0)
+        {
+            return path;
+        }
+
+        var segments = new List<MemoryRootSegment>(path.Segments.Count);
+        foreach (var segment in path.Segments)
+        {
+            if (segment.Kind == MemoryRootSegmentKind.Index
+                && segment.RangeMin is null
+                && TryResolveMemoryRootIndexRange(segment.Text, scope, out var rangeMin, out var rangeMax))
+            {
+                segments.Add(segment with { RangeMin = rangeMin, RangeMax = rangeMax });
+                continue;
+            }
+
+            segments.Add(segment);
+        }
+
+        return new MemoryRootPath(path.BaseName, segments);
+    }
+
+    private static bool TryResolveMemoryRootIndexRange(
+        string text,
+        Scope scope,
+        out BigInteger rangeMin,
+        out BigInteger rangeMax)
+    {
+        if (TryParseNonNegativeInteger(text, out var literalIndex))
+        {
+            rangeMin = literalIndex;
+            rangeMax = literalIndex;
+            return true;
+        }
+
+        if (TryReadIdentifier(text, 0, out var identifier, out var end)
+            && end == text.Length
+            && scope.TryLookup(identifier, out var symbol)
+            && symbol.Type.Kind == StarkTypeKind.Integer
+            && symbol.Type.RangeMin is { } symbolRangeMin
+            && symbol.Type.RangeMax is { } symbolRangeMax)
+        {
+            rangeMin = symbolRangeMin;
+            rangeMax = symbolRangeMax;
+            return true;
+        }
+
+        rangeMin = BigInteger.Zero;
+        rangeMax = BigInteger.Zero;
+        return false;
+    }
+
+    private static bool MemoryRootIndexRangesAreDisjoint(
+        MemoryRootSegment left,
+        MemoryRootSegment right)
+    {
+        return left.RangeMin is { } leftMin
+            && left.RangeMax is { } leftMax
+            && right.RangeMin is { } rightMin
+            && right.RangeMax is { } rightMax
+            && (leftMax < rightMin || rightMax < leftMin);
+    }
+
+    private static bool TryReadIdentifier(
+        string text,
+        int start,
+        out string identifier,
+        out int end)
+    {
+        identifier = string.Empty;
+        end = start;
+        if (start >= text.Length || !(char.IsLetter(text[start]) || text[start] == '_'))
+        {
+            return false;
+        }
+
+        end = start + 1;
+        while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_'))
+        {
+            end++;
+        }
+
+        identifier = text[start..end];
+        return true;
+    }
+
+    private static bool TryParseNonNegativeInteger(string text, out BigInteger value)
+    {
+        return BigInteger.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryParseMemoryRootIndexRangeText(
+        string text,
+        out BigInteger rangeMin,
+        out BigInteger rangeMax)
+    {
+        rangeMin = BigInteger.Zero;
+        rangeMax = BigInteger.Zero;
+        var separator = text.IndexOf("..", StringComparison.Ordinal);
+        if (separator <= 0 || separator >= text.Length - 2)
+        {
+            return false;
+        }
+
+        return BigInteger.TryParse(text[..separator], NumberStyles.None, CultureInfo.InvariantCulture, out rangeMin)
+            && BigInteger.TryParse(text[(separator + 2)..], NumberStyles.None, CultureInfo.InvariantCulture, out rangeMax)
+            && rangeMin >= BigInteger.Zero
+            && rangeMax >= rangeMin;
+    }
+
+    private static string BuildMemoryRootPrefix(MemoryRootPath path, int segmentCount)
+    {
+        var builder = new System.Text.StringBuilder(path.BaseName);
+        for (var index = 0; index < segmentCount && index < path.Segments.Count; index++)
+        {
+            var segment = path.Segments[index];
+            if (segment.Kind == MemoryRootSegmentKind.Field)
+            {
+                builder.Append('.');
+                builder.Append(segment.Text);
+            }
+            else
+            {
+                builder.Append('[');
+                builder.Append(segment.Text);
+                builder.Append(']');
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildMemoryRootSuffix(MemoryRootPath path, int startSegmentIndex)
+    {
+        if (startSegmentIndex >= path.Segments.Count)
+        {
+            return string.Empty;
+        }
+
+        var builder = new System.Text.StringBuilder();
+        for (var index = Math.Max(0, startSegmentIndex); index < path.Segments.Count; index++)
+        {
+            var segment = path.Segments[index];
+            if (segment.Kind == MemoryRootSegmentKind.Field)
+            {
+                builder.Append('.');
+                builder.Append(segment.Text);
+            }
+            else
+            {
+                builder.Append('[');
+                builder.Append(segment.Text);
+                builder.Append(']');
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private readonly record struct MemoryRootPath(
+        string BaseName,
+        IReadOnlyList<MemoryRootSegment> Segments);
+
+    private readonly record struct MemoryRootSegment(
+        MemoryRootSegmentKind Kind,
+        string Text,
+        BigInteger? RangeMin = null,
+        BigInteger? RangeMax = null);
+
+    private readonly record struct MemoryArgumentRoot(
+        string RootKey,
+        string BaseName,
+        ParserRuleContext Expression,
+        StarkTypeSymbol ArgumentType,
+        bool WasAddressOf,
+        bool BaseHasNamedStorage,
+        bool HasProvenIndependentStorage,
+        MemoryRootPath Path,
+        IReadOnlyList<string>? AliasRootKeys = null);
+
+    private readonly record struct IndependentLoopMemoryAccess(
+        string RootKey,
+        string DisplayName,
+        bool IsWrite,
+        ParserRuleContext Expression);
+
+    private sealed record DisjointMemoryArgument(
+        ParserRuleContext Expression,
+        MemoryArgumentRoot? Root);
+
+    private enum MemoryRootSegmentKind
+    {
+        Field,
+        Index
+    }
+
+    private static string NormalizeExpressionText(string text)
+    {
+        while (text.Length >= 2 && text[0] == '(' && text[^1] == ')' && HasSingleOuterParentheses(text))
+        {
+            text = text[1..^1];
+        }
+
+        return text;
+    }
+
+    private static bool TryGetSimpleParameterExpression(StarkParser.ExpressionContext expression, out string name)
+    {
+        name = string.Empty;
+        if (TryGetSimplePostfixExpression(expression) is not { } postfix
+            || postfix.postfixPart().Length != 0
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier)
+        {
+            return false;
+        }
+
+        name = identifier;
+        return true;
+    }
+
+    private static bool TryGetRawPointerRegionExpression(
+        StarkParser.ExpressionContext expression,
+        out string rootName,
+        out StarkParser.ExpressionContext startExpression,
+        out StarkParser.ExpressionContext lengthExpression)
+    {
+        rootName = string.Empty;
+        startExpression = null!;
+        lengthExpression = null!;
+
+        if (TryGetSimplePostfixExpression(expression) is not { } postfix
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier
+            || postfix.postfixPart() is not [var indexPart]
+            || indexPart.LBRACK() is null
+            || indexPart.expressionList()?.expression() is not [var start, var length])
+        {
+            return false;
+        }
+
+        rootName = identifier;
+        startExpression = start;
+        lengthExpression = length;
+        return true;
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.ExpressionContext expression)
+    {
+        return TryGetSimpleUnaryExpression(expression) is { } unary
+            ? TryGetSimplePostfixExpression(unary)
+            : null;
+    }
+
+    private static StarkParser.UnaryExpressionContext? TryGetSimpleUnaryExpression(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        return multiplicative.unaryExpression(0);
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        if (expression.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null)
+        {
+            return null;
+        }
+
+        return powerExpression.postfixExpression();
+    }
+
+    private static bool TryGetAddressOfIndexedPostfixExpression(
+        StarkParser.UnaryExpressionContext expression,
+        out StarkParser.PostfixExpressionContext postfix)
+    {
+        postfix = null!;
+        if (expression.unaryOperator()?.AND() is not null
+            && expression.unaryExpression() is { } indexedExpression
+            && TryGetSimplePostfixExpression(indexedExpression) is { } indexedPostfix)
+        {
+            postfix = indexedPostfix;
+            return true;
+        }
+
+        if (expression.powerExpression()?.postfixExpression() is { } parenthesizedPostfix
+            && parenthesizedPostfix.postfixPart().Length == 0
+            && parenthesizedPostfix.primaryExpression().expression() is { } parenthesizedExpression
+            && TryGetSimpleUnaryExpression(parenthesizedExpression) is { } parenthesizedUnary)
+        {
+            return TryGetAddressOfIndexedPostfixExpression(parenthesizedUnary, out postfix);
+        }
+
+        return false;
+    }
+
+    private static string? AppendMemoryRootIndexKey(string rootKey, StarkParser.ExpressionContext indexExpression)
+    {
+        var indexText = NormalizeExpressionText(indexExpression.GetText());
+        return IsSimpleMemoryRootIndexText(indexText)
+            ? $"{rootKey}[{indexText}]"
+            : null;
+    }
+
+    private static string? AppendMemoryRootTextRangeKey(
+        string rootKey,
+        StarkParser.ExpressionContext startExpression,
+        StarkParser.ExpressionContext lengthExpression,
+        Scope scope)
+    {
+        var startText = NormalizeExpressionText(startExpression.GetText());
+        var lengthText = NormalizeExpressionText(lengthExpression.GetText());
+        if (!TryResolveMemoryRootIndexRange(startText, scope, out var startMin, out var startMax)
+            || !TryResolveMemoryRootIndexRange(lengthText, scope, out _, out var lengthMax)
+            || startMin < BigInteger.Zero
+            || lengthMax <= BigInteger.Zero)
+        {
+            return null;
+        }
+
+        var rangeMax = startMax + lengthMax - BigInteger.One;
+        return rangeMax >= startMin
+            ? $"{rootKey}[{startMin.ToString(CultureInfo.InvariantCulture)}..{rangeMax.ToString(CultureInfo.InvariantCulture)}]"
+            : null;
+    }
+
+    private static bool IsSimpleMemoryRootIndexText(string text)
+    {
+        return !string.IsNullOrWhiteSpace(text)
+            && text.All(static character => char.IsLetterOrDigit(character) || character is '_' or '.');
+    }
+
+    private static bool IsSimpleMemoryRootText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)
+            || !(char.IsLetter(text[0]) || text[0] == '_'))
+        {
+            return false;
+        }
+
+        return text.All(static character =>
+            char.IsLetterOrDigit(character)
+            || character is '_' or '.' or '[' or ']');
+    }
+
+    private static bool HasSingleOuterParentheses(string text)
+    {
+        var depth = 0;
+        for (var index = 0; index < text.Length; index++)
+        {
+            switch (text[index])
+            {
+                case '(':
+                    depth++;
+                    break;
+                case ')':
+                    depth--;
+                    if (depth == 0 && index < text.Length - 1)
+                    {
+                        return false;
+                    }
+
+                    break;
+            }
+        }
+
+        return depth == 0;
     }
 
     private static bool IsCVarargsStableArgumentType(StarkTypeSymbol type)
@@ -5843,7 +9169,7 @@ internal sealed class TypeChecker
             EnsureCallArgumentCompatible(
                 target.DiagnosticName ?? "function pointer",
                 index + 1,
-                parameterTypes[index],
+                expectedParameters[index],
                 argumentBindings[index],
                 arguments.argument(index).expression());
         }
@@ -5930,7 +9256,13 @@ internal sealed class TypeChecker
                     target.Type,
                     IsAssignable: false,
                     NamedType: ResolveNamedTypeSymbol(target.Type),
-                    DiagnosticName: target.DiagnosticName is null ? "text slice" : $"text slice of {target.DiagnosticName}");
+                    DiagnosticName: target.DiagnosticName is null ? "text slice" : $"text slice of {target.DiagnosticName}",
+                    RootGlobalName: target.RootGlobalName,
+                    RootGlobalBindingKind: target.RootGlobalBindingKind,
+                    UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                    HasConstProvenance: HasConstProvenance(target),
+                    MemoryRootKey: target.MemoryRootKey,
+                    MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
             }
 
             if (indexExpressions.Length == 1)
@@ -5948,7 +9280,15 @@ internal sealed class TypeChecker
                     target.Type,
                     IsAssignable: false,
                     NamedType: ResolveNamedTypeSymbol(target.Type),
-                    DiagnosticName: target.DiagnosticName is null ? "text element" : $"text element of {target.DiagnosticName}");
+                    DiagnosticName: target.DiagnosticName is null ? "text element" : $"text element of {target.DiagnosticName}",
+                    RootGlobalName: target.RootGlobalName,
+                    RootGlobalBindingKind: target.RootGlobalBindingKind,
+                    UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                    HasConstProvenance: HasConstProvenance(target),
+                    MemoryRootKey: target.MemoryRootKey is { } elementMemoryRootKey
+                        ? AppendMemoryRootIndexKey(elementMemoryRootKey, indexExpressions[0])
+                        : null,
+                    MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
             }
 
             if (indexExpressions.Length != 2)
@@ -5973,12 +9313,22 @@ internal sealed class TypeChecker
                 target.Type,
                 IsAssignable: false,
                 NamedType: ResolveNamedTypeSymbol(target.Type),
-                DiagnosticName: target.DiagnosticName is null ? "text slice" : $"text slice of {target.DiagnosticName}");
+                DiagnosticName: target.DiagnosticName is null ? "text slice" : $"text slice of {target.DiagnosticName}",
+                RootGlobalName: target.RootGlobalName,
+                RootGlobalBindingKind: target.RootGlobalBindingKind,
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                HasConstProvenance: HasConstProvenance(target),
+                MemoryRootKey: target.MemoryRootKey is { } sliceMemoryRootKey
+                    ? AppendMemoryRootTextRangeKey(sliceMemoryRootKey, indexExpressions[0], indexExpressions[1], scope)
+                    : null,
+                MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
         }
 
         var currentType = target.Type;
         var currentIsAddressMutable = target.IsAddressMutable;
         var currentUsesFrozenProjectionSemantics = UsesFrozenProjectionSemantics(target);
+        var currentHasConstProvenance = HasConstProvenance(target);
+        var currentMemoryRootKey = target.MemoryRootKey;
 
         foreach (var indexExpression in indexes.expression())
         {
@@ -5991,9 +9341,18 @@ internal sealed class TypeChecker
                     indexExpression);
             }
 
+            currentMemoryRootKey = currentMemoryRootKey is null
+                ? null
+                : AppendMemoryRootIndexKey(currentMemoryRootKey, indexExpression);
+
             if (currentType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Slice && currentType.ElementType is not null)
             {
-                currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
+                currentIsAddressMutable = currentType.Kind == StarkTypeKind.Slice
+                    ? currentIsAddressMutable
+                        && currentType.IsMutableView
+                        && currentType.AccessKind != StarkAccessKind.Frozen
+                    : currentIsAddressMutable
+                        && currentType.AccessKind != StarkAccessKind.Frozen;
                 currentType = currentUsesFrozenProjectionSemantics
                     ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
                     : ProjectFrozenView(currentType, currentType.ElementType);
@@ -6005,8 +9364,10 @@ internal sealed class TypeChecker
 
             if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
             {
-                currentIsAddressMutable = currentType.IsMutablePointer;
-                currentType = currentType.ElementType;
+                currentIsAddressMutable = currentType.IsMutablePointer && !currentUsesFrozenProjectionSemantics;
+                currentType = currentUsesFrozenProjectionSemantics
+                    ? StarkTypeSymbols.FreezeReachableView(currentType.ElementType)
+                    : currentType.ElementType;
                 currentIsAddressMutable &= currentType.AccessKind != StarkAccessKind.Frozen;
                 currentUsesFrozenProjectionSemantics = currentUsesFrozenProjectionSemantics
                     || currentType.AccessKind == StarkAccessKind.Frozen;
@@ -6033,7 +9394,10 @@ internal sealed class TypeChecker
                 : target.Type.AccessKind == StarkAccessKind.Frozen
                     ? DescribeFrozenMutationError("indexed element")
                 : target.AssignmentErrorMessage,
-            UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics);
+            UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics,
+            HasConstProvenance: currentHasConstProvenance,
+            MemoryRootKey: currentMemoryRootKey,
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
     }
 
     private ExpressionBinding ApplyMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -6190,7 +9554,12 @@ internal sealed class TypeChecker
                     : target.Type.AccessKind == StarkAccessKind.Frozen
                         ? DescribeFrozenMutationError($"member '{memberName}'")
                     : target.AssignmentErrorMessage,
-                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target));
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                HasConstProvenance: HasConstProvenance(target),
+                MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
+                    ? $"{memoryRootKey}.{memberName}"
+                    : null,
+                MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
         }
 
         var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
@@ -6328,27 +9697,41 @@ internal sealed class TypeChecker
     {
         if (scope.TryLookup(name, out var local))
         {
+            var localUsesReadonlyProjectionSemantics = local.UsesFrozenProjectionSemantics
+                || local.HasConstProvenance
+                || local.BindingKind == GlobalBindingKind.Const;
+            var expressionType = localUsesReadonlyProjectionSemantics
+                ? GetConstProvenanceViewType(local.Type)
+                : local.Type;
+            var hasConstProvenance = local.HasConstProvenance
+                || local.BindingKind == GlobalBindingKind.Const;
+            var memoryRootKey = local.MemoryRootKey ?? name;
+            var memoryRootIsIndependentStorage = local.MemoryRootIsIndependentStorage
+                || IsLocalBindingIndependentStorage(local);
             if (local.BindingKind is not null)
             {
                 return new ExpressionBinding(
-                    local.Type,
+                    expressionType,
                     IsAssignable: local.IsMutable,
-                    NamedType: ResolveNamedTypeSymbol(local.Type),
+                    NamedType: ResolveNamedTypeSymbol(expressionType),
                     DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
                     IsAddressable: true,
                     IsAddressMutable: local.IsMutable,
                     RootGlobalName: name,
                     RootGlobalBindingKind: local.BindingKind,
+                    HasConstProvenance: hasConstProvenance,
                     AssignmentErrorMessage: local.IsMutable
                         ? null
-                        : DescribeGlobalRebindingError(name, local.BindingKind.Value));
+                        : DescribeGlobalRebindingError(name, local.BindingKind.Value),
+                    MemoryRootKey: memoryRootKey,
+                    MemoryRootIsIndependentStorage: memoryRootIsIndependentStorage);
             }
 
             var canAssignLocal = CanAssignToLocal(local);
             return new ExpressionBinding(
-                local.Type,
+                expressionType,
                 IsAssignable: canAssignLocal,
-                NamedType: ResolveNamedTypeSymbol(local.Type),
+                NamedType: ResolveNamedTypeSymbol(expressionType),
                 DiagnosticName: local.IsConstant ? $"constant '{name}'" : $"variable '{name}'",
                 IsAddressable: true,
                 IsAddressMutable: CanFormMutableAddressFromLocal(local),
@@ -6356,7 +9739,11 @@ internal sealed class TypeChecker
                     ? null
                     : local.IsConstant
                         ? $"Cannot assign to constant '{name}'."
-                        : $"Cannot assign to immutable local '{name}'.");
+                        : $"Cannot assign to immutable local '{name}'.",
+                UsesFrozenProjectionSemantics: localUsesReadonlyProjectionSemantics,
+                HasConstProvenance: hasConstProvenance,
+                MemoryRootKey: memoryRootKey,
+                MemoryRootIsIndependentStorage: memoryRootIsIndependentStorage);
         }
 
         if (TryResolveGlobalBySourceName(name, out var global, out var ambiguousGlobalNames))
@@ -6370,9 +9757,12 @@ internal sealed class TypeChecker
                 IsAddressMutable: global.IsMutable,
                 RootGlobalName: global.Name,
                 RootGlobalBindingKind: global.BindingKind,
+                HasConstProvenance: global.BindingKind == GlobalBindingKind.Const,
                 AssignmentErrorMessage: global.IsMutable
                     ? null
-                    : DescribeGlobalRebindingError(global.Name, global.BindingKind ?? GlobalBindingKind.Immutable));
+                    : DescribeGlobalRebindingError(global.Name, global.BindingKind ?? GlobalBindingKind.Immutable),
+                MemoryRootKey: name,
+                MemoryRootIsIndependentStorage: IsLocalBindingIndependentStorage(global));
         }
 
         if (ambiguousGlobalNames.Count > 0)
@@ -6877,6 +10267,21 @@ internal sealed class TypeChecker
             Location(type));
     }
 
+    private StarkTypeSymbol ResolveParameterType(
+        StarkParser.Type_Context type,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        out string? rawPointerElementCountExpression)
+    {
+        return EnsureMonomorphizedType(
+            _typeResolver!.ResolveParameterType(
+                type,
+                genericParameters ?? _currentFunctionGenericParameters,
+                currentModuleName,
+                out rawPointerElementCountExpression),
+            Location(type));
+    }
+
     private StarkTypeSymbol ResolveQualifiedType(string qualifiedName, ISet<string>? genericParameters, IToken token, string? currentModuleName = null)
     {
         return _typeResolver!.ResolveQualifiedType(qualifiedName, genericParameters ?? _currentFunctionGenericParameters, token, currentModuleName);
@@ -7277,7 +10682,12 @@ internal sealed class TypeChecker
             .Select(constructor => new ConstructorShape(
                 constructor.Name,
                 constructor.Parameters
-                    .Select(parameter => new TypedParameterSymbol(parameter.Name, SubstituteType(parameter.Type, substitution)))
+                    .Select(parameter => new TypedParameterSymbol(
+                        parameter.Name,
+                        SubstituteType(parameter.Type, substitution),
+                        parameter.IsDisjoint,
+                        parameter.IsConst,
+                        parameter.RawPointerElementCountExpression))
                     .ToArray(),
                 constructor.IsPrimaryShape,
                 constructor.BodyKey))
@@ -7994,7 +11404,13 @@ internal sealed class TypeChecker
             ? StarkTypeSymbols.FreezeAddressPointeeType(operand.Type)
             : operand.Type;
         var pointerType = StarkTypeSymbols.RawPointer(pointeeType, operand.IsAddressMutable);
-        return new ExpressionBinding(pointerType, NamedType: ResolveNamedTypeSymbol(pointerType));
+        return new ExpressionBinding(
+            pointerType,
+            NamedType: ResolveNamedTypeSymbol(pointerType),
+            HasConstProvenance: HasConstProvenance(operand),
+            MemoryRootKey: operand.MemoryRootKey,
+            MemoryRootIsIndependentStorage: operand.MemoryRootIsIndependentStorage
+                || operand.MemoryRootKey is not null);
     }
 
     private ExpressionBinding EnsureDereferenceUnary(ExpressionBinding operand, ParserRuleContext context)
@@ -8006,13 +11422,27 @@ internal sealed class TypeChecker
         }
 
         var pointeeType = operand.Type.ElementType;
+        var resultType = pointeeType.AccessKind == StarkAccessKind.Frozen
+            ? StarkTypeSymbols.FreezeReachableView(pointeeType)
+            : pointeeType;
+        var isAddressMutable = operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen;
         return new ExpressionBinding(
-            pointeeType,
-            IsAssignable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
-            NamedType: ResolveNamedTypeSymbol(pointeeType),
+            resultType,
+            IsAssignable: isAddressMutable,
+            NamedType: ResolveNamedTypeSymbol(resultType),
             DiagnosticName: "dereferenced value",
             IsAddressable: true,
-            IsAddressMutable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen);
+            IsAddressMutable: isAddressMutable,
+            AssignmentErrorMessage: isAddressMutable
+                ? null
+                : pointeeType.AccessKind == StarkAccessKind.Frozen
+                    ? DescribeFrozenMutationError("dereferenced value")
+                    : null,
+            UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(operand)
+                || pointeeType.AccessKind == StarkAccessKind.Frozen,
+            HasConstProvenance: HasConstProvenance(operand),
+            MemoryRootKey: operand.MemoryRootKey,
+            MemoryRootIsIndependentStorage: operand.MemoryRootIsIndependentStorage);
     }
 
     private void EnsureBoolean(StarkTypeSymbol type, ParserRuleContext context, string message)
@@ -8138,7 +11568,7 @@ internal sealed class TypeChecker
         for (var index = 0; index < arguments.argument().Length; index++)
         {
             var expectedType = expectedParameters is not null && index < expectedParameters.Count
-                ? expectedParameters[index].Type
+                ? GetExpectedParameterExpressionType(expectedParameters[index])
                 : null;
             argumentBindings[index] = EvaluateExpression(
                 arguments.argument(index).expression(),
@@ -8148,6 +11578,13 @@ internal sealed class TypeChecker
         }
 
         return argumentBindings;
+    }
+
+    private static StarkTypeSymbol GetExpectedParameterExpressionType(TypedParameterSymbol parameter)
+    {
+        return parameter.IsConst
+            ? StarkTypeSymbols.FreezeReachableView(parameter.Type)
+            : parameter.Type;
     }
 
     private int CountMismatchedParameters(IReadOnlyList<TypedParameterSymbol> parameters, IReadOnlyList<StarkTypeSymbol> arguments)
@@ -8245,10 +11682,17 @@ internal sealed class TypeChecker
     private void EnsureCallArgumentCompatible(
         string functionName,
         int position,
-        StarkTypeSymbol parameterType,
+        TypedParameterSymbol parameter,
         ExpressionBinding argument,
         ParserRuleContext context)
     {
+        var parameterType = parameter.Type;
+        if (parameter.IsConst)
+        {
+            EnsureConstCallArgumentCompatible(functionName, position, parameter, argument, context);
+            return;
+        }
+
         var argumentType = argument.Type;
         if (parameterType.InitializationKind != StarkInitializationKind.None)
         {
@@ -8339,12 +11783,48 @@ internal sealed class TypeChecker
             context);
     }
 
+    private void EnsureConstCallArgumentCompatible(
+        string functionName,
+        int position,
+        TypedParameterSymbol parameter,
+        ExpressionBinding argument,
+        ParserRuleContext context)
+    {
+        var parameterType = GetExpectedParameterExpressionType(parameter);
+        if (!HasConstArgumentProvenance(argument))
+        {
+            ReportError(
+                "STK3031",
+                $"Argument {position} for '{functionName}' must have const provenance because parameter '{parameter.Name}' is declared const.",
+                context);
+            return;
+        }
+
+        var argumentType = GetConstProvenanceViewType(argument.Type);
+        if (CanAssign(parameterType, argumentType))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3002",
+            $"Argument {position} for '{functionName}' expects const-compatible '{parameterType.DisplayName}' but found '{argument.Type.DisplayName}'.{GetExplicitConversionHint(parameterType, argumentType)}",
+            context);
+    }
+
     private void EnsureReceiverArgumentCompatible(
         string functionName,
-        StarkTypeSymbol parameterType,
+        TypedParameterSymbol parameter,
         ExpressionBinding receiver,
         ParserRuleContext context)
     {
+        var parameterType = parameter.Type;
+        if (parameter.IsConst)
+        {
+            EnsureConstCallArgumentCompatible(functionName, 1, parameter, receiver, context);
+            return;
+        }
+
         if (FunctionOverloadFacts.CanBindReceiver(parameterType, receiver.Type, CanAssign))
         {
             return;
@@ -8477,6 +11957,8 @@ internal sealed class TypeChecker
     private static bool CanFormMutableAddressFromLocal(VariableSymbol local)
     {
         return !local.IsConstant
+            && !local.UsesFrozenProjectionSemantics
+            && !local.HasConstProvenance
             && local.Type.AccessKind != StarkAccessKind.Frozen
             && (local.IsMutable || local.Type.IsMutableView || local.Type.InitializationKind != StarkInitializationKind.None);
     }
@@ -8484,7 +11966,15 @@ internal sealed class TypeChecker
     private static bool CanAssignToLocal(VariableSymbol local)
     {
         return !local.IsConstant
+            && !local.HasConstProvenance
             && (local.IsMutable || local.Type.InitializationKind != StarkInitializationKind.None);
+    }
+
+    private static bool IsLocalBindingIndependentStorage(VariableSymbol local)
+    {
+        return local.Type.BorrowKind == StarkBorrowKind.None
+            && local.Type.InitializationKind == StarkInitializationKind.None
+            && local.Type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
     }
 
     private static bool CanMutateAddressProjection(ExpressionBinding target, StarkTypeSymbol projectedType)
@@ -8524,8 +12014,25 @@ internal sealed class TypeChecker
     private static bool UsesFrozenProjectionSemantics(ExpressionBinding binding)
     {
         return binding.UsesFrozenProjectionSemantics
+            || binding.HasConstProvenance
             || binding.Type.AccessKind == StarkAccessKind.Frozen
             || binding.RootGlobalBindingKind == GlobalBindingKind.Const;
+    }
+
+    private static bool HasConstArgumentProvenance(ExpressionBinding binding)
+    {
+        return HasConstProvenance(binding);
+    }
+
+    private static bool HasConstProvenance(ExpressionBinding binding)
+    {
+        return binding.HasConstProvenance
+            || binding.RootGlobalBindingKind == GlobalBindingKind.Const;
+    }
+
+    private static StarkTypeSymbol GetConstProvenanceViewType(StarkTypeSymbol type)
+    {
+        return StarkTypeSymbols.FreezeReachableView(type);
     }
 
     private static StarkTypeSymbol ProjectProjectionType(ExpressionBinding source, StarkTypeSymbol projectedType)
@@ -8999,6 +12506,12 @@ internal sealed class TypeChecker
         min = -(BigInteger.One << (bitWidth - 1));
         max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
         return true;
+    }
+
+    private static bool IsProvablyNonNegativeIntegerType(StarkTypeSymbol type)
+    {
+        return TryGetEffectiveIntegerRange(type, out var min, out _)
+            && min >= BigInteger.Zero;
     }
 
     private static StarkTypeSymbol FindCommonType(StarkTypeSymbol left, StarkTypeSymbol right)
@@ -9996,7 +13509,12 @@ internal sealed class TypeChecker
         bool IsMutable,
         bool IsConstant,
         GlobalBindingKind? BindingKind = null,
-        CompileTimeConstant? ConstantValue = null);
+        CompileTimeConstant? ConstantValue = null,
+        bool UsesFrozenProjectionSemantics = false,
+        bool HasConstProvenance = false,
+        string? MemoryRootKey = null,
+        bool MemoryRootIsIndependentStorage = false,
+        string? RawPointerElementCountExpression = null);
 
     private sealed record LambdaCaptureBinding(
         VariableSymbol Symbol,
@@ -10019,7 +13537,15 @@ internal sealed class TypeChecker
         EnumConstructorBinding? EnumConstructor = null,
         string? TextLiteral = null,
         TextLiteralKind? TextLiteralKind = null,
-        bool UsesFrozenProjectionSemantics = false);
+        bool UsesFrozenProjectionSemantics = false,
+        bool HasConstProvenance = false,
+        string? MemoryRootKey = null,
+        bool MemoryRootIsIndependentStorage = false);
+
+    private sealed record LocalMemoryProvenance(
+        string RootKey,
+        bool IsIndependentStorage,
+        string? RawPointerElementCountExpression = null);
 
     private sealed record EnumConstructorBinding(
         string Name,
@@ -10052,6 +13578,7 @@ internal sealed class TypeChecker
     {
         private readonly Dictionary<string, VariableSymbol> _locals = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VariableSymbol>? _globals;
+        private readonly List<IReadOnlyList<string>> _disjointFacts = [];
 
         public Scope(Scope parent)
         {
@@ -10066,6 +13593,26 @@ internal sealed class TypeChecker
         public Scope? Parent { get; }
 
         public static Scope CreateRoot(Dictionary<string, VariableSymbol> globals) => new(globals);
+
+        public void AddDisjointFact(IReadOnlyList<string> rootKeys)
+        {
+            var distinctRootKeys = rootKeys
+                .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (distinctRootKeys.Length >= 2)
+            {
+                _disjointFacts.Add(distinctRootKeys);
+            }
+        }
+
+        public bool HasDisjointFact(string leftRootKey, string rightRootKey)
+        {
+            return _disjointFacts.Any(group => ContainsCoveredRoot(group, leftRootKey)
+                                               && ContainsCoveredRoot(group, rightRootKey)
+                                               && !CoveredBySameFactRoot(group, leftRootKey, rightRootKey))
+                || Parent?.HasDisjointFact(leftRootKey, rightRootKey) == true;
+        }
 
         public void Declare(VariableSymbol symbol)
         {
@@ -10091,6 +13638,20 @@ internal sealed class TypeChecker
 
             symbol = default!;
             return false;
+        }
+
+        private static bool ContainsCoveredRoot(IReadOnlyList<string> group, string rootKey)
+        {
+            return group.Any(factRootKey => IsSameOrDescendantMemoryRoot(rootKey, factRootKey));
+        }
+
+        private static bool CoveredBySameFactRoot(
+            IReadOnlyList<string> group,
+            string leftRootKey,
+            string rightRootKey)
+        {
+            return group.Any(factRootKey => IsSameOrDescendantMemoryRoot(leftRootKey, factRootKey)
+                                            && IsSameOrDescendantMemoryRoot(rightRootKey, factRootKey));
         }
     }
 }

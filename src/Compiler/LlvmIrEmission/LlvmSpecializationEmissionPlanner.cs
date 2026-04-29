@@ -420,7 +420,8 @@ internal static class LlvmSpecializationEmissionPlanner
                 LlvmType: kind == AbiParameterKind.Direct
                     ? SyntheticLowerAbiValueType(parameter.Type, isFfi, forReturnValue: false)
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
-                Kind: kind));
+                Kind: kind,
+                RawPointerElementCountExpression: parameter.RawPointerElementCountExpression));
         }
 
         return new AbiFunctionSignature(

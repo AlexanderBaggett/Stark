@@ -1,0 +1,95 @@
+module Book.BoundedRawPointerRegions
+
+fn void CopyFast(
+    rawptr<i32[min max]>[4] source,
+    rawmutptr<i32[min max]>[4] destination)
+    where disjoint(source[0, 4], destination[0, 4]) {
+    for willexit independent (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+        *(&destination[index]) = *(&source[index]);
+    }
+
+    return;
+}
+
+fn void CopyOverlapSafe(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] destination) {
+    stack mut i32[min max][4] temporary = { 0, 0, 0, 0 };
+
+    for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+        temporary[index] = *(&source[index]);
+    }
+
+    for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+        *(&destination[index]) = temporary[index];
+    }
+
+    return;
+}
+
+fn bool TryCopy(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] destination) {
+    if disjoint(source[0, 4], destination[0, 4]) {
+        for willexit independent (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+            *(&destination[index]) = *(&source[index]);
+        }
+
+        return true;
+    }
+
+    CopyOverlapSafe(source, destination);
+    return false;
+}
+
+fn void Fill(rawmutptr<i32[min max]>[4] destination, i32[min max] value) {
+    for willexit independent (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+        *(&destination[index]) = value + (i32[min max])index;
+    }
+
+    return;
+}
+
+fn void Transform(
+    rawptr<i32[min max]>[4] source,
+    rawmutptr<i32[min max]>[4] destination)
+    where disjoint(source[0, 4], destination[0, 4]) {
+    for willexit independent (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+        *(&destination[index]) = *(&source[index]) * 2;
+    }
+
+    return;
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i32[min max][5] values = { 1, 2, 3, 4, 5 };
+    stack mut i32[min max][4] scratch = { 0, 0, 0, 0 };
+    stack mut i32[min max][4] output = { 0, 0, 0, 0 };
+
+    Fill(&scratch[0], 10);
+    Transform(&scratch[0], &output[0]);
+
+    if (output[0] != 20 || output[3] != 26) {
+        return 1;
+    }
+
+    CopyFast(&scratch[0], &output[0]);
+
+    if (output[0] != 10 || output[3] != 13) {
+        return 2;
+    }
+
+    if (!TryCopy(&scratch[0], &output[0])) {
+        return 3;
+    }
+
+    if (output[0] != 10 || output[3] != 13) {
+        return 4;
+    }
+
+    if (TryCopy(&values[0], &values[1])) {
+        return 5;
+    }
+
+    if (values[0] != 1 || values[1] != 1 || values[4] != 4) {
+        return 6;
+    }
+
+    return 0;
+}

@@ -782,6 +782,7 @@ internal static class SyntaxModelFactory
                     function.returnType(),
                     function.typeParameterList(),
                     function.parameterList(),
+                    function.parameterMemoryContractClause(),
                     function.asmSpecifier(),
                     function.asmClauseList(),
                     function.functionModifier(),
@@ -849,6 +850,7 @@ internal static class SyntaxModelFactory
                         method.returnType(),
                         method.typeParameterList(),
                         method.parameterList(),
+                        method.parameterMemoryContractClause(),
                         null,
                         null,
                         method.functionModifier(),
@@ -918,6 +920,7 @@ internal static class SyntaxModelFactory
                         method.returnType(),
                         method.typeParameterList(),
                         method.parameterList(),
+                        method.parameterMemoryContractClause(),
                         null,
                         null,
                         method.functionModifier(),
@@ -983,6 +986,7 @@ internal static class SyntaxModelFactory
                         method.returnType(),
                         method.typeParameterList(),
                         method.parameterList(),
+                        method.parameterMemoryContractClause(),
                         null,
                         null,
                         method.functionModifier(),
@@ -1040,6 +1044,7 @@ internal static class SyntaxModelFactory
                         method.returnType(),
                         method.typeParameterList(),
                         method.parameterList(),
+                        method.parameterMemoryContractClause(),
                         null,
                         null,
                         method.functionModifier(),
@@ -1163,6 +1168,7 @@ internal static class SyntaxModelFactory
         StarkParser.ReturnTypeContext returnType,
         StarkParser.TypeParameterListContext? typeParameterList,
         StarkParser.ParameterListContext parameterList,
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses,
         StarkParser.AsmSpecifierContext? asmSpecifier,
         StarkParser.AsmClauseListContext? asmClauseList,
         IReadOnlyList<StarkParser.FunctionModifierContext> modifiersList,
@@ -1197,9 +1203,7 @@ internal static class SyntaxModelFactory
             Kind: functionKind,
             ReturnType: returnType.GetText(),
             Parameters: parameterList.parameter()
-                .Select(static parameter => new ParameterModel(
-                    parameter.Identifier().GetText(),
-                    parameter.type_().GetText()))
+                .Select(CreateParameterModel)
                 .ToArray(),
             Modifiers: new FunctionModifierSet(
                 inlinePreference,
@@ -1215,7 +1219,111 @@ internal static class SyntaxModelFactory
             GenericParameterNames: genericParameters,
             IsStatic: modifiers.Contains("static"),
             Attributes: attributes,
-            BackendOptimizationMode: backendOptimizationMode);
+            BackendOptimizationMode: backendOptimizationMode,
+            DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses));
+    }
+
+    private static ParameterModel CreateParameterModel(StarkParser.ParameterContext parameter)
+    {
+        return new ParameterModel(
+            parameter.Identifier().GetText(),
+            parameter.type_().GetText(),
+            IsDisjoint: ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+            IsConst: ParameterHasPrefix(parameter, StarkParser.CONST),
+            RawPointerElementCountExpression: TryGetBoundedRawPointerElementCount(parameter.type_()));
+    }
+
+    private static string? TryGetBoundedRawPointerElementCount(StarkParser.Type_Context type)
+    {
+        return type.nonArrayType().rawPointerType() is not null
+            && type.arraySuffix() is [var suffix]
+            && suffix.expression() is { } expression
+                ? expression.GetText()
+                : null;
+    }
+
+    private static bool ParameterHasPrefix(StarkParser.ParameterContext parameter, int tokenType)
+    {
+        return parameter.parameterContractPrefix()
+            .Any(prefix => prefix.Start.Type == tokenType);
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup> CreateDisjointParameterGroups(
+        StarkParser.ParameterListContext parameterList,
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        var groups = new List<ParameterDisjointGroup>();
+        var prefixedParameters = parameterList.parameter()
+            .Where(static parameter => ParameterHasPrefix(parameter, StarkParser.DISJOINT))
+            .Select(static parameter => parameter.Identifier().GetText())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (prefixedParameters.Length > 1)
+        {
+            groups.Add(new ParameterDisjointGroup(prefixedParameters));
+        }
+
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.disjointContract())
+            {
+                var names = contract.expressionList()
+                    .expression()
+                    .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Select(static name => name!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                if (names.Length > 1)
+                {
+                    groups.Add(new ParameterDisjointGroup(names));
+                }
+            }
+        }
+
+        return groups;
+    }
+
+    private static string? TryGetDisjointContractParameterName(string operandText)
+    {
+        operandText = TrimOuterParentheses(operandText);
+        if (!TryReadIdentifier(operandText, 0, out var identifier, out var position))
+        {
+            return null;
+        }
+
+        return position == operandText.Length || operandText[position] == '['
+            ? identifier
+            : null;
+    }
+
+    private static string TrimOuterParentheses(string text)
+    {
+        while (text.Length >= 2 && text[0] == '(' && text[^1] == ')')
+        {
+            text = text[1..^1];
+        }
+
+        return text;
+    }
+
+    private static bool TryReadIdentifier(string text, int start, out string identifier, out int end)
+    {
+        identifier = string.Empty;
+        end = start;
+        if (start >= text.Length || !(char.IsLetter(text[start]) || text[start] == '_'))
+        {
+            return false;
+        }
+
+        end = start + 1;
+        while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_'))
+        {
+            end++;
+        }
+
+        identifier = text[start..end];
+        return true;
     }
 
     private static void AddBackendOpaqueModifierDiagnostics(

@@ -262,6 +262,225 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImagePreservesConstAndDisjointParameterQualifiers()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-parameter-qualifiers-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public fn void Inspect(const rawmutptr<i32[min max]> ptr) {
+                        return;
+                    }
+
+                    public fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+                        return;
+                    }
+
+                    public fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                        return;
+                    }
+
+                    public struct Reader {
+                        i32[min max] Value;
+
+                        public fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr) {
+                            return;
+                        }
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var typedInterface = facadeModule.CompilerSections?.TypedInterface;
+            Assert.NotNull(typedInterface);
+
+            var inspect = Assert.Single(typedInterface!.Functions, static function => function.Name == "Inspect");
+            Assert.True(Assert.Single(inspect.Parameters).IsConst);
+
+            var touch = Assert.Single(typedInterface.Functions, static function => function.Name == "Touch");
+            Assert.All(touch.Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.Contains(touch.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+
+            var touchWhere = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchWhere");
+            Assert.All(touchWhere.Parameters, static parameter => Assert.False(parameter.IsDisjoint));
+            Assert.Contains(touchWhere.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+
+            var reader = Assert.Single(typedInterface.Types, static type => type.Name == "Reader");
+            var read = Assert.Single(reader.Methods ?? [], static method => method.Name == "Read");
+            Assert.True(read.Parameters[1].IsConst);
+
+            var resolvedModule = CreateResolvedPackageModule(facadeModule);
+            Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
+            Assert.Contains("Inspect(const rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.Contains("Touch(disjoint rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.Contains("TouchWhere(rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where disjoint(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("Read(borrow Reader self, const rawmutptr", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
+            Assert.True(facts.FunctionSignatures["Facade.Inspect"].Parameters[0].IsConst);
+            Assert.All(facts.FunctionSignatures["Facade.Touch"].Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.Contains(facts.FunctionSignatures["Facade.TouchWhere"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.True(facts.FunctionSignatures["Facade.Reader.Read"].Parameters[1].IsConst);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesIndependentLoopContractsInTypedTemplateBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-independent-loop-contracts-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public fn i32[-2147483648 2147483647] CountIndependent<T>(i32[-2147483648 2147483647] limit, T tag) {
+                        stack mut i32[-2147483648 2147483647] value = 0;
+                        while willexit independent (value < limit) {
+                            value += 1;
+                        }
+
+                        for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+                            value += 1;
+                        }
+
+                        return value;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var template = Assert.Single(
+                module.CompilerSections?.GenericTemplates?.Functions ?? [],
+                static item => item.QualifiedResolvedName == "Facade.CountIndependent");
+            Assert.NotNull(template.TypedBody);
+
+            var whileManifest = Assert.Single(template.TypedBody!.Statements, static statement => statement.Kind == "while");
+            Assert.Equal(["independent"], whileManifest.LoopContracts ?? []);
+            var forManifest = Assert.Single(template.TypedBody.Statements, static statement => statement.Kind == "for");
+            Assert.Equal(["independent"], forManifest.LoopContracts ?? []);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
+            var importedTemplate = facts.FunctionTemplates["Facade.CountIndependent"];
+            Assert.NotNull(importedTemplate.TypedBody);
+            var whileSummary = Assert.Single(
+                importedTemplate.TypedBody!.Statements,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.While);
+            Assert.Equal(["independent"], whileSummary.LoopContractNames);
+            var forSummary = Assert.Single(
+                importedTemplate.TypedBody.Statements,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.For);
+            Assert.Equal(["independent"], forSummary.LoopContractNames);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedWhereDisjointCallsRejectOverlappingArguments()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-where-disjoint-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                    return;
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run(rawmutptr<i32[min max]> ptr) {
+                        Facade.TouchWhere(ptr, ptr);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "type-check"));
+
+            Assert.False(result.Succeeded);
+            Assert.Contains(
+                result.Diagnostics,
+                static diagnostic => diagnostic.Code == "STK3030"
+                    && diagnostic.Message.Contains("violates disjoint parameter contract", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesUnsignedIntegerFacts()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-unsigned-integers-");

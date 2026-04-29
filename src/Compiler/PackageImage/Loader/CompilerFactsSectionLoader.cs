@@ -34,16 +34,15 @@ internal static partial class PackageImageLoader
                 qualifiedResolvedName,
                 BuildTypeSymbol(function.ReturnType, module.Module.ModuleName, localNamedTypes),
                 function.Parameters
-                    .Select(parameter => new TypedParameterSymbol(
-                        parameter.Name,
-                        BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
+                    .Select(parameter => BuildTypedParameterSymbol(parameter, module.Module.ModuleName, localNamedTypes))
                     .ToArray(),
                 SourceName: function.QualifiedName,
                 GenericParameterNames: function.GenericParameters?.Count > 0 ? function.GenericParameters.ToArray() : null,
                 Kind: functionKind,
                 IsUnsafe: function.IsUnsafe,
                 IsVarargs: function.IsVarargs,
-                BackendOptimizationMode: functionBackendOptimizationMode);
+                BackendOptimizationMode: functionBackendOptimizationMode,
+                DisjointParameterGroups: BuildParameterDisjointGroups(function.Parameters, function.DisjointParameterGroups));
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -74,9 +73,7 @@ internal static partial class PackageImageLoader
                     qualifiedResolvedName,
                     BuildTypeSymbol(method.ReturnType, module.Module.ModuleName, localNamedTypes),
                     method.Parameters
-                        .Select(parameter => new TypedParameterSymbol(
-                            parameter.Name,
-                        BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
+                        .Select(parameter => BuildTypedParameterSymbol(parameter, module.Module.ModuleName, localNamedTypes))
                     .ToArray(),
                     SourceName: method.QualifiedName,
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
@@ -84,7 +81,8 @@ internal static partial class PackageImageLoader
                     Kind: methodKind,
                     IsUnsafe: method.IsUnsafe,
                     IsVarargs: method.IsVarargs,
-                    BackendOptimizationMode: methodBackendOptimizationMode);
+                    BackendOptimizationMode: methodBackendOptimizationMode,
+                    DisjointParameterGroups: BuildParameterDisjointGroups(method.Parameters, method.DisjointParameterGroups));
             }
         }
 
@@ -188,9 +186,7 @@ internal static partial class PackageImageLoader
                 constructors.Add(new TypedConstructorShape(
                     type.Name,
                     type.PrimaryConstructorParameters
-                        .Select(parameter => new TypedParameterSymbol(
-                            parameter.Name,
-                            BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
+                        .Select(parameter => BuildTypedParameterSymbol(parameter, module.Module.ModuleName, localNamedTypes))
                         .ToArray(),
                     IsPrimaryShape: true));
             }
@@ -200,9 +196,7 @@ internal static partial class PackageImageLoader
                 constructors.Add(new TypedConstructorShape(
                     type.Name,
                     constructor.Parameters
-                        .Select(parameter => new TypedParameterSymbol(
-                            parameter.Name,
-                            BuildTypeSymbol(parameter.Type, module.Module.ModuleName, localNamedTypes)))
+                        .Select(parameter => BuildTypedParameterSymbol(parameter, module.Module.ModuleName, localNamedTypes))
                         .ToArray(),
                     IsPrimaryShape: false));
             }
@@ -343,9 +337,7 @@ internal static partial class PackageImageLoader
                             : new TypedConstructorShape(
                                 objectCreation.Constructor.TypeName,
                                 objectCreation.Constructor.Parameters
-                                    .Select(parameter => new TypedParameterSymbol(
-                                        parameter.Name,
-                                        BuildTypeSymbol(parameter.Type)))
+                                    .Select(BuildTypedParameterSymbol)
                                     .ToArray(),
                                 objectCreation.Constructor.IsPrimaryShape),
                         objectCreation.InitializerMembers?
@@ -415,13 +407,12 @@ internal static partial class PackageImageLoader
                             directCall.QualifiedResolvedName,
                             BuildTypeSymbol(directCall.ReturnType),
                             directCall.Parameters
-                                .Select(parameter => new TypedParameterSymbol(
-                                    parameter.Name,
-                                    BuildTypeSymbol(parameter.Type)))
+                                .Select(BuildTypedParameterSymbol)
                                 .ToArray(),
                             SourceName: directCall.QualifiedSourceName,
                             TemplateName: directCall.QualifiedTemplateName,
-                            TypeArguments: directCall.TypeArguments?.Select(BuildTypeSymbol).ToArray())))
+                            TypeArguments: directCall.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+                            DisjointParameterGroups: BuildParameterDisjointGroups(directCall.Parameters, directCall.DisjointParameterGroups))))
                     .ToArray(),
                 FieldAccessSummaries: functionTemplate.FieldAccesses?
                     .Select(fieldAccess => new ImportedTemplateFieldAccessSummary(
@@ -437,13 +428,12 @@ internal static partial class PackageImageLoader
                             memberCall.QualifiedResolvedName,
                             BuildTypeSymbol(memberCall.ReturnType),
                             memberCall.Parameters
-                                .Select(parameter => new TypedParameterSymbol(
-                                    parameter.Name,
-                                    BuildTypeSymbol(parameter.Type)))
+                                .Select(BuildTypedParameterSymbol)
                                 .ToArray(),
                             SourceName: memberCall.QualifiedSourceName,
                             TemplateName: memberCall.QualifiedTemplateName,
-                            TypeArguments: memberCall.TypeArguments?.Select(BuildTypeSymbol).ToArray())))
+                            TypeArguments: memberCall.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+                            DisjointParameterGroups: BuildParameterDisjointGroups(memberCall.Parameters, memberCall.DisjointParameterGroups))))
                     .ToArray(),
                 BackendOptimizationMode: templateBackendOptimizationMode);
         }
@@ -543,6 +533,29 @@ internal static partial class PackageImageLoader
         return names;
     }
 
+    private static TypedParameterSymbol BuildTypedParameterSymbol(
+        StarkPackageTypedParameterManifest parameter,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        return new TypedParameterSymbol(
+            parameter.Name,
+            BuildTypeSymbol(parameter.Type, moduleName, localNamedTypes),
+            parameter.IsDisjoint,
+            parameter.IsConst,
+            parameter.RawPointerElementCountExpression);
+    }
+
+    private static TypedParameterSymbol BuildTypedParameterSymbol(StarkPackageTypedParameterManifest parameter)
+    {
+        return new TypedParameterSymbol(
+            parameter.Name,
+            BuildTypeSymbol(parameter.Type),
+            parameter.IsDisjoint,
+            parameter.IsConst,
+            parameter.RawPointerElementCountExpression);
+    }
+
     private static bool TryBuildAbiFunctionSignature(
         StarkPackageAbiFunctionManifest abiFunction,
         out AbiFunctionSignature signature)
@@ -562,7 +575,8 @@ internal static partial class PackageImageLoader
                 parameter.LlvmName,
                 BuildTypeSymbol(parameter.SourceType),
                 BuildTypeSymbol(parameter.LlvmType),
-                kind));
+                kind,
+                parameter.RawPointerElementCountExpression));
         }
 
         signature = new AbiFunctionSignature(

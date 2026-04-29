@@ -616,6 +616,72 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void ConstParameterAddressesLowerToFrozenMirAddresses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr(const Box box) {
+                return &(box.Value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions);
+        Assert.True(function.SupportsDirectCodeGeneration);
+
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrAddressOfParameterRValue
+            {
+                PointeeType.AccessKind: StarkAccessKind.Frozen,
+                Type.Kind: StarkTypeKind.RawPointer,
+                Type.IsMutablePointer: false
+            });
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrFieldAddressRValue
+            {
+                Type.Kind: StarkTypeKind.RawPointer,
+                Type.IsMutablePointer: false,
+                Type.ElementType.AccessKind: StarkAccessKind.Frozen
+            });
+
+        var returnedFieldAddress = Assert.IsType<MidLevelIrLocalOperand>(Assert.Single(function.Blocks).Terminator.Value);
+        Assert.Equal(StarkTypeKind.RawPointer, returnedFieldAddress.Type.Kind);
+        Assert.False(returnedFieldAddress.Type.IsMutablePointer);
+        Assert.NotNull(returnedFieldAddress.Type.ElementType);
+        Assert.Equal(StarkAccessKind.Frozen, returnedFieldAddress.Type.ElementType!.AccessKind);
+    }
+
+    [Fact]
+    public void ConstProvenanceLocalsAreMarkedInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn rawptr<frozen i32[-2147483648 2147483647]> Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                stack rawptr<frozen i32[-2147483648 2147483647]> local = ptr;
+                return local;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions);
+        var local = Assert.Single(function.Locals, static local => local.Name == "local");
+        Assert.True(local.HasConstProvenance);
+    }
+
+    [Fact]
     public void FrozenSliceAddressesLowerToReadonlyMirAddresses()
     {
         var result = Compile(

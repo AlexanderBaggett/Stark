@@ -350,7 +350,12 @@ internal static class FunctionOverloadFacts
             Name = materializedName,
             ReturnType = SubstituteType(template.ReturnType, substitution),
             Parameters = template.Parameters
-                .Select(parameter => new TypedParameterSymbol(parameter.Name, SubstituteType(parameter.Type, substitution)))
+                .Select(parameter => new TypedParameterSymbol(
+                    parameter.Name,
+                    SubstituteType(parameter.Type, substitution),
+                    parameter.IsDisjoint,
+                    parameter.IsConst,
+                    parameter.RawPointerElementCountExpression))
                 .ToArray(),
             GenericParameterNames = null,
             TemplateName = template.TemplateName ?? template.Name,
@@ -578,7 +583,12 @@ internal static class FunctionOverloadFacts
         {
             ReturnType = SubstituteType(candidate.ReturnType, substitution),
             Parameters = candidate.Parameters
-                .Select(parameter => new TypedParameterSymbol(parameter.Name, SubstituteType(parameter.Type, substitution)))
+                .Select(parameter => new TypedParameterSymbol(
+                    parameter.Name,
+                    SubstituteType(parameter.Type, substitution),
+                    parameter.IsDisjoint,
+                    parameter.IsConst,
+                    parameter.RawPointerElementCountExpression))
                 .ToArray(),
             GenericParameterNames = null,
             TemplateName = candidate.TemplateName ?? candidate.Name,

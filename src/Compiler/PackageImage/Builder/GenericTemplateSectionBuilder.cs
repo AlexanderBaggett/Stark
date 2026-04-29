@@ -748,7 +748,8 @@ internal static partial class PackageImageBuilder
                 LoopBehavior: forStatement.loopBehavior().GetText(),
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
-                BodyStatements: forBodyStatements);
+                BodyStatements: forBodyStatements,
+                LoopContracts: BuildLoopContracts(forStatement.loopContract()));
             return true;
         }
 
@@ -789,14 +790,16 @@ internal static partial class PackageImageBuilder
                 Kind: "while",
                 Expression: whileCondition,
                 LoopBehavior: whileStatement.loopBehavior().GetText(),
-                BodyStatements: whileBodyStatements);
+                BodyStatements: whileBodyStatements,
+                LoopContracts: BuildLoopContracts(whileStatement.loopContract()));
             return true;
         }
 
         if (statement.ifStatement() is { } ifStatement
+            && ifStatement.expression() is { } ifCondition
             && TryBuildPublishedTypedTemplateExpression(
                 module,
-                ifStatement.expression(),
+                ifCondition,
                 namedTypes,
                 literalsByLocation,
                 conversionsByLocation,
@@ -970,6 +973,15 @@ internal static partial class PackageImageBuilder
         }
 
         return false;
+    }
+
+    private static IReadOnlyList<string> BuildLoopContracts(
+        IEnumerable<StarkParser.LoopContractContext> contracts)
+    {
+        return contracts
+            .Select(static contract => contract.GetText())
+            .Where(static contract => !string.IsNullOrWhiteSpace(contract))
+            .ToArray();
     }
 
     private static bool CanUseTypedTemplateStatementAsTerminal(
@@ -3689,7 +3701,10 @@ internal static partial class PackageImageBuilder
                 constructor.Parameters
                     .Select(parameter => new StarkPackageTypedParameterManifest(
                         parameter.Name,
-                        BuildPublishedAbiTypeReference(parameter.Type, module)))
+                        BuildPublishedAbiTypeReference(parameter.Type, module),
+                        parameter.IsDisjoint,
+                        parameter.IsConst,
+                        parameter.RawPointerElementCountExpression))
                     .ToArray(),
                 constructor.IsPrimaryShape);
     }
@@ -3766,7 +3781,10 @@ internal static partial class PackageImageBuilder
                     record.Signature.Parameters
                         .Select(parameter => new StarkPackageTypedParameterManifest(
                             parameter.Name,
-                            BuildPublishedAbiTypeReference(parameter.Type, module)))
+                            BuildPublishedAbiTypeReference(parameter.Type, module),
+                            parameter.IsDisjoint,
+                            parameter.IsConst,
+                            parameter.RawPointerElementCountExpression))
                         .ToArray(),
                     QualifiedSourceName: record.Signature.SourceName is null
                         ? null
@@ -3778,7 +3796,8 @@ internal static partial class PackageImageBuilder
                         ? record.Signature.TypeArguments
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
-                        : null)
+                        : null,
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups))
                 : null)
             .Where(static directCall => directCall is not null)
             .Cast<StarkPackageTemplateDirectCallManifest>()
@@ -3841,7 +3860,10 @@ internal static partial class PackageImageBuilder
                     record.Signature.Parameters
                         .Select(parameter => new StarkPackageTypedParameterManifest(
                             parameter.Name,
-                            BuildPublishedAbiTypeReference(parameter.Type, module)))
+                            BuildPublishedAbiTypeReference(parameter.Type, module),
+                            parameter.IsDisjoint,
+                            parameter.IsConst,
+                            parameter.RawPointerElementCountExpression))
                         .ToArray(),
                     QualifiedSourceName: record.Signature.SourceName is null
                         ? null
@@ -3853,7 +3875,8 @@ internal static partial class PackageImageBuilder
                         ? record.Signature.TypeArguments
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
-                        : null)
+                        : null,
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups))
                 : null)
             .Where(static memberCall => memberCall is not null)
             .Cast<StarkPackageTemplateMemberCallManifest>()

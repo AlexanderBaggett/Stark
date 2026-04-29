@@ -79,6 +79,39 @@ Use raw pointers for FFI, runtime internals, and small carefully reviewed
 low-level boundaries. Do not use them as a general replacement for `borrow` or
 `mut borrow`.
 
+## Bounded Raw Pointer Regions
+
+Raw pointer parameters can state an element count:
+
+```stark
+fn void Fill(
+    i64[0 max] length,
+    rawmutptr<i32[min max]>[length] destination,
+    i32[min max] value) {
+    return;
+}
+```
+
+`rawptr<T>[count]` and `rawmutptr<T>[count]` are still raw pointers. They may
+belong to FFI-owned storage, and they do not become safe borrows. The bound
+says the region is valid for `count` contiguous elements of `T`. Positive
+counts require non-null pointers; zero-length regions may be `null`.
+
+Region expressions name subranges for contracts without building slices:
+
+```stark
+where disjoint(source[0, length], destination[0, length])
+```
+
+The same region expression can be checked at runtime with `if disjoint(...)`.
+That lets low-level wrappers pick a fast non-overlap path and keep an
+overlap-safe fallback for the branch where the regions may alias.
+
+Inside `unsafe`, `slice(pointer, count)` turns a bounded raw pointer region
+into an ordinary slice view. The slice keeps the raw region's root, length,
+mutability, const provenance, alignment, and disjoint facts, so the rest of the
+wrapper can use ordinary slice indexing rules.
+
 ## Safe Borrows Versus Raw Pointers
 
 Safe borrows carry stronger guarantees:

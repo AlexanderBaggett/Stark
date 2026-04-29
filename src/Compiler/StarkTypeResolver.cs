@@ -129,6 +129,27 @@ internal sealed class StarkTypeResolver
         return ApplyQualifiers(result, type.typeQualifier());
     }
 
+    public StarkTypeSymbol ResolveParameterType(
+        StarkParser.Type_Context type,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        out string? rawPointerElementCountExpression)
+    {
+        rawPointerElementCountExpression = null;
+
+        if (TryResolveBoundedRawPointerParameterType(
+                type,
+                genericParameters,
+                currentModuleName,
+                out var rawPointerType,
+                out rawPointerElementCountExpression))
+        {
+            return rawPointerType;
+        }
+
+        return ResolveType(type, genericParameters, currentModuleName);
+    }
+
     public StarkTypeSymbol ResolveConversionType(StarkParser.ConversionTypeContext type, ISet<string>? genericParameters = null, string? currentModuleName = null)
     {
         var result = ResolveConversionNonArrayType(type.conversionNonArrayType(), genericParameters, currentModuleName);
@@ -252,6 +273,31 @@ internal sealed class StarkTypeResolver
         }
 
         return ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
+    }
+
+    private bool TryResolveBoundedRawPointerParameterType(
+        StarkParser.Type_Context type,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        out StarkTypeSymbol rawPointerType,
+        out string? elementCountExpression)
+    {
+        rawPointerType = StarkTypeSymbols.Error;
+        elementCountExpression = null;
+
+        if (type.nonArrayType().rawPointerType() is not { } rawPointerSyntax
+            || type.arraySuffix() is not [var suffix]
+            || suffix.expression() is not { } countExpression)
+        {
+            return false;
+        }
+
+        var elementType = ResolveType(rawPointerSyntax.type_(), genericParameters, currentModuleName);
+        rawPointerType = ApplyQualifiers(
+            StarkTypeSymbols.RawPointer(elementType, rawPointerSyntax.RAWMUTPTR() is not null),
+            type.typeQualifier());
+        elementCountExpression = countExpression.GetText();
+        return true;
     }
 
     private StarkTypeSymbol ResolveConversionNonArrayType(StarkParser.ConversionNonArrayTypeContext type, ISet<string>? genericParameters, string? currentModuleName)

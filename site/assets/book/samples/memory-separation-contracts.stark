@@ -1,0 +1,52 @@
+module Book.MemorySeparationContracts
+
+fn void AddSeparate(
+    disjoint rawmutptr<i32[min max]> left,
+    disjoint rawmutptr<i32[min max]> right) {
+    *left += 1;
+    *right += 1;
+    return;
+}
+
+fn void AddOverlapSafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+    if (left == right) {
+        *left += 2;
+        return;
+    }
+
+    *left += 1;
+    *right += 1;
+    return;
+}
+
+fn bool TryAddPairFast(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+    if disjoint(left, right) {
+        AddSeparate(left, right);
+        return true;
+    }
+
+    AddOverlapSafe(left, right);
+    return false;
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i32[min max][2] values = { 1, 10 };
+
+    if (!TryAddPairFast(&values[0], &values[1])) {
+        return 1;
+    }
+
+    if (values[0] != 2 || values[1] != 11) {
+        return 2;
+    }
+
+    if (TryAddPairFast(&values[0], &values[0])) {
+        return 3;
+    }
+
+    if (values[0] != 4 || values[1] != 11) {
+        return 4;
+    }
+
+    return 0;
+}

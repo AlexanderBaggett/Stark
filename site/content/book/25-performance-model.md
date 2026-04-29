@@ -43,6 +43,107 @@ work to start from:
 Before reaching for generated IR, first ask whether the source already says the
 facts you expect the compiler to rely on.
 
+## Memory Separation Contracts
+
+`disjoint` is how Stark lets source code state that memory regions do not
+overlap. The compiler uses that fact for call validation and, when it reaches
+LLVM, for `noalias` and scoped alias metadata.
+
+{{< stark-sample "assets/book/samples/memory-separation-contracts.stark" >}}
+
+The sample has two paths. `AddSeparate` requires non-overlapping pointer
+arguments, so the compiler will not accept arbitrary raw pointer variables at a
+safe call site. `TryAddPairFast` first runs `if disjoint(left, right)`. Only
+the true branch receives the separation fact and can call the faster contract.
+The false branch keeps an overlap-safe implementation.
+
+This distinction is intentional. Different pointer names are not proof that
+the pointed-to regions differ. Proof can come from distinct fields, distinct
+constant indexes, separately addressed storage, declared `where disjoint(...)`
+contracts, or a runtime `if disjoint(...)` check that dominates the call.
+
+Loop `independent` uses the same design philosophy. The current compiler
+accepts scalar loops and a canonical memory-backed subset over slices, fixed
+arrays, and bounded raw pointer regions. Accepted memory operations carry LLVM
+access-group metadata, and accepted loops carry `parallel_accesses` plus the
+existing progress facts.
+
+## Bounded Raw Pointer Regions
+
+Raw pointer performance code can give Stark a precise region without turning
+the pointer into a safe borrow:
+
+```stark
+rawmutptr<i32[min max]>[count]
+```
+
+The bound says the raw pointer is valid for `count` contiguous elements. A
+positive count requires a non-null pointer; a zero-length region may use
+`null`. Region expressions such as `source[0, count]` and
+`destination[start, count]` can appear in `where disjoint(...)` and
+`if disjoint(...)` so fast paths are still tied to explicit source facts.
+
+{{< stark-sample "assets/book/samples/bounded-raw-pointer-regions.stark" >}}
+
+The checked sample contains the common pattern:
+
+- `CopyFast` uses bounded raw pointer parameters and an `independent` loop.
+- `TryCopy` uses `if disjoint(...)` to choose an `independent` copy loop.
+- `Fill` writes one element per iteration through a bounded `rawmutptr`.
+- `Transform` reads from one bounded region and writes another.
+- the false branch falls back to an overlap-safe temporary copy when ranges
+  overlap.
+
+When an unsafe boundary needs an ordinary slice view, `slice(pointer, count)`
+materializes one from the bounded raw pointer region inside an `unsafe` block.
+The slice keeps the raw region's root, length, mutability, const provenance,
+alignment, and disjoint facts, so normal slice indexing and loop validation can
+take over after the boundary conversion.
+
+## Const Parameter Provenance
+
+`const` on a parameter means the reachable object graph is deeply immutable.
+It is stronger than an ordinary immutable binding and stronger than a temporary
+`frozen` borrow. The caller must pass a value whose provenance is already const,
+or a value the compiler can prove is equivalently immutable.
+
+{{< stark-sample "assets/book/samples/const-parameter-provenance.stark" >}}
+
+Inside `ReadMiddle`, the compiler can treat the table graph as readonly.
+`ForwardConst` can forward that provenance to another const parameter without
+weakening it. A projection such as `table.Values[1]` does not regain mutation
+authority. If a const parameter contains a raw mutable pointer field, reading
+that field through the const graph yields readonly access, not a mutable raw
+alias.
+
+Const is not an aliasing promise. Two const parameters may point at the same
+immutable graph, so `const` and `disjoint` remain separate contracts.
+
+## Independent Loop Contracts
+
+`independent` is the loop-level form of the same proof-carrying style:
+
+```stark
+stack mut i32[0 10] value = 0;
+while willexit independent (value < 4) {
+    value += 1;
+}
+```
+
+The intended contract is semantic, not a soft optimization hint. A write in
+one iteration must not be read or written by another iteration unless the
+compiler has a proof that the accessed regions are per-iteration separate.
+Those proofs are expected to come from index ranges, exclusive borrows,
+disjoint slice regions, and call memory effects.
+
+The compiler accepts canonical slice, fixed-array, and bounded raw pointer
+region element accesses when the loop induction variable is the element index
+and each read/write root pair is either the same indexed root or proven
+disjoint. Raw pointer loops use the spelling `*(&root[index])` when `root` has
+a bounded raw pointer region. Unbounded raw pointer dereferences, hidden roots,
+non-induction indexes, nested loops, early exits, and calls with unproven memory
+effects report `STK3027`.
+
 ## No Hidden Allocation
 
 Allocation should be visible in the API. A growable collection may allocate

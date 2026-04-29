@@ -369,7 +369,7 @@ internal sealed class SemanticValidator
 
         var summary = GetOrCreateSummary(name);
         summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody, syntaxDeclaration.Function.Kind);
-        summary.SetParameters(signature.Parameters, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
         ApplyBuiltinDeclarationMemoryEffects(syntaxDeclaration.Function, summary);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
@@ -399,7 +399,8 @@ internal sealed class SemanticValidator
                     SymbolOrigin.Parameter,
                     LocalStorageClass.None,
                     IsMutable: false,
-                    IsConstant: false));
+                    IsConstant: false,
+                    HasConstProvenance: parameter.IsConst));
             }
 
             CheckBlock(block, scope, syntaxDeclaration.Function, effects, summary, ControlFlowContext.Root);
@@ -667,9 +668,10 @@ internal sealed class SemanticValidator
 
             foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
             {
+                var hasConstProvenance = false;
                 if (declarator.variableInitializer() is { } initializer)
                 {
-                    CheckVariableInitializer(initializer, scope, function, effects, summary, declaredType);
+                    hasConstProvenance = CheckVariableInitializer(initializer, scope, function, effects, summary, declaredType);
                 }
 
                 scope.Declare(new VariableSymbol(
@@ -678,7 +680,8 @@ internal sealed class SemanticValidator
                     SymbolOrigin.Local,
                     LocalStorageClass.None,
                     IsMutable: false,
-                    IsConstant: true));
+                    IsConstant: true,
+                    HasConstProvenance: hasConstProvenance));
             }
 
             return;
@@ -703,9 +706,10 @@ internal sealed class SemanticValidator
 
             foreach (var declarator in localVariable.variableDeclarators().variableDeclarator())
             {
+                var hasConstProvenance = false;
                 if (declarator.variableInitializer() is { } initializer)
                 {
-                    CheckVariableInitializer(initializer, scope, function, effects, summary, declaredType);
+                    hasConstProvenance = CheckVariableInitializer(initializer, scope, function, effects, summary, declaredType);
                 }
 
                 scope.Declare(new VariableSymbol(
@@ -714,7 +718,8 @@ internal sealed class SemanticValidator
                     SymbolOrigin.Local,
                     storageClass,
                     IsMutable: localVariable.MUT() is not null,
-                    IsConstant: false));
+                    IsConstant: false,
+                    HasConstProvenance: localVariable.MUT() is null && hasConstProvenance));
             }
 
             return;
@@ -722,7 +727,23 @@ internal sealed class SemanticValidator
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            EvaluateExpression(ifStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            if (ifStatement.expression() is { } condition)
+            {
+                EvaluateExpression(condition, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            }
+            else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
+            {
+                foreach (var expression in disjointCondition.expressionList().expression())
+                {
+                    if (TryEvaluateRawPointerRegionExpression(expression, scope, function, effects, summary))
+                    {
+                        continue;
+                    }
+
+                    EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+                }
+            }
+
             CheckStatement(ifStatement.statement(0), new ValidationScope(scope), function, effects, summary, controlFlow);
             if (ifStatement.statement().Length > 1)
             {
@@ -816,9 +837,10 @@ internal sealed class SemanticValidator
 
                 foreach (var declarator in localForDeclaration.variableDeclarators().variableDeclarator())
                 {
+                    var hasConstProvenance = false;
                     if (declarator.variableInitializer() is { } initializer)
                     {
-                        CheckVariableInitializer(initializer, loopScope, function, effects, summary, declaredType);
+                        hasConstProvenance = CheckVariableInitializer(initializer, loopScope, function, effects, summary, declaredType);
                     }
 
                     loopScope.Declare(new VariableSymbol(
@@ -827,7 +849,8 @@ internal sealed class SemanticValidator
                         SymbolOrigin.Local,
                         storageClass,
                         IsMutable: localForDeclaration.MUT() is not null,
-                        IsConstant: false));
+                        IsConstant: false,
+                        HasConstProvenance: localForDeclaration.MUT() is null && hasConstProvenance));
                 }
             }
             else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
@@ -906,7 +929,7 @@ internal sealed class SemanticValidator
         }
     }
 
-    private void CheckVariableInitializer(
+    private bool CheckVariableInitializer(
         StarkParser.VariableInitializerContext initializer,
         ValidationScope scope,
         FunctionDeclarationModel function,
@@ -921,7 +944,7 @@ internal sealed class SemanticValidator
                 && TryGetStandaloneInterpolatedTextLiteral(expression) is { } interpolatedLiteral)
             {
                 CheckFixedTextStorageInterpolation(interpolatedLiteral, expectedType, scope, function, effects, summary);
-                return;
+                return false;
             }
 
             var value = EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
@@ -930,26 +953,32 @@ internal sealed class SemanticValidator
                 ValidateRegisterStorageBackedUse(value, expectedType, expression);
             }
 
-            return;
+            return HasConstProvenance(value);
         }
 
         if (initializer.objectInitializer() is { } objectInitializer)
         {
+            var allMembersHaveConstProvenance = objectInitializer.memberInitializer().Length > 0;
             foreach (var memberInitializer in objectInitializer.memberInitializer())
             {
-                CheckVariableInitializer(memberInitializer.variableInitializer(), scope, function, effects, summary);
+                allMembersHaveConstProvenance &= CheckVariableInitializer(memberInitializer.variableInitializer(), scope, function, effects, summary);
             }
 
-            return;
+            return allMembersHaveConstProvenance;
         }
 
         if (initializer.arrayInitializer() is { } arrayInitializer)
         {
+            var allItemsHaveConstProvenance = arrayInitializer.variableInitializer().Length > 0;
             foreach (var item in arrayInitializer.variableInitializer())
             {
-                CheckVariableInitializer(item, scope, function, effects, summary);
+                allItemsHaveConstProvenance &= CheckVariableInitializer(item, scope, function, effects, summary);
             }
+
+            return allItemsHaveConstProvenance;
         }
+
+        return false;
     }
 
     private void CheckFixedTextStorageInterpolation(
@@ -1089,6 +1118,145 @@ internal sealed class SemanticValidator
         }
 
         return new ValidationValue(left.Type);
+    }
+
+    private bool TryEvaluateRawPointerRegionExpression(
+        StarkParser.ExpressionContext expression,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary)
+    {
+        if (!TryGetRawPointerRegionExpression(expression, out _, out var startExpression, out var lengthExpression))
+        {
+            return false;
+        }
+
+        EvaluateExpression(startExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        EvaluateExpression(lengthExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        return true;
+    }
+
+    private static bool TryGetRawPointerRegionExpression(
+        StarkParser.ExpressionContext expression,
+        out string rootName,
+        out StarkParser.ExpressionContext startExpression,
+        out StarkParser.ExpressionContext lengthExpression)
+    {
+        rootName = string.Empty;
+        startExpression = null!;
+        lengthExpression = null!;
+
+        if (TryGetSimplePostfixExpression(expression) is not { } postfix
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier
+            || postfix.postfixPart() is not [var indexPart]
+            || indexPart.LBRACK() is null
+            || indexPart.expressionList()?.expression() is not [var start, var length])
+        {
+            return false;
+        }
+
+        rootName = identifier;
+        startExpression = start;
+        lengthExpression = length;
+        return true;
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.ExpressionContext expression)
+    {
+        return TryGetSimpleUnaryExpression(expression) is { } unary
+            ? TryGetSimplePostfixExpression(unary)
+            : null;
+    }
+
+    private static StarkParser.UnaryExpressionContext? TryGetSimpleUnaryExpression(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        return multiplicative.unaryExpression(0);
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        if (expression.unaryOperator() is not null
+            || expression.conversionType() is not null
+            || expression.unaryExpression() is not null
+            || expression.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null)
+        {
+            return null;
+        }
+
+        return powerExpression.postfixExpression();
     }
 
     private ValidationValue EvaluateConditionalExpression(
@@ -1567,7 +1735,7 @@ internal sealed class SemanticValidator
 
             var summary = GetOrCreateSummary(lambda.FunctionName);
             summary.Configure(signature.ReturnType, hasBody: true, signature.Kind);
-            summary.SetParameters(signature.Parameters, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+            summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
 
             var scope = ValidationScope.CreateRoot();
             foreach (var parameter in signature.Parameters)
@@ -1578,7 +1746,8 @@ internal sealed class SemanticValidator
                     SymbolOrigin.Parameter,
                     LocalStorageClass.None,
                     IsMutable: false,
-                    IsConstant: false));
+                    IsConstant: false,
+                    HasConstProvenance: parameter.IsConst));
             }
 
             if (expression.expression() is { } bodyExpression)
@@ -1710,7 +1879,8 @@ internal sealed class SemanticValidator
                 IsAssignable: CanAssignToLocal(local),
                 RootSymbol: local,
                 NamedType: ResolveNamedTypeSymbol(local.Type),
-                IsAddressMutable: CanFormMutableAddressFromLocal(local));
+                IsAddressMutable: CanFormMutableAddressFromLocal(local),
+                HasConstProvenance: local.HasConstProvenance);
         }
 
         if (TryResolveGlobalBySourceName(name, out var globalType))
@@ -1737,9 +1907,11 @@ internal sealed class SemanticValidator
                     LocalStorageClass.Static,
                     isMutable,
                     IsConstant: !isMutable,
-                    BindingKind: globalType.BindingKind),
+                    BindingKind: globalType.BindingKind,
+                    HasConstProvenance: globalType.BindingKind == GlobalBindingKind.Const),
                 NamedType: ResolveNamedTypeSymbol(globalType.Type),
-                IsAddressMutable: isMutable);
+                IsAddressMutable: isMutable,
+                HasConstProvenance: globalType.BindingKind == GlobalBindingKind.Const);
         }
 
         if (TryGetFunctionOverloads(name, out var targetFunctions))
@@ -2383,7 +2555,8 @@ internal sealed class SemanticValidator
             NamedType: ResolveNamedTypeSymbol(currentType),
             IsIndirectStorageAccess: true,
             IsAddressMutable: currentIsAddressMutable,
-            UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics);
+            UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics,
+            HasConstProvenance: HasConstProvenance(target));
     }
 
     private ValidationValue ApplyMemberAccess(ValidationValue target, string memberName)
@@ -2414,9 +2587,11 @@ internal sealed class SemanticValidator
                         LocalStorageClass.Static,
                         isMutable,
                         IsConstant: !isMutable,
-                        BindingKind: globalType.BindingKind),
+                        BindingKind: globalType.BindingKind,
+                        HasConstProvenance: globalType.BindingKind == GlobalBindingKind.Const),
                     NamedType: ResolveNamedTypeSymbol(globalType.Type),
-                    IsAddressMutable: isMutable);
+                    IsAddressMutable: isMutable,
+                    HasConstProvenance: globalType.BindingKind == GlobalBindingKind.Const);
             }
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
@@ -2493,7 +2668,8 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(projectedType),
                 IsIndirectStorageAccess: true,
                 IsAddressMutable: CanMutateAddressProjection(target, projectedType),
-                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target));
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                HasConstProvenance: HasConstProvenance(target));
         }
 
         var methodSourceName = $"{namedType.Name}.{memberName}";
@@ -2588,7 +2764,8 @@ internal sealed class SemanticValidator
                 RootSymbol: operand.RootSymbol,
                 NamedType: ResolveNamedTypeSymbol(targetType),
                 IsIndirectStorageAccess: operand.IsIndirectStorageAccess,
-                UsesFrozenProjectionSemantics: operand.UsesFrozenProjectionSemantics)
+                UsesFrozenProjectionSemantics: operand.UsesFrozenProjectionSemantics,
+                HasConstProvenance: HasConstProvenance(operand))
             : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
     }
 
@@ -2818,7 +2995,8 @@ internal sealed class SemanticValidator
             pointerType,
             RootSymbol: operand.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(pointerType),
-            IsIndirectStorageAccess: true);
+            IsIndirectStorageAccess: true,
+            HasConstProvenance: HasConstProvenance(operand));
     }
 
     private ValidationValue CreateDereferenceValidationValue(ValidationValue operand)
@@ -2835,7 +3013,8 @@ internal sealed class SemanticValidator
             RootSymbol: operand.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(pointeeType),
             IsIndirectStorageAccess: true,
-            IsAddressMutable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen);
+            IsAddressMutable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
+            HasConstProvenance: HasConstProvenance(operand));
     }
 
     private PendingCallArgument CreatePendingCallArgument(
@@ -4131,7 +4310,15 @@ internal sealed class SemanticValidator
     private static bool UsesFrozenProjectionSemantics(ValidationValue value)
     {
         return value.UsesFrozenProjectionSemantics
+            || value.HasConstProvenance
             || value.Type.AccessKind == StarkAccessKind.Frozen
+            || value.RootSymbol?.BindingKind == GlobalBindingKind.Const;
+    }
+
+    private static bool HasConstProvenance(ValidationValue value)
+    {
+        return value.HasConstProvenance
+            || value.RootSymbol is { HasConstProvenance: true }
             || value.RootSymbol?.BindingKind == GlobalBindingKind.Const;
     }
 
@@ -4145,6 +4332,7 @@ internal sealed class SemanticValidator
     private static bool CanFormMutableAddressFromLocal(VariableSymbol local)
     {
         return !local.IsConstant
+            && !local.HasConstProvenance
             && local.Type.AccessKind != StarkAccessKind.Frozen
             && (local.IsMutable || local.Type.IsMutableView || local.Type.InitializationKind != StarkInitializationKind.None);
     }
@@ -4152,6 +4340,7 @@ internal sealed class SemanticValidator
     private static bool CanAssignToLocal(VariableSymbol local)
     {
         return !local.IsConstant
+            && !local.HasConstProvenance
             && (local.IsMutable || local.Type.InitializationKind != StarkInitializationKind.None);
     }
 
@@ -4194,9 +4383,37 @@ internal sealed class SemanticValidator
             || type.AccessKind is StarkAccessKind.Shared or StarkAccessKind.Frozen;
     }
 
-    private static bool DeriveGuaranteedNoAlias(StarkTypeSymbol type)
+    private static bool DeriveGuaranteedNoAlias(
+        TypedParameterSymbol parameter,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        IReadOnlyList<ParameterDisjointGroup> disjointGroups)
     {
-        return type.InitializationKind != StarkInitializationKind.None;
+        if (parameter.Type.InitializationKind != StarkInitializationKind.None)
+        {
+            return true;
+        }
+
+        if (!CanAliasCalleeParameterMemory(parameter.Type))
+        {
+            return false;
+        }
+
+        var aliasingParameters = parameters
+            .Where(static candidate => CanAliasCalleeParameterMemory(candidate.Type))
+            .Select(static candidate => candidate.Name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (aliasingParameters.Length <= 1)
+        {
+            return false;
+        }
+
+        return disjointGroups.Any(group =>
+        {
+            var names = group.ParameterNames.ToHashSet(StringComparer.Ordinal);
+            return names.Contains(parameter.Name)
+                && aliasingParameters.All(names.Contains);
+        });
     }
 
     private static bool CanAliasCalleeParameterMemory(StarkTypeSymbol parameterType)
@@ -4548,7 +4765,8 @@ internal sealed class SemanticValidator
         LocalStorageClass StorageClass,
         bool IsMutable,
         bool IsConstant,
-        GlobalBindingKind? BindingKind = null);
+        GlobalBindingKind? BindingKind = null,
+        bool HasConstProvenance = false);
 
     private sealed record ValidationValue(
         StarkTypeSymbol Type,
@@ -4562,7 +4780,8 @@ internal sealed class SemanticValidator
         ValidationValue? Receiver = null,
         EnumConstructorBinding? EnumConstructor = null,
         bool IsAddressMutable = false,
-        bool UsesFrozenProjectionSemantics = false);
+        bool UsesFrozenProjectionSemantics = false,
+        bool HasConstProvenance = false);
 
     private sealed record EnumConstructorBinding(
         string Name,
@@ -4644,6 +4863,8 @@ internal sealed class SemanticValidator
     {
         public ParameterSummaryBuilder(
             TypedParameterSymbol parameter,
+            IReadOnlyList<TypedParameterSymbol> parameters,
+            IReadOnlyList<ParameterDisjointGroup> disjointGroups,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
@@ -4651,9 +4872,9 @@ internal sealed class SemanticValidator
             Type = parameter.Type;
             IsMemoryBacked = IsMemoryBackedType(parameter.Type);
             GuaranteedNonNull = DeriveGuaranteedNonNull(parameter.Type);
-            GuaranteedReadOnly = DeriveGuaranteedReadOnly(parameter.Type);
+            GuaranteedReadOnly = parameter.IsConst || DeriveGuaranteedReadOnly(parameter.Type);
             GuaranteedWriteOnly = parameter.Type.InitializationKind != StarkInitializationKind.None;
-            GuaranteedNoAlias = DeriveGuaranteedNoAlias(parameter.Type);
+            GuaranteedNoAlias = DeriveGuaranteedNoAlias(parameter, parameters, disjointGroups);
             var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(parameter.Type, namedTypes, enumLayouts);
             DereferenceableBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.SizeBytes : null;
             AlignmentBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.AlignmentBytes : null;
@@ -4798,12 +5019,13 @@ internal sealed class SemanticValidator
 
         public void SetParameters(
             IReadOnlyList<TypedParameterSymbol> parameters,
+            IReadOnlyList<ParameterDisjointGroup> disjointGroups,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
             foreach (var parameter in parameters)
             {
-                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, namedTypes, enumLayouts);
+                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, parameters, disjointGroups, namedTypes, enumLayouts);
             }
         }
 

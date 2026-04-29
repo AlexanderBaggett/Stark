@@ -19,6 +19,7 @@ internal sealed class DebugMetadataEmitter
     private readonly Dictionary<string, string> _tbaaAccessTagRefs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _aliasScopeDomainRefs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _aliasScopeRefs = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _selfReferentialMetadataRefs = new(StringComparer.Ordinal);
     private readonly string _compileUnitRef;
     private readonly string _debugInfoVersionRef;
     private readonly string _dwarfVersionRef;
@@ -175,6 +176,19 @@ internal sealed class DebugMetadataEmitter
     {
         _hasNonDebugMetadata = true;
         return GetTupleRef(items);
+    }
+
+    public string GetSelfReferentialMetadataRef(string key, Func<string, string> buildBody)
+    {
+        if (_selfReferentialMetadataRefs.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        _hasNonDebugMetadata = true;
+        var metadataRef = CreateSelfReferentialMetadata(buildBody);
+        _selfReferentialMetadataRefs[key] = metadataRef;
+        return metadataRef;
     }
 
     public DebugFunctionContext CreateFunctionContext(

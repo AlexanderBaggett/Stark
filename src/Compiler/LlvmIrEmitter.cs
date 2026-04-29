@@ -29,6 +29,7 @@ internal sealed class LlvmIrEmitter
     private readonly SsaIrModule _ssa;
     private readonly LlvmTargetInfo? _targetInfo;
     private readonly bool _internalizeModulePrivate;
+    private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
     private readonly IReadOnlySet<string> _globalsEligibleForLocalUnnamedAddr;
     private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
@@ -63,6 +64,7 @@ internal sealed class LlvmIrEmitter
         LlvmTargetInfo? targetInfo = null,
         bool internalizeModulePrivate = false,
         bool isOptimizedBuild = false,
+        bool enableOptimizedRawPointerLoopIntrinsics = false,
         SemanticValidationModel? semanticValidation = null,
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
@@ -81,6 +83,7 @@ internal sealed class LlvmIrEmitter
             targetInfo,
             internalizeModulePrivate,
             isOptimizedBuild,
+            enableOptimizedRawPointerLoopIntrinsics,
             semanticValidation,
             closedWorldModel,
             specializationCodegenStrategy,
@@ -102,6 +105,7 @@ internal sealed class LlvmIrEmitter
         LlvmTargetInfo? targetInfo = null,
         bool internalizeModulePrivate = false,
         bool isOptimizedBuild = false,
+        bool enableOptimizedRawPointerLoopIntrinsics = false,
         SemanticValidationModel? semanticValidation = null,
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
@@ -124,6 +128,7 @@ internal sealed class LlvmIrEmitter
         _ssa = ssa;
         _targetInfo = targetInfo;
         _internalizeModulePrivate = internalizeModulePrivate;
+        _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
         _isOptimizedBuild = isOptimizedBuild;
         _stringConstants = CollectStringConstants(parseResult, ssa);
         _objectCreationConstructors = typeModel.ObjectCreations
@@ -186,6 +191,7 @@ internal sealed class LlvmIrEmitter
             (key, displayName) => _debugInfo.GetAliasScopeDomainRef(key, displayName),
             (key, domainRef, displayName) => _debugInfo.GetAliasScopeRef(key, domainRef, displayName),
             items => _debugInfo.GetMetadataTupleRef(items),
+            (key, buildBody) => _debugInfo.GetSelfReferentialMetadataRef(key, buildBody),
             functionName => _allFunctionEffects.TryGetValue(functionName, out var effects) ? effects : null);
         _globalInitializerPlanner = new LlvmGlobalInitializerPlanner(_emissionContext);
         _functionAttributeBuilder = new LlvmFunctionAttributeBuilder(_emissionContext);
@@ -202,7 +208,10 @@ internal sealed class LlvmIrEmitter
             UsesHeapAllocator,
             UsesUnreachableTrapHelper,
             UsesAssumeIntrinsic,
+            UsesMemcpyIntrinsic,
+            UsesMemmoveIntrinsic,
             UsesMemcpyInlineIntrinsic,
+            UsesMemsetIntrinsic,
             UsesMemsetInlineIntrinsic);
         _moduleSurfaceEmitter = new LlvmModuleSurfaceEmitter(
             _emissionContext,
@@ -1085,6 +1094,32 @@ internal sealed class LlvmIrEmitter
         return false;
     }
 
+    private bool UsesMemcpyIntrinsic()
+    {
+        return _enableOptimizedRawPointerLoopIntrinsics
+            && _ssa.Functions.Any(function => LlvmFunctionBodyEmitter.MayEmitOptimizedRawPointerMemcpyIntrinsic(
+                function,
+                TryGetConcreteTypeLayout,
+                GetParameterEffects(function.Name, hasBody: true)));
+    }
+
+    private bool UsesMemmoveIntrinsic()
+    {
+        return _enableOptimizedRawPointerLoopIntrinsics
+            && _ssa.Functions.Any(function => LlvmFunctionBodyEmitter.MayEmitOptimizedRawPointerMemmoveIntrinsic(
+                function,
+                TryGetConcreteTypeLayout));
+    }
+
+    private bool UsesMemsetIntrinsic()
+    {
+        return _enableOptimizedRawPointerLoopIntrinsics
+            && _ssa.Functions.Any(function => LlvmFunctionBodyEmitter.MayEmitOptimizedRawPointerMemsetIntrinsic(
+                function,
+                TryGetConcreteTypeLayout,
+                GetParameterEffects(function.Name, hasBody: true)));
+    }
+
     private bool UsesMemsetInlineIntrinsic()
     {
         return _ssa.Functions
@@ -1197,7 +1232,8 @@ internal sealed class LlvmIrEmitter
             debugFunction,
             valueFacts,
             parameterEffects,
-            effects.IsStrictFp);
+            effects.IsStrictFp,
+            _enableOptimizedRawPointerLoopIntrinsics);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);

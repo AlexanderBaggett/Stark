@@ -936,6 +936,173 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void ConstRawPointerParametersCannotMutatePointees()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                *ptr = 1;
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3007", "Cannot mutate dereferenced value through a frozen value");
+    }
+
+    [Fact]
+    public void ConstParameterReachableRawPointerFieldsCannotLeakMutableAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct PtrBox {
+                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+            }
+
+            fn void Run(const PtrBox box) {
+                stack rawmutptr<i32[-2147483648 2147483647]> leaked = box.Ptr;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3002", "rawmutptr<i32>", "rawptr<frozen i32>");
+    }
+
+    [Fact]
+    public void ConstParameterCallsRequireConstProvenance()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Inspect(const Box box) {
+                return;
+            }
+
+            fn void Run(Box box) {
+                Inspect(box);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "must have const provenance", "box");
+    }
+
+    [Fact]
+    public void FrozenParameterCallsDoNotSatisfyConstProvenance()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Inspect(const Box box) {
+                return;
+            }
+
+            fn void Run(frozen Box box) {
+                Inspect(box);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "must have const provenance", "box");
+    }
+
+    [Fact]
+    public void FrozenParameterProjectionsDoNotSatisfyConstProvenance()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Inner {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            struct Outer {
+                Inner Child;
+            }
+
+            fn void Inspect(const Inner inner) {
+                return;
+            }
+
+            fn void Run(frozen Outer outer) {
+                Inspect(outer.Child);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "must have const provenance");
+    }
+
+    [Fact]
+    public void FrozenRawPointerFieldsDoNotSatisfyConstProvenance()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct PtrBox {
+                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+            }
+
+            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                return;
+            }
+
+            fn void Run(frozen PtrBox box) {
+                Inspect(box.Ptr);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "must have const provenance");
+    }
+
+    [Fact]
+    public void RawSlicesFromFrozenPointersDoNotSatisfyConstProvenance()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Inspect(const i32[-2147483648 2147483647][] view) {
+                return;
+            }
+
+            fn void Run(
+                frozen rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+                i32[1 10] count) {
+                unsafe {
+                    stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
+                    Inspect(view);
+                }
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "must have const provenance", "view");
+    }
+
+    [Fact]
     public void MemberAssignmentsReportExpectedAndActualTypes()
     {
         var result = Compile(

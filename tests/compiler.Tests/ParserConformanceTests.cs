@@ -173,6 +173,29 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "memory separation contracts parse",
+            """
+            module Memory
+
+            fn void Copy(
+                disjoint rawptr<i32[min max]> source,
+                disjoint rawmutptr<i32[min max]> destination)
+                where disjoint(source, destination) {
+                if disjoint(source, destination) {
+                    return;
+                }
+
+                while willexit independent (false) {
+                    break;
+                }
+
+                for willexit independent (stack mut i32[0 max] index = 0; index < 4; index += 1) {
+                    continue;
+                }
+            }
+            """
+        },
+        {
             "switch sections may contain multiple labels and guards",
             """
             module Branching

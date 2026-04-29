@@ -36,6 +36,7 @@ internal static class LlvmEmissionContextBuilder
         Func<string, string, string> getAliasScopeDomainRef,
         Func<string, string, string, string> getAliasScopeRef,
         Func<IReadOnlyList<string>, string> getMetadataTupleRef,
+        Func<string, Func<string, string>, string> getSelfReferentialMetadataRef,
         Func<string, FunctionEffectProfile?>? tryGetFunctionEffects = null)
     {
         return new LlvmEmissionContext(
@@ -70,6 +71,7 @@ internal static class LlvmEmissionContextBuilder
             getTbaaAccessTagRef,
             getAliasScopeDomainRef,
             getAliasScopeRef,
-            getMetadataTupleRef);
+            getMetadataTupleRef,
+            getSelfReferentialMetadataRef);
     }
 }

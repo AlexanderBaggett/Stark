@@ -14,6 +14,8 @@ anchors, and navigation stay inside the website.
 - [Modules and visibility](/reference/language/ModulesAndVisibility/)
 - [Projects and solutions](/reference/language/ProjectsAndSolutions/)
 - [General idea](/reference/language/general-idea/)
+- [Performance contracts](/book/25-performance-model/)
+- [Bounded raw pointer regions](/book/19-ffi-raw-pointers-native-packages/#bounded-raw-pointer-regions)
 
 ## Standard Library
 

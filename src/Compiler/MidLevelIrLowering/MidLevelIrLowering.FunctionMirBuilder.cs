@@ -11,6 +11,9 @@ internal sealed partial class MidLevelIrLowerer
 {
     private sealed partial class FunctionMirBuilder : IDisposable
     {
+        private static readonly StarkTypeSymbol ByteType = StarkTypeSymbols.Integer(8);
+        private static readonly StarkTypeSymbol BytePointerType = StarkTypeSymbols.RawPointer(ByteType, isMutable: false);
+        private static readonly StarkTypeSymbol I64Type = StarkTypeSymbols.Integer(64);
         private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
 
         private enum AggregatePatternFieldKind
@@ -97,6 +100,8 @@ internal sealed partial class MidLevelIrLowerer
             MidLevelIrOperand ResultValue,
             MidLevelIrOperand? Address,
             bool ReplacesWholeValue);
+
+        private sealed record MemoryRangeOperand(MidLevelIrOperand Start, MidLevelIrOperand End);
 
         private sealed class ScopeFrame
         {
@@ -226,6 +231,8 @@ internal sealed partial class MidLevelIrLowerer
         private readonly Stack<LoopTargets> _loops = [];
         private readonly Stack<BreakTargets> _breakTargets = [];
         private readonly Stack<ScopeFrame> _scopes = [];
+        private readonly Stack<ScopedNoAliasGroup> _activeScopedNoAliasGroups = [];
+        private readonly Stack<string> _activeLoopAccessGroups = [];
         private readonly CompileTimeEvaluator _compileTimeEvaluator;
         private readonly CompileTimeEvaluator.CompileTimeEvaluationState _compileTimeConstantState = new();
         private readonly ImportedTemplateLowerer _importedTemplateLowerer;
@@ -246,6 +253,8 @@ internal sealed partial class MidLevelIrLowerer
         private int _nextBlockId;
         private int _nextTempId;
         private int _nextScopedLocalId;
+        private int _nextRuntimeDisjointScopeId;
+        private int _nextLoopAccessGroupId;
 
         public FunctionMirBuilder(
             HighLevelIrFunction function,
@@ -518,6 +527,12 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
+            if (statement.unsafeStatement() is { } unsafeStatement)
+            {
+                LowerBlock(unsafeStatement.block());
+                return;
+            }
+
             if (statement.localConstantDeclaration() is { } localConstant)
             {
                 LowerConstantDeclaration(localConstant);
@@ -612,7 +627,11 @@ internal sealed partial class MidLevelIrLowerer
                 var localName = DeclareLocal(sourceName, declaredType, storageClass: "local", isMutable: false, isConstant: true);
                 Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
                 TrackCompileTimeConstant(sourceName, declaredType, declarator.variableInitializer());
-                LowerVariableInitializer(localName, declaredType, declarator.variableInitializer());
+                if (LowerVariableInitializer(localName, declaredType, declarator.variableInitializer()))
+                {
+                    MarkLocalHasConstProvenance(localName);
+                }
+
                 InitializeRuntimeDropState(localName, declaredType, isActive: true);
             }
         }
@@ -659,13 +678,19 @@ internal sealed partial class MidLevelIrLowerer
                     continue;
                 }
 
-                var localName = DeclareLocal(sourceName, declaredType, storageClass, declaration.MUT() is not null, isConstant: false);
+                var isMutable = declaration.MUT() is not null;
+                var localName = DeclareLocal(sourceName, declaredType, storageClass, isMutable, isConstant: false);
                 Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
                 InitializeRuntimeDropState(localName, declaredType, isActive: false);
 
                 if (declarator.variableInitializer() is { } initializer)
                 {
-                    LowerVariableInitializer(localName, declaredType, initializer);
+                    var initializerHasConstProvenance = LowerVariableInitializer(localName, declaredType, initializer);
+                    if (!isMutable && initializerHasConstProvenance)
+                    {
+                        MarkLocalHasConstProvenance(localName);
+                    }
+
                     SetRuntimeDropState(localName, isActive: true);
                 }
             }
@@ -1269,12 +1294,11 @@ internal sealed partial class MidLevelIrLowerer
                 : $"System.Text.{name}";
         }
 
-        private void LowerVariableInitializer(string name, StarkTypeSymbol declaredType, StarkParser.VariableInitializerContext initializer)
+        private bool LowerVariableInitializer(string name, StarkTypeSymbol declaredType, StarkParser.VariableInitializerContext initializer)
         {
             if (initializer.expression() is { } expression)
             {
-                EmitAssignmentFromExpression(name, declaredType, expression, expression.GetText());
-                return;
+                return EmitAssignmentFromExpression(name, declaredType, expression, expression.GetText());
             }
 
             if (initializer.objectInitializer() is { } objectInitializer)
@@ -1284,11 +1308,11 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     MarkUnsupported(initializer, "Object initializer lowered without a materialized MIR value.");
                     Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType);
-                    return;
+                    return false;
                 }
 
                 Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType, new MidLevelIrUseRValue(value));
-                return;
+                return OperandHasConstProvenance(value);
             }
 
             if (initializer.arrayInitializer() is { } arrayInitializer)
@@ -1298,15 +1322,16 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     MarkUnsupported(initializer, "Array initializer lowered without a materialized MIR value.");
                     Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType);
-                    return;
+                    return false;
                 }
 
                 Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType, new MidLevelIrUseRValue(value));
-                return;
+                return OperandHasConstProvenance(value);
             }
 
             MarkUnsupported(initializer, "Unsupported variable initializer shape.");
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType);
+            return false;
         }
 
         private MidLevelIrOperand? LowerInitializerToOperand(StarkParser.VariableInitializerContext initializer, StarkTypeSymbol targetType)
@@ -1724,18 +1749,38 @@ internal sealed partial class MidLevelIrLowerer
             var thenBlock = CreateBlock("if_then");
             var elseBlock = ifStatement.statement().Length > 1 ? CreateBlock("if_else") : null;
             var joinBlock = CreateBlock("if_join");
-            var condition = LowerExpressionToOperand(ifStatement.expression(), StarkTypeSymbols.Bool);
+            var conditionExpression = ifStatement.expression();
+            ScopedNoAliasGroup? trueBranchScopedNoAliasGroup = null;
+            var condition = conditionExpression is not null
+                ? LowerExpressionToOperand(conditionExpression, StarkTypeSymbols.Bool)
+                : LowerDisjointRuntimeCondition(ifStatement.disjointRuntimeCondition(), out trueBranchScopedNoAliasGroup);
             var branchWeights = CreateConditionalBranchWeights(ifStatement.weightSpecifier());
 
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Branch,
                 elseBlock is null ? [thenBlock.Id, joinBlock.Id] : [thenBlock.Id, elseBlock.Id],
-                ConditionText: ifStatement.expression().GetText(),
+                ConditionText: conditionExpression?.GetText() ?? ifStatement.disjointRuntimeCondition()?.GetText() ?? "false",
                 Condition: condition,
                 BranchWeights: branchWeights);
 
             CurrentBlock = thenBlock;
-            LowerStatement(ifStatement.statement(0));
+            if (trueBranchScopedNoAliasGroup is null)
+            {
+                LowerStatement(ifStatement.statement(0));
+            }
+            else
+            {
+                _activeScopedNoAliasGroups.Push(trueBranchScopedNoAliasGroup);
+                try
+                {
+                    LowerStatement(ifStatement.statement(0));
+                }
+                finally
+                {
+                    _activeScopedNoAliasGroups.Pop();
+                }
+            }
+
             EnsureGoto(joinBlock.Id);
 
             if (elseBlock is not null)
@@ -1746,6 +1791,481 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             CurrentBlock = joinBlock;
+        }
+
+        private MidLevelIrOperand LowerDisjointRuntimeCondition(
+            StarkParser.DisjointRuntimeConditionContext? condition,
+            out ScopedNoAliasGroup? scopedNoAliasGroup)
+        {
+            scopedNoAliasGroup = null;
+            if (condition is null)
+            {
+                MarkUnsupported(
+                    reason: "Runtime disjoint checks require a parsed disjoint(...) condition.",
+                    featureTag: "runtime-disjoint-condition");
+                return new MidLevelIrBoolConstantOperand(false);
+            }
+
+            var expressions = condition.expressionList().expression();
+            if (expressions.Length < 2)
+            {
+                MarkUnsupported(
+                    condition,
+                    "Runtime disjoint checks require at least two operands.",
+                    featureTag: "runtime-disjoint-condition");
+                return new MidLevelIrBoolConstantOperand(false);
+            }
+
+            var ranges = new List<MemoryRangeOperand>(expressions.Length);
+            foreach (var expression in expressions)
+            {
+                if (!TryLowerMemoryRange(expression, out var range))
+                {
+                    return new MidLevelIrBoolConstantOperand(false);
+                }
+
+                ranges.Add(range);
+            }
+
+            scopedNoAliasGroup = TryCreateRuntimeDisjointScopedNoAliasGroup(expressions);
+
+            MidLevelIrOperand? combined = null;
+            for (var leftIndex = 0; leftIndex < ranges.Count; leftIndex++)
+            {
+                for (var rightIndex = leftIndex + 1; rightIndex < ranges.Count; rightIndex++)
+                {
+                    var pairwiseDisjoint = EmitRangeDisjointComparison(
+                        ranges[leftIndex],
+                        ranges[rightIndex],
+                        $"{expressions[leftIndex].GetText()} disjoint {expressions[rightIndex].GetText()}");
+                    combined = combined is null
+                        ? pairwiseDisjoint
+                        : EmitBooleanBinary(
+                            MidLevelIrBinaryOperator.BitwiseAnd,
+                            combined,
+                            pairwiseDisjoint,
+                            $"{combined.Text} && {pairwiseDisjoint.Text}",
+                            "disjoint_all");
+                }
+            }
+
+            return combined ?? new MidLevelIrBoolConstantOperand(true);
+        }
+
+        private ScopedNoAliasGroup? TryCreateRuntimeDisjointScopedNoAliasGroup(
+            IReadOnlyList<StarkParser.ExpressionContext> expressions)
+        {
+            var rootKeys = new List<string>(expressions.Count);
+            foreach (var expression in expressions)
+            {
+                if (TryResolveRuntimeDisjointRootKey(expression, out var rootKey))
+                {
+                    rootKeys.Add(rootKey);
+                }
+            }
+
+            var distinctRootKeys = rootKeys
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (distinctRootKeys.Length < 2)
+            {
+                return null;
+            }
+
+            return new ScopedNoAliasGroup(
+                $"runtime-disjoint-{_nextRuntimeDisjointScopeId++}",
+                distinctRootKeys);
+        }
+
+        private bool TryResolveRuntimeDisjointRootKey(
+            StarkParser.ExpressionContext expression,
+            out string rootKey)
+        {
+            rootKey = string.Empty;
+
+            if (TryGetRawPointerRegionExpression(expression, out var regionRootName, out _, out _)
+                && _parametersByName.ContainsKey(regionRootName))
+            {
+                rootKey = CreateScopedNoAliasParameterRootKey(regionRootName);
+                return true;
+            }
+
+            if (!TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
+                || !TryResolveAssignmentTarget(unaryExpression, out var target)
+                || target.RootName is not { } rootName
+                || !_parametersByName.ContainsKey(rootName))
+            {
+                return false;
+            }
+
+            rootKey = CreateScopedNoAliasParameterRootKey(rootName);
+            return true;
+        }
+
+        private bool TryLowerMemoryRange(StarkParser.ExpressionContext expression, out MemoryRangeOperand range)
+        {
+            range = default!;
+
+            if (TryLowerRawPointerRegionMemoryRange(expression, out range))
+            {
+                return true;
+            }
+
+            if (TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
+                && TryResolveAssignmentTarget(unaryExpression, out var target)
+                && IsPointerBackedContractRangeType(target.Type))
+            {
+                return TryBuildPlaceMemoryRange(target, expression, out range);
+            }
+
+            var operand = LowerExpressionToOperand(expression);
+            if (operand is null)
+            {
+                MarkUnsupported(
+                    expression,
+                    "Runtime disjoint operand could not be lowered.",
+                    featureTag: "runtime-disjoint-condition");
+                return false;
+            }
+
+            if (operand.Type.Kind == StarkTypeKind.RawPointer)
+            {
+                return TryBuildRawPointerMemoryRange(operand, expression, out range);
+            }
+
+            if (TryGetContiguousViewElementType(operand.Type, out var elementType))
+            {
+                return TryBuildViewMemoryRange(operand, elementType, expression, out range);
+            }
+
+            MarkUnsupported(
+                expression,
+                $"Runtime disjoint operand '{expression.GetText()}' does not lower to a contiguous memory range.",
+                featureTag: "runtime-disjoint-condition");
+            return false;
+        }
+
+        private bool TryLowerRawPointerRegionMemoryRange(
+            StarkParser.ExpressionContext expression,
+            out MemoryRangeOperand range)
+        {
+            range = default!;
+            if (!TryGetRawPointerRegionExpression(expression, out var rootName, out var startExpression, out var lengthExpression))
+            {
+                return false;
+            }
+
+            var pointer = ResolveNamedOperand(rootName);
+            if (pointer is null
+                || pointer.Type.Kind != StarkTypeKind.RawPointer
+                || pointer.Type.ElementType is not { } elementType)
+            {
+                MarkUnsupported(
+                    expression,
+                    $"Runtime disjoint raw pointer region '{expression.GetText()}' requires a raw pointer root.",
+                    featureTag: "runtime-disjoint-condition");
+                return true;
+            }
+
+            var startIndex = LowerExpressionToOperand(startExpression);
+            var elementCount = LowerExpressionToOperand(lengthExpression);
+            if (startIndex is null
+                || startIndex.Type.Kind != StarkTypeKind.Integer
+                || elementCount is null
+                || elementCount.Type.Kind != StarkTypeKind.Integer)
+            {
+                MarkUnsupported(
+                    expression,
+                    $"Runtime disjoint raw pointer region '{expression.GetText()}' requires integer start and count operands.",
+                    featureTag: "runtime-disjoint-condition");
+                return true;
+            }
+
+            var regionStart = EmitTemporary(
+                new MidLevelIrElementAddressRValue(
+                    pointer,
+                    elementType,
+                    startIndex,
+                    ConstantIndex: null,
+                    StarkTypeSymbols.RawPointer(elementType, pointer.Type.IsMutablePointer),
+                    $"{rootName}[{startExpression.GetText()}]"),
+                "range_ptr");
+            var byteStart = regionStart is null ? null : CoerceOperand(regionStart, BytePointerType);
+            var byteLength = BuildByteLength(elementCount, elementType, expression);
+            if (byteStart is null || byteLength is null)
+            {
+                return true;
+            }
+
+            var end = BuildByteRangeEnd(byteStart, byteLength, $"{expression.GetText()}:end");
+            if (end is null)
+            {
+                return true;
+            }
+
+            range = new MemoryRangeOperand(byteStart, end);
+            return true;
+        }
+
+        private bool TryBuildPlaceMemoryRange(
+            PlaceTarget target,
+            ParserRuleContext syntax,
+            out MemoryRangeOperand range)
+        {
+            range = default!;
+
+            var valueType = StarkTypeSymbols.BorrowReturnValueType(target.Type);
+            if (!TryGetMemoryRangeLayout(valueType, syntax, out var layout))
+            {
+                return false;
+            }
+
+            var address = BuildAddress(target);
+            if (address is null)
+            {
+                MarkUnsupported(
+                    syntax,
+                    $"Runtime disjoint operand '{syntax.GetText()}' is not addressable.",
+                    featureTag: "runtime-disjoint-condition");
+                return false;
+            }
+
+            var start = CoerceOperand(address, BytePointerType);
+            if (start is null)
+            {
+                return false;
+            }
+
+            var byteLength = new MidLevelIrIntegerConstantOperand(layout.SizeBytes, I64Type);
+            var end = BuildByteRangeEnd(start, byteLength, $"{syntax.GetText()}:end");
+            if (end is null)
+            {
+                return false;
+            }
+
+            range = new MemoryRangeOperand(start, end);
+            return true;
+        }
+
+        private bool TryBuildRawPointerMemoryRange(
+            MidLevelIrOperand pointer,
+            ParserRuleContext syntax,
+            out MemoryRangeOperand range)
+        {
+            range = default!;
+
+            if (pointer.Type.ElementType is not { } elementType
+                || !TryGetMemoryRangeLayout(elementType, syntax, out var layout))
+            {
+                return false;
+            }
+
+            var start = CoerceOperand(pointer, BytePointerType);
+            if (start is null)
+            {
+                return false;
+            }
+
+            var byteLength = new MidLevelIrIntegerConstantOperand(layout.SizeBytes, I64Type);
+            var end = BuildByteRangeEnd(start, byteLength, $"{pointer.Text}:end");
+            if (end is null)
+            {
+                return false;
+            }
+
+            range = new MemoryRangeOperand(start, end);
+            return true;
+        }
+
+        private bool TryBuildViewMemoryRange(
+            MidLevelIrOperand view,
+            StarkTypeSymbol elementType,
+            ParserRuleContext syntax,
+            out MemoryRangeOperand range)
+        {
+            range = default!;
+
+            var dataPointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    view,
+                    0,
+                    AddressType(elementType, view.Type.IsMutableView),
+                    $"{view.Text}:data"),
+                "range_data");
+            var elementCount = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    view,
+                    1,
+                    I64Type,
+                    $"{view.Text}:len"),
+                "range_len");
+            if (dataPointer is null || elementCount is null)
+            {
+                return false;
+            }
+
+            var start = CoerceOperand(dataPointer, BytePointerType);
+            var byteLength = BuildByteLength(elementCount, elementType, syntax);
+            if (start is null || byteLength is null)
+            {
+                return false;
+            }
+
+            var end = BuildByteRangeEnd(start, byteLength, $"{view.Text}:end");
+            if (end is null)
+            {
+                return false;
+            }
+
+            range = new MemoryRangeOperand(start, end);
+            return true;
+        }
+
+        private MidLevelIrOperand? BuildByteLength(
+            MidLevelIrOperand elementCount,
+            StarkTypeSymbol elementType,
+            ParserRuleContext syntax)
+        {
+            if (!TryGetMemoryRangeLayout(elementType, syntax, out var elementLayout))
+            {
+                return null;
+            }
+
+            if (elementLayout.SizeBytes == 1)
+            {
+                return CoerceOperand(elementCount, I64Type);
+            }
+
+            var byteCount = new MidLevelIrIntegerConstantOperand(elementLayout.SizeBytes, I64Type);
+            return EmitTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Multiply,
+                    CoerceOperand(elementCount, I64Type) ?? elementCount,
+                    byteCount,
+                    I64Type,
+                    $"{elementCount.Text} * {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}"),
+                "range_bytes");
+        }
+
+        private MidLevelIrOperand? BuildByteRangeEnd(
+            MidLevelIrOperand start,
+            MidLevelIrOperand byteLength,
+            string text)
+        {
+            return EmitTemporary(
+                new MidLevelIrElementAddressRValue(
+                    start,
+                    ByteType,
+                    byteLength,
+                    null,
+                    BytePointerType,
+                    text),
+                "range_end");
+        }
+
+        private MidLevelIrOperand EmitRangeDisjointComparison(
+            MemoryRangeOperand left,
+            MemoryRangeOperand right,
+            string text)
+        {
+            var leftBeforeRight = EmitPointerComparison(
+                MidLevelIrBinaryOperator.LessThanOrEqual,
+                left.End,
+                right.Start,
+                $"{left.End.Text} <= {right.Start.Text}");
+            var rightBeforeLeft = EmitPointerComparison(
+                MidLevelIrBinaryOperator.LessThanOrEqual,
+                right.End,
+                left.Start,
+                $"{right.End.Text} <= {left.Start.Text}");
+            return EmitBooleanBinary(
+                MidLevelIrBinaryOperator.BitwiseOr,
+                leftBeforeRight,
+                rightBeforeLeft,
+                text,
+                "disjoint_pair");
+        }
+
+        private MidLevelIrOperand EmitPointerComparison(
+            MidLevelIrBinaryOperator comparison,
+            MidLevelIrOperand left,
+            MidLevelIrOperand right,
+            string text)
+        {
+            return EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    comparison,
+                    left,
+                    right,
+                    StarkTypeSymbols.Bool,
+                    text),
+                "ptrcmp");
+        }
+
+        private MidLevelIrOperand EmitBooleanBinary(
+            MidLevelIrBinaryOperator operatorKind,
+            MidLevelIrOperand left,
+            MidLevelIrOperand right,
+            string text,
+            string hint)
+        {
+            return EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    operatorKind,
+                    CoerceOperand(left, StarkTypeSymbols.Bool) ?? left,
+                    CoerceOperand(right, StarkTypeSymbols.Bool) ?? right,
+                    StarkTypeSymbols.Bool,
+                    text),
+                hint);
+        }
+
+        private bool TryGetMemoryRangeLayout(
+            StarkTypeSymbol type,
+            ParserRuleContext syntax,
+            out ConcreteTypeLayout layout)
+        {
+            if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+                    type,
+                    _typeModel.NamedTypes,
+                    _enumLayoutModel.Layouts) is { } resolvedLayout)
+            {
+                layout = resolvedLayout;
+                return true;
+            }
+
+            MarkUnsupported(
+                syntax,
+                $"Runtime disjoint operand '{syntax.GetText()}' has no concrete layout for '{type.DisplayName}'.",
+                featureTag: "runtime-disjoint-condition");
+            layout = default!;
+            return false;
+        }
+
+        private static bool IsPointerBackedContractRangeType(StarkTypeSymbol type)
+        {
+            return type.Kind is not (StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                && (type.BorrowKind != StarkBorrowKind.None
+                    || type.InitializationKind != StarkInitializationKind.None);
+        }
+
+        private static bool TryGetContiguousViewElementType(StarkTypeSymbol type, out StarkTypeSymbol elementType)
+        {
+            var valueType = StarkTypeSymbols.BorrowReturnValueType(type);
+            switch (valueType.Kind)
+            {
+                case StarkTypeKind.Slice when valueType.ElementType is not null:
+                    elementType = valueType.ElementType;
+                    return true;
+                case StarkTypeKind.Ascii:
+                    elementType = ByteType;
+                    return true;
+                case StarkTypeKind.Unicode:
+                    elementType = StarkTypeSymbols.Integer(32);
+                    return true;
+                default:
+                    elementType = StarkTypeSymbols.Error;
+                    return false;
+            }
         }
 
         private static IReadOnlyList<int>? CreateConditionalBranchWeights(StarkParser.WeightSpecifierContext? weightSpecifier)
@@ -1805,6 +2325,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private void LowerWhile(StarkParser.WhileStatementContext whileStatement)
         {
+            var loopContracts = GetLoopContractNames(whileStatement.loopContract());
+            var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
             var conditionBlock = CreateBlock($"while_{whileStatement.loopBehavior().GetText()}_cond");
             var bodyBlock = CreateBlock("while_body");
             var exitBlock = CreateBlock("while_exit");
@@ -1823,14 +2345,30 @@ internal sealed partial class MidLevelIrLowerer
             CurrentBlock = bodyBlock;
             try
             {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                    {
+                        _activeLoopAccessGroups.Push(loopAccessGroup);
+                    }
+                }
+
                 LowerStatement(whileStatement.statement());
             }
             finally
             {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    for (var index = 0; index < loopAccessGroups.Count; index++)
+                    {
+                        _activeLoopAccessGroups.Pop();
+                    }
+                }
+
                 _breakTargets.Pop();
                 _loops.Pop();
             }
-            EnsureGoto(conditionBlock.Id);
+            EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups);
 
             CurrentBlock = exitBlock;
         }
@@ -1852,12 +2390,18 @@ internal sealed partial class MidLevelIrLowerer
                     foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
                     {
                         var sourceName = declarator.Identifier().GetText();
-                        var localName = DeclareLocal(sourceName, declaredType, storageClass, localForVariableDeclaration.MUT() is not null, isConstant: false);
+                        var isMutable = localForVariableDeclaration.MUT() is not null;
+                        var localName = DeclareLocal(sourceName, declaredType, storageClass, isMutable, isConstant: false);
                         Emit(MidLevelIrStatementKind.StorageLive, localName, localName, declaredType);
                         InitializeRuntimeDropState(localName, declaredType, isActive: false);
                         if (declarator.variableInitializer() is { } initializer)
                         {
-                            LowerVariableInitializer(localName, declaredType, initializer);
+                            var initializerHasConstProvenance = LowerVariableInitializer(localName, declaredType, initializer);
+                            if (!isMutable && initializerHasConstProvenance)
+                            {
+                                MarkLocalHasConstProvenance(localName);
+                            }
+
                             SetRuntimeDropState(localName, isActive: true);
                         }
                     }
@@ -1874,6 +2418,8 @@ internal sealed partial class MidLevelIrLowerer
                 var bodyBlock = CreateBlock("for_body");
                 var iteratorBlock = CreateBlock("for_iter");
                 var exitBlock = CreateBlock("for_exit");
+                var loopContracts = GetLoopContractNames(forStatement.loopContract());
+                var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
 
                 EnsureGoto(conditionBlock.Id);
 
@@ -1896,10 +2442,26 @@ internal sealed partial class MidLevelIrLowerer
                 CurrentBlock = bodyBlock;
                 try
                 {
+                    if (loopAccessGroups is { Count: > 0 })
+                    {
+                        foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                        {
+                            _activeLoopAccessGroups.Push(loopAccessGroup);
+                        }
+                    }
+
                     LowerStatement(forStatement.statement());
                 }
                 finally
                 {
+                    if (loopAccessGroups is { Count: > 0 })
+                    {
+                        for (var index = 0; index < loopAccessGroups.Count; index++)
+                        {
+                            _activeLoopAccessGroups.Pop();
+                        }
+                    }
+
                     _breakTargets.Pop();
                     _loops.Pop();
                 }
@@ -1914,7 +2476,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
                 }
 
-                EnsureGoto(conditionBlock.Id);
+                EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups);
                 CurrentBlock = exitBlock;
             }
             finally
@@ -2277,16 +2839,26 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? LowerDereferenceUnary(StarkParser.UnaryExpressionContext expression, MidLevelIrOperand operand)
         {
+            if (operand.Type.Kind == StarkTypeKind.RawPointer
+                && UsesFrozenProjectionSemantics(operand))
+            {
+                operand = CoerceOperand(operand, StarkTypeSymbols.FreezeReachableView(operand.Type)) ?? operand;
+            }
+
             if (operand.Type.Kind != StarkTypeKind.RawPointer || operand.Type.ElementType is null)
             {
                 MarkUnsupported();
                 return null;
             }
 
+            var resultType = operand.Type.ElementType.AccessKind == StarkAccessKind.Frozen
+                ? StarkTypeSymbols.FreezeReachableView(operand.Type.ElementType)
+                : operand.Type.ElementType;
+
             return EmitTemporary(
                 new MidLevelIrLoadIndirectRValue(
                     operand,
-                    operand.Type.ElementType,
+                    resultType,
                     expression.GetText()),
                 "load");
         }
@@ -2343,6 +2915,11 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? LowerPostfixExpression(StarkParser.PostfixExpressionContext expression, StarkTypeSymbol? expectedType)
         {
+            if (TryLowerRawSliceConstruction(expression, out var rawSlice))
+            {
+                return expectedType is null ? rawSlice : CoerceOperand(rawSlice, expectedType);
+            }
+
             if (expression.postfixPart().Length == 0)
             {
                 return LowerPrimaryExpression(expression.primaryExpression(), expectedType);
@@ -2438,19 +3015,121 @@ internal sealed partial class MidLevelIrLowerer
             return expectedType is null ? current : CoerceOperand(current, expectedType);
         }
 
+        private bool TryLowerRawSliceConstruction(
+            StarkParser.PostfixExpressionContext expression,
+            out MidLevelIrOperand? result)
+        {
+            if (!TryLowerRawSliceConstructionPrefix(expression, out result, out var firstUnhandledPostfixIndex))
+            {
+                return false;
+            }
+
+            if (firstUnhandledPostfixIndex != expression.postfixPart().Length)
+            {
+                result = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryLowerRawSliceConstructionPrefix(
+            StarkParser.PostfixExpressionContext expression,
+            out MidLevelIrOperand? result,
+            out int firstUnhandledPostfixIndex)
+        {
+            result = null;
+            firstUnhandledPostfixIndex = 0;
+            if (!string.Equals(expression.primaryExpression().Identifier()?.GetText(), "slice", StringComparison.Ordinal)
+                || expression.postfixPart().Length == 0
+                || expression.postfixPart()[0] is not { } callPart
+                || callPart.argumentList() is not { } argumentList)
+            {
+                return false;
+            }
+
+            firstUnhandledPostfixIndex = 1;
+            var arguments = argumentList.argument();
+            if (arguments.Length != 2)
+            {
+                MarkUnsupported(argumentList, "Raw slice construction requires pointer and count operands.");
+                firstUnhandledPostfixIndex = expression.postfixPart().Length;
+                return true;
+            }
+
+            var pointer = LowerExpressionToOperand(arguments[0].expression());
+            var length = LowerExpressionToOperand(arguments[1].expression());
+            if (pointer is null
+                || length is null
+                || length.Type.Kind != StarkTypeKind.Integer)
+            {
+                MarkUnsupported(expression, "Raw slice construction requires a raw pointer and integer count.");
+                firstUnhandledPostfixIndex = expression.postfixPart().Length;
+                return true;
+            }
+
+            var hasFrozenSliceProvenance = UsesFrozenProjectionSemantics(pointer);
+            if (pointer.Type.Kind == StarkTypeKind.RawPointer
+                && hasFrozenSliceProvenance)
+            {
+                pointer = CoerceOperand(pointer, StarkTypeSymbols.FreezeReachableView(pointer.Type)) ?? pointer;
+            }
+
+            if (pointer.Type.Kind != StarkTypeKind.RawPointer
+                || pointer.Type.ElementType is not { } elementType)
+            {
+                MarkUnsupported(expression, "Raw slice construction requires a raw pointer and integer count.");
+                firstUnhandledPostfixIndex = expression.postfixPart().Length;
+                return true;
+            }
+
+            hasFrozenSliceProvenance |= elementType.AccessKind == StarkAccessKind.Frozen;
+            var sliceElementType = hasFrozenSliceProvenance
+                ? StarkTypeSymbols.WithQualifiers(elementType, accessKind: StarkAccessKind.None, isMutableView: false)
+                : elementType;
+            var sliceType = StarkTypeSymbols.ApplyQualifiers(
+                StarkTypeSymbols.Slice(sliceElementType),
+                isMutableView: pointer.Type.IsMutablePointer);
+            if (hasFrozenSliceProvenance)
+            {
+                sliceType = StarkTypeSymbols.FreezeReachableView(sliceType);
+            }
+
+            result = EmitTemporary(
+                new MidLevelIrMakeSliceFromPointerRValue(
+                    pointer,
+                    CoerceOperand(length, I64Type) ?? length,
+                    sliceType,
+                    $"{expression.primaryExpression().GetText()}{callPart.GetText()}"),
+                "slice");
+            return true;
+        }
+
         private bool TryLowerPostfixOperand(
             StarkParser.PostfixExpressionContext expression,
             out MidLevelIrOperand? result)
         {
             result = null;
 
-            if (!TryInitializePostfixState(expression.primaryExpression(), out var currentValue, out var currentName))
+            var firstUnhandledPostfixIndex = 0;
+            MidLevelIrOperand? currentValue;
+            string? currentName;
+            if (TryLowerRawSliceConstructionPrefix(expression, out var rawSlice, out firstUnhandledPostfixIndex))
+            {
+                currentValue = rawSlice;
+                currentName = null;
+                if (currentValue is null)
+                {
+                    return false;
+                }
+            }
+            else if (!TryInitializePostfixState(expression.primaryExpression(), out currentValue, out currentName))
             {
                 return false;
             }
 
             PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
-            for (var index = 0; index < expression.postfixPart().Length; index++)
+            for (var index = firstUnhandledPostfixIndex; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
 
@@ -3675,7 +4354,12 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (current.Type.Kind == StarkTypeKind.RawPointer && current.Type.ElementType is not null)
                 {
-                    var elementType = current.Type.ElementType;
+                    var addressSource = currentUsesFrozenProjectionSemantics
+                        ? CoerceOperand(current, StarkTypeSymbols.FreezeReachableView(current.Type)) ?? current
+                        : current;
+                    var elementType = currentUsesFrozenProjectionSemantics
+                        ? StarkTypeSymbols.FreezeReachableView(current.Type.ElementType)
+                        : current.Type.ElementType;
                     var index = LowerExpressionToOperand(indexExpression);
                     if (index is null || index.Type.Kind != StarkTypeKind.Integer)
                     {
@@ -3685,11 +4369,11 @@ internal sealed partial class MidLevelIrLowerer
 
                     var elementAddress = EmitTemporary(
                         new MidLevelIrElementAddressRValue(
-                            current,
+                            addressSource,
                             elementType,
                             index,
                             ConstantIndex: null,
-                            AddressType(elementType, current.Type.IsMutablePointer && CanMutateThroughType(elementType)),
+                            AddressType(elementType, addressSource.Type.IsMutablePointer && CanMutateThroughType(elementType)),
                             $"{current.Text}[{indexExpression.GetText()}]"),
                         "addr");
                     if (elementAddress is null)
@@ -5109,7 +5793,10 @@ internal sealed partial class MidLevelIrLowerer
                 Parameters = signature.Parameters
                     .Select(parameter => new TypedParameterSymbol(
                         parameter.Name,
-                        ApplyGenericSubstitution(parameter.Type)))
+                        ApplyGenericSubstitution(parameter.Type),
+                        parameter.IsDisjoint,
+                        parameter.IsConst,
+                        parameter.RawPointerElementCountExpression))
                     .ToArray(),
                 TypeArguments = signature.TypeArguments is { Count: > 0 }
                     ? signature.TypeArguments.Select(ApplyGenericSubstitution).ToArray()
@@ -6051,7 +6738,13 @@ internal sealed partial class MidLevelIrLowerer
         private MidLevelIrOperand? EmitTemporary(MidLevelIrRValue value, string hint)
         {
             var name = AllocateTemporaryName(hint);
-            RegisterLocal(name, value.Type, storageClass: "temp", isMutable: false, isConstant: false);
+            RegisterLocal(
+                name,
+                value.Type,
+                storageClass: "temp",
+                isMutable: false,
+                isConstant: false,
+                hasConstProvenance: RValueHasConstProvenance(value));
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {value.Text}", name, value.Type, value);
             return new MidLevelIrLocalOperand(name, value.Type);
         }
@@ -6174,6 +6867,31 @@ internal sealed partial class MidLevelIrLowerer
             return TryGetSimplePostfixExpression(multiplicative.unaryExpression(0));
         }
 
+        private static bool TryGetRawPointerRegionExpression(
+            StarkParser.ExpressionContext expression,
+            out string rootName,
+            out StarkParser.ExpressionContext startExpression,
+            out StarkParser.ExpressionContext lengthExpression)
+        {
+            rootName = string.Empty;
+            startExpression = null!;
+            lengthExpression = null!;
+
+            if (TryGetSimplePostfixExpression(expression) is not { } postfix
+                || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier
+                || postfix.postfixPart() is not [var indexPart]
+                || indexPart.LBRACK() is null
+                || indexPart.expressionList()?.expression() is not [var start, var length])
+            {
+                return false;
+            }
+
+            rootName = identifier;
+            startExpression = start;
+            lengthExpression = length;
+            return true;
+        }
+
         private static StarkParser.AdditiveExpressionContext? TryGetStandaloneAdditiveExpression(StarkParser.ExpressionContext expression)
         {
             var assignment = expression.assignmentExpression();
@@ -6275,7 +6993,7 @@ internal sealed partial class MidLevelIrLowerer
             return powerExpression.postfixExpression();
         }
 
-        private void EmitAssignmentFromExpression(
+        private bool EmitAssignmentFromExpression(
             string targetName,
             StarkTypeSymbol targetType,
             StarkParser.ExpressionContext expression,
@@ -6286,11 +7004,12 @@ internal sealed partial class MidLevelIrLowerer
             {
                 MarkUnsupported(expression, $"Variable initializer '{text}' could not be lowered to a MIR operand.");
                 Emit(MidLevelIrStatementKind.Assign, $"{targetName} = {text}", targetName, targetType);
-                return;
+                return false;
             }
 
             Emit(MidLevelIrStatementKind.Assign, $"{targetName} = {text}", targetName, targetType, new MidLevelIrUseRValue(operand));
             RecordMoveFromOperand(operand, targetType);
+            return OperandHasConstProvenance(operand);
         }
 
         private string DeclareLocal(string sourceName, StarkTypeSymbol type, string storageClass, bool isMutable, bool isConstant)
@@ -6370,7 +7089,13 @@ internal sealed partial class MidLevelIrLowerer
             }
         }
 
-        private void RegisterLocal(string name, StarkTypeSymbol type, string storageClass, bool isMutable, bool isConstant)
+        private void RegisterLocal(
+            string name,
+            StarkTypeSymbol type,
+            string storageClass,
+            bool isMutable,
+            bool isConstant,
+            bool hasConstProvenance = false)
         {
             if (_localsByName.ContainsKey(name))
             {
@@ -6384,9 +7109,29 @@ internal sealed partial class MidLevelIrLowerer
                 isMutable,
                 isConstant,
                 IsAddressable: ShouldAddressLocal(type, storageClass),
-                Location: _currentStatementLocation ?? _functionLocation);
+                Location: _currentStatementLocation ?? _functionLocation,
+                HasConstProvenance: hasConstProvenance);
             _locals.Add(local);
             _localsByName[name] = local;
+        }
+
+        private void MarkLocalHasConstProvenance(string name)
+        {
+            if (!_localsByName.TryGetValue(name, out var local) || local.HasConstProvenance)
+            {
+                return;
+            }
+
+            var updated = local with { HasConstProvenance = true };
+            _localsByName[name] = updated;
+            for (var index = 0; index < _locals.Count; index++)
+            {
+                if (string.Equals(_locals[index].Name, name, StringComparison.Ordinal))
+                {
+                    _locals[index] = updated;
+                    return;
+                }
+            }
         }
 
         private void TrackDeclaredLocal(string name, StarkTypeSymbol type)
@@ -6476,15 +7221,56 @@ internal sealed partial class MidLevelIrLowerer
                 targetType,
                 address,
                 value,
-                _currentStatementLocation ?? _functionLocation));
+                _currentStatementLocation ?? _functionLocation,
+                CurrentScopedNoAliasGroups(),
+                CurrentLoopAccessGroups()));
         }
 
-        private void EnsureGoto(int targetBlockId)
+        private IReadOnlyList<ScopedNoAliasGroup>? CurrentScopedNoAliasGroups()
+        {
+            return _activeScopedNoAliasGroups.Count == 0
+                ? null
+                : _activeScopedNoAliasGroups.Reverse().ToArray();
+        }
+
+        private IReadOnlyList<string>? CurrentLoopAccessGroups()
+        {
+            return _activeLoopAccessGroups.Count == 0
+                ? null
+                : _activeLoopAccessGroups.Reverse().ToArray();
+        }
+
+        private void EnsureGoto(
+            int targetBlockId,
+            IReadOnlyList<string>? loopContracts = null,
+            IReadOnlyList<string>? loopAccessGroups = null)
         {
             if (!CurrentBlock.HasTerminator)
             {
-                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [targetBlockId]);
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Goto,
+                    [targetBlockId],
+                    LoopContracts: loopContracts is { Count: > 0 } ? loopContracts : null,
+                    LoopAccessGroups: loopAccessGroups is { Count: > 0 } ? loopAccessGroups : null);
             }
+        }
+
+        private IReadOnlyList<string>? CreateIndependentLoopAccessGroups(IReadOnlyList<string>? loopContracts)
+        {
+            return loopContracts is { Count: > 0 }
+                && loopContracts.Contains("independent", StringComparer.Ordinal)
+                ? [$"independent-loop-{_nextLoopAccessGroupId++}"]
+                : null;
+        }
+
+        private static IReadOnlyList<string>? GetLoopContractNames(IEnumerable<StarkParser.LoopContractContext> contracts)
+        {
+            var names = contracts
+                .Select(static contract => contract.GetText())
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            return names.Length == 0 ? null : names;
         }
 
         private string AllocateTemporaryName(string hint)
@@ -6865,7 +7651,7 @@ internal sealed partial class MidLevelIrLowerer
         private MidLevelIrOperand? CreateAddressOfParameter(string name, StarkTypeSymbol type)
         {
             var isMutable = _parametersByName.TryGetValue(name, out var parameter)
-                ? CanFormMutableAddressFromParameter(parameter.Type)
+                ? CanFormMutableAddressFromParameter(parameter)
                 : true;
             return EmitTemporary(
                 new MidLevelIrAddressOfParameterRValue(name, type, AddressType(type, isMutable), $"&{name}"),
@@ -6883,9 +7669,65 @@ internal sealed partial class MidLevelIrLowerer
         private bool UsesFrozenProjectionSemantics(MidLevelIrOperand operand)
         {
             return operand.Type.AccessKind == StarkAccessKind.Frozen
+                || operand is MidLevelIrLocalOperand local
+                    && _localsByName.TryGetValue(local.Name, out var localBinding)
+                    && localBinding.HasConstProvenance
+                || operand is MidLevelIrParameterOperand parameter
+                    && _parametersByName.TryGetValue(parameter.Name, out var parameterBinding)
+                    && parameterBinding.IsConst
                 || operand is MidLevelIrGlobalOperand global
                     && TryResolveGlobal(global.Name, out var binding)
                     && binding.IsConst;
+        }
+
+        private bool OperandHasConstProvenance(MidLevelIrOperand operand)
+        {
+            return operand switch
+            {
+                MidLevelIrParameterOperand parameter =>
+                    _parametersByName.TryGetValue(parameter.Name, out var parameterBinding)
+                    && parameterBinding.IsConst,
+                MidLevelIrGlobalOperand global =>
+                    TryResolveGlobal(global.Name, out var globalBinding)
+                    && globalBinding.IsConst,
+                MidLevelIrGlobalAddressOperand globalAddress =>
+                    TryResolveGlobal(globalAddress.Name, out var globalBinding)
+                    && globalBinding.IsConst,
+                MidLevelIrLocalOperand local =>
+                    _localsByName.TryGetValue(local.Name, out var localBinding)
+                    && localBinding.HasConstProvenance,
+                _ => false
+            };
+        }
+
+        private bool RValueHasConstProvenance(MidLevelIrRValue value)
+        {
+            return value switch
+            {
+                MidLevelIrUseRValue use => OperandHasConstProvenance(use.Operand),
+                MidLevelIrConvertRValue convert when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
+                                                && convert.TargetType.Kind == StarkTypeKind.RawPointer
+                    => OperandHasConstProvenance(convert.Operand),
+                MidLevelIrExtractFieldRValue extractField => OperandHasConstProvenance(extractField.Target),
+                MidLevelIrExtractIndexRValue extractIndex => OperandHasConstProvenance(extractIndex.Target),
+                MidLevelIrMakeSliceFromLocalRValue makeSlice =>
+                    _localsByName.TryGetValue(makeSlice.LocalName, out var localBinding)
+                    && localBinding.HasConstProvenance,
+                MidLevelIrMakeSliceFromPointerRValue makeSlice => OperandHasConstProvenance(makeSlice.Pointer),
+                MidLevelIrLoadSliceElementRValue loadSlice => OperandHasConstProvenance(loadSlice.Slice),
+                MidLevelIrTextSliceRValue textSlice => OperandHasConstProvenance(textSlice.TextValue),
+                MidLevelIrAddressOfLocalRValue addressOfLocal =>
+                    _localsByName.TryGetValue(addressOfLocal.LocalName, out var localBinding)
+                    && localBinding.HasConstProvenance,
+                MidLevelIrAddressOfParameterRValue addressOfParameter =>
+                    _parametersByName.TryGetValue(addressOfParameter.ParameterName, out var parameterBinding)
+                    && parameterBinding.IsConst,
+                MidLevelIrFieldAddressRValue fieldAddress => OperandHasConstProvenance(fieldAddress.Address),
+                MidLevelIrElementAddressRValue elementAddress => OperandHasConstProvenance(elementAddress.Address),
+                MidLevelIrSliceElementAddressRValue sliceElementAddress => OperandHasConstProvenance(sliceElementAddress.Slice),
+                MidLevelIrLoadIndirectRValue loadIndirect => OperandHasConstProvenance(loadIndirect.Address),
+                _ => false
+            };
         }
 
         private StarkTypeSymbol ProjectRootType(MidLevelIrOperand operand)
@@ -6918,6 +7760,8 @@ internal sealed partial class MidLevelIrLowerer
             return StarkTypeSymbols.RawPointer(pointeeType, isMutable);
         }
 
+        private static string CreateScopedNoAliasParameterRootKey(string parameterName) => $"param:{parameterName}";
+
         private bool GetAddressMutability(MidLevelIrOperand operand)
         {
             return operand switch
@@ -6928,7 +7772,9 @@ internal sealed partial class MidLevelIrLowerer
                 MidLevelIrGlobalOperand global => _typeModel.Globals.TryGetValue(global.Name, out var globalBinding)
                     ? globalBinding.IsMutable && CanMutateThroughType(globalBinding.Type)
                     : true,
-                MidLevelIrParameterOperand parameter => CanFormMutableAddressFromParameter(parameter.Type),
+                MidLevelIrParameterOperand parameter => _parametersByName.TryGetValue(parameter.Name, out var parameterBinding)
+                    ? CanFormMutableAddressFromParameter(parameterBinding)
+                    : CanFormMutableAddressFromParameter(parameter.Type),
                 MidLevelIrGlobalAddressOperand globalAddress => globalAddress.Type.IsMutablePointer,
                 _ => true
             };
@@ -6944,15 +7790,22 @@ internal sealed partial class MidLevelIrLowerer
     private static bool CanFormMutableAddressFromLocal(MidLevelIrLocal local)
     {
         return !local.IsConstant
+            && !local.HasConstProvenance
             && local.Type.AccessKind != StarkAccessKind.Frozen
             && (local.IsMutable || local.Type.IsMutableView || local.Type.InitializationKind != StarkInitializationKind.None);
     }
 
-    private static bool CanFormMutableAddressFromParameter(StarkTypeSymbol type)
-    {
-        return (type.IsMutableView || type.InitializationKind != StarkInitializationKind.None)
-            && CanMutateThroughType(type);
-    }
+        private static bool CanFormMutableAddressFromParameter(TypedParameterSymbol parameter)
+        {
+            return !parameter.IsConst
+                && CanFormMutableAddressFromParameter(parameter.Type);
+        }
+
+        private static bool CanFormMutableAddressFromParameter(StarkTypeSymbol type)
+        {
+            return (type.IsMutableView || type.InitializationKind != StarkInitializationKind.None)
+                && CanMutateThroughType(type);
+        }
 
         private static bool CanMutateThroughType(StarkTypeSymbol type) => type.AccessKind != StarkAccessKind.Frozen;
 

@@ -35,7 +35,10 @@ internal static partial class PackageImageBuilder
             function.Parameters
                 .Select(parameter => new StarkPackageParameterManifest(
                     parameter.Name,
-                    RenderManifestTypeText(parameter.Type, ModuleNameFromQualifiedName(qualifiedName))))
+                    RenderManifestTypeText(parameter.Type, ModuleNameFromQualifiedName(qualifiedName)),
+                    parameter.IsDisjoint,
+                    parameter.IsConst,
+                    parameter.RawPointerElementCountExpression))
                 .ToArray(),
             effects.IsFfi,
             effects.IsStrictFp,
@@ -48,7 +51,8 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference,
             IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
             IsVarargs: effects.IsVarargs,
-            BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode));
+            BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode),
+            DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
         return true;
     }
 
@@ -71,7 +75,10 @@ internal static partial class PackageImageBuilder
             function.Parameters
                 .Select(parameter => new StarkPackageTypedParameterManifest(
                     parameter.Name,
-                    BuildTypeReference(parameter.Type, moduleName)))
+                    BuildTypeReference(parameter.Type, moduleName),
+                    parameter.IsDisjoint,
+                    parameter.IsConst,
+                    parameter.RawPointerElementCountExpression))
                 .ToArray(),
             manifest.IsFfi,
             manifest.IsStrictFp,
@@ -90,7 +97,8 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: manifest.HasExplicitInlinePreference,
             IsUnsafe: manifest.IsUnsafe,
             IsVarargs: manifest.IsVarargs,
-            BackendOptimizationMode: manifest.BackendOptimizationMode);
+            BackendOptimizationMode: manifest.BackendOptimizationMode,
+            DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -201,14 +209,16 @@ internal static partial class PackageImageBuilder
         }
 
         return parameters
-            .Select(parameter => parameter.Identifier().GetText())
-            .Where(parameterName => namedType.TryGetField(parameterName, out _, out _))
-            .Select(parameterName =>
+            .Select(parameter => (Name: parameter.Identifier().GetText(), Parameter: parameter))
+            .Where(parameter => namedType.TryGetField(parameter.Name, out _, out _))
+            .Select(parameter =>
             {
-                namedType.TryGetField(parameterName, out var field, out _);
+                namedType.TryGetField(parameter.Name, out var field, out _);
                 return new StarkPackageParameterManifest(
-                    parameterName,
-                    RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName));
+                    parameter.Name,
+                    RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName),
+                    ParameterHasPrefix(parameter.Parameter, StarkParser.DISJOINT),
+                    ParameterHasPrefix(parameter.Parameter, StarkParser.CONST));
             })
             .ToArray();
     }
@@ -225,14 +235,16 @@ internal static partial class PackageImageBuilder
         }
 
         return parameters
-            .Select(parameter => parameter.Identifier().GetText())
-            .Where(parameterName => namedType.TryGetField(parameterName, out _, out _))
-            .Select(parameterName =>
+            .Select(parameter => (Name: parameter.Identifier().GetText(), Parameter: parameter))
+            .Where(parameter => namedType.TryGetField(parameter.Name, out _, out _))
+            .Select(parameter =>
             {
-                namedType.TryGetField(parameterName, out var field, out _);
+                namedType.TryGetField(parameter.Name, out var field, out _);
                 return new StarkPackageTypedParameterManifest(
-                    parameterName,
-                    BuildTypeReference(field.Type, module.SyntaxModel.ModuleName));
+                    parameter.Name,
+                    BuildTypeReference(field.Type, module.SyntaxModel.ModuleName),
+                    ParameterHasPrefix(parameter.Parameter, StarkParser.DISJOINT),
+                    ParameterHasPrefix(parameter.Parameter, StarkParser.CONST));
             })
             .ToArray();
     }
@@ -275,8 +287,11 @@ internal static partial class PackageImageBuilder
                     .Select(parameter => new StarkPackageTypedParameterManifest(
                         parameter.Identifier().GetText(),
                         BuildTypeReference(
-                            resolver.ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName),
-                            module.SyntaxModel.ModuleName)))
+                            resolver.ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression),
+                            module.SyntaxModel.ModuleName),
+                        ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                        ParameterHasPrefix(parameter, StarkParser.CONST),
+                        rawPointerElementCountExpression))
                     .ToArray()))
             .ToArray();
     }
@@ -373,7 +388,10 @@ internal static partial class PackageImageBuilder
                     function.Parameters
                         .Select(parameter => new StarkPackageParameterManifest(
                             parameter.Name,
-                            RenderManifestTypeText(parameter.Type, module.SyntaxModel.ModuleName)))
+                            RenderManifestTypeText(parameter.Type, module.SyntaxModel.ModuleName),
+                            parameter.IsDisjoint,
+                            parameter.IsConst,
+                            parameter.RawPointerElementCountExpression))
                         .ToArray(),
                     effects.IsFfi,
                     effects.IsStrictFp,
@@ -387,7 +405,8 @@ internal static partial class PackageImageBuilder
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
-                    BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode));
+                    BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -429,7 +448,10 @@ internal static partial class PackageImageBuilder
                     function.Parameters
                         .Select(parameter => new StarkPackageTypedParameterManifest(
                             parameter.Name,
-                            BuildTypeReference(parameter.Type, module.SyntaxModel.ModuleName)))
+                            BuildTypeReference(parameter.Type, module.SyntaxModel.ModuleName),
+                            parameter.IsDisjoint,
+                            parameter.IsConst,
+                            parameter.RawPointerElementCountExpression))
                         .ToArray(),
                     effects.IsFfi,
                     effects.IsStrictFp,
@@ -449,7 +471,8 @@ internal static partial class PackageImageBuilder
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
-                    BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode));
+                    BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()
@@ -504,5 +527,105 @@ internal static partial class PackageImageBuilder
         return visibility == StarkVisibility.Public
             ? null
             : visibility.ToString().ToLowerInvariant();
+    }
+
+    private static bool ParameterHasPrefix(StarkParser.ParameterContext parameter, int tokenType)
+    {
+        return parameter.parameterContractPrefix()
+            .Any(prefix => prefix.Start.Type == tokenType);
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterDisjointGroupManifests(
+        IReadOnlyList<ParameterDisjointGroup> groups)
+    {
+        if (groups.Count == 0)
+        {
+            return null;
+        }
+
+        var manifests = groups
+            .Select(static group => new StarkPackageParameterDisjointGroupManifest(
+                group.ParameterNames
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray()))
+            .Where(static group => group.ParameterNames.Count >= 2)
+            .ToArray();
+        return manifests.Length == 0 ? null : manifests;
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterDisjointGroupManifests(
+        StarkParser.ParameterListContext parameterList,
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        var groups = new List<StarkPackageParameterDisjointGroupManifest>();
+        var prefixedParameters = parameterList.parameter()
+            .Where(static parameter => ParameterHasPrefix(parameter, StarkParser.DISJOINT))
+            .Select(static parameter => parameter.Identifier().GetText())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (prefixedParameters.Length >= 2)
+        {
+            groups.Add(new StarkPackageParameterDisjointGroupManifest(prefixedParameters));
+        }
+
+        foreach (var contract in memoryContractClauses.SelectMany(static clause => clause.disjointContract()))
+        {
+            var names = contract.expressionList()
+                .expression()
+                .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Select(static name => name!)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (names.Length >= 2)
+            {
+                groups.Add(new StarkPackageParameterDisjointGroupManifest(names));
+            }
+        }
+
+        return groups.Count == 0 ? null : groups;
+    }
+
+    private static string? TryGetDisjointContractParameterName(string operandText)
+    {
+        operandText = TrimOuterParentheses(operandText);
+        if (!TryReadIdentifier(operandText, 0, out var identifier, out var position))
+        {
+            return null;
+        }
+
+        return position == operandText.Length || operandText[position] == '['
+            ? identifier
+            : null;
+    }
+
+    private static string TrimOuterParentheses(string text)
+    {
+        while (text.Length >= 2 && text[0] == '(' && text[^1] == ')')
+        {
+            text = text[1..^1];
+        }
+
+        return text;
+    }
+
+    private static bool TryReadIdentifier(string text, int start, out string identifier, out int end)
+    {
+        identifier = string.Empty;
+        end = start;
+        if (start >= text.Length || !(char.IsLetter(text[start]) || text[start] == '_'))
+        {
+            return false;
+        }
+
+        end = start + 1;
+        while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_'))
+        {
+            end++;
+        }
+
+        identifier = text[start..end];
+        return true;
     }
 }

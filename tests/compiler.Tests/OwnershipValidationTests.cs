@@ -402,6 +402,37 @@ public sealed class OwnershipValidationTests
         AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
     }
 
+    [Fact]
+    public void DisjointMutableBorrowCallsParticipateInOwnershipFlow()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Touch(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+
+            fn i32[-2147483648 2147483647] Run(borrow mut Box left, borrow mut Box right) {
+                Touch(left, right);
+                left.Value = left.Value + 1;
+                right.Value = right.Value + 1;
+                return left.Value + right.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var ownership = GetOwnership(result);
+        Assert.True(ownership.Functions["Run"].OwnershipValid);
+        Assert.Empty(ownership.Functions["Run"].Moves);
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

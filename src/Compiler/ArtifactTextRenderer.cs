@@ -38,6 +38,11 @@ internal static class ArtifactTextRenderer
                         flags.Add("const");
                     }
 
+                    if (local.HasConstProvenance)
+                    {
+                        flags.Add("const-provenance");
+                    }
+
                     if (local.IsAddressable)
                     {
                         flags.Add("addr");
@@ -173,7 +178,10 @@ internal static class ArtifactTextRenderer
         var rendered = instruction switch
         {
             SsaValueInstruction valueInstruction => $"{valueInstruction.ResultName} = {valueInstruction.Value.Text}",
-            SsaAllocateLocalInstruction allocateLocal => $"alloca[{allocateLocal.StorageClass}] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
+            SsaAllocateLocalInstruction allocateLocal =>
+                allocateLocal.HasConstProvenance
+                    ? $"alloca[{allocateLocal.StorageClass}, const-provenance] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}"
+                    : $"alloca[{allocateLocal.StorageClass}] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
             SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaDeallocateLocalInstruction deallocateLocal => $"dealloc[{deallocateLocal.StorageClass}] {deallocateLocal.LocalName}",

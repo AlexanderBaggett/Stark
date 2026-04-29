@@ -1,0 +1,27 @@
+module Book.ConstParameterProvenance
+
+struct Table {
+    i32[min max] Bias;
+    i32[min max][3] Values;
+}
+
+const Table Defaults = new Table() {
+    Bias = 2,
+    Values = { 3, 5, 7 }
+};
+
+finite law i32[min max] ReadMiddle(const Table table) {
+    return table.Values[1] + table.Bias;
+}
+
+finite law i32[min max] ForwardConst(const Table table) {
+    return ReadMiddle(table);
+}
+
+export ffi fn i32[min max] main() {
+    if (Defaults.Values[1] + Defaults.Bias != 7) {
+        return 1;
+    }
+
+    return 0;
+}

@@ -105,7 +105,7 @@ Common consequences include:
 - constrained destruction and explicit shared-state rules can justify `nounwind`, `nosync`, and `nofree`
 - `finite` reasoning can justify `willreturn` and `mustprogress`
 - `out` and `init` contracts can justify `initializes(...)`, writable-destination reasoning, and `dead_on_return`
-- stronger slice and array qualifiers can justify `align`, better range reasoning, and more aggressive loop/vectorization facts
+- stronger slice, bounded raw pointer, and array qualifiers can justify `align`, better range reasoning, and more aggressive loop/vectorization facts
 
 These are compiler outputs, not language syntax.
 They are emitted only when the implementation can prove them from the source rules plus body analysis.
@@ -115,11 +115,15 @@ They are emitted only when the implementation can prove them from the source rul
 `disjoint` is Stark's source-level contract for memory regions that do not overlap.
 The parameter-prefix form and the relational `where disjoint(...)` form both feed the same internal memory-separation fact model.
 
+The compiler accepts disjoint contracts only for memory-backed parameters and memory-region expressions: slices, text views, borrows, initialization views, bounded raw pointer regions, and raw pointers. Scalar value parameters are rejected because there is no source memory region for the contract to describe.
+
 Each `disjoint(...)` relation forms a pairwise non-overlap group. `where disjoint(a, b, c)` records `a` separate from `b`, `a` separate from `c`, and `b` separate from `c`. Multiple groups remain independent: `where disjoint(a, b), disjoint(c, d)` records only the two stated pairs and does not record any relationship between `a` or `b` and `c` or `d`.
 
 Disjointness facts are not transitive. `disjoint(a, b), disjoint(b, c)` does not prove `disjoint(a, c)` unless that relation is also stated or separately proven.
 
 For a four-parameter function where `a` and `b` do not overlap and `c` and `d` do not overlap, but cross-group pairs such as `b` and `d` may overlap, the source form is `where disjoint(a, b), disjoint(c, d)`. For a four-parameter function where all parameters are mutually separate, the source form is `where disjoint(a, b, c, d)`.
+
+Safe call-site validation uses the proof facts the compiler can see directly: explicit disjoint parameter facts, runtime `if disjoint(...)` branch facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, and compiler-visible text slice ranges. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges remain rejected outside `unsafe`.
 
 For function parameters, disjointness gives the compiler these backend facts:
 
@@ -129,17 +133,36 @@ For function parameters, disjointness gives the compiler these backend facts:
 - disjoint output or initialization destinations compose with `writeonly`, `initializes(...)`, and dead-store reasoning when the initialized byte range is known
 - disjoint readonly inputs compose with `readonly`, `captures(none)`, or read-only `captures(...)` facts
 
-The compiler treats disjointness as a memory-range fact, not as a root-identity fact. Two slices from the same allocation can be disjoint when their element ranges do not overlap. Two different values are not considered disjoint merely because their names differ.
+The compiler treats disjointness as a memory-range fact, not as a root-identity fact. Two slices or raw pointer regions from the same allocation can be disjoint when their element ranges do not overlap. Two different values are not considered disjoint merely because their names differ.
 
 ### 2.2 Branch-Scoped Disjointness
 
 `if disjoint(a, b)` creates a control-flow-scoped memory fact. The true branch carries a proven no-overlap relation for the listed memory regions. The false branch keeps ordinary conservative aliasing behavior.
 
-For contiguous slices and text views, the check lowers to pointer-range comparisons over the data pointer, element size, and length. Once the true branch is selected, memory operations through the checked regions receive scoped `!alias.scope` and `!noalias` metadata. If the fact is introduced inside a nested scope or loop body, the compiler uses a distinct alias-scope domain for that scope and emits `llvm.experimental.noalias.scope.decl` when the selected LLVM representation needs an explicit scope boundary.
+For contiguous slices, text views, bounded raw pointer parameters, and raw pointer region expressions, the check lowers to pointer-range comparisons over the data pointer, element size, and length. Once the true branch is selected, memory operations through the checked regions receive scoped `!alias.scope` and `!noalias` metadata. If the fact is introduced inside a nested scope or loop body, the compiler uses a distinct alias-scope domain for that scope and emits `llvm.experimental.noalias.scope.decl` when the selected LLVM representation needs an explicit scope boundary.
 
 The runtime check is a source-level fact boundary. Optimizer metadata must not be attached outside the dominated true-branch region unless later analysis proves the fact still holds.
 
-### 2.3 Independent Loops
+### 2.3 Bounded Raw Pointer Regions
+
+A bounded raw pointer region is the typed triple of base pointer, element type, and element count, plus an optional start offset for region expressions. Source forms include bounded raw pointer parameter types such as `rawptr<T>[count]` and `rawmutptr<T>[count]`, raw pointer region expressions such as `pointer[start, count]`, and unsafe raw slice construction with `slice(pointer, count)`.
+
+The bound is a source contract. A positive element count requires a non-null base pointer that is valid for the full byte range `count * sizeof(T)`. A zero-length region may use `null`. The region carries the pointer's mutability, readonly or const provenance, alignment facts, memory root key, and element count range through MIR and SSA.
+
+Bounded raw pointer regions produce these backend facts:
+
+- loads and stores through the region use inbounds GEP flags only when the access index is proven within the bounded region
+- parameters with statically known positive byte extents receive `nonnull`, `noundef`, `dereferenceable`, and `align` attributes when the pointer contract and target ABI rules make those attributes valid
+- variable-size regions emit range facts and dominated `llvm.assume` facts where those assumptions strengthen alias analysis or loop optimization without inventing false constant-size dereferenceability
+- disjoint bounded regions lower to LLVM parameter `noalias` where valid and to scoped `!alias.scope` / `!noalias` metadata on the individual memory operations that use the bounded roots
+- readonly bounded regions from `rawptr<T>[count]`, `const`, or frozen provenance lower to `readonly`, read-only memory effects, and `!invariant.load` only where permanence and replacement rules make the load invariant
+- unsafe `slice(pointer, count)` construction preserves the bounded region's root, length, alignment, mutability, const, and disjoint facts in the produced slice value
+- recognized disjoint copy loops over bounded raw pointer regions may lower to `llvm.memcpy`; overlap-safe copies lower to `llvm.memmove` when the source semantics require overlap preservation
+- recognized fill loops over bounded raw pointer regions may lower to `llvm.memset` when the element representation and initialization semantics make byte fill valid
+
+Raw pointer region expressions inside `where disjoint(...)` and `if disjoint(...)` are lowered as first-class region facts, not as runtime slice aggregates. Their range comparisons use byte intervals derived from base pointer, start offset, element size, and count.
+
+### 2.4 Independent Loops
 
 `independent` on a `while` or `for` loop means loop iterations have no loop-carried memory dependencies. The loop body may still use induction variables, local scalar temporaries, and immutable reads, but a memory write in one iteration may not be read or written by another iteration.
 
@@ -152,7 +175,9 @@ Independent loops lower to LLVM loop-dependence metadata:
 
 The contract is semantic, not a hint. If a loop marked `independent` contains a real loop-carried memory dependence, the program violates the Stark source contract. Safe Stark code must either prove the contract statically or establish the required disjointness through checked facts such as `if disjoint(...)` before entering the loop.
 
-### 2.4 Const Parameters
+The accepted memory-backed subset requires a single mutable integer induction variable incremented by exactly one. Slice and fixed-array memory accesses use the simple form `root[index]`; bounded raw pointer memory accesses may also use the raw pointer spelling `*(&root[index])`. Field projections are accepted when they are rooted at the per-iteration element, such as `root[index].field`, and their field path participates in the memory-root key used for dependency checks. Structured `if` statements are accepted when their condition and every branch satisfy the same dependency-validation subset. In all cases, `index` is the loop induction variable, and write/read root pairs are either the same indexed root or proven disjoint by source facts, bounded raw pointer region facts, borrow exclusivity, or an enclosing `if disjoint(...)` fact. Law calls with scalar returns are allowed after their argument memory reads have been validated; calls with unproven memory effects report `STK3027`. Accepted independent loops carry their loop contract and access groups through MIR/SSA, emit LLVM `!llvm.access.group` on covered memory operations, and attach `!llvm.loop.mustprogress` plus `!llvm.loop.parallel_accesses` metadata on the loop backedge. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member projections that are not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and unsupported calls remain outside the accepted subset.
+
+### 2.5 Const Parameters
 
 `const` on a parameter means the reachable object graph has const provenance and is deeply immutable. It is stronger than `frozen`, which is a borrow-duration readonly view. A const parameter describes memory that safe Stark code cannot mutate at any point through any reachable path.
 

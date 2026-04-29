@@ -47,7 +47,7 @@ visibilityModifier
     ;
 
 functionDeclaration
-    : functionModifier* asmSpecifier? functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* asmClauseList? functionBody
+    : functionModifier* asmSpecifier? functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* parameterMemoryContractClause* asmClauseList? functionBody
     ;
 
 functionKind
@@ -80,7 +80,20 @@ parameterList
     ;
 
 parameter
-    : type_ Identifier
+    : parameterContractPrefix* type_ Identifier
+    ;
+
+parameterContractPrefix
+    : DISJOINT
+    | CONST
+    ;
+
+parameterMemoryContractClause
+    : WHERE disjointContract (COMMA disjointContract)* COMMA?
+    ;
+
+disjointContract
+    : DISJOINT LPAREN expressionList RPAREN
     ;
 
 typeParameterList
@@ -223,15 +236,15 @@ fieldDeclaration
     ;
 
 methodDeclaration
-    : visibilityModifier? functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* functionBody
+    : visibilityModifier? functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* parameterMemoryContractClause* functionBody
     ;
 
 traitMethodDeclaration
-    : functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* functionBody
+    : functionModifier* functionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* parameterMemoryContractClause* functionBody
     ;
 
 doctrineMethodDeclaration
-    : functionModifier* doctrineFunctionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* functionBody
+    : functionModifier* doctrineFunctionKind returnType Identifier typeParameterList? parameterList typeParameterConstraints* parameterMemoryContractClause* functionBody
     ;
 
 doctrineFunctionKind
@@ -408,7 +421,11 @@ localVariableDeclaration
     ;
 
 ifStatement
-    : IF weightSpecifier? LPAREN expression RPAREN statement (ELSE statement)?
+    : IF weightSpecifier? (LPAREN expression RPAREN | disjointRuntimeCondition) statement (ELSE statement)?
+    ;
+
+disjointRuntimeCondition
+    : DISJOINT LPAREN expressionList RPAREN
     ;
 
 switchStatement
@@ -429,11 +446,11 @@ whenClause
     ;
 
 whileStatement
-    : WHILE loopBehavior LPAREN expression RPAREN statement
+    : WHILE loopBehavior loopContract* LPAREN expression RPAREN statement
     ;
 
 forStatement
-    : FOR loopBehavior LPAREN forInitializer? SEMI forCondition? SEMI forIterator? RPAREN statement
+    : FOR loopBehavior loopContract* LPAREN forInitializer? SEMI forCondition? SEMI forIterator? RPAREN statement
     ;
 
 forInitializer
@@ -457,6 +474,10 @@ loopBehavior
     : INFINITE
     | NONDETERMINISTIC
     | WILLEXIT
+    ;
+
+loopContract
+    : INDEPENDENT
     ;
 
 weightSpecifier
@@ -792,6 +813,7 @@ RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
 FNPTR       : 'fnptr';
 MUT         : 'mut';
+DISJOINT    : 'disjoint';
 
 IF          : 'if';
 ELSE        : 'else';
@@ -811,6 +833,7 @@ VAR         : 'var';
 INFINITE         : 'infinite';
 NONDETERMINISTIC : 'non-deterministic';
 WILLEXIT         : 'willexit';
+INDEPENDENT      : 'independent';
 
 VOID        : 'void';
 BOOL        : 'bool';

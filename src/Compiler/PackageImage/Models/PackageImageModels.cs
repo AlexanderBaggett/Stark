@@ -104,11 +104,18 @@ internal sealed record StarkPackageFunctionManifest(
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
     bool IsVarargs = false,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
-    string Type);
+    string Type,
+    bool IsDisjoint = false,
+    bool IsConst = false,
+    string? RawPointerElementCountExpression = null);
+
+internal sealed record StarkPackageParameterDisjointGroupManifest(
+    IReadOnlyList<string> ParameterNames);
 
 internal sealed record StarkPackageAsmManifest(
     string ArchitectureText,
@@ -145,7 +152,8 @@ internal sealed record StarkPackageMethodManifest(
     string? Visibility = null,
     bool IsUnsafe = false,
     bool IsVarargs = false,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -222,7 +230,10 @@ internal sealed record StarkPackageTypeReference(
 
 internal sealed record StarkPackageTypedParameterManifest(
     string Name,
-    StarkPackageTypeReference Type);
+    StarkPackageTypeReference Type,
+    bool IsDisjoint = false,
+    bool IsConst = false,
+    string? RawPointerElementCountExpression = null);
 
 internal sealed record StarkPackageTypedConstructorManifest(
     IReadOnlyList<StarkPackageTypedParameterManifest> Parameters);
@@ -254,7 +265,8 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
     bool IsVarargs = false,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -278,7 +290,8 @@ internal sealed record StarkPackageTypedMethodManifest(
     string? Visibility = null,
     bool IsUnsafe = false,
     bool IsVarargs = false,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
@@ -419,7 +432,8 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? BodyStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ThenStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ElseStatements = null,
-    StarkPackageTypedTemplateExpressionManifest? TargetExpression = null);
+    StarkPackageTypedTemplateExpressionManifest? TargetExpression = null,
+    IReadOnlyList<string>? LoopContracts = null);
 
 internal sealed record StarkPackageTypedTemplateBodyManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest> Statements);
@@ -441,7 +455,8 @@ internal sealed record StarkPackageTemplateDirectCallManifest(
     IReadOnlyList<StarkPackageTypedParameterManifest> Parameters,
     string? QualifiedSourceName = null,
     string? QualifiedTemplateName = null,
-    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null);
+    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
 
 internal sealed record StarkPackageTemplateFieldAccessManifest(
     int Ordinal,
@@ -456,7 +471,8 @@ internal sealed record StarkPackageTemplateMemberCallManifest(
     IReadOnlyList<StarkPackageTypedParameterManifest> Parameters,
     string? QualifiedSourceName = null,
     string? QualifiedTemplateName = null,
-    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null);
+    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
 
 internal sealed record StarkPackageFunctionTemplateManifest(
     string QualifiedResolvedName,
@@ -520,7 +536,8 @@ internal sealed record StarkPackageAbiParameterManifest(
     string LlvmName,
     StarkPackageTypeReference SourceType,
     StarkPackageTypeReference LlvmType,
-    string Kind);
+    string Kind,
+    string? RawPointerElementCountExpression = null);
 
 internal sealed record StarkPackageAbiFunctionManifest(
     string QualifiedResolvedName,

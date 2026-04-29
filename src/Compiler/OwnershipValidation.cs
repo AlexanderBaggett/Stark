@@ -204,7 +204,22 @@ internal sealed class OwnershipValidator
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            EvaluateExpression(ifStatement.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            if (ifStatement.expression() is { } condition)
+            {
+                EvaluateExpression(condition, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+            }
+            else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
+            {
+                foreach (var expression in disjointCondition.expressionList().expression())
+                {
+                    if (TryEvaluateRawPointerRegionExpression(expression, state, signature, summary))
+                    {
+                        continue;
+                    }
+
+                    EvaluateExpression(expression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+                }
+            }
 
             var thenState = state.Clone();
             CheckStatement(ifStatement.statement(0), thenState, signature, summary);
@@ -526,6 +541,144 @@ internal sealed class OwnershipValidator
         bool allowFunctionReference)
     {
         return EvaluateAssignmentExpression(expression.assignmentExpression(), state, signature, summary, use, allowFunctionReference);
+    }
+
+    private bool TryEvaluateRawPointerRegionExpression(
+        StarkParser.ExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        if (!TryGetRawPointerRegionExpression(expression, out _, out var startExpression, out var lengthExpression))
+        {
+            return false;
+        }
+
+        EvaluateExpression(startExpression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        EvaluateExpression(lengthExpression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        return true;
+    }
+
+    private static bool TryGetRawPointerRegionExpression(
+        StarkParser.ExpressionContext expression,
+        out string rootName,
+        out StarkParser.ExpressionContext startExpression,
+        out StarkParser.ExpressionContext lengthExpression)
+    {
+        rootName = string.Empty;
+        startExpression = null!;
+        lengthExpression = null!;
+
+        if (TryGetSimplePostfixExpression(expression) is not { } postfix
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier
+            || postfix.postfixPart() is not [var indexPart]
+            || indexPart.LBRACK() is null
+            || indexPart.expressionList()?.expression() is not [var start, var length])
+        {
+            return false;
+        }
+
+        rootName = identifier;
+        startExpression = start;
+        lengthExpression = length;
+        return true;
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.ExpressionContext expression)
+    {
+        return TryGetSimpleUnaryExpression(expression) is { } unary
+            ? TryGetSimplePostfixExpression(unary)
+            : null;
+    }
+
+    private static StarkParser.UnaryExpressionContext? TryGetSimpleUnaryExpression(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        return multiplicative.unaryExpression(0);
+    }
+
+    private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        if (expression.unaryOperator() is not null
+            || expression.conversionType() is not null
+            || expression.unaryExpression() is not null
+            || expression.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null)
+        {
+            return null;
+        }
+
+        return powerExpression.postfixExpression();
     }
 
     private ExpressionInfo EvaluateAssignmentExpression(

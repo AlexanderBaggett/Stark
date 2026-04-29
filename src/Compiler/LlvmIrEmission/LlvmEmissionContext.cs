@@ -27,6 +27,7 @@ internal sealed class LlvmEmissionContext
     private readonly Func<string, string, string> _getAliasScopeDomainRef;
     private readonly Func<string, string, string, string> _getAliasScopeRef;
     private readonly Func<IReadOnlyList<string>, string> _getMetadataTupleRef;
+    private readonly Func<string, Func<string, string>, string> _getSelfReferentialMetadataRef;
 
     public LlvmEmissionContext(
         string moduleName,
@@ -60,7 +61,8 @@ internal sealed class LlvmEmissionContext
         Func<string, string, long, string> getTbaaAccessTagRef,
         Func<string, string, string> getAliasScopeDomainRef,
         Func<string, string, string, string> getAliasScopeRef,
-        Func<IReadOnlyList<string>, string> getMetadataTupleRef)
+        Func<IReadOnlyList<string>, string> getMetadataTupleRef,
+        Func<string, Func<string, string>, string> getSelfReferentialMetadataRef)
     {
         ModuleName = moduleName;
         AsciiStringTypeName = asciiStringTypeName;
@@ -94,6 +96,7 @@ internal sealed class LlvmEmissionContext
         _getAliasScopeDomainRef = getAliasScopeDomainRef;
         _getAliasScopeRef = getAliasScopeRef;
         _getMetadataTupleRef = getMetadataTupleRef;
+        _getSelfReferentialMetadataRef = getSelfReferentialMetadataRef;
     }
 
     public string ModuleName { get; }
@@ -144,6 +147,9 @@ internal sealed class LlvmEmissionContext
         _getAliasScopeRef(key, domainRef, displayName);
 
     public string GetMetadataTupleRef(IReadOnlyList<string> items) => _getMetadataTupleRef(items);
+
+    public string GetSelfReferentialMetadataRef(string key, Func<string, string> buildBody) =>
+        _getSelfReferentialMetadataRef(key, buildBody);
 
     public string MapType(StarkTypeSymbol type) => _mapType(type);
 

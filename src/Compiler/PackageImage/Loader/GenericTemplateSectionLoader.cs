@@ -187,7 +187,8 @@ internal static partial class PackageImageLoader
                 LoopBehavior: manifest.LoopBehavior,
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
-                BodyStatements: bodyStatements);
+                BodyStatements: bodyStatements,
+                LoopContracts: manifest.LoopContracts);
             return true;
         }
 
@@ -213,7 +214,8 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedBodyStatementKind.While,
                 expression,
                 LoopBehavior: manifest.LoopBehavior,
-                BodyStatements: bodyStatements);
+                BodyStatements: bodyStatements,
+                LoopContracts: manifest.LoopContracts);
             return true;
         }
 

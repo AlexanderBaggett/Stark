@@ -40,7 +40,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private readonly Func<bool> _usesHeapAllocator;
     private readonly Func<bool> _usesUnreachableTrapHelper;
     private readonly Func<bool> _usesAssumeIntrinsic;
+    private readonly Func<bool> _usesMemcpyIntrinsic;
+    private readonly Func<bool> _usesMemmoveIntrinsic;
     private readonly Func<bool> _usesMemcpyInlineIntrinsic;
+    private readonly Func<bool> _usesMemsetIntrinsic;
     private readonly Func<bool> _usesMemsetInlineIntrinsic;
 
     public LlvmBuiltinAndHelperEmitter(
@@ -54,7 +57,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         Func<bool> usesHeapAllocator,
         Func<bool> usesUnreachableTrapHelper,
         Func<bool> usesAssumeIntrinsic,
+        Func<bool> usesMemcpyIntrinsic,
+        Func<bool> usesMemmoveIntrinsic,
         Func<bool> usesMemcpyInlineIntrinsic,
+        Func<bool> usesMemsetIntrinsic,
         Func<bool> usesMemsetInlineIntrinsic)
     {
         _context = context;
@@ -67,7 +73,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         _usesHeapAllocator = usesHeapAllocator;
         _usesUnreachableTrapHelper = usesUnreachableTrapHelper;
         _usesAssumeIntrinsic = usesAssumeIntrinsic;
+        _usesMemcpyIntrinsic = usesMemcpyIntrinsic;
+        _usesMemmoveIntrinsic = usesMemmoveIntrinsic;
         _usesMemcpyInlineIntrinsic = usesMemcpyInlineIntrinsic;
+        _usesMemsetIntrinsic = usesMemsetIntrinsic;
         _usesMemsetInlineIntrinsic = usesMemsetInlineIntrinsic;
     }
 
@@ -162,9 +171,19 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add("declare i32 @HeapFree(ptr, i32, ptr) nounwind");
         }
 
-        if (usesRuntimeAllocator || usesTextConcatBuiltin)
+        if (usesRuntimeAllocator || usesTextConcatBuiltin || _usesMemcpyIntrinsic())
         {
             declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+        }
+
+        if (_usesMemsetIntrinsic())
+        {
+            declarations.Add("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)");
+        }
+
+        if (_usesMemmoveIntrinsic())
+        {
+            declarations.Add("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
         }
 
         if (_usesMemcpyInlineIntrinsic())

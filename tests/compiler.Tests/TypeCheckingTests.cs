@@ -1947,6 +1947,106 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ConstParameterProvenanceTypeChecksAsReadonlyAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct PtrBox {
+                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+            }
+
+            fn void Inspect(const PtrBox box, const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                stack rawptr<frozen i32[-2147483648 2147483647]> fieldPtr = box.Ptr;
+                stack rawptr<frozen i32[-2147483648 2147483647]> directPtr = ptr;
+                stack i32[-2147483648 2147483647] value = *ptr;
+                stack bool same = *fieldPtr == *directPtr;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void ConstParametersCanBeForwardedToConstParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[-2147483648 2147483647] Value;
+            }
+
+            fn void Inspect(const Box box) {
+                return;
+            }
+
+            fn void Forward(const Box box) {
+                Inspect(box);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void ConstRawPointerProvenanceFlowsThroughImmutableLocal()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                return;
+            }
+
+            fn void Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                stack rawptr<frozen i32[-2147483648 2147483647]> local = ptr;
+                Inspect(local);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void ConstRawSliceProvenanceFlowsThroughImmutableLocal()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Inspect(const i32[-2147483648 2147483647][] view) {
+                return;
+            }
+
+            fn void Forward(
+                const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+                i32[1 10] count) {
+                unsafe {
+                    stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
+                    Inspect(view);
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void AggregateSwitchPatternsTypeCheckOnScalarFields()
     {
         var result = Compile(

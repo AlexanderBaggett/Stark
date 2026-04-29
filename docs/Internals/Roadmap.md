@@ -1841,57 +1841,141 @@ turn that book outline into published website content.
 
 ### New Langauge Features
 
-- [ ] Add `disjoint` function parameter contracts.
-  - [ ] support the parameter-prefix form, such as `disjoint borrow u8[] source`
-  - [ ] support the relational `where disjoint(a, b)` form for explicit parameter pairs and groups
-  - [ ] define `disjoint` as a semantic contract that the named memory regions do not overlap for the duration of the call
-  - [ ] validate safe `disjoint` calls using borrow, ownership, slice-range, and projection facts
-  - [ ] reject safe calls when two `disjoint` arguments may refer to overlapping memory
-  - [ ] lower proven parameter disjointness to LLVM `noalias` where valid
-  - [ ] lower call/body memory accesses through disjoint roots to scoped `!alias.scope` and `!noalias` metadata
-  - [ ] add parser, type-checking, ownership, semantic, LLVM, and negative tests
+- [x] Add `disjoint` function parameter contracts.
+  - [x] support the parameter-prefix form, such as `disjoint borrow u8[] source`
+  - [x] support the relational `where disjoint(a, b)` form for explicit parameter pairs and groups
+  - [x] define `disjoint` as a semantic contract that the named memory regions do not overlap for the duration of the call
+  - [x] reject `disjoint` declarations on non-memory-backed scalar parameters
+  - [x] validate safe calls using explicit facts, independent storage roots, distinct field projections, literal indexes, and non-overlapping integer index ranges
+  - [x] validate safe calls using exclusive mutable borrow roots, including method receiver contracts
+  - [x] preserve immutable slice-local backing roots for safe disjoint call validation
+  - [x] validate safe calls using compiler-visible text slice ranges and immutable text-view backing roots
+  - [x] reject safe calls when a required `disjoint` argument has no statically identifiable memory root
+  - [x] validate safe `disjoint` calls using borrow, ownership, slice-range, and projection facts
+  - [x] reject safe calls when two `disjoint` arguments may refer to overlapping memory
+  - [x] lower proven parameter disjointness to LLVM `noalias` where valid
+  - [x] lower call/body memory accesses through disjoint roots to scoped `!alias.scope` and `!noalias` metadata
+  - [x] add parser, type-checking, ownership, semantic, LLVM, and negative tests
 
-- [ ] Add `if disjoint(...)` runtime disjointness tests.
-  - [ ] support `if disjoint(a, b)` and multi-operand `if disjoint(a, b, c)` conditions
-  - [ ] define the true branch as a fact scope where the named memory regions do not overlap
-  - [ ] preserve normal overlap-safe semantics in the false branch
-  - [ ] lower contiguous slice and text-view disjoint checks to pointer-range comparisons
-  - [ ] feed true-branch facts into borrow validation, SSA memory facts, and LLVM scoped noalias metadata
-  - [ ] add examples for choosing between copy-fast and overlap-safe paths
-  - [ ] add parser, lowering, branch-fact, and LLVM metadata tests
+- [x] Add `if disjoint(...)` runtime disjointness tests.
+  - [x] support `if disjoint(a, b)` and multi-operand `if disjoint(a, b, c)` conditions
+  - [x] define the true branch as a fact scope where the named memory regions do not overlap
+  - [x] preserve normal overlap-safe semantics in the false branch
+  - [x] lower contiguous slice and text-view disjoint checks to pointer-range comparisons
+  - [x] feed true-branch facts into borrow validation, SSA memory facts, and LLVM scoped noalias metadata
+  - [x] add examples for choosing between copy-fast and overlap-safe paths
+  - [x] add parser, lowering, branch-fact, and LLVM metadata tests
 
-- [ ] Add loop `independent` contracts.
-  - [ ] support `for willexit independent (...)` and `while willexit independent (...)`
-  - [ ] define `independent` as a semantic contract that loop iterations have no loop-carried memory dependencies
-  - [ ] validate safe independent loops using disjoint parameter facts, per-iteration index ranges, borrow exclusivity, and call memory effects
-  - [ ] reject independent loops when a memory write in one iteration may be read or written by another iteration
-  - [ ] lower independent loop memory accesses to LLVM `!llvm.access.group`
-  - [ ] lower independent loops to LLVM `!llvm.loop.parallel_accesses` and preserve existing `mustprogress` facts
-  - [ ] add vectorization-focused LLVM and benchmark tests for independent slice loops
+- [x] Add loop `independent` contracts.
+  - [x] support `for willexit independent (...)` and `while willexit independent (...)`
+  - [x] define `independent` as a semantic contract that loop iterations have no loop-carried memory dependencies
+  - [x] accept a conservative scalar-local, memory-free subset and keep memory-touching loops on `STK3027`
+  - [x] allow stack/register scalar local declarations with pure scalar initializers inside the conservative subset
+  - [x] preserve accepted independent loop contracts through MIR/SSA and emit LLVM `!llvm.loop.mustprogress`
+  - [x] validate safe independent loops using disjoint parameter facts, per-iteration index ranges, borrow exclusivity, and law-call memory-effect facts in the canonical slice-loop subset
+  - [x] reject independent loops when a memory write in one iteration may be read or written by another iteration in the accepted dependency-validation subset
+  - [x] lower independent loop memory accesses to LLVM `!llvm.access.group`
+  - [x] lower independent loops to LLVM `!llvm.loop.parallel_accesses` and preserve existing `mustprogress` facts
+  - [x] add vectorization-focused LLVM and benchmark tests for independent slice loops
 
-- [ ] Add `const` as a parameter qualifier.
-  - [ ] support parameter syntax such as `const Table table` and `const u8[] bytes`
-  - [ ] define `const` parameters as references to deeply immutable reachable object graphs
-  - [ ] require callers to pass values with permanent const provenance or compiler-proven equivalent deep immutability
-  - [ ] keep `const` separate from `disjoint`; multiple const parameters may alias unless disjointness is stated or proven
-  - [ ] make projections from const parameters preserve frozen/readonly provenance
-  - [ ] lower const parameter loads to readonly/invariant LLVM facts where valid
-  - [ ] reject safe attempts to derive mutable raw aliases from const parameter graphs
-  - [ ] add type-checking, raw-conversion, lowering, and LLVM tests
+- [x] Add `const` as a parameter qualifier.
+  - [x] support parameter syntax such as `const Table table` and `const u8[] bytes`
+  - [x] define `const` parameters as references to deeply immutable reachable object graphs
+  - [x] require callers to pass values with permanent const provenance or compiler-proven equivalent deep immutability
+  - [x] keep `const` separate from `disjoint`; multiple const parameters may alias unless disjointness is stated or proven
+  - [x] make projections from const parameters preserve frozen/readonly provenance
+  - [x] lower const parameter loads to readonly/invariant LLVM facts where valid
+  - [x] reject safe attempts to derive mutable raw aliases from const parameter graphs
+  - [x] add type-checking, raw-conversion, lowering, and LLVM tests
 
-- [ ] Update language documentation for memory-separation contracts.
+- [x] Add bounded raw pointer region parameters.
+  - [x] support `rawptr<T>[count]` and `rawmutptr<T>[count]` parameter forms
+  - [x] bind `count` expressions against integer parameters and compile-time constants in the function parameter environment
+  - [x] validate that positive element counts reject statically null raw pointer arguments
+  - [x] define and enforce safe proof rules for valid contiguous storage at nontrivial bounded raw pointer call sites
+  - [x] preserve zero-length raw pointer regions as valid empty ranges, including `null` empty ranges
+  - [x] represent bounded raw pointer roots in type checking, ownership validation, MIR, SSA, and package images
+  - [x] lower bounded raw pointer parameters to LLVM `nonnull`, `noundef`, `dereferenceable`, and `align` facts when the byte extent and provenance make those attributes valid
+  - [x] avoid constant-size dereferenceability claims for variable-size regions that only justify range or `llvm.assume` facts
+
+- [x] Add raw pointer region expressions.
+  - [x] support `pointer[start, count]` as a bounded memory-region expression in `where disjoint(...)`
+  - [x] support `pointer[start, count]` in `if disjoint(...)` runtime disjointness checks
+  - [x] validate nonnegative starts and counts using integer range facts
+  - [x] compare raw pointer region byte intervals using base pointer, start offset, element size, and count
+  - [x] feed true-branch raw pointer region facts into borrow validation, SSA memory facts, and LLVM scoped noalias metadata
+  - [x] reject region expressions that hide their root behind an unmodeled call or conversion outside `unsafe`
+
+- [x] Add unsafe raw slice construction.
+  - [x] support `slice(pointer, count)` inside unsafe contexts for raw pointer to slice conversion
+  - [x] produce ordinary `T[]` slice views from `rawptr<T>[count]`
+  - [x] produce mutable slice views from `rawmutptr<T>[count]` when mutability provenance is preserved
+  - [x] carry bounded raw pointer root, length, alignment, const, and disjoint provenance into the produced slice
+  - [x] reject safe attempts to use raw slice construction outside an unsafe context
+  - [x] add diagnostics for invalid mutability strengthening, negative counts, hidden roots, and null positive-length regions
+
+- [x] Extend `independent` loops to bounded raw pointer regions.
+  - [x] accept canonical raw pointer accesses such as `*(&root[index])` when `root` has a bounded raw pointer region
+  - [x] validate induction-variable indexing against the bounded region element count
+  - [x] use bounded raw pointer `disjoint` facts, `where disjoint(...)`, and `if disjoint(...)` facts for loop-dependence validation
+  - [x] lower raw pointer region loop accesses to LLVM `!llvm.access.group`
+  - [x] lower accepted raw pointer region loops to `!llvm.loop.parallel_accesses` while preserving `mustprogress`
+  - [x] add vectorization-focused LLVM and benchmark tests for raw pointer copy, fill, and transform loops
+
+- [x] Add optimized lowering for recognized bounded raw pointer region loops.
+  - [x] lower disjoint byte and scalar copy loops to `llvm.memcpy` when element representation permits it
+  - [x] lower overlap-safe copy loops to `llvm.memmove` when source semantics require overlap preservation
+  - [x] lower valid byte-fill loops to `llvm.memset`
+  - [x] preserve Stark alias, readonly, writeonly, initialization, and alignment facts on the intrinsic calls
+  - [x] keep fallback scalar lowering for element types or destructuring semantics that cannot use byte intrinsics
+
+- [x] Update language documentation for memory-separation contracts.
   - [x] update `docs/Userfacing/LanguageReference.md` with syntax and source-level semantics for `disjoint`, `if disjoint`, loop `independent`, and const parameters
   - [x] update `docs/Userfacing/BorrowerSystem.md` with how `disjoint`, `borrow mut`, `out`, `init`, `frozen`, `shared`, and const parameters compose
   - [x] update `docs/Internals/LanguageInternals.md` with the LLVM facts emitted from these contracts
-  - [ ] add compiler diagnostic examples for invalid overlapping arguments and invalid independent loops
+  - [x] add compiler diagnostic examples for invalid overlapping arguments and invalid independent loops
+  - [x] update the Stark book to have sections on these features with code samples
 
-- [ ] Update the Stark Book and website for memory-separation contracts.
-  - [ ] add a Stark Book chapter or section explaining `disjoint` parameters and `if disjoint`
-  - [ ] add a Stark Book chapter or section explaining loop `independent` and vectorization-oriented loop contracts
-  - [ ] add a Stark Book chapter or section explaining const parameter provenance and deep immutability
-  - [ ] add website reference pages or feature callouts for these contracts
-  - [ ] add runnable examples that show overlap-safe and disjoint-fast paths
-  - [ ] update website navigation and book summary entries for the new material
+- [x] Update language documentation for bounded raw pointer regions.
+  - [x] update `docs/Userfacing/LanguageReference.md` with syntax and source-level semantics for bounded raw pointer parameters, raw pointer region expressions, unsafe raw slice construction, and bounded raw pointer `independent` loops
+  - [x] update `docs/Internals/LanguageInternals.md` with the LLVM facts emitted from bounded raw pointer regions
+  - [x] update `docs/Userfacing/BorrowerSystem.md` with how bounded raw pointer regions compose with `disjoint`, `const`, `borrow mut`, `frozen`, `out`, and `init`
+  - [x] add compiler diagnostic examples for invalid bounded raw pointer region contracts, invalid raw slice construction, and invalid raw pointer `independent` loops
+
+- [x] Update the Stark Book and website for bounded raw pointer regions.
+  - [x] add a Stark Book chapter or section explaining bounded raw pointer region parameters
+  - [x] add a Stark Book chapter or section explaining raw pointer region expressions in `where disjoint(...)` and `if disjoint(...)`
+  - [x] add a Stark Book chapter or section explaining unsafe raw slice construction
+  - [x] add a Stark Book chapter or section explaining `independent` loops over bounded raw pointer regions
+  - [x] add runnable examples that show raw pointer copy, fill, transform, and overlap-safe fallback paths
+  - [x] update website navigation and book summary entries for the new material
+
+- [x] Update the Stark Book and website for memory-separation contracts.
+  - [x] add a Stark Book chapter or section explaining `disjoint` parameters and `if disjoint`
+  - [x] add a Stark Book chapter or section explaining loop `independent` and vectorization-oriented loop contracts
+  - [x] add a Stark Book chapter or section explaining const parameter provenance and deep immutability
+  - [x] add website reference pages or feature callouts for these contracts
+  - [x] add runnable examples that show overlap-safe and disjoint-fast paths
+  - [x] update website navigation and book summary entries for the new material
+
+- [x] Close New Language Features implementation gaps found by compiler audit.
+  - [x] separate permanent `const` provenance from borrow-duration `frozen` projection semantics in type checking, MIR lowering, semantic validation, SSA, and LLVM metadata decisions
+  - [x] reject `const` parameter calls satisfied only by projections from non-const `frozen` values, unless the compiler has a separate proof of permanent deep immutability
+  - [x] add regression tests proving direct `frozen T`, projected `frozen` fields, frozen raw pointer fields, and raw slices from frozen values cannot accidentally satisfy `const T`
+  - [x] broaden `if disjoint(...)` true-branch fact extraction to use typed memory-root provenance for all accepted memory-backed operands, not only obvious source-text roots and raw pointer region expressions
+  - [x] add tests where runtime `if disjoint(...)` facts flow through slice locals, text views, bounded raw pointer slice views, and descendant subregions into safe disjoint calls and scoped noalias metadata
+  - [x] replace stale `independent` diagnostics and tests that say memory dependency validation and LLVM metadata lowering are not implemented
+  - [x] decide and implement the next accepted `independent` loop tier beyond the current canonical subset, including documented choices for conditionals, member projections, memory-backed local declarations, nested loops, early exits, and law/read-only calls
+    - [x] accept structured `if` statements in memory-backed independent loops when the condition and every branch satisfy the accepted dependency-validation subset
+    - [x] accept member projections rooted at the loop induction element, such as `root[index].field`, while preserving the existing rejection of nested loops, early exits, and memory-backed local declarations
+  - [x] generalize optimized bounded raw pointer intrinsic lowering from whole-function canonical 4-block/7-block shapes to eligible loops inside larger functions with compatible prologue, epilogue, and surrounding scalar work
+    - [x] recognize and replace embedded single-loop raw pointer `memcpy` and byte `memset` patterns by emitting the intrinsic in the loop preheader, redirecting to the original exit block, and skipping the scalar loop blocks
+    - [x] extend the same embedded replacement model to the overlap-safe two-loop temporary-copy pattern that lowers to `llvm.memmove`
+  - [x] add LLVM and benchmark tests for raw pointer `memcpy`, `memmove`, and `memset` recognition inside nontrivial functions, plus negative tests that preserve scalar lowering when aliasing or element semantics are not proven safe
+    - [x] add LLVM and benchmark coverage for embedded raw pointer `memcpy` and byte `memset`, plus a non-alias-proven negative `memcpy` case that preserves scalar lowering
+    - [x] add embedded `memmove` LLVM and benchmark coverage once the two-loop replacement model is generalized
+  - [x] expand safe bounded raw pointer contiguous-storage proof rules for provenance-preserving locals, forwarded subregions, and slice-derived raw regions, or explicitly document every case that intentionally remains an unsafe-boundary assertion
+  - [x] add an audit checklist test or script that scans the New Language Features roadmap bullets against parser, type checking, lowering, LLVM, package-image, docs, and regression-test coverage
 
 ### Trait/Doctrine Runtime Dispatch, If Ever Added
 

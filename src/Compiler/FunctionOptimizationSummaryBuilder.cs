@@ -92,7 +92,18 @@ internal static class FunctionOptimizationSummaryBuilder
         if (statement.ifStatement() is { } ifStatement)
         {
             accumulator.BranchStatementCount++;
-            CountExpression(ifStatement.expression(), accumulator);
+            if (ifStatement.expression() is { } condition)
+            {
+                CountExpression(condition, accumulator);
+            }
+            else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
+            {
+                foreach (var expression in disjointCondition.expressionList().expression())
+                {
+                    CountExpression(expression, accumulator);
+                }
+            }
+
             CountStatement(ifStatement.statement(0), accumulator);
             if (ifStatement.statement().Length > 1)
             {
@@ -457,7 +468,8 @@ internal static class FunctionOptimizationSummaryBuilder
     private static bool TryIsTerminalSelectionIfStatement(StarkParser.IfStatementContext ifStatement)
     {
         return ifStatement.statement().Length == 2
-            && TryIsSimpleInlineConditionExpression(ifStatement.expression())
+            && ifStatement.expression() is { } condition
+            && TryIsSimpleInlineConditionExpression(condition)
             && TryIsTerminalSelectionStatement(ifStatement.statement(0))
             && TryIsTerminalSelectionStatement(ifStatement.statement(1));
     }

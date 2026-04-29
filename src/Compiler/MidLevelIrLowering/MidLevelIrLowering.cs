@@ -718,10 +718,18 @@ internal sealed partial class MidLevelIrLowerer(
                 var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, declaration);
                 var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
                 var qualifiedName = QualifyName(module, declaration.Name);
+                FunctionOverloadFacts.TryFindFunctionDeclaration(
+                    module.SyntaxModel,
+                    declaration.DisplaySourceName,
+                    FunctionOverloadFacts.BuildOverloadKey(declaration.ParameterList),
+                    out var declarationModel);
                 var parameters = declaration.ParameterList.parameter()
                     .Select(parameter => new TypedParameterSymbol(
                         parameter.Identifier().GetText(),
-                        resolver.ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName)))
+                        resolver.ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression),
+                        parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.DISJOINT),
+                        parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
+                        rawPointerElementCountExpression))
                     .ToArray();
                 functions[qualifiedName] = new TypedFunctionSignature(
                     qualifiedName,
@@ -730,7 +738,8 @@ internal sealed partial class MidLevelIrLowerer(
                     SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
                     IsStatic: declaration.IsStatic,
-                    IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)));
+                    IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
+                    DisjointParameterGroups: declarationModel?.Function?.DisjointGroups);
             }
         }
 

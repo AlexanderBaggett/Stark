@@ -3330,13 +3330,21 @@ public static class DefaultCompilerPipeline
                 foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declaration.Name}";
+                    FunctionOverloadFacts.TryFindFunctionDeclaration(
+                        module.SyntaxModel,
+                        declaration.DisplaySourceName,
+                        FunctionOverloadFacts.BuildOverloadKey(declaration.ParameterList),
+                        out var declarationModel);
                     var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, declaration);
                     var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
-                    var parameters = declaration.ParameterList.parameter()
-                        .Select(parameter => new TypedParameterSymbol(
-                            parameter.Identifier().GetText(),
-                            resolver.ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName)))
-                        .ToArray();
+                var parameters = declaration.ParameterList.parameter()
+                    .Select(parameter => new TypedParameterSymbol(
+                        parameter.Identifier().GetText(),
+                        resolver.ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression),
+                        parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.DISJOINT),
+                        parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
+                        rawPointerElementCountExpression))
+                    .ToArray();
                     functions[qualifiedName] = new TypedFunctionSignature(
                         qualifiedName,
                         resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
@@ -3344,7 +3352,8 @@ public static class DefaultCompilerPipeline
                         SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                         GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
                         IsStatic: declaration.IsStatic,
-                        IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)));
+                        IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
+                        DisjointParameterGroups: declarationModel?.Function?.DisjointGroups);
                 }
             }
 
@@ -3447,6 +3456,9 @@ public static class DefaultCompilerPipeline
                 context.Options.TargetInfo,
                 internalizeModulePrivate: context.Options.InternalizeModulePrivate || context.Options.QualifyModuleSymbols,
                 isOptimizedBuild: context.Options.OptimizationLevel != CompilerOptimizationLevel.O0,
+                enableOptimizedRawPointerLoopIntrinsics: context.Options.OptimizationLevel is CompilerOptimizationLevel.O1
+                    or CompilerOptimizationLevel.O2
+                    or CompilerOptimizationLevel.O3,
                 semanticValidation: validationModel,
                 closedWorldModel: closedWorldModel,
                 specializationCodegenStrategy: specializationCodegenStrategy,

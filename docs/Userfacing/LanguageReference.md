@@ -209,7 +209,7 @@ fn void Add(
 }
 ```
 
-The relational `where disjoint(...)` form declares exact disjointness relations between named parameters:
+The relational `where disjoint(...)` form declares exact disjointness relations between named parameters or bounded memory-region expressions:
 
 ```stark
 fn void Copy(borrow u8[] source, borrow mut u8[] destination)
@@ -257,7 +257,88 @@ fn void ProcessAllSeparate(
 }
 ```
 
-A disjoint contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy `disjoint` when their element ranges do not overlap.
+A disjoint contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy `disjoint` when their element ranges do not overlap. The parameter named by `disjoint` must have a memory-backed type, such as a slice, text view, borrow, initialization view, bounded raw pointer region, or raw pointer; scalar value parameters cannot carry a disjoint memory-region contract.
+
+Raw pointer parameters may expose their bounded element region directly. The forms `rawptr<T>[count]` and `rawmutptr<T>[count]` are raw pointer parameters whose valid source region contains `count` contiguous elements of `T`:
+
+```stark
+fn void CopyBytes(
+    i64[0 max] length,
+    disjoint rawptr<i8[min max]>[length] source,
+    disjoint rawmutptr<i8[min max]>[length] destination) {
+    return;
+}
+```
+
+The pointer value is still a raw pointer, but the function contract includes the region bound. A nonzero count requires a non-null pointer that is valid for every element in `0 <= index < count`; a zero-length region may use `null`. The bound expression is an integer expression over the function parameters and compile-time constants, and cyclic bounds are rejected.
+
+Raw pointer region expressions use two-index slicing syntax inside memory contracts and disjoint checks. `pointer[start, count]` names the contiguous region beginning at `pointer + start` and containing `count` elements:
+
+```stark
+fn void CopyWindow(
+    rawptr<i8[min max]> source,
+    rawmutptr<i8[min max]> destination,
+    i64[0 max] sourceStart,
+    i64[0 max] length)
+    where disjoint(source[sourceStart, length], destination[0, length]) {
+    return;
+}
+```
+
+The expression `pointer[start, count]` is a memory-region expression, not an owning value. It is valid in `where disjoint(...)`, `if disjoint(...)`, and places where the language expects a bounded raw pointer region fact.
+
+At a safe call site, the compiler must have a proof before it lets a call satisfy a `disjoint` contract. Passing the same memory region twice, passing a whole object together with one of its fields, passing two indexed regions whose indexes are not proven separate, passing a call result or other expression whose memory root is not visible, or passing two raw pointer or slice variables whose regions have not been proven separate violates the contract:
+
+```stark
+fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+    return;
+}
+
+fn void Bad(rawmutptr<i32[min max]> ptr) {
+    Touch(ptr, ptr); // STK3030: overlapping disjoint arguments
+}
+
+fn void MaybeBad(i32[0 2] i, i32[0 2] j) {
+    stack mut i32[min max][3] values = { 1, 2, 3 };
+    Touch(&values[i], &values[j]); // STK3030 unless the indexes are proven separate
+}
+
+fn void Unknown(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+    Touch(maybeLeft, maybeRight); // STK3030: different pointer names are not a proof
+}
+
+fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
+    return ptr;
+}
+
+fn void HiddenRoot(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+    Touch(Identity(maybeLeft), maybeRight); // STK3030: the left root is hidden behind a call
+}
+```
+
+Inside an `unsafe` block, raw pointer separation may be a programmer-proven fact instead of a compiler-proven one. The compiler still rejects obvious self-overlap.
+
+Distinct projections that the compiler can see do not overlap, non-overlapping index ranges, compiler-visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views whose backing storage is compiler-visible, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Readonly borrows do not prove disjointness by themselves because two readonly views may alias the same immutable region.
+
+```stark
+struct Pair {
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+fn void Fields(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+    return;
+}
+
+fn void Good(borrow mut Pair pair) {
+    Fields(&pair.Left, &pair.Right);
+}
+
+fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where disjoint(left, right) {
+    Fields(left, right);
+}
+```
 
 A `const` parameter is a parameter whose reachable object graph is deeply immutable. It is stronger than ordinary readonly access and stronger than `frozen` borrow access because it requires permanent const provenance rather than only a call-scoped readonly view:
 
@@ -453,6 +534,39 @@ The raw pointer forms:
 Safe Stark code has no null references and no nullable borrows.
 
 `null` exists only in the raw and FFI domain. A Stark program may compare raw pointers against `null` and may store `null` in raw pointer storage, but may not assign `null` to safe values or borrows.
+
+Raw pointers may carry an explicit element bound in parameter positions and memory-region expressions:
+
+```stark
+fn bool Fill(
+    i64[0 max] length,
+    rawmutptr<i32[min max]>[length] destination,
+    i32[min max] value) {
+    return true;
+}
+```
+
+The bounded form does not turn the pointer into an owning value and does not make pointer arithmetic safe outside the stated region. It gives the compiler and type checker a concrete contiguous region for nullability, bounds, aliasing, and loop-dependence reasoning.
+
+An unsafe raw slice construction materializes an ordinary slice view from a raw pointer region:
+
+```stark
+fn void Copy(
+    i64[0 max] length,
+    rawptr<i8[min max]>[length] source,
+    rawmutptr<i8[min max]>[length] destination)
+    where disjoint(source, destination) {
+    unsafe {
+        stack i8[min max][] sourceView = slice(source, length);
+        stack mut i8[min max][] destinationView = slice(destination, length);
+        for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1) {
+            destinationView[index] = sourceView[index];
+        }
+    }
+}
+```
+
+`slice(pointer, count)` is unsafe because the caller asserts the raw pointer is valid for `count` elements and that the requested mutability matches the pointer provenance. Once the slice exists, ordinary slice rules apply: bounds, mutability, disjoint contracts, const provenance, and `independent` loop validation all use the slice view.
 
 ### 6.5 Generic Parameters and Type Aliases
 
@@ -782,7 +896,22 @@ for willexit independent (stack i32[0 max] i = 0; i < count; i += 1) {
 }
 ```
 
-`independent` means loop iterations have no loop-carried memory dependencies. A memory write in one iteration may not be read or written by another iteration, and a call inside the loop may not create cross-iteration memory dependence. Reads from immutable memory are allowed. Writes are allowed when each iteration writes a region proven separate from the regions read or written by other iterations.
+`independent` means loop iterations have no loop-carried memory dependencies. A memory write in one iteration may not be read or written by another iteration, and a call inside the loop may not create cross-iteration memory dependence. Reads from immutable memory are allowed by the language contract. Writes are allowed when each iteration writes a region proven separate from the regions read or written by other iterations.
+
+Scalar-only `while` and `for` loops may use scalar local values directly, and their bodies may declare stack or register scalar locals with pure scalar initializers. Canonical `for` loops may also use slice, fixed-array, and bounded raw pointer region element accesses when the element index is the loop induction variable, the induction variable is incremented by exactly one, and every write/read root pair is either the same indexed root or proven disjoint by parameter contracts, borrow exclusivity, raw pointer region facts, or an enclosing `if disjoint(...)` fact. The accepted memory-backed form includes structured `if` statements whose conditions and branches satisfy the same subset, and it includes field projections rooted at the per-iteration element, such as `root[index].field`. Calls inside that memory-backed subset are accepted when they resolve to law functions with scalar returns, so the call itself introduces no unproven memory effect.
+
+```stark
+fn i32[0 10] CountFour() {
+    stack mut i32[0 10] value = 0;
+    while willexit independent (value < 4) {
+        value += 1;
+    }
+
+    return value;
+}
+```
+
+Accepted `independent` loops preserve the contract through lowering and emit LLVM loop `mustprogress` metadata. Memory operations in the accepted canonical slice, fixed-array, and bounded raw pointer region subset also receive LLVM `!llvm.access.group`, and the loop latch receives `!llvm.loop.parallel_accesses`. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
 
 ### 10.3 Disjoint Branch Conditions
 
@@ -796,7 +925,9 @@ if disjoint(source, destination) {
 }
 ```
 
-Inside the true branch, every memory region listed in `disjoint(...)` is known to be pairwise non-overlapping. The false branch does not receive the disjoint fact and must use overlap-safe behavior. For contiguous slices and text views, the check compares the memory ranges represented by their data pointer, element size, and length.
+Inside the true branch, every memory region listed in `disjoint(...)` is known to be pairwise non-overlapping. The false branch does not receive the disjoint fact and must use overlap-safe behavior. For contiguous slices, text views, bounded raw pointer parameters, and raw pointer region expressions, the check compares the memory ranges represented by their data pointer, element size, and length.
+
+The true-branch fact can satisfy a callee's `disjoint` parameter contract for the same regions or for subregions covered by those checked regions. The false branch cannot use that fact.
 
 ### 10.4 Switch and Patterns
 

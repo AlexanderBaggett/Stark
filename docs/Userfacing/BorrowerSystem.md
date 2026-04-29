@@ -511,6 +511,115 @@ The false branch receives no disjoint fact and must use overlap-safe code.
 
 `const` and `disjoint` are independent. Two const parameters can alias the same immutable object graph. The compiler treats them as non-overlapping only when `disjoint` is written or proven.
 
+## 12. Bounded Raw Pointer Regions
+
+Bounded raw pointer regions keep raw pointer work explicit while giving the borrower and optimizer a concrete memory range to reason about.
+
+The parameter forms:
+
+* `rawptr<T>[count]`
+* `rawmutptr<T>[count]`
+
+mean that the pointer is valid for `count` contiguous elements of `T`. A positive count requires a non-null pointer. A zero-length region may use `null`.
+
+```stark
+module Demo
+
+fn void Copy(
+    i64[0 max] length,
+    disjoint rawptr<i8[-128 127]>[length] source,
+    disjoint rawmutptr<i8[-128 127]>[length] destination)
+    where disjoint(source[0, length], destination[0, length]) {
+    return;
+}
+```
+
+The bound does not make the pointer safe in the same sense as `borrow`. It gives the compiler a source-level region fact: base pointer, element type, element count, mutability, readonly or const provenance, and any stated disjointness.
+
+Composition rules:
+
+* `rawptr<T>[count]` gives readonly raw access to the bounded region.
+* `rawmutptr<T>[count]` gives mutable raw access to the bounded region.
+* `disjoint rawptr<T>[count]` and `disjoint rawmutptr<T>[count]` state non-overlap with the other regions in the same disjoint group.
+* `const rawptr<T>[count]` and `frozen` provenance keep reachable memory readonly; they do not prove non-overlap by themselves.
+* `borrow mut` remains the safe mutable-borrow form. A bounded `rawmutptr` can be used at an unsafe or FFI boundary, but it does not become a safe borrow automatically.
+* `out` and `init` still express write-before-read initialization. A bounded raw pointer region may be proven disjoint from `out` or `init` destinations, but raw pointer mutability is not a substitute for the `out` or `init` initialization contract.
+
+Raw pointer region expressions name subregions without constructing a slice:
+
+```stark
+fn bool RangesDoNotOverlap(
+    rawptr<i32[min max]>[count] left,
+    rawptr<i32[min max]>[count] right,
+    i32[0 max] start,
+    i32[0 max] count) {
+    if disjoint(left[start, count], right[0, count]) {
+        return true;
+    }
+
+    return false;
+}
+```
+
+Inside the true branch, the listed raw pointer regions are known to be pairwise separate. The false branch receives no such fact.
+
+Unsafe raw slice construction converts a bounded raw pointer region into an ordinary slice view:
+
+```stark
+fn i32[min max] ReadFirst(rawptr<i32[min max]>[count] pointer, i32[0 max] count) {
+    unsafe {
+        stack i32[min max][] view = slice(pointer, count);
+        return view[0];
+    }
+
+    return 0;
+}
+```
+
+The resulting slice keeps the raw region's length, root, alignment, mutability, const, and disjoint facts. A readonly `rawptr<T>` produces a readonly slice view. A mutable slice view requires `rawmutptr<T>` provenance.
+
+Common bounded raw pointer diagnostics:
+
+```stark
+module Demo
+
+fn void NeedsData(rawptr<i32[min max]>[1] input) {
+    return;
+}
+
+fn void NullPositiveCount() {
+    NeedsData(null); // STK3029: positive bounded raw pointer regions cannot be null.
+}
+
+fn rawptr<i32[min max]> Identity(rawptr<i32[min max]> pointer) {
+    return pointer;
+}
+
+fn void HiddenRoot(rawptr<i32[min max]> pointer, i32[0 max] count) {
+    unsafe {
+        stack i32[min max][] view = slice(Identity(pointer), count); // STK3029: hidden raw pointer root.
+    }
+
+    return;
+}
+
+fn void StrengthenMutability(rawptr<i32[min max]>[count] pointer, i32[0 max] count) {
+    unsafe {
+        stack mut mut i32[min max][] view = slice(pointer, count); // STK3002: readonly raw provenance cannot create a mutable slice.
+    }
+
+    return;
+}
+
+fn void UnboundedIndependent(rawmutptr<i32[min max]> output, i32[0 max] count) {
+    for willexit independent (stack mut i32[0 max] index = 0; index < count; index += 1) {
+        *(&output[index]) = 0; // STK3027: independent raw pointer loops need a bounded raw pointer region.
+    }
+
+    return;
+}
+```
+
 ## Summary
 
 The Stark borrower system is organized around:
@@ -525,6 +634,7 @@ The Stark borrower system is organized around:
 * permanent const provenance
 * explicit initialization contracts
 * explicit disjoint memory-region contracts
+* explicit bounded raw pointer regions at unsafe and FFI boundaries
 * explicit effects
 * restricted destruction
 * explicit shared state capability

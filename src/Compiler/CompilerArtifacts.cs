@@ -189,7 +189,14 @@ public sealed record AsmFunctionModel(
     IReadOnlyList<AsmOutputOperandModel> Outputs,
     IReadOnlyList<string> Clobbers);
 
-public sealed record ParameterModel(string Name, string TypeText);
+public sealed record ParameterModel(
+    string Name,
+    string TypeText,
+    bool IsDisjoint = false,
+    bool IsConst = false,
+    string? RawPointerElementCountExpression = null);
+
+public sealed record ParameterDisjointGroup(IReadOnlyList<string> ParameterNames);
 
 public sealed record ImportDeclarationModel(
     string ModuleName,
@@ -210,10 +217,12 @@ public sealed record FunctionDeclarationModel(
     string? PublishedOverloadKey = null,
     bool IsStatic = false,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
 }
 
 public sealed record DestructorDeclarationModel(
@@ -608,7 +617,8 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? BodyStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
-    ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null)
+    ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
+    IReadOnlyList<string>? LoopContracts = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
         InitializerStatements ?? [];
@@ -627,6 +637,9 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
 
     public IReadOnlyList<ImportedTemplateTypedSwitchCaseSummary> SwitchCases =>
         SwitchCaseSummaries ?? [];
+
+    public IReadOnlyList<string> LoopContractNames =>
+        LoopContracts ?? [];
 }
 
 public sealed record ImportedTemplateTypedBodySummary(
@@ -1343,7 +1356,12 @@ public sealed record EnumLayoutSymbol(
     }
 }
 
-public sealed record TypedParameterSymbol(string Name, StarkTypeSymbol Type);
+public sealed record TypedParameterSymbol(
+    string Name,
+    StarkTypeSymbol Type,
+    bool IsDisjoint = false,
+    bool IsConst = false,
+    string? RawPointerElementCountExpression = null);
 
 public sealed record TypedConstructorShape(
     string TypeName,
@@ -1369,12 +1387,14 @@ public sealed record TypedFunctionSignature(
     StarkFunctionKind Kind = StarkFunctionKind.Fn,
     bool IsUnsafe = false,
     bool IsVarargs = false,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
     public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
+    public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
 }
 
 public enum GlobalBindingKind
@@ -1836,7 +1856,8 @@ public sealed record AbiParameterSymbol(
     string LlvmName,
     StarkTypeSymbol SourceType,
     StarkTypeSymbol LlvmType,
-    AbiParameterKind Kind);
+    AbiParameterKind Kind,
+    string? RawPointerElementCountExpression = null);
 
 public sealed record AbiFunctionSignature(
     string Name,
@@ -2336,7 +2357,8 @@ public sealed record MidLevelIrLocal(
     bool IsMutable,
     bool IsConstant,
     bool IsAddressable = false,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    bool HasConstProvenance = false);
 
 public abstract record MidLevelIrOperand(StarkTypeSymbol Type, string Text);
 
@@ -2456,6 +2478,13 @@ public sealed record MidLevelIrMakeSliceFromLocalRValue(
     string Text)
     : MidLevelIrRValue(Type, Text);
 
+public sealed record MidLevelIrMakeSliceFromPointerRValue(
+    MidLevelIrOperand Pointer,
+    MidLevelIrOperand Length,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
 public sealed record MidLevelIrLoadSliceElementRValue(
     MidLevelIrOperand Slice,
     MidLevelIrOperand Index,
@@ -2516,6 +2545,10 @@ public sealed record MidLevelIrLoadIndirectRValue(
     string Text)
     : MidLevelIrRValue(Type, Text);
 
+public sealed record ScopedNoAliasGroup(
+    string ScopeId,
+    IReadOnlyList<string> RootKeys);
+
 public sealed record MidLevelIrStatement(
     MidLevelIrStatementKind Kind,
     string Text,
@@ -2523,7 +2556,9 @@ public sealed record MidLevelIrStatement(
     StarkTypeSymbol? TargetType = null,
     MidLevelIrOperand? Address = null,
     MidLevelIrRValue? Value = null,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null);
 
 public sealed record MidLevelIrSwitchCase(
     string Label,
@@ -2541,7 +2576,9 @@ public sealed record MidLevelIrTerminator(
     IReadOnlyList<MidLevelIrSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
     SourceLocation? Location = null,
-    IReadOnlyList<int>? BranchWeights = null);
+    IReadOnlyList<int>? BranchWeights = null,
+    IReadOnlyList<string>? LoopContracts = null,
+    IReadOnlyList<string>? LoopAccessGroups = null);
 
 public sealed record MidLevelIrBasicBlock(
     int Id,
@@ -2730,6 +2767,13 @@ public sealed record SsaMakeSliceFromLocalRValue(
     string Text)
     : SsaRValue(Type, Text);
 
+public sealed record SsaMakeSliceFromPointerRValue(
+    SsaValue Pointer,
+    SsaValue Length,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
 public sealed record SsaLoadSliceElementRValue(
     SsaValue Slice,
     SsaValue Index,
@@ -2819,7 +2863,9 @@ public sealed record SsaPhi(
 public sealed record SsaValueInstruction(
     string ResultName,
     SsaRValue Value,
-    SourceLocation? Location = null)
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
     : SsaInstruction;
 
 public sealed record SsaAllocateLocalInstruction(
@@ -2827,7 +2873,8 @@ public sealed record SsaAllocateLocalInstruction(
     StarkTypeSymbol LocalType,
     string StorageClass = "stack",
     SourceLocation? Location = null,
-    bool IsImmutable = false)
+    bool IsImmutable = false,
+    bool HasConstProvenance = false)
     : SsaInstruction;
 
 public sealed record SsaLifetimeStartInstruction(
@@ -2860,7 +2907,9 @@ public sealed record SsaStoreIndirectInstruction(
     SsaValue Address,
     StarkTypeSymbol ValueType,
     SsaValue Value,
-    SourceLocation? Location = null)
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
     : SsaInstruction;
 
 public enum SsaMemoryTransferKind
@@ -2874,7 +2923,9 @@ public sealed record SsaCopyMemoryInstruction(
     SsaValue SourceAddress,
     StarkTypeSymbol CopyType,
     SsaMemoryTransferKind TransferKind = SsaMemoryTransferKind.Copy,
-    SourceLocation? Location = null)
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
     : SsaInstruction;
 
 public sealed record SsaStoreGlobalInstruction(
@@ -2901,7 +2952,9 @@ public sealed record SsaTerminator(
     IReadOnlyList<SsaSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
     SourceLocation? Location = null,
-    IReadOnlyList<int>? BranchWeights = null);
+    IReadOnlyList<int>? BranchWeights = null,
+    IReadOnlyList<string>? LoopContracts = null,
+    IReadOnlyList<string>? LoopAccessGroups = null);
 
 public sealed record SsaBasicBlock(
     int Id,

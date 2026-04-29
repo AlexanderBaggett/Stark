@@ -114,7 +114,8 @@ internal sealed class AbiLowerer
                 LlvmType: kind == AbiParameterKind.Direct
                     ? llvmType
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
-                Kind: kind));
+                Kind: kind,
+                RawPointerElementCountExpression: parameter.RawPointerElementCountExpression));
         }
 
         return new AbiFunctionSignature(

@@ -114,13 +114,18 @@ internal static partial class PackageImageBuilder
             Parameters = functionDeclaration.parameterList().parameter()
                 .Select(parameter => new StarkPackageParameterManifest(
                     parameter.Identifier().GetText(),
-                    GetContextSourceText(module.ParseResult, parameter.type_())))
+                    GetContextSourceText(module.ParseResult, parameter.type_()),
+                    ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                    ParameterHasPrefix(parameter, StarkParser.CONST)))
                 .ToArray(),
             GenericParameters = functionDeclaration.typeParameterList() is { } typeParameterList
                 ? typeParameterList.typeParameter()
                     .Select(static parameter => parameter.Identifier().GetText())
                     .ToArray()
-                : null
+                : null,
+            DisjointParameterGroups = BuildParameterDisjointGroupManifests(
+                functionDeclaration.parameterList(),
+                functionDeclaration.parameterMemoryContractClause())
         };
     }
 
@@ -165,7 +170,9 @@ internal static partial class PackageImageBuilder
                     PrimaryConstructorParameters = recordDeclaration.primaryConstructorParameters()?.parameterList().parameter()
                         .Select(parameter => new StarkPackageParameterManifest(
                             parameter.Identifier().GetText(),
-                            GetContextSourceText(module.ParseResult, parameter.type_())))
+                            GetContextSourceText(module.ParseResult, parameter.type_()),
+                            ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                            ParameterHasPrefix(parameter, StarkParser.CONST)))
                         .ToArray(),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
@@ -260,7 +267,9 @@ internal static partial class PackageImageBuilder
                 constructor.parameterList().parameter()
                     .Select(parameter => new StarkPackageParameterManifest(
                         parameter.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, parameter.type_())))
+                        GetContextSourceText(module.ParseResult, parameter.type_()),
+                        ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                        ParameterHasPrefix(parameter, StarkParser.CONST)))
                     .ToArray(),
                 GetContextSourceText(module.ParseResult, constructor.block())))
             .ToArray();
@@ -303,13 +312,18 @@ internal static partial class PackageImageBuilder
                 Parameters = method.parameterList().parameter()
                     .Select(parameter => new StarkPackageParameterManifest(
                         parameter.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, parameter.type_())))
+                        GetContextSourceText(module.ParseResult, parameter.type_()),
+                        ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                        ParameterHasPrefix(parameter, StarkParser.CONST)))
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
-                    : null
+                    : null,
+                DisjointParameterGroups = BuildParameterDisjointGroupManifests(
+                    method.parameterList(),
+                    method.parameterMemoryContractClause())
             });
         }
 
@@ -351,13 +365,18 @@ internal static partial class PackageImageBuilder
                 Parameters = method.parameterList().parameter()
                     .Select(parameter => new StarkPackageParameterManifest(
                         parameter.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, parameter.type_())))
+                        GetContextSourceText(module.ParseResult, parameter.type_()),
+                        ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                        ParameterHasPrefix(parameter, StarkParser.CONST)))
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
-                    : null
+                    : null,
+                DisjointParameterGroups = BuildParameterDisjointGroupManifests(
+                    method.parameterList(),
+                    method.parameterMemoryContractClause())
             });
         }
 
@@ -399,13 +418,18 @@ internal static partial class PackageImageBuilder
                 Parameters = method.parameterList().parameter()
                     .Select(parameter => new StarkPackageParameterManifest(
                         parameter.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, parameter.type_())))
+                        GetContextSourceText(module.ParseResult, parameter.type_()),
+                        ParameterHasPrefix(parameter, StarkParser.DISJOINT),
+                        ParameterHasPrefix(parameter, StarkParser.CONST)))
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
-                    : null
+                    : null,
+                DisjointParameterGroups = BuildParameterDisjointGroupManifests(
+                    method.parameterList(),
+                    method.parameterMemoryContractClause())
             });
         }
 

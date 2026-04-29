@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Numerics;
+
 namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed class LlvmFunctionAttributeBuilder
@@ -183,6 +186,8 @@ internal sealed class LlvmFunctionAttributeBuilder
             return attributes;
         }
 
+        AppendBoundedRawPointerRegionAttributes(attributes, parameter);
+
         if (parameter.SourceType.BorrowKind != StarkBorrowKind.None
             || parameter.SourceType.InitializationKind != StarkInitializationKind.None)
         {
@@ -190,7 +195,8 @@ internal sealed class LlvmFunctionAttributeBuilder
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
         }
 
-        if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+        if (parameter.SourceType.InitializationKind != StarkInitializationKind.None
+            || parameterEffects?.GuaranteedNoAlias == true)
         {
             attributes.Add("noalias");
         }
@@ -201,6 +207,33 @@ internal sealed class LlvmFunctionAttributeBuilder
         // Plain raw pointers remain nullable and may carry arbitrary raw/FFI
         // provenance, so do not infer nonnull or dereferenceable facts here.
         return attributes;
+    }
+
+    private void AppendBoundedRawPointerRegionAttributes(List<string> attributes, AbiParameterSymbol parameter)
+    {
+        if (parameter.Kind != AbiParameterKind.Direct
+            || parameter.SourceType.Kind != StarkTypeKind.RawPointer
+            || parameter.SourceType.ElementType is not { } elementType
+            || string.IsNullOrWhiteSpace(parameter.RawPointerElementCountExpression)
+            || !BigInteger.TryParse(parameter.RawPointerElementCountExpression, NumberStyles.None, CultureInfo.InvariantCulture, out var elementCount)
+            || elementCount <= BigInteger.Zero
+            || TryGetConcreteTypeLayout(elementType) is not { } elementLayout)
+        {
+            return;
+        }
+
+        var byteCount = elementCount * elementLayout.SizeBytes;
+        if (byteCount > long.MaxValue)
+        {
+            return;
+        }
+
+        attributes.Add("nonnull");
+        attributes.Add($"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})");
+        if (elementLayout.AlignmentBytes > 1)
+        {
+            attributes.Add($"align {elementLayout.AlignmentBytes}");
+        }
     }
 
     private void AppendDereferenceableAttributes(List<string> attributes, StarkTypeSymbol type)
@@ -261,7 +294,8 @@ internal sealed class LlvmFunctionAttributeBuilder
         if (parameterEffects is not null)
         {
             var reads = parameterEffects.Reads || ParameterContractReadsMustBePreserved(parameter);
-            var writes = parameterEffects.Writes || ParameterContractWritesMustBePreserved(parameter);
+            var writes = parameterEffects.Writes
+                || (!parameterEffects.GuaranteedReadOnly && ParameterContractWritesMustBePreserved(parameter));
 
             if (writes)
             {

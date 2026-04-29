@@ -175,6 +175,8 @@ with Stark-specific framing:
 19. FFI, Raw Pointers, and Native Packages
     - `ffi fn`
     - raw pointers and `null`
+    - bounded raw pointer region parameters
+    - unsafe raw slice construction
     - package-owned native sources
     - `pkg-config` and native fallback paths
     - C ABI boundaries
@@ -211,6 +213,11 @@ with Stark-specific framing:
 
 25. Stark's Performance Model
     - why restrictions are part of the design
+    - memory separation contracts and `if disjoint`
+    - raw pointer region expressions in `where disjoint` and `if disjoint`
+    - bounded raw pointer copy, fill, transform, and overlap-safe fallback paths
+    - const parameter provenance and deep immutability
+    - `independent` loop contracts for slices, arrays, and bounded raw pointer regions
     - no hidden allocation
     - static dispatch by default
     - no unwinding
