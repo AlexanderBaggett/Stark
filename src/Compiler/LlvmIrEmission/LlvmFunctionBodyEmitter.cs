@@ -62,6 +62,7 @@ internal sealed class LlvmFunctionBodyEmitter
         new Dictionary<int, RawPointerLoopIntrinsicPlan>();
     private HashSet<int> _embeddedOptimizedRawPointerLoopSkippedBlockIds = new();
     private HashSet<int> _embeddedOptimizedRawPointerLoopExitBlockIds = new();
+    private readonly Dictionary<int, string> _blockExitLabels = [];
     private SourceLocation? _currentDebugLocation;
     private SsaBasicBlock? _currentBlock;
     private int? _entryStaticAllocaInsertionIndex;
@@ -2148,7 +2149,7 @@ internal sealed class LlvmFunctionBodyEmitter
     {
         var incoming = string.Join(
             ", ",
-            phi.Incomings.Select(entry => $"[ {FormatValue(entry.Value)}, %{FormatBlockLabel(entry.PredecessorBlockId)} ]"));
+            phi.Incomings.Select(entry => $"[ {FormatValue(entry.Value)}, %{FormatPhiIncomingBlockLabel(entry.PredecessorBlockId)} ]"));
         AppendLine($"  %{EscapeIdentifier(phi.ResultName)} = phi{GetFastMathSuffix(phi.Type)} {MapType(phi.Type)} {incoming}");
     }
 
@@ -4641,22 +4642,12 @@ internal sealed class LlvmFunctionBodyEmitter
             || call.Type.Kind != StarkTypeKind.Bool
             || call.Arguments.Count != 2
             || call.Arguments[0].Type is not { Kind: StarkTypeKind.RawPointer, ElementType: not null } destinationPointerType
-            || call.Arguments[1] is not SsaStringConstant { Type.Kind: StarkTypeKind.Ascii } source
+            || !TryGetKnownAsciiLiteralPayload(call.Arguments[1], out var sourceBytes, out var sourceLiteralText)
             || !CanSplitCurrentBlockForCallSiteControlFlow())
         {
             return false;
         }
 
-        var literalKind = source.LiteralText.StartsWith("'", StringComparison.Ordinal)
-            ? TextLiteralKind.Character
-            : TextLiteralKind.String;
-        if (!TextLiteralDecoder.TryDecode(source.LiteralText, literalKind, out var decoded, out _)
-            || !decoded.IsAscii)
-        {
-            return false;
-        }
-
-        var sourceBytes = decoded.Utf8Bytes;
         var destinationStructType = destinationPointerType.ElementType;
         var destination = FormatValue(call.Arguments[0]);
         var destinationLlvmType = MapType(destinationStructType);
@@ -4704,11 +4695,21 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         AppendLine($"{storeLabel}:");
-        for (var index = 0; index < sourceBytes.Length; index++)
+        if (sourceLiteralText is not null
+            && sourceBytes.Length >= LlvmTextOptimizationConstants.AsciiToUnicodeLiteralMemcpyThresholdCodeUnits)
         {
-            var destinationUnit = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_unit"))}";
-            AppendLine($"  {destinationUnit} = getelementptr{GetProvenInObjectGepFlags()} i32, ptr {data}, i64 {index.ToString(CultureInfo.InvariantCulture)}");
-            AppendLine($"  store i32 {sourceBytes[index].ToString(CultureInfo.InvariantCulture)}, ptr {destinationUnit}{unitAlignment}");
+            var unicodeConstant = ResolveStringConstant(sourceLiteralText, StarkTypeSymbols.Unicode);
+            var copyByteLength = checked(sourceBytes.Length * 4);
+            AppendLine($"  call void @llvm.memcpy.p0.p0.i64(ptr align 4 {data}, ptr align {unicodeConstant.AlignmentBytes} @{unicodeConstant.SymbolName}, i64 {copyByteLength.ToString(CultureInfo.InvariantCulture)}, i1 false)");
+        }
+        else
+        {
+            for (var index = 0; index < sourceBytes.Length; index++)
+            {
+                var destinationUnit = $"%{EscapeIdentifier(CreateAbiTempName("ascii2unicode_unit"))}";
+                AppendLine($"  {destinationUnit} = getelementptr{GetProvenInObjectGepFlags()} i32, ptr {data}, i64 {index.ToString(CultureInfo.InvariantCulture)}");
+                AppendLine($"  store i32 {sourceBytes[index].ToString(CultureInfo.InvariantCulture)}, ptr {destinationUnit}{unitAlignment}");
+            }
         }
 
         AppendLine($"  store i64 {sourceBytes.Length.ToString(CultureInfo.InvariantCulture)}, ptr {lengthAddress}{lengthAlignment}");
@@ -4723,7 +4724,60 @@ internal sealed class LlvmFunctionBodyEmitter
 
         AppendLine($"{doneLabel}:");
         AppendLine($"  {result} = phi i1 [ true, %{storeLabel} ], [ false, %{failNonnullLabel} ], [ false, %{nullDestinationLabel} ]");
+        if (_currentBlock is not null)
+        {
+            _blockExitLabels[_currentBlock.Id] = doneLabel;
+        }
+
         return true;
+    }
+
+    private bool TryGetKnownAsciiLiteralPayload(
+        SsaValue value,
+        out byte[] sourceBytes,
+        out string? literalText)
+    {
+        sourceBytes = [];
+        literalText = null;
+
+        if (value is SsaStringConstant { Type.Kind: StarkTypeKind.Ascii } source)
+        {
+            if (!TextLiteralDecoder.TryDecode(
+                    source.LiteralText,
+                    source.LiteralText.StartsWith("'", StringComparison.Ordinal)
+                        ? TextLiteralKind.Character
+                        : TextLiteralKind.String,
+                    out var decoded,
+                    out _)
+                || !decoded.IsAscii)
+            {
+                return false;
+            }
+
+            sourceBytes = decoded.Utf8Bytes;
+            literalText = source.LiteralText;
+            return true;
+        }
+
+        if (value is SsaValueReference reference
+            && _valueFacts.TryGetValue(reference.Name, out var facts)
+            && facts.Type.Kind == StarkTypeKind.Ascii
+            && facts.TextLiteralPayloadKind == SsaFactLatticeKind.Known
+            && facts.TextLiteralPayload is { IsAsciiOnly: true } payload)
+        {
+            try
+            {
+                sourceBytes = Convert.FromHexString(payload.Utf8PayloadHex);
+                return sourceBytes.Length == payload.Utf8Length;
+            }
+            catch (FormatException)
+            {
+                sourceBytes = [];
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private bool CanSplitCurrentBlockForCallSiteControlFlow()
@@ -4734,10 +4788,16 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         // Splitting the emitted LLVM block changes the predecessor label seen by successors.
-        // Keep this narrow until phi incoming labels can be rewritten for split blocks.
+        // Forward successors can read the recorded exit label when their phis are emitted.
+        // Backedges target already-emitted phis, so keep those on the ordinary call path
+        // until the rewrite moves to SSA blocks.
         foreach (var targetId in EnumerateTerminatorTargets(_currentBlock.Terminator))
         {
-            if (_blocksById.TryGetValue(targetId, out var targetBlock) && targetBlock.Phis.Count != 0)
+            if (_blocksById.TryGetValue(targetId, out var targetBlock)
+                && targetBlock.Phis.Count != 0
+                && (!_blockOrderById.TryGetValue(targetId, out var targetOrder)
+                    || !_blockOrderById.TryGetValue(_currentBlock.Id, out var currentOrder)
+                    || targetOrder <= currentOrder))
             {
                 return false;
             }
@@ -6660,6 +6720,13 @@ internal sealed class LlvmFunctionBodyEmitter
     }
 
     private static string FormatBlockLabel(int blockId) => $"bb{blockId}";
+
+    private string FormatPhiIncomingBlockLabel(int blockId)
+    {
+        return _blockExitLabels.TryGetValue(blockId, out var label)
+            ? label
+            : FormatBlockLabel(blockId);
+    }
 
     private string FormatValue(SsaValue value)
     {

@@ -298,8 +298,8 @@ internal static class NativeToolchain
             }
 
             AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
-            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, optimizationLevel);
             AppendCompileLtoArguments(startInfo.ArgumentList, compileOnly && enableLto);
+            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, optimizationLevel, compileOnly && enableLto);
             AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
@@ -598,9 +598,10 @@ internal static class NativeToolchain
 
     private static void AppendStarkLlvmIrCompileStabilityArguments(
         ICollection<string> arguments,
-        CompilerOptimizationLevel optimizationLevel)
+        CompilerOptimizationLevel optimizationLevel,
+        bool enableLto)
     {
-        if (optimizationLevel == CompilerOptimizationLevel.O0)
+        if (optimizationLevel == CompilerOptimizationLevel.O0 || enableLto)
         {
             return;
         }
@@ -608,6 +609,9 @@ internal static class NativeToolchain
         // Stark runs its own high-level optimization pipeline before LLVM emission.
         // Let clang lower the IR to native code, but avoid known pathological LLVM
         // optimizer behavior on generated stdlib modules such as System.FileSystem.
+        // ThinLTO bitcode is the exception: the link-time optimizer expects
+        // ordinary optimized module summaries, and disabling compile-time LLVM
+        // passes there can produce incorrect cross-module optimization.
         arguments.Add("-Xclang");
         arguments.Add("-disable-llvm-passes");
     }

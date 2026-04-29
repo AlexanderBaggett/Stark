@@ -1,5 +1,4 @@
 import System.Memory
-[Backend(Opaque)]
 module System.Collections
 
 public trait Equatable<T> {
@@ -87,6 +86,7 @@ internal fn System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
     return ComputeContiguousGrowthCapacity(length, currentCapacity, targetAdditional, 8, nextCapacity);
 }
 
+[Backend(Opaque)]
 public struct Dictionary<K, V> {
     internal rawmutptr<K> Keys;
     internal rawmutptr<V> Values;
@@ -497,6 +497,25 @@ internal struct LinkedListNode<T> {
     rawmutptr<LinkedListNode<T>> Next;
     rawmutptr<LinkedListNode<T>> Previous;
     T Value;
+}
+
+internal fn void FreeReservedLinkedListNodes<T>(
+    System.Memory.Allocator allocator,
+    rawmutptr<LinkedListNode<T>> head) {
+    stack mut rawmutptr<LinkedListNode<T>> current = head;
+    while willexit (current != null) {
+        stack rawmutptr<LinkedListNode<T>> next = (*current).Next;
+        System.Memory.Free(new System.Memory.Allocation() {
+            Pointer = (rawmutptr<i8[-128 127]>)current,
+            ByteLength = sizeof(LinkedListNode<T>),
+            Alignment = alignof(LinkedListNode<T>),
+            Allocator = allocator
+        });
+
+        current = next;
+    }
+
+    return;
 }
 
 public struct List<T> {
@@ -918,6 +937,34 @@ public struct LinkedList<T> {
 
     finite law bool IsEmpty(borrow LinkedList<T> self) {
         return self.Length == 0;
+    }
+
+    fn System.Memory.MemoryStatus ReserveNodes(mut borrow LinkedList<T> self, i64[0 max] count) {
+        if (count == 0) {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack i64[0 max] nodeByteLength = sizeof(LinkedListNode<T>);
+        if (nodeByteLength == 0) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack mut rawmutptr<LinkedListNode<T>> reserved = null;
+        for willexit (stack mut i64[0 max] i = 0; i < count; i += 1) {
+            stack System.Memory.Allocation nodeAllocation = System.Memory.Allocate(self.Allocator, nodeByteLength, alignof(LinkedListNode<T>));
+            if (nodeAllocation.Pointer == null) {
+                FreeReservedLinkedListNodes(self.Allocator, reserved);
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            }
+
+            stack rawmutptr<LinkedListNode<T>> node = (rawmutptr<LinkedListNode<T>>)nodeAllocation.Pointer;
+            (*node).Next = reserved;
+            (*node).Previous = null;
+            reserved = node;
+        }
+
+        FreeReservedLinkedListNodes(self.Allocator, reserved);
+        return System.Memory.MemoryStatus.Ok;
     }
 
     fn System.Memory.MemoryStatus AddFirst(mut borrow LinkedList<T> self, T value) {

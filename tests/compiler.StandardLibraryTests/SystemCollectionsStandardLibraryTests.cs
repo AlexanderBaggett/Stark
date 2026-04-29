@@ -190,6 +190,9 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                     }
 
                     stack mut LinkedList<i32[0 max]> linked = new();
+                    if (!Ok(linked.ReserveNodes(2)) || linked.Count() != 0) {
+                        return false;
+                    }
                     if (!Ok(linked.AddFirst(40))) {
                         return false;
                     }

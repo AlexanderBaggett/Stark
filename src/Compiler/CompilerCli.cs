@@ -3,6 +3,14 @@ using System.Text.Json;
 
 namespace Stark.Compiler;
 
+internal sealed record ModuleOptimizationSafetyFacts(
+    string ModuleName,
+    bool CanEmitThinLtoBitcode,
+    bool CanRunNormalLlvmPasses,
+    bool ContainsKnownFragileConstructs,
+    bool ExposesHotInlineCandidates,
+    string DecisionReason);
+
 internal static class CompilerCli
 {
     private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
@@ -517,10 +525,10 @@ internal static class CompilerCli
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
-        var enableExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel, toolchainOptions.LinkerTool)
-            && ShouldEnableRootModuleLto(result)
-            && !UsesPrecompiledStarkLibraries(result)
-            && !LlvmTextReferencesSystemCollections(llvmModule.Text);
+        var canUseExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel, toolchainOptions.LinkerTool);
+        var enableRootModuleLto = canUseExecutableLto
+                                  && ShouldEnableRootModuleLto(result);
+        var enableDependencyLto = canUseExecutableLto;
         var toolchainMetrics = new ToolchainMetrics();
 
         try
@@ -533,7 +541,7 @@ internal static class CompilerCli
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
                 optimizationLevel: compilerOptions.OptimizationLevel,
-                enableLto: enableExecutableLto);
+                enableLto: enableRootModuleLto);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
@@ -576,7 +584,7 @@ internal static class CompilerCli
                     intermediateDirectory,
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
                     toolchainMetrics: toolchainMetrics,
-                    enableLto: enableExecutableLto);
+                    enableLto: enableDependencyLto);
                 if (!sourceDependencyResult.Success)
                 {
                     await WriteDiagnosticsAsync(stderr, sourceDependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -636,7 +644,7 @@ internal static class CompilerCli
                 linkArguments,
                 compilerOptions.TargetInfo,
                 compilerOptions.OptimizationLevel,
-                enableExecutableLto);
+                enableRootModuleLto || enableDependencyLto);
             toolchainMetrics.AddLink(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
@@ -695,6 +703,10 @@ internal static class CompilerCli
         var resolvedOutputPath = outputPath ?? DeriveLibraryOutputPath(inputPath, result);
         var objectPaths = new List<string>();
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-lib-", out var cleanupDirectory);
+        var canUseLibraryLto = ShouldEnableLibraryLto(compilerOptions.OptimizationLevel);
+        var enableRootModuleLto = canUseLibraryLto
+                                  && ShouldEnableRootModuleLto(result);
+        var enableDependencyLto = canUseLibraryLto;
         var toolchainMetrics = new ToolchainMetrics();
 
         try
@@ -706,7 +718,8 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                optimizationLevel: compilerOptions.OptimizationLevel);
+                optimizationLevel: compilerOptions.OptimizationLevel,
+                enableLto: enableRootModuleLto);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
@@ -726,7 +739,11 @@ internal static class CompilerCli
                         compilerOptions,
                         intermediateDirectory,
                         preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
-                        toolchainMetrics: toolchainMetrics);
+                        toolchainMetrics: toolchainMetrics,
+                        enableLto: AddOptimizationDecision(
+                            toolchainMetrics,
+                            "library_dependency",
+                            AnalyzeModuleOptimizationSafety(module, enableDependencyLto)).CanEmitThinLtoBitcode);
                     if (!dependencyResult.Success)
                     {
                         await WriteDiagnosticsAsync(stderr, dependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -1834,7 +1851,8 @@ internal static class CompilerCli
         CompilerOptions rootOptions,
         string intermediateDirectory,
         bool preserveTemps,
-        ToolchainMetrics? toolchainMetrics = null)
+        ToolchainMetrics? toolchainMetrics = null,
+        bool enableLto = false)
     {
         var dependencyResult = CompileDependencyLlvm(module, rootOptions);
         if (!dependencyResult.Success)
@@ -1850,7 +1868,7 @@ internal static class CompilerCli
                 RequiresWindowsSynchronizationLibrary: false);
         }
 
-        var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps);
+        var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
         toolchainMetrics?.AddLlvmObject(toolchainResult);
         return toolchainResult.Succeeded
             ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary)
@@ -1922,9 +1940,10 @@ internal static class CompilerCli
                     rootOptions,
                     intermediateDirectory,
                     preserveTemps,
-                    enableLto
-                        && ShouldEnableDependencyLto(dependencyResult.Module)
-                        && !LlvmTextReferencesSystemCollections(dependencyResult.LlvmText));
+                    AddOptimizationDecision(
+                        toolchainMetrics,
+                        "source_dependency",
+                        AnalyzeModuleOptimizationSafety(dependencyResult.Module, enableLto)).CanEmitThinLtoBitcode);
                 toolchainMetrics?.AddLlvmObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
@@ -2077,17 +2096,52 @@ internal static class CompilerCli
         return NativeToolchain.SupportsExecutableThinLto();
     }
 
-    internal static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
+    private static bool ShouldEnableLibraryLto(CompilerOptimizationLevel optimizationLevel)
     {
-        if (IsBackendOpaque(module))
+        if (optimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og or CompilerOptimizationLevel.O1)
         {
             return false;
         }
 
-        // System.Memory stays native for now: owned text allocation can
-        // miscompile when root code, System.Text, and System.Memory all
-        // participate in the same ThinLTO link.
-        return !string.Equals(module.SyntaxModel.ModuleName, "System.Memory", StringComparison.Ordinal);
+        return NativeToolchain.SupportsExecutableThinLto();
+    }
+
+    internal static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
+    {
+        return AnalyzeModuleOptimizationSafety(module, toolchainCanUseThinLto: true).CanEmitThinLtoBitcode;
+    }
+
+    internal static ModuleOptimizationSafetyFacts AnalyzeModuleOptimizationSafety(
+        LoadedModuleDocument module,
+        bool toolchainCanUseThinLto)
+    {
+        var isBackendOpaque = IsBackendOpaque(module);
+        var exposesHotInlineCandidates = ModuleExposesHotInlineCandidates(module);
+        var canEmitThinLtoBitcode = toolchainCanUseThinLto && !isBackendOpaque;
+        var reason = canEmitThinLtoBitcode
+            ? exposesHotInlineCandidates
+                ? "thinlto-enabled-hot-inline-candidates"
+                : "thinlto-enabled"
+            : !toolchainCanUseThinLto
+                ? "thinlto-unavailable"
+                : "backend-opaque";
+
+        return new ModuleOptimizationSafetyFacts(
+            module.SyntaxModel.ModuleName,
+            CanEmitThinLtoBitcode: canEmitThinLtoBitcode,
+            CanRunNormalLlvmPasses: canEmitThinLtoBitcode,
+            ContainsKnownFragileConstructs: isBackendOpaque,
+            ExposesHotInlineCandidates: exposesHotInlineCandidates,
+            reason);
+    }
+
+    private static ModuleOptimizationSafetyFacts AddOptimizationDecision(
+        ToolchainMetrics? toolchainMetrics,
+        string scope,
+        ModuleOptimizationSafetyFacts facts)
+    {
+        toolchainMetrics?.AddOptimizationDecision(scope, facts);
+        return facts;
     }
 
     internal static bool ShouldEnableRootModuleLto(CompilationResult result)
@@ -2102,37 +2156,21 @@ internal static class CompilerCli
             || module.PackageImageFacts?.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque;
     }
 
-    private static bool LlvmTextReferencesSystemCollections(string? llvmText)
+    private static bool ModuleExposesHotInlineCandidates(LoadedModuleDocument module)
     {
-        if (string.IsNullOrWhiteSpace(llvmText))
+        if (module.PackageImageFacts is not null)
         {
-            return false;
+            return module.PackageImageFacts.FunctionEffects.Values.Any(static function =>
+                function.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+                && (function.IsHot || function.InlinePreference == InlinePreference.Inline));
         }
 
-        foreach (var rawLine in llvmText.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
-        {
-            var line = rawLine.TrimStart();
-            if (line.StartsWith("declare ", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (line.Contains("@System_Collections", StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool UsesPrecompiledStarkLibraries(CompilationResult result)
-    {
-        return result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
-            && loadedModules is not null
-            && loadedModules.ImportedModules.Any(static module =>
-                !module.Reference.IsExternal
-                && !string.IsNullOrWhiteSpace(module.Reference.LibraryPath));
+        return module.SyntaxModel.Declarations.Any(static declaration =>
+            declaration.Function is { HasBody: true } function
+            && function.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+            && (function.Modifiers.IsHot
+                || function.Modifiers.InlinePreference == InlinePreference.Inline
+                || FunctionKindFacts.IsLaw(function.Kind)));
     }
 
     private static LlvmSymbolSummary SummarizeLlvmSymbols(string llvmText)
@@ -2954,6 +2992,8 @@ internal static class CompilerCli
 
     private sealed class ToolchainMetrics
     {
+        private readonly List<string> optimizationDecisions = [];
+
         public long LlvmObjectMicroseconds { get; private set; }
 
         public int LlvmObjectCount { get; private set; }
@@ -2994,6 +3034,22 @@ internal static class CompilerCli
             ArchiveCount++;
         }
 
+        public void AddOptimizationDecision(string scope, ModuleOptimizationSafetyFacts facts)
+        {
+            optimizationDecisions.Add(
+                string.Join(
+                    ',',
+                    [
+                        $"scope={scope}",
+                        $"module={facts.ModuleName}",
+                        $"thinlto={FormatBool(facts.CanEmitThinLtoBitcode)}",
+                        $"llvm_passes={FormatBool(facts.CanRunNormalLlvmPasses)}",
+                        $"fragile={FormatBool(facts.ContainsKnownFragileConstructs)}",
+                        $"hot_inline={FormatBool(facts.ExposesHotInlineCandidates)}",
+                        $"reason={facts.DecisionReason}"
+                    ]));
+        }
+
         public async Task WriteAsync(string? path)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -3017,10 +3073,14 @@ internal static class CompilerCli
                         $"link_count={LinkCount}",
                         $"archive_us={ArchiveMicroseconds}",
                         $"archive_count={ArchiveCount}",
+                        $"optimization_decision_count={optimizationDecisions.Count}",
+                        .. optimizationDecisions.Select((decision, index) => $"optimization_decision_{index}={decision}"),
                         $"toolchain_us={LlvmObjectMicroseconds + NativeObjectMicroseconds + LinkMicroseconds + ArchiveMicroseconds}"
                     ])
                 + Environment.NewLine);
         }
+
+        private static string FormatBool(bool value) => value ? "true" : "false";
 
         private static long ToMicroseconds(TimeSpan duration)
         {

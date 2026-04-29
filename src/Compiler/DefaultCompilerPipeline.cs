@@ -1,3 +1,4 @@
+using System.Globalization;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -3691,6 +3692,102 @@ public static class DefaultCompilerPipeline
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var facts = new SsaValueFactAnalyzer().Analyze(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, facts);
+            context.Logs.Info(
+                category: "optimization",
+                eventId: "ssa.value-facts.summary",
+                message: "Analyzed SSA value facts.",
+                stage: Id,
+                operation: "analyze",
+                data: CreateValueFactsLogData(facts),
+                kind: CompilerLogKind.Decision,
+                outcome: CompilerLogOutcome.Continued,
+                verbosity: CompilerLogVerbosity.Verbose);
+        }
+
+        private static IReadOnlyDictionary<string, string> CreateValueFactsLogData(SsaValueFactModel facts)
+        {
+            var valueCount = 0;
+            var integerRangeCount = 0;
+            var knownBitsCount = 0;
+            var booleanCount = 0;
+            var nullabilityCount = 0;
+            var pointerAlignmentCount = 0;
+            var lengthCount = 0;
+            var textLiteralPayloadCount = 0;
+            var blockEntryBlockCount = 0;
+            var blockEntryFactCount = 0;
+            var blockExitBlockCount = 0;
+            var blockExitFactCount = 0;
+
+            foreach (var function in facts.Functions.Values)
+            {
+                valueCount += function.Values.Count;
+                foreach (var valueFacts in function.Values.Values)
+                {
+                    if (valueFacts.IntegerRangeKind != SsaFactLatticeKind.Unknown)
+                    {
+                        integerRangeCount++;
+                    }
+
+                    if (valueFacts.KnownBitsKind != SsaFactLatticeKind.Unknown)
+                    {
+                        knownBitsCount++;
+                    }
+
+                    if (valueFacts.BooleanKind != SsaFactLatticeKind.Unknown)
+                    {
+                        booleanCount++;
+                    }
+
+                    if (valueFacts.Nullability != SsaNullabilityFactKind.Unknown)
+                    {
+                        nullabilityCount++;
+                    }
+
+                    if (valueFacts.PointerAlignmentKind != SsaFactLatticeKind.Unknown)
+                    {
+                        pointerAlignmentCount++;
+                    }
+
+                    if (valueFacts.LengthKind != SsaFactLatticeKind.Unknown)
+                    {
+                        lengthCount++;
+                    }
+
+                    if (valueFacts.TextLiteralPayloadKind != SsaFactLatticeKind.Unknown)
+                    {
+                        textLiteralPayloadCount++;
+                    }
+                }
+
+                if (function.BlockEntryValueFacts is { } blockEntryFacts)
+                {
+                    blockEntryBlockCount += blockEntryFacts.Count;
+                    blockEntryFactCount += blockEntryFacts.Values.Sum(static blockFacts => blockFacts.Count);
+                }
+
+                if (function.BlockExitValueFacts is { } blockExitFacts)
+                {
+                    blockExitBlockCount += blockExitFacts.Count;
+                    blockExitFactCount += blockExitFacts.Values.Sum(static blockFacts => blockFacts.Count);
+                }
+            }
+
+            return CompilerLogData.Create(
+                ("module", facts.ModuleName),
+                ("functions", facts.Functions.Count.ToString(CultureInfo.InvariantCulture)),
+                ("values", valueCount.ToString(CultureInfo.InvariantCulture)),
+                ("integerRanges", integerRangeCount.ToString(CultureInfo.InvariantCulture)),
+                ("knownBits", knownBitsCount.ToString(CultureInfo.InvariantCulture)),
+                ("booleans", booleanCount.ToString(CultureInfo.InvariantCulture)),
+                ("nullability", nullabilityCount.ToString(CultureInfo.InvariantCulture)),
+                ("pointerAlignments", pointerAlignmentCount.ToString(CultureInfo.InvariantCulture)),
+                ("lengths", lengthCount.ToString(CultureInfo.InvariantCulture)),
+                ("textLiteralPayloads", textLiteralPayloadCount.ToString(CultureInfo.InvariantCulture)),
+                ("blockEntryBlocks", blockEntryBlockCount.ToString(CultureInfo.InvariantCulture)),
+                ("blockEntryFacts", blockEntryFactCount.ToString(CultureInfo.InvariantCulture)),
+                ("blockExitBlocks", blockExitBlockCount.ToString(CultureInfo.InvariantCulture)),
+                ("blockExitFacts", blockExitFactCount.ToString(CultureInfo.InvariantCulture)));
         }
     }
 

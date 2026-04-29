@@ -1140,8 +1140,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                     stack i32[-2147483648 2147483647] index = 1;
                     holder.Cells[index].Value += 4;
 
-                    stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
-                    stack mut i32[-2147483648 2147483647][] view = values;
+                    stack mut mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+                    stack mut mut i32[-2147483648 2147483647][] view = values;
                     view[0] = holder.Cells[index].Value;
 
                     return holder.Cells[index].Value + view[0];

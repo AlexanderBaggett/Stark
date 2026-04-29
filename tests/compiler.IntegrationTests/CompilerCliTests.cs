@@ -1417,7 +1417,7 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task EmitExecutableModeKeepsSystemMemoryDependencyOutOfThinLto()
+    public async Task EmitExecutableModeAllowsSystemMemoryDependencyThinLto()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -1430,6 +1430,7 @@ public sealed class CompilerCliTests
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
         var saveTempsPath = Path.Combine(tempDirectory.FullName, "temps");
         var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        var metricsPath = Path.Combine(tempDirectory.FullName, "toolchain.metrics");
         _ = await CreateUnixAppendCaptureClangAsync(tempDirectory.FullName, clangLogPath);
         var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
         await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
@@ -1461,6 +1462,103 @@ public sealed class CompilerCliTests
                     "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
+                    "--save-temps", saveTempsPath,
+                    "--toolchain-metrics", metricsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("root.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("System_Text.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+
+            var metrics = await File.ReadAllTextAsync(metricsPath);
+            Assert.Contains("optimization_decision_count=", metrics, StringComparison.Ordinal);
+            Assert.Contains("module=System.Memory", metrics, StringComparison.Ordinal);
+            Assert.Contains("thinlto=true", metrics, StringComparison.Ordinal);
+            Assert.Contains("reason=thinlto-enabled", metrics, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeAllowsSystemCollectionsDependencyThinLto()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-system-collections-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var saveTempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixAppendCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
+        await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
+        System.Diagnostics.Process.Start("chmod", $"+x {lldPath}")!.WaitForExit();
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import System
+                import System.Collections
+                module App
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut List<i32[0 max]> values = new();
+                    values.Push(1);
+                    return (i32[-2147483648 2147483647])values.Count();
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-O3",
+                    "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
                     "--save-temps", saveTempsPath
                 ],
                 new StringReader(string.Empty),
@@ -1476,15 +1574,128 @@ public sealed class CompilerCliTests
             Assert.Contains(
                 clangLogLines,
                 static line => line.Contains("root.ll", StringComparison.Ordinal)
-                    && line.Contains("-flto=thin", StringComparison.Ordinal));
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
             Assert.Contains(
                 clangLogLines,
-                static line => line.Contains("System_Text.ll", StringComparison.Ordinal)
-                    && line.Contains("-flto=thin", StringComparison.Ordinal));
+                static line => line.Contains("System_Collections.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
             Assert.Contains(
                 clangLogLines,
                 static line => line.Contains("System_Memory.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeReportsMixedThinLtoDependencyPolicy()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-mixed-policy-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var saveTempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        var metricsPath = Path.Combine(tempDirectory.FullName, "toolchain.metrics");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixAppendCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
+        await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
+        System.Diagnostics.Process.Start("chmod", $"+x {lldPath}")!.WaitForExit();
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Opaque.stark"),
+                """
+                [Backend(Opaque)]
+                module Opaque
+
+                public fn i32[-2147483648 2147483647] Value() {
+                    return 1;
+                }
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Inlineable.stark"),
+                """
+                module Inlineable
+
+                public finite law i32[-2147483648 2147483647] Value() {
+                    return 2;
+                }
+                """);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import Opaque
+                import Inlineable
+                module App
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    return Opaque.Value() + Inlineable.Value();
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-O3",
+                    "-I", tempDirectory.FullName,
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
+                    "--save-temps", saveTempsPath,
+                    "--toolchain-metrics", metricsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("root.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal));
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("Inlineable.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal));
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("Opaque.ll", StringComparison.Ordinal)
                     && !line.Contains("-flto=thin", StringComparison.Ordinal));
+
+            var metrics = await File.ReadAllTextAsync(metricsPath);
+            Assert.Contains("module=Inlineable,thinlto=true", metrics, StringComparison.Ordinal);
+            Assert.Contains("reason=thinlto-enabled-hot-inline-candidates", metrics, StringComparison.Ordinal);
+            Assert.Contains("module=Opaque,thinlto=false", metrics, StringComparison.Ordinal);
+            Assert.Contains("reason=backend-opaque", metrics, StringComparison.Ordinal);
         }
         finally
         {
@@ -1520,6 +1731,7 @@ public sealed class CompilerCliTests
         var appPath = Path.Combine(appDirectory, "App.stark");
         var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
         var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
+        var buildTempsPath = Path.Combine(packageDirectory, "temps");
 
         try
         {
@@ -1547,13 +1759,19 @@ public sealed class CompilerCliTests
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [facadePath, "--emit-lib", "-o", libraryPath],
+                [facadePath, "--emit-lib", "-O3", "-o", libraryPath, "--save-temps", buildTempsPath],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
 
             Assert.Equal(0, buildExitCode);
             Assert.Equal(string.Empty, buildStderr.ToString());
+            if (NativeToolchain.SupportsExecutableThinLto())
+            {
+                var objectExtension = OperatingSystem.IsWindows() ? ".obj" : ".o";
+                Assert.True(await IsLlvmBitcodeFileAsync(Path.Combine(buildTempsPath, $"root{objectExtension}")));
+                Assert.True(await IsLlvmBitcodeFileAsync(Path.Combine(buildTempsPath, $"Math{objectExtension}")));
+            }
 
             File.Delete(facadePath);
             File.Delete(mathPath);
@@ -1573,7 +1791,7 @@ public sealed class CompilerCliTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                [appPath, "--emit-exe", "-O3", "-I", packageDirectory, "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -2329,6 +2547,21 @@ public sealed class CompilerCliTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root.");
+    }
+
+    private static async Task<bool> IsLlvmBitcodeFileAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        var bytes = await File.ReadAllBytesAsync(path);
+        return bytes.Length >= 4
+            && bytes[0] == (byte)'B'
+            && bytes[1] == (byte)'C'
+            && bytes[2] == 0xC0
+            && bytes[3] == 0xDE;
     }
 
     private static string? FindFirstAvailableTool(params string[] toolNames)

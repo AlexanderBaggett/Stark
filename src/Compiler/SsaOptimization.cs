@@ -17,13 +17,18 @@ internal sealed class SsaCleanupOptimizer
     {
         var optimized = new SsaIrModule(
             module.ModuleName,
-            module.Functions.Select(OptimizeFunction).ToArray(),
+            module.Functions.Select(function => OptimizeFunction(function, module.ModuleName)).ToArray(),
             module.AddressTakenFunctions);
 
         return SsaAddressTakenFunctionPruner.Prune(optimized);
     }
 
     public SsaFunction OptimizeFunction(SsaFunction function)
+    {
+        return OptimizeFunction(function, moduleName: string.Empty);
+    }
+
+    private SsaFunction OptimizeFunction(SsaFunction function, string moduleName)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {
@@ -3435,6 +3440,18 @@ internal sealed class SsaAliasAwareMemoryOptimizer
 
                 case SsaValueInstruction
                 {
+                    Value: SsaElementAddressRValue elementAddress
+                } valueInstruction:
+                    if (TryCreateElementMemoryKey(elementAddress, definitions, out var createdElementKey))
+                    {
+                        fieldAddressKeys[valueInstruction.ResultName] = createdElementKey;
+                    }
+
+                    instructions.Add(rewritten);
+                    continue;
+
+                case SsaValueInstruction
+                {
                     Value: SsaLoadLocalRValue loadLocal
                 }:
                     pendingStoreInstructionIndexes.Remove(loadLocal.LocalName);
@@ -4093,9 +4110,17 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                     return true;
                 }
 
-                return definitions.TryGetValue(reference.Name, out var definition)
-                       && definition is SsaFieldAddressRValue fieldAddress
-                       && TryCreateFieldMemoryKey(fieldAddress, definitions, out key);
+                if (!definitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return false;
+                }
+
+                return definition switch
+                {
+                    SsaFieldAddressRValue fieldAddress => TryCreateFieldMemoryKey(fieldAddress, definitions, out key),
+                    SsaElementAddressRValue elementAddress => TryCreateElementMemoryKey(elementAddress, definitions, out key),
+                    _ => false
+                };
 
             default:
                 return false;
@@ -4127,6 +4152,33 @@ internal sealed class SsaAliasAwareMemoryOptimizer
         return true;
     }
 
+    private static bool TryCreateElementMemoryKey(
+        SsaElementAddressRValue elementAddress,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out FieldMemoryKey key)
+    {
+        key = default!;
+        if (elementAddress.AggregateType.Kind != StarkTypeKind.FixedArray
+            || elementAddress.ConstantIndex is not int constantIndex
+            || elementAddress.Type.ElementType is not { } elementType
+            || !IsForwardableScalarMemoryType(elementType)
+            || !TryResolveFieldAddressRoot(
+                elementAddress.Address,
+                definitions,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var localName,
+                out var parentFieldPath))
+        {
+            return false;
+        }
+
+        key = new FieldMemoryKey(
+            localName,
+            AppendElementPath(parentFieldPath, constantIndex),
+            elementType);
+        return true;
+    }
+
     private static bool TryResolveFieldAddressRoot(
         SsaValue address,
         IReadOnlyDictionary<string, SsaRValue> definitions,
@@ -4150,6 +4202,12 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                         out fieldPath),
                     SsaFieldAddressRValue parentFieldAddress => TryResolveParentFieldAddressRoot(
                         parentFieldAddress,
+                        definitions,
+                        visitedValueNames,
+                        out localName,
+                        out fieldPath),
+                    SsaElementAddressRValue parentElementAddress => TryResolveParentElementAddressRoot(
+                        parentElementAddress,
                         definitions,
                         visitedValueNames,
                         out localName,
@@ -4196,11 +4254,46 @@ internal sealed class SsaAliasAwareMemoryOptimizer
         return true;
     }
 
+    private static bool TryResolveParentElementAddressRoot(
+        SsaElementAddressRValue elementAddress,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visitedValueNames,
+        out string localName,
+        out string fieldPath)
+    {
+        if (elementAddress.AggregateType.Kind != StarkTypeKind.FixedArray
+            || elementAddress.ConstantIndex is not int constantIndex
+            || !TryResolveFieldAddressRoot(
+                elementAddress.Address,
+                definitions,
+                visitedValueNames,
+                out localName,
+                out var parentFieldPath))
+        {
+            localName = string.Empty;
+            fieldPath = string.Empty;
+            return false;
+        }
+
+        fieldPath = AppendElementPath(parentFieldPath, constantIndex);
+        return true;
+    }
+
     private static string AppendFieldPath(string parentFieldPath, int fieldIndex, string fieldName)
     {
         var segment = string.Create(
             CultureInfo.InvariantCulture,
             $"{fieldIndex}:{fieldName}");
+        return string.IsNullOrEmpty(parentFieldPath)
+            ? segment
+            : string.Concat(parentFieldPath, "/", segment);
+    }
+
+    private static string AppendElementPath(string parentFieldPath, int constantIndex)
+    {
+        var segment = string.Create(
+            CultureInfo.InvariantCulture,
+            $"element:{constantIndex}");
         return string.IsNullOrEmpty(parentFieldPath)
             ? segment
             : string.Concat(parentFieldPath, "/", segment);
@@ -4570,6 +4663,7 @@ internal sealed class SsaValueFactAnalyzer
     private static SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function)
     {
         var values = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
+        var reachableBlockIds = FindReachableBlockIds(function);
 
         foreach (var parameter in function.Parameters)
         {
@@ -4578,6 +4672,11 @@ internal sealed class SsaValueFactAnalyzer
 
         foreach (var block in function.Blocks)
         {
+            if (!reachableBlockIds.Contains(block.Id))
+            {
+                continue;
+            }
+
             foreach (var phi in block.Phis)
             {
                 values[phi.ResultName] = CreateTypeFacts(phi.ResultName, phi.Type);
@@ -4591,14 +4690,44 @@ internal sealed class SsaValueFactAnalyzer
             }
         }
 
-        RefineFacts(moduleName, function, values);
-        var blockEntryFacts = AnalyzeBlockEntryFacts(function, values);
-        return new SsaFunctionFactModel(function.Name, values, blockEntryFacts);
+        RefineFacts(moduleName, function, values, reachableBlockIds);
+        var blockEntryFacts = AnalyzeBlockEntryFacts(function, values, reachableBlockIds);
+        var blockExitFacts = AnalyzeBlockExitFacts(function, values, blockEntryFacts, reachableBlockIds);
+        return new SsaFunctionFactModel(function.Name, values, blockEntryFacts, blockExitFacts);
+    }
+
+    private static HashSet<int> FindReachableBlockIds(SsaFunction function)
+    {
+        var blocksById = function.Blocks.ToDictionary(static block => block.Id);
+        var reachable = new HashSet<int>();
+        var worklist = new Stack<int>();
+        worklist.Push(function.EntryBlockId);
+
+        while (worklist.Count != 0)
+        {
+            var blockId = worklist.Pop();
+            if (!reachable.Add(blockId)
+                || !blocksById.TryGetValue(blockId, out var block))
+            {
+                continue;
+            }
+
+            foreach (var target in EnumerateTerminatorTargets(block.Terminator))
+            {
+                if (!reachable.Contains(target))
+                {
+                    worklist.Push(target);
+                }
+            }
+        }
+
+        return reachable;
     }
 
     private static IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>> AnalyzeBlockEntryFacts(
         SsaFunction function,
-        IReadOnlyDictionary<string, SsaValueFacts> values)
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        ISet<int> reachableBlockIds)
     {
         var definitions = CollectValueDefinitions(function);
         var incomingFacts = function.Blocks.ToDictionary(
@@ -4607,9 +4736,15 @@ internal sealed class SsaValueFactAnalyzer
 
         foreach (var block in function.Blocks)
         {
+            if (!reachableBlockIds.Contains(block.Id))
+            {
+                continue;
+            }
+
             foreach (var target in EnumerateTerminatorTargets(block.Terminator))
             {
-                if (!incomingFacts.TryGetValue(target, out var edges))
+                if (!reachableBlockIds.Contains(target)
+                    || !incomingFacts.TryGetValue(target, out var edges))
                 {
                     continue;
                 }
@@ -4634,6 +4769,71 @@ internal sealed class SsaValueFactAnalyzer
         }
 
         return result;
+    }
+
+    private static IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>> AnalyzeBlockExitFacts(
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<int, IReadOnlyDictionary<string, SsaValueFacts>> blockEntryFacts,
+        ISet<int> reachableBlockIds)
+    {
+        var result = new Dictionary<int, IReadOnlyDictionary<string, SsaValueFacts>>();
+        foreach (var block in function.Blocks)
+        {
+            if (!reachableBlockIds.Contains(block.Id))
+            {
+                continue;
+            }
+
+            var exitFacts = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
+            if (blockEntryFacts.TryGetValue(block.Id, out var entryFacts))
+            {
+                foreach (var (valueName, facts) in entryFacts)
+                {
+                    if (HasValueFactPayload(facts))
+                    {
+                        exitFacts[valueName] = facts;
+                    }
+                }
+            }
+
+            foreach (var phi in block.Phis)
+            {
+                AddBlockLocalValueFact(phi.ResultName);
+            }
+
+            foreach (var valueInstruction in block.Instructions.OfType<SsaValueInstruction>())
+            {
+                AddBlockLocalValueFact(valueInstruction.ResultName);
+            }
+
+            if (exitFacts.Count != 0)
+            {
+                result[block.Id] = exitFacts;
+            }
+
+            void AddBlockLocalValueFact(string valueName)
+            {
+                if (values.TryGetValue(valueName, out var facts)
+                    && HasValueFactPayload(facts))
+                {
+                    exitFacts[valueName] = facts;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static bool HasValueFactPayload(SsaValueFacts facts)
+    {
+        return facts.IntegerRangeKind != SsaFactLatticeKind.Unknown
+            || facts.KnownBitsKind != SsaFactLatticeKind.Unknown
+            || facts.BooleanKind != SsaFactLatticeKind.Unknown
+            || facts.Nullability != SsaNullabilityFactKind.Unknown
+            || facts.PointerAlignmentKind != SsaFactLatticeKind.Unknown
+            || facts.LengthKind != SsaFactLatticeKind.Unknown
+            || facts.TextLiteralPayloadKind != SsaFactLatticeKind.Unknown;
     }
 
     private static Dictionary<string, SsaRValue> CollectValueDefinitions(SsaFunction function)
@@ -5190,14 +5390,18 @@ internal sealed class SsaValueFactAnalyzer
     private static void RefineFacts(
         string moduleName,
         SsaFunction function,
-        Dictionary<string, SsaValueFacts> values)
+        Dictionary<string, SsaValueFacts> values,
+        ISet<int> reachableBlockIds)
     {
         for (var round = 0; round < 8; round++)
         {
             var changed = false;
-            foreach (var phi in function.Blocks.SelectMany(static block => block.Phis))
+            foreach (var phi in function.Blocks
+                         .Where(block => reachableBlockIds.Contains(block.Id))
+                         .SelectMany(static block => block.Phis))
             {
                 var incomingFacts = phi.Incomings
+                    .Where(incoming => reachableBlockIds.Contains(incoming.PredecessorBlockId))
                     .Select(incoming => AnalyzeValue(phi.ResultName, incoming.Value, values))
                     .ToArray();
                 if (incomingFacts.Length == 0)
@@ -5214,6 +5418,7 @@ internal sealed class SsaValueFactAnalyzer
             }
 
             foreach (var valueInstruction in function.Blocks
+                         .Where(block => reachableBlockIds.Contains(block.Id))
                          .SelectMany(static block => block.Instructions)
                          .OfType<SsaValueInstruction>())
             {
@@ -5793,6 +5998,15 @@ internal sealed class SsaValueFactAnalyzer
                 : facts;
         }
 
+        if (convert.TargetType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            && convert.Operand.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            && operand.TextLiteralPayloadKind == SsaFactLatticeKind.Known
+            && operand.TextLiteralPayload is { } payload
+            && (convert.TargetType.Kind != StarkTypeKind.Ascii || payload.IsAsciiOnly))
+        {
+            return CreateTextLiteralPayloadFacts(valueName, convert.TargetType, payload);
+        }
+
         return CreateTypeFacts(valueName, convert.TargetType);
     }
 
@@ -6122,6 +6336,30 @@ internal sealed class SsaValueFactAnalyzer
             };
         }
 
+        var textPayloads = facts
+            .Where(static fact => fact.TextLiteralPayloadKind == SsaFactLatticeKind.Known
+                                  && fact.TextLiteralPayload is not null)
+            .Select(static fact => fact.TextLiteralPayload!)
+            .Distinct()
+            .ToArray();
+        if (textPayloads.Length == 1
+            && facts.All(static fact => fact.TextLiteralPayloadKind == SsaFactLatticeKind.Known
+                                        && fact.TextLiteralPayload is not null))
+        {
+            joined = CreateTextLiteralPayloadFacts(valueName, type, textPayloads[0]) with
+            {
+                IntegerRangeKind = joined.IntegerRangeKind,
+                IntegerRange = joined.IntegerRange,
+                KnownBitsKind = joined.KnownBitsKind,
+                KnownBits = joined.KnownBits,
+                BooleanKind = joined.BooleanKind,
+                BooleanConstant = joined.BooleanConstant,
+                Nullability = joined.Nullability,
+                PointerAlignmentKind = joined.PointerAlignmentKind,
+                PointerAlignmentBytes = joined.PointerAlignmentBytes
+            };
+        }
+
         var knownNullabilityFacts = facts
             .Select(static fact => fact.Nullability)
             .Where(static nullability => nullability is SsaNullabilityFactKind.Null or SsaNullabilityFactKind.NonNull)
@@ -6291,11 +6529,35 @@ internal sealed class SsaValueFactAnalyzer
         if ((normalizedKnownZero | normalizedKnownOne) == mask)
         {
             var value = DenormalizeIntegerBits(normalizedKnownOne, facts.Type);
-            updated = updated with
+            if (facts.IntegerRangeKind == SsaFactLatticeKind.Known
+                && facts.IntegerRange is { } existingRange)
             {
-                IntegerRangeKind = SsaFactLatticeKind.Known,
-                IntegerRange = new SsaIntegerRangeFact(value, value)
-            };
+                var normalizedValue = normalizedKnownOne & mask;
+                var matchingValues = new[]
+                    {
+                        value,
+                        normalizedValue
+                    }
+                    .Distinct()
+                    .Where(candidate => existingRange.Min <= candidate && candidate <= existingRange.Max)
+                    .ToArray();
+
+                if (matchingValues.Length == 1)
+                {
+                    updated = updated with
+                    {
+                        IntegerRange = new SsaIntegerRangeFact(matchingValues[0], matchingValues[0])
+                    };
+                }
+            }
+            else
+            {
+                updated = updated with
+                {
+                    IntegerRangeKind = SsaFactLatticeKind.Known,
+                    IntegerRange = new SsaIntegerRangeFact(value, value)
+                };
+            }
         }
         else if (TryCreateNonNegativeRangeFromKnownBits(
                      facts.Type,
@@ -6427,14 +6689,43 @@ internal sealed class SsaValueFactAnalyzer
             return facts;
         }
 
+        var payload = CreateTextLiteralPayload(decoded);
+
+        return CreateTextLiteralPayloadFacts(valueName, type, payload);
+    }
+
+    private static SsaTextLiteralPayloadFact CreateTextLiteralPayload(DecodedTextLiteral decoded)
+    {
+        var utf8Bytes = decoded.Utf8Bytes;
+        var utf32CodeUnits = decoded.Utf32CodeUnits;
+
+        return new SsaTextLiteralPayloadFact(
+            decoded.Value,
+            Convert.ToHexString(utf8Bytes),
+            string.Join(
+                ",",
+                utf32CodeUnits.Select(static unit => unit.ToString("X8", CultureInfo.InvariantCulture))),
+            decoded.IsAscii,
+            utf8Bytes.Length,
+            utf32CodeUnits.Length);
+    }
+
+    private static SsaValueFacts CreateTextLiteralPayloadFacts(
+        string valueName,
+        StarkTypeSymbol type,
+        SsaTextLiteralPayloadFact payload)
+    {
+        var facts = CreateTypeFacts(valueName, type);
         var length = type.Kind == StarkTypeKind.Unicode
-            ? decoded.Utf32CodeUnits.Length
-            : decoded.Utf8Bytes.Length;
+            ? payload.Utf32Length
+            : payload.Utf8Length;
 
         return facts with
         {
             LengthKind = SsaFactLatticeKind.Known,
-            LengthRange = new SsaIntegerRangeFact(length, length)
+            LengthRange = new SsaIntegerRangeFact(length, length),
+            TextLiteralPayloadKind = SsaFactLatticeKind.Known,
+            TextLiteralPayload = payload
         };
     }
 
@@ -6556,7 +6847,7 @@ internal sealed class SsaValueFactAnalyzer
                || string.Equals(extractField.FieldName, "length", StringComparison.Ordinal);
     }
 
-    private static bool TryGetSystemTextLengthFunction(
+    internal static bool TryGetSystemTextLengthFunction(
         string functionName,
         string moduleName,
         out StarkTypeKind textKind)
@@ -6672,9 +6963,11 @@ internal sealed class SsaValueFactAnalyzer
         SsaIntegerRangeFact range,
         SsaIntegerRangeFact bounds)
     {
-        return new SsaIntegerRangeFact(
-            Max(range.Min, bounds.Min),
-            Min(range.Max, bounds.Max));
+        var min = Max(range.Min, bounds.Min);
+        var max = Min(range.Max, bounds.Max);
+        return min <= max
+            ? new SsaIntegerRangeFact(min, max)
+            : bounds;
     }
 
     private static bool TryGetIntegerTypeRange(StarkTypeSymbol type, out SsaIntegerRangeFact range)
@@ -7485,7 +7778,6 @@ internal sealed class SsaDirectCallInliner
             || effects.IsFfi
             || effects.IsCold
             || effects.InlinePreference == InlinePreference.NoInline
-            || !IsInlineCandidateByPolicy(function, effects)
             || !IsInlineSafeType(function.ReturnType)
             || function.Parameters.Any(static parameter => !IsInlineSafeType(parameter.Type))
             || function.Blocks.Count != 1)
@@ -7530,7 +7822,22 @@ internal sealed class SsaDirectCallInliner
             return false;
         }
 
-        candidate = new InlineCandidate(function, instructions, returnValue, directCalls);
+        var canInlineByDefault = IsInlineCandidateByPolicy(function, effects);
+        var canInlineWithConstantArguments = !canInlineByDefault
+                                             && function.Parameters.Count > 0
+                                             && directCalls.Count == 0;
+        if (!canInlineByDefault && !canInlineWithConstantArguments)
+        {
+            return false;
+        }
+
+        candidate = new InlineCandidate(
+            function,
+            instructions,
+            returnValue,
+            directCalls,
+            canInlineByDefault,
+            canInlineWithConstantArguments);
         return true;
     }
 
@@ -7631,6 +7938,8 @@ internal sealed class SsaDirectCallInliner
         if (!candidates.TryGetValue(call.FunctionName, out var candidate)
             || string.Equals(candidate.Function.Name, caller.Name, StringComparison.Ordinal)
             || candidate.Function.Parameters.Count != call.Arguments.Count
+            || (!candidate.CanInlineByDefault
+                && (!candidate.CanInlineWithConstantArguments || !HasConstantSpecializationArgument(call)))
             || call.IndirectArgumentLocalNames?.Any(static name => name is not null) == true
             || call.IndirectArgumentAddresses?.Any(static address => address is not null) == true)
         {
@@ -7665,6 +7974,17 @@ internal sealed class SsaDirectCallInliner
         replacement = RewriteValue(candidate.ReturnValue, localReplacements);
         clonedInstructions = clones;
         return true;
+    }
+
+    private static bool HasConstantSpecializationArgument(SsaCallRValue call)
+    {
+        return call.Arguments.Any(static argument => argument is
+            SsaIntegerConstant
+            or SsaFloatConstant
+            or SsaBoolConstant
+            or SsaNullConstant
+            or SsaGlobalAddressValue
+            or SsaFunctionAddressValue);
     }
 
     private static HashSet<string> CollectDefinedValueNames(SsaFunction function)
@@ -7966,7 +8286,9 @@ internal sealed class SsaDirectCallInliner
         SsaFunction Function,
         IReadOnlyList<SsaValueInstruction> Instructions,
         SsaValue ReturnValue,
-        IReadOnlyList<string> DirectCalls);
+        IReadOnlyList<string> DirectCalls,
+        bool CanInlineByDefault,
+        bool CanInlineWithConstantArguments);
 }
 
 internal static class SsaAddressTakenFunctionPruner
@@ -8186,13 +8508,18 @@ internal sealed class SsaConstantPropagator
     {
         var optimized = new SsaIrModule(
             module.ModuleName,
-            module.Functions.Select(OptimizeFunction).ToArray(),
+            module.Functions.Select(function => OptimizeFunction(function, module.ModuleName)).ToArray(),
             module.AddressTakenFunctions);
 
         return SsaAddressTakenFunctionPruner.Prune(optimized);
     }
 
     public SsaFunction OptimizeFunction(SsaFunction function)
+    {
+        return OptimizeFunction(function, moduleName: string.Empty);
+    }
+
+    private SsaFunction OptimizeFunction(SsaFunction function, string moduleName)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {
@@ -8203,13 +8530,13 @@ internal sealed class SsaConstantPropagator
 
         for (var iteration = 0; iteration < PropagationPassCount; iteration++)
         {
-            current = OptimizeFunctionCore(current);
+            current = OptimizeFunctionCore(current, moduleName);
         }
 
         return current;
     }
 
-    private SsaFunction OptimizeFunctionCore(SsaFunction function)
+    private SsaFunction OptimizeFunctionCore(SsaFunction function, string moduleName)
     {
         var byId = function.Blocks.ToDictionary(static block => block.Id);
         var states = new Dictionary<string, ConstantState>(StringComparer.Ordinal);
@@ -8254,7 +8581,7 @@ internal sealed class SsaConstantPropagator
 
                     foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
                     {
-                        var state = EvaluateRValue(instruction.Value, newStates);
+                        var state = EvaluateRValue(instruction.Value, newStates, moduleName);
                         if (UpdateState(newStates, instruction.ResultName, state))
                         {
                             changed = true;
@@ -8423,7 +8750,8 @@ internal sealed class SsaConstantPropagator
 
     private static ConstantState EvaluateRValue(
         SsaRValue value,
-        IReadOnlyDictionary<string, ConstantState> states)
+        IReadOnlyDictionary<string, ConstantState> states,
+        string moduleName)
     {
         switch (value)
         {
@@ -8488,6 +8816,10 @@ internal sealed class SsaConstantPropagator
                         ? ConstantState.FromValue(foldedConvert)
                         : ConstantState.Overdefined;
                 }
+            case SsaCallRValue call:
+                return TryFoldTextLengthCall(call, states, moduleName, out var foldedCall)
+                    ? ConstantState.FromValue(foldedCall)
+                    : ConstantState.Overdefined;
             default:
                 return ConstantState.Overdefined;
         }
@@ -8661,6 +8993,38 @@ internal sealed class SsaConstantPropagator
         }
 
         return false;
+    }
+
+    private static bool TryFoldTextLengthCall(
+        SsaCallRValue call,
+        IReadOnlyDictionary<string, ConstantState> states,
+        string moduleName,
+        out SsaValue folded)
+    {
+        folded = default!;
+        if (call.Type.Kind != StarkTypeKind.Integer
+            || call.Arguments.Count != 1
+            || !SsaValueFactAnalyzer.TryGetSystemTextLengthFunction(call.FunctionName, moduleName, out var textKind)
+            || call.Arguments[0].Type.Kind != textKind
+            || ResolveConstantState(call.Arguments[0], states) is not
+            {
+                Kind: ConstantStateKind.Constant,
+                Value: SsaStringConstant source
+            }
+            || !TextLiteralDecoder.TryDecode(
+                source.LiteralText,
+                source.LiteralText.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String,
+                out var decoded,
+                out _))
+        {
+            return false;
+        }
+
+        var length = textKind == StarkTypeKind.Unicode
+            ? decoded.Utf32CodeUnits.Length
+            : decoded.Utf8Bytes.Length;
+        folded = new SsaIntegerConstant(length, call.Type);
+        return true;
     }
 
     private static bool FoldLogicalNot(SsaBoolConstant boolean, out SsaValue folded)

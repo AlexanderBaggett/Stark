@@ -50,6 +50,11 @@ public sealed class PackageImageArchitectureTests
 
             Assert.True(PackageImageLoader.TryBuildModuleDocument(resolvedModule, out var importedDocument));
             Assert.False(CompilerCli.ShouldEnableDependencyLto(importedDocument));
+            var optimizationFacts = CompilerCli.AnalyzeModuleOptimizationSafety(importedDocument, toolchainCanUseThinLto: true);
+            Assert.False(optimizationFacts.CanEmitThinLtoBitcode);
+            Assert.False(optimizationFacts.CanRunNormalLlvmPasses);
+            Assert.True(optimizationFacts.ContainsKnownFragileConstructs);
+            Assert.Equal("backend-opaque", optimizationFacts.DecisionReason);
         }
         finally
         {
@@ -185,10 +190,37 @@ public sealed class PackageImageArchitectureTests
             syntaxModel);
 
         Assert.True(CompilerCli.ShouldEnableDependencyLto(document));
+        var optimizationFacts = CompilerCli.AnalyzeModuleOptimizationSafety(document, toolchainCanUseThinLto: true);
+        Assert.True(optimizationFacts.CanEmitThinLtoBitcode);
+        Assert.True(optimizationFacts.CanRunNormalLlvmPasses);
+        Assert.False(optimizationFacts.ContainsKnownFragileConstructs);
+        Assert.False(optimizationFacts.ExposesHotInlineCandidates);
+        Assert.Equal("thinlto-enabled", optimizationFacts.DecisionReason);
+
+        var hotParseResult = StarkSyntax.ParseCompilationUnit(
+            """
+            module Helpers
+
+            public finite law i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                return value;
+            }
+            """);
+        var hotDocument = new LoadedModuleDocument(
+            new ResolvedModuleReference(
+                "Helpers",
+                "/virtual/Helpers.stark",
+                IsExternal: false,
+                IsRoot: false),
+            hotParseResult,
+            SyntaxModelFactory.Create(hotParseResult));
+        var hotFacts = CompilerCli.AnalyzeModuleOptimizationSafety(hotDocument, toolchainCanUseThinLto: true);
+        Assert.True(hotFacts.CanEmitThinLtoBitcode);
+        Assert.True(hotFacts.ExposesHotInlineCandidates);
+        Assert.Equal("thinlto-enabled-hot-inline-candidates", hotFacts.DecisionReason);
     }
 
     [Fact]
-    public void SystemCollectionsSourceUsesBackendOpaqueInsteadOfCompilerNameGate()
+    public void SystemCollectionsSourceUsesDictionaryBackendOpaqueWithoutModuleNameGate()
     {
         var repositoryRoot = FindRepositoryRoot();
         var collectionsPath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark");
@@ -196,7 +228,17 @@ public sealed class PackageImageArchitectureTests
         var syntaxModel = SyntaxModelFactory.Create(parseResult);
 
         Assert.Equal("System.Collections", syntaxModel.ModuleName);
-        Assert.Equal(ModuleBackendOptimizationMode.Opaque, syntaxModel.BackendOptimizationMode);
+        Assert.Equal(ModuleBackendOptimizationMode.Default, syntaxModel.BackendOptimizationMode);
+
+        var dictionary = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Dictionary");
+        Assert.Equal(ModuleBackendOptimizationMode.Opaque, dictionary.BackendOptimizationMode);
+        var dictionaryReserve = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Dictionary.Reserve");
+        Assert.Equal(ModuleBackendOptimizationMode.Opaque, dictionaryReserve.Function!.BackendOptimizationMode);
+
+        var list = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "List");
+        Assert.Equal(ModuleBackendOptimizationMode.Default, list.BackendOptimizationMode);
+        var linkedListAddLast = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "LinkedList.AddLast");
+        Assert.Equal(ModuleBackendOptimizationMode.Default, linkedListAddLast.Function!.BackendOptimizationMode);
 
         var nonOpaqueCollections = StarkSyntax.ParseCompilationUnit("module System.Collections");
         var nonOpaqueSyntaxModel = SyntaxModelFactory.Create(nonOpaqueCollections);
@@ -210,6 +252,17 @@ public sealed class PackageImageArchitectureTests
             nonOpaqueSyntaxModel);
 
         Assert.True(CompilerCli.ShouldEnableDependencyLto(nonOpaqueDocument));
+
+        var collectionsDocument = new LoadedModuleDocument(
+            new ResolvedModuleReference(
+                "System.Collections",
+                collectionsPath,
+                IsExternal: false,
+                IsRoot: false),
+            parseResult,
+            syntaxModel);
+
+        Assert.True(CompilerCli.ShouldEnableDependencyLto(collectionsDocument));
     }
 
     [Fact]

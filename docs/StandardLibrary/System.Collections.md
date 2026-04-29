@@ -118,6 +118,7 @@ movement is undesirable.
 public struct LinkedList<T> {
     finite law i64[0 max] Count(borrow LinkedList<T> self);
     finite law bool IsEmpty(borrow LinkedList<T> self);
+    fn System.Memory.MemoryStatus ReserveNodes(mut borrow LinkedList<T> self, i64[0 max] count);
     fn System.Memory.MemoryStatus AddFirst(mut borrow LinkedList<T> self, T value);
     fn System.Memory.MemoryStatus AddLast(mut borrow LinkedList<T> self, T value);
     fn bool TryRemoveFirst(mut borrow LinkedList<T> self, out T value);
@@ -215,7 +216,9 @@ records, text, or other richer values can become dictionary keys.
 - `LinkedList<T>` owns nodes internally and does not expose public raw node
   pointers. The current implementation supports construction, `AddFirst`,
   `AddLast`, `TryRemoveFirst`, `TryRemoveLast`, metadata inspection, `Clear`,
-  and destructor cleanup.
+  `ReserveNodes`, and destructor cleanup. `ReserveNodes(count)` is an explicit
+  performance knob for workloads that know they will allocate many nodes; it
+  pre-fills the list allocator's node bucket without adding elements to the list.
 - `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast` now have
   source-level `out T` bodies.
 - `Get`, `GetMut`, and `Peek` now return safe retborrows from addressable

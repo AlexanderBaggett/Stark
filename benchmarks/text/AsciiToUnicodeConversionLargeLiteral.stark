@@ -1,0 +1,34 @@
+import System
+module Benchmarks.Text.AsciiToUnicodeConversionLargeLiteral
+
+export ffi fn i32[min max] main() {
+    stack mut i32[-2147483648 2147483647][80] unicodeBuffer = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode unicodeText = new Unicode() {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 80
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 100000] i = 0; i < 100000; i += 1) {
+        if (!System.Text.TryConvertAsciiToUnicode(&unicodeText, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_!")) {
+            return 1;
+        }
+
+        checksum += unicodeText.Length;
+        checksum += *unicodeText.Data;
+        checksum += *(&unicodeText.Data[unicodeText.Length - 1]);
+    }
+
+    if (checksum != 19400000) {
+        return 2;
+    }
+
+    return 0;
+}

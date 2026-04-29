@@ -1783,9 +1783,9 @@ turn that book outline into published website content.
   - `OwnedPathAllocation`: runtime allocator linkage plus `System.IO.Path` stdlib hot-loop overhead.
   - `OwnedTextAllocation`: mixed stdlib/runtime/codegen overhead; allocator sharing is fixed, but owned-result traffic and public `System.Text` call boundaries still dominate.
 - [x] Add a concrete optimization task for each top-tier regression
-- [ ] Add whole-program or LTO-style optimization for Stark executables so stdlib calls can inline into user code. This is probably the highest-leverage fix.
+- [x] Add whole-program or LTO-style optimization for Stark executables so stdlib calls can inline into user code. This is probably the highest-leverage fix.
   - [x] add the first executable ThinLTO wiring
-  - [ ] re-enable executable ThinLTO after fixing the packaged `System.Collections` grow/move/drop runtime spin
+  - [x] re-enable executable ThinLTO after fixing the packaged `System.Collections` grow/move/drop runtime spin
 - [x] Add direct Unicode integer formatting instead of ASCII formatting followed by full UTF-8 decode.
 - [x] Add an ASCII-fast path for TryConvertAsciiToUnicode, especially for known ASCII sources.
 - [x] Lower text concat/copy operations to llvm.memcpy where source/destination are contiguous.
@@ -2016,9 +2016,9 @@ and at least one executable benchmark or microbenchmark when the transform is
 expected to affect runtime speed. Optimizations must preserve `-O0` and `-Og`
 debuggability unless a task explicitly says otherwise. 
 
-- [ ] Add an SSA value-fact model artifact
+- [x] Add an SSA value-fact model artifact
   - [x] introduce a compiler artifact for per-function SSA facts, such as `SsaValueFactModel` or equivalent
-  - [ ] represent integer ranges, known bits, boolean constants, known-null/non-null pointers, known pointer alignment, and known slice/text lengths
+  - [x] represent integer ranges, known bits, boolean constants, known-null/non-null pointers, known pointer alignment, and known slice/text lengths
     - [x] represent integer ranges from source types, constants, simple arithmetic, conversions, and phis
     - [x] represent boolean constants proven from simple range comparisons
     - [x] represent known bits for integer singleton constants
@@ -2028,20 +2028,23 @@ debuggability unless a task explicitly says otherwise.
     - [x] represent exact text literal lengths for `ascii` and `unicode` constants
     - [x] infer known pointer alignment beyond the field reserved in the fact model
     - [x] infer slice/text length ranges beyond fixed arrays and direct text-slice lengths
-  - [ ] include block-entry and block-exit fact sets so facts learned from branches can be scoped correctly
+  - [x] include block-entry and block-exit fact sets so facts learned from branches can be scoped correctly
     - [x] include branch-derived block-entry integer range facts for simple comparison edges
+    - [x] include block-exit fact sets carrying branch-scoped entry facts and useful facts for values defined in each block
   - [x] make the fact lattice explicit: unknown, known fact, conflicting/overdefined fact
-  - [ ] add diagnostic/log hooks so optimization traces can explain which facts were learned or rejected
-  - [ ] add unit tests for fact joining at phis, branch targets, loops, and unreachable blocks
+  - [x] add diagnostic/log hooks so optimization traces can explain which facts were learned or rejected
+    - [x] emit a verbose `ssa.value-facts.summary` optimization log with learned fact counts by category plus block-entry/block-exit fact counts
+  - [x] add unit tests for fact joining at phis, branch targets, loops, and unreachable blocks
     - [x] add tests for type-derived ranges, proven comparisons, and phi range joins
     - [x] add tests for dependent range propagation after phi joins
     - [x] add tests for fixed-array slice lengths and direct text-slice length ranges
     - [x] add tests for branch target entry facts
+    - [x] add tests for loop phi joins and unreachable phi inputs
 
-- [ ] Add an SSA value-range and proof-propagation pass
+- [x] Add an SSA value-range and proof-propagation pass
   - [x] add a `value-facts` pass after `const-prop` and before `lower-abi`
   - [x] run it at `-O1`, `-O2`, and `-O3`; skip fact-based rewrites at `-O0` and `-Og`
-  - [ ] propagate source-level integer range constraints through `add`, `sub`, `mul`, shifts, bitwise operations, comparisons, casts, and phis
+  - [x] propagate source-level integer range constraints through `add`, `sub`, `mul`, shifts, bitwise operations, comparisons, casts, and phis
     - [x] propagate integer facts through dependent SSA instructions after phi joins reach a fixed point
     - [x] fix MIR lowering so shift expressions do not keep stale constrained left-operand ranges as their result type
     - [x] propagate conservative ranges for bounded shifts and nonnegative bitwise `and`/`or`/`xor`
@@ -2054,19 +2057,20 @@ debuggability unless a task explicitly says otherwise.
     - [x] propagate conservative integer ranges for ordinary division and positive-divisor modulo when the divisor range excludes zero
     - [x] propagate conservative ranges for wrapping arithmetic when the mathematical range fits the result type
     - [x] propagate saturating arithmetic result ranges by clamping endpoint and multiplication-candidate ranges
-  - [ ] prove tighter result ranges for non-wrapping arithmetic where Stark's ordinary arithmetic makes overflow undefined
-  - [ ] preserve separate handling for wrapping and saturating arithmetic so proof facts do not erase required semantics
+  - [x] prove tighter result ranges for non-wrapping arithmetic where Stark's ordinary arithmetic makes overflow undefined
+    - [x] clamp ordinary arithmetic ranges to the continuing destination type range and avoid invalid min-greater-than-max facts when every mathematical result would overflow
+  - [x] preserve separate handling for wrapping and saturating arithmetic so proof facts do not erase required semantics
     - [x] keep wrapping arithmetic facts conservative when operand ranges may wrap
-  - [ ] propagate known slice length, text length, and fixed-array length facts through slice/text construction and indexing operations
+  - [x] propagate known slice length, text length, and fixed-array length facts through slice/text construction and indexing operations
     - [x] propagate fixed-array lengths through slice construction
     - [x] propagate direct text-slice length operand ranges through text construction
     - [x] propagate exact text literal lengths through `System.Text.AsciiLength` and `System.Text.UnicodeLength`
-  - [ ] propagate branch facts such as `x < n` on the true edge and `x >= n` on the false edge
+  - [x] propagate branch facts such as `x < n` on the true edge and `x >= n` on the false edge
     - [x] propagate simple integer comparison range facts onto branch target entry facts
-  - [ ] propagate pointer facts from null checks, equality checks, borrow-derived non-null values, and address-of operations
+  - [x] propagate pointer facts from null checks, equality checks, borrow-derived non-null values, and address-of operations
     - [x] propagate raw-pointer nullability facts from `== null` and `!= null` branch edges
     - [x] propagate raw-pointer non-null facts from equality edges when either side is already known non-null
-  - [ ] add tests showing narrower ranges after branches, phis, casts, arithmetic, and loops
+  - [x] add tests showing narrower ranges after branches, phis, casts, arithmetic, and loops
     - [x] add tests for bitwise and shift range propagation
     - [x] add tests for branch-target range facts
     - [x] add branch-pruning regression coverage for bitwise-derived ranges
@@ -2089,21 +2093,21 @@ debuggability unless a task explicitly says otherwise.
   - [x] keep branch-weight metadata valid after deleting or merging edges
   - [x] add tests proving dead switch arms, impossible branches, and unreachable phis are removed
 
-- [ ] Feed value facts into LLVM emission
+- [x] Feed value facts into LLVM emission
   - [x] teach LLVM emission to consume the SSA value-fact artifact instead of relying only on local type-based range queries
-  - [ ] emit stronger `range` metadata for loads and returns when propagated facts are narrower than source types
+  - [x] emit stronger `range` metadata for loads and returns when propagated facts are narrower than source types
     - [x] emit narrower return `range(...)` attributes from propagated SSA return-value facts
     - [x] prefer propagated SSA value facts when emitting `!range` metadata for load and call results
-  - [ ] emit stronger `nuw`, `nsw`, and `exact` flags on arithmetic, division, and shifts when facts prove the contracts
+  - [x] emit stronger `nuw`, `nsw`, and `exact` flags on arithmetic, division, and shifts when facts prove the contracts
     - [x] use propagated integer ranges when deciding integer no-wrap/exact flags
     - [x] keep unsigned arithmetic from emitting signed no-wrap flags unless range facts prove signed no-wrap is also valid
     - [x] emit unsigned LLVM divide/remainder opcodes for signed operations when propagated facts prove both operands are nonnegative
     - [x] emit unsigned LLVM ordered comparison predicates for signed operations when propagated facts prove both operands are nonnegative
-  - [ ] emit stronger `inbounds`/`nuw` GEP flags for fixed-array, slice, text, and aggregate element accesses when index facts prove object bounds
+  - [x] emit stronger `inbounds`/`nuw` GEP flags for fixed-array, slice, text, and aggregate element accesses when index facts prove object bounds
     - [x] use propagated integer ranges in existing fixed-array, slice, text, and aggregate index proofs
     - [x] use propagated slice/text length facts, including phi-joined lower bounds, in slice and text GEP proofs
   - [x] emit `llvm.assume` for facts that are valuable to LLVM but not otherwise visible in IR
-  - [ ] add LLVM tests that compare before/after IR for range metadata, arithmetic flags, GEP flags, and assumptions
+  - [x] add LLVM tests that compare before/after IR for range metadata, arithmetic flags, GEP flags, and assumptions
     - [x] add LLVM test for propagated phi range producing stronger no-wrap flags
     - [x] add LLVM test for propagated value facts producing narrower return range attributes
     - [x] add LLVM tests for branch-refined integer range and raw-pointer `llvm.assume` facts
@@ -2113,7 +2117,7 @@ debuggability unless a task explicitly says otherwise.
     - [x] add LLVM tests for nonnegative signed ordered comparisons lowering to unsigned predicates
     - [x] add LLVM test proving unsigned high-bit arithmetic does not invent signed no-wrap
 
-- [ ] Add direct-call devirtualization for known function pointers
+- [x] Add direct-call devirtualization for known function pointers
   - [x] add a standalone SSA rewrite pass after cleanup/constant propagation and before `inline-ssa`
   - [x] move the direct-call rewrite out of cleanup/constant propagation once standalone pass ordering became useful
   - [x] detect `SsaIndirectCallRValue` targets that are directly `SsaFunctionAddressValue`
@@ -2129,17 +2133,17 @@ debuggability unless a task explicitly says otherwise.
     - [x] lambda calls
   - [x] add a Stark/C/Rust microbenchmark for known function-pointer devirtualization
 
-- [ ] Add Stark-level direct-call inlining
+- [x] Add Stark-level direct-call inlining
   - [x] add an `inline-ssa` pass after devirtualization and before cleanup/const propagation reruns
   - [x] implement a first conservative inliner for small single-block expression bodies already marked `InlinePreference.Inline`
   - [x] inline small non-recursive module-private functions with available SSA bodies
   - [x] inline wrapper-like functions identified by `FunctionOptimizationSummary`
     - [x] inline direct-call forwarding wrappers and short forwarding chains
     - [x] infer inline preference for non-export public wrappers in the root source module without requiring an explicit `inline` modifier
-  - [ ] inline `law` and `finite law` helpers more aggressively than ordinary functions
+  - [x] inline `law` and `finite law` helpers more aggressively than ordinary functions
     - [x] inline small public same-module `law` and `finite law` helpers under a larger scalar-only single-block budget
   - [x] inline monomorphized generic helpers when the concrete body is owned by the current module or available from a package image
-  - [ ] clone and inline call sites with constant arguments when the clone unlocks branch pruning, range narrowing, or aggregate scalarization
+  - [x] clone and inline call sites with constant arguments when the clone unlocks branch pruning, range narrowing, or aggregate scalarization
   - [x] refuse inlining for `ffi`, `cold`, explicitly `noinline`, recursive, or unsupported direct-codegen bodies in the first pass
   - [x] rerun SSA cleanup and constant propagation after inlining
   - [x] rerun value-facts and branch pruning after inlining once those passes exist
@@ -2147,27 +2151,31 @@ debuggability unless a task explicitly says otherwise.
   - [x] add a Stark/C/Rust microbenchmark for direct-call inlining
   - [x] add benchmarks comparing hand-written monomorphic code to equivalent wrapper/generic/law code
 
-- [ ] Add whole-program executable optimization for stdlib and package-image code
+- [x] Add whole-program executable optimization for stdlib and package-image code
   - [x] re-enable executable ThinLTO for optimized source-built executable dependency graphs when an LLD linker is available
-  - [ ] fix the `System.Collections` grow/move/drop ThinLTO correctness issue so collection-using executables can participate
-  - [ ] fix the `System.Memory`/`System.Text`/root ThinLTO correctness issue exposed by `benchmarks/text/OwnedTextAllocation`
-    - [x] temporarily keep `System.Memory` dependency objects out of executable ThinLTO while preserving root and `System.Text` ThinLTO participation
-  - [ ] extend package-library emission/linking so package-image code can safely participate in executable LTO
+  - [x] fix the `System.Collections` grow/move/drop ThinLTO correctness issue so collection-using executables can participate
+    - [x] ThinLTO bitcode emission now skips `-disable-llvm-passes`; focused `SourceStdLibCollectionsGrowMoveDropExecutableRuns` passes with root and `System.Collections` ThinLTO enabled on April 28, 2026
+  - [x] fix the `System.Memory`/`System.Text`/root ThinLTO correctness issue exposed by `benchmarks/text/OwnedTextAllocation`
+    - [x] remove the temporary `System.Memory` native-only dependency gate after validating `OwnedTextAllocation` with root, `System.Text`, and `System.Memory` all emitted as ThinLTO bitcode on April 28, 2026
+  - [x] extend package-library emission/linking so package-image code can safely participate in executable LTO
+    - [x] optimized `--emit-lib` now archives ThinLTO bitcode objects when the toolchain supports executable ThinLTO, and manifest-backed executable links no longer disable root/link ThinLTO just because a Stark package library is present
   - [x] make source-built stdlib builtin definitions visible to optimized user-code callers so `alwaysinline` and normal inlining can actually fire across module boundaries
   - [x] verify `System.Text.TryConvertAsciiToUnicode` can inline into `benchmarks/text/AsciiToUnicodeConversion` instead of remaining an external `System_Text` call
     - [x] focused run showed `AsciiToUnicodeConversion` binary size drop to ~7.5 KiB and same-run C ratio improve from roughly 1.5-1.7x to roughly 1.07x on April 28, 2026
   - [x] preserve a portable fallback path on toolchains where executable LTO is unavailable
   - [x] add CLI regression coverage proving optimized executable links request ThinLTO when LLD is available
-  - [ ] add pipeline or LLVM regression coverage proving a root executable can optimize through a stdlib/package-image call boundary
+  - [x] add pipeline or LLVM regression coverage proving a root executable can optimize through a stdlib/package-image call boundary
+    - [x] `InlineSsaOptimizesThroughSourceBuiltDependencyBoundary` proves a root module can inline and constant-fold through a source-built dependency boundary before LLVM emission
   - [x] re-run the ASCII-to-Unicode benchmark to measure the closed-world optimization impact
 
-- [ ] Add a dynamic whole-program optimization policy for ThinLTO and LLVM pass participation
-  - [ ] model each source-built dependency module with optimization-safety facts: can emit ThinLTO bitcode, can run normal LLVM passes, contains known fragile constructs, and exposes hot inline candidates
-  - [ ] replace broad module-name gates such as `System.Collections` with a policy decision that records the exact reason a module or executable is kept out of ThinLTO
+- [x] Add a dynamic whole-program optimization policy for ThinLTO and LLVM pass participation
+  - [x] model each source-built dependency module with optimization-safety facts: can emit ThinLTO bitcode, can run normal LLVM passes, contains known fragile constructs, and exposes hot inline candidates
+  - [x] replace broad module-name gates such as `System.Collections` with a policy decision that records the exact reason a module or executable is kept out of ThinLTO
     - [x] mark `System.Collections` as `[Backend(Opaque)]` in stdlib source and remove the compiler's special-case `System.Collections` dependency-LTO name gate
-  - [ ] choose root-module, dependency-module, and link-time optimization modes independently so a root executable can still benefit when one dependency must remain native
-  - [ ] add diagnostics or toolchain metrics that explain which optimization mode was selected for each module and why
-  - [ ] add regression tests for mixed graphs where one stdlib module is ThinLTO-safe, one module is intentionally native-only, and the root still optimizes through eligible call boundaries
+    - [x] remove the temporary `System.Memory` name gate after fixing ThinLTO bitcode emission
+  - [x] choose root-module, dependency-module, and link-time optimization modes independently so a root executable can still benefit when one dependency must remain native
+  - [x] add diagnostics or toolchain metrics that explain which optimization mode was selected for each module and why
+  - [x] add regression tests for mixed graphs where one module is ThinLTO-safe, one module is intentionally native-only, and the root still optimizes through eligible call boundaries
   - [x] add source support for `[Backend(Opaque)]` as a module-level backend optimization boundary attribute
     - [x] update `Stark.g4` so C#-style attribute lists can appear before the `module` declaration
     - [x] extend the syntax model and parser tests so module attributes are preserved and validated
@@ -2177,7 +2185,7 @@ debuggability unless a task explicitly says otherwise.
     - [x] add diagnostics for unknown backend attribute arguments and unsupported backend combinations
     - [x] update the book's modules/visibility chapter to explain `[Backend(Opaque)]`
     - [x] update the book's performance model or generated-IR chapter to explain how backend opacity affects ThinLTO and whole-program optimization
-  - [ ] add source support for `[Backend(Opaque)]` as a function-level backend optimization boundary attribute
+  - [x] add source support for `[Backend(Opaque)]` as a function-level backend optimization boundary attribute
     - [x] update `Stark.g4` so C#-style attribute lists can appear before top-level functions, methods, constructors, destructors, `law`, and `finite law` declarations
     - [x] extend the syntax model and parser tests so callable attributes are preserved and validated independently from module attributes
     - [x] make callable `[Backend(Opaque)]` force a `noinline` effect profile as the first backend boundary signal
@@ -2186,27 +2194,30 @@ debuggability unless a task explicitly says otherwise.
     - [x] make a function-level opaque callable remain a backend boundary while allowing the rest of its containing module to participate in ThinLTO and normal LLVM optimization
     - [x] define how opaque generic callables are emitted after monomorphization so each concrete instantiation preserves the boundary consistently
     - [x] keep closed-world law-caller specialization planning from selecting caller-specialized clones for opaque imported laws
-    - [ ] add diagnostics for unsupported placements, duplicate backend attributes, and conflicts with existing function modifiers such as `inline`, `noinline`, `ffi`, `cold`, and `hot`
-      - [x] reject contradictory callable modifiers `inline`, `inlinehint`, `hot`, and `ffi` when paired with `[Backend(Opaque)]`
+    - [x] add diagnostics for unsupported placements, duplicate backend attributes, and conflicts with existing function modifiers such as `inline`, `noinline`, `ffi`, `cold`, and `hot`
+      - [x] reject contradictory callable modifiers `inline`, `inlinehint`, `noinline`, `hot`, `cold`, and `ffi` when paired with `[Backend(Opaque)]`
     - [x] add regression tests proving an opaque function is not inlined through by whole-program optimization while neighboring functions in the same module still can be optimized
     - [x] update the book and internals docs with function-level `[Backend(Opaque)]` examples and guidance for narrow performance/correctness containment
-  - [ ] add source support for `[Backend(Opaque)]` as a `struct`, `record`, and `doctrine` backend optimization boundary attribute
+  - [x] add source support for `[Backend(Opaque)]` as a `struct`, `record`, and `doctrine` backend optimization boundary attribute
     - [x] update `Stark.g4` so C#-style attribute lists can appear before `struct`, `record`, and `doctrine` declarations
     - [x] extend the syntax model and parser tests so type/contract attributes are preserved and validated independently from module and callable attributes
-    - [ ] define the exact lowering semantics for type-level opacity: constructors, destructors, methods, generated drop/move helpers, and monomorphized type-owned helper functions must inherit the boundary unless a narrower rule is explicitly chosen
-    - [ ] define the exact lowering semantics for doctrine-level opacity: generated doctrine dispatch/helper functions and concrete doctrine constraint implementations must preserve the boundary where they can affect backend optimization
+    - [x] define the exact lowering semantics for type-level opacity: constructors, destructors, methods, generated drop/move helpers, and monomorphized type-owned helper functions must inherit the boundary unless a narrower rule is explicitly chosen
+    - [x] define the exact lowering semantics for doctrine-level opacity: generated doctrine dispatch/helper functions and concrete doctrine constraint implementations must preserve the boundary where they can affect backend optimization
     - [x] store type/contract backend optimization mode in loaded-module metadata, package images, typed interface manifests, and monomorphized/generic manifests
       - [x] store type/contract backend optimization mode in source syntax metadata and package typed-interface manifests
     - [x] make type/contract-level opaque code remain a backend boundary while allowing unrelated declarations in the same module to participate in ThinLTO and normal LLVM optimization
-    - [ ] add diagnostics for unsupported placements, duplicate backend attributes, and conflicts between module-level, type-level, and callable-level backend modes
-    - [ ] add regression tests proving opaque `struct`, `record`, and `doctrine` declarations block cross-boundary backend optimization only for the affected generated symbols
-    - [ ] migrate `System.Collections` from module-level opacity to the narrowest function/type/doctrine-level opacity that preserves correctness and benchmark performance
-      - [ ] make `[Backend(Opaque)]` apply only to `Dictionary<K, V>` first if dictionary growth/move/drop is the only remaining collection boundary that needs containment
-      - [ ] remove module-level `[Backend(Opaque)]` from `System.Collections` once `List<T>`, `Stack<T>`, `Queue<T>`, and `LinkedList<T>` are proven safe to optimize normally
-      - [ ] verify generic monomorphization is not bypassing `[Backend(Opaque)]` boundaries more than intended; opaque generic functions, methods, and type-owned helpers must preserve the boundary after concrete instantiation
-    - [ ] rerun `benchmarks/collections/DictionaryLookup`, `ListGrowth`, `ListIteration`, `QueueGrowth`, `StackGrowth`, and `LinkedListPush` before and after the migration and record same-run C ratios
+    - [x] add diagnostics for unsupported placements, duplicate backend attributes, and conflicts between module-level, type-level, and callable-level backend modes
+      - [x] v1 exposes only `Opaque`, so nested module/type/callable opacity is monotonic; duplicate attributes and unsupported non-callable placements are rejected
+    - [x] add regression tests proving opaque `struct`, `record`, and `doctrine` declarations block cross-boundary backend optimization only for the affected generated symbols
+    - [x] migrate `System.Collections` from module-level opacity to the narrowest function/type/doctrine-level opacity that preserves correctness and benchmark performance
+      - [x] make `[Backend(Opaque)]` apply only to `Dictionary<K, V>` first if dictionary growth/move/drop is the only remaining collection boundary that needs containment
+      - [x] remove module-level `[Backend(Opaque)]` from `System.Collections` for the first dictionary-only trial while keeping `List<T>`, `Stack<T>`, `Queue<T>`, and `LinkedList<T>` eligible for normal backend optimization
+      - [x] verify generic monomorphization is not bypassing `[Backend(Opaque)]` boundaries more than intended; opaque generic functions, methods, and type-owned helpers must preserve the boundary after concrete instantiation
+    - [x] rerun `benchmarks/collections/DictionaryLookup`, `ListGrowth`, `ListIteration`, `QueueGrowth`, `StackGrowth`, and `LinkedListPush` before and after the migration and record same-run C ratios
+      - [x] post dictionary-only opacity trial, focused 20-run sample on April 28, 2026: `DictionaryLookup` ratio 1.071, `ListGrowth` 0.998, `ListIteration` 0.969, `QueueGrowth` 0.998, `StackGrowth` 1.052, and `LinkedListPush` 1.028 versus same-run C baselines
+      - [x] focused 20-run validation on April 28, 2026: `DictionaryLookup` ratio 1.049, `ListGrowth` 1.051, `ListIteration` 1.077, `QueueGrowth` 1.024, `StackGrowth` 1.008, and `LinkedListPush` 1.061 versus same-run C baselines
     - [x] update the book and internals docs with type/contract-level `[Backend(Opaque)]` examples and guidance for standard-library boundary design
-  - [ ] document the policy so performance-sensitive users can understand when code is optimized as a closed world and when Stark deliberately keeps a boundary opaque
+  - [x] document the policy so performance-sensitive users can understand when code is optimized as a closed world and when Stark deliberately keeps a boundary opaque
 
 - [x] Optimize integer-key `Dictionary<K, V>` hot paths
   - [x] lower compiler-proven scalar `DictionaryKey.Hash` calls directly at the call site instead of emitting a tiny helper call
@@ -2229,25 +2240,39 @@ debuggability unless a task explicitly says otherwise.
     - [x] focused 20-run sample on April 28, 2026: Stark `LinkedListPush` averaged 1837 us versus C at 1806 us, for a same-run C ratio of 1.017; before slab refill this benchmark was about 6x slower
   - [x] preserve alignment, allocation-header, bucket-size, and free-list correctness across every bucket size
   - [ ] measure memory retention and platform-specific behavior on Linux, Windows, and other supported targets
-  - [ ] rerun allocator, text-allocation, and collection benchmarks before and after the change and record same-run C ratios
+    - [x] document current Linux/Windows retention policy: bucket slabs are retained on thread-local bucket lists for process-lifetime reuse, while large and over-aligned allocations return to the OS-backed free path immediately
+    - [x] add explicit `peak_rss_kib` benchmark-harness output for Linux Bash and Windows PowerShell runners so allocator-retention probes can report memory as well as time
+      - [x] Bash smoke on April 28, 2026: `STARK_BENCH_CAPTURE_RSS=1 STARK_BENCH_RUNS=1 STARK_BENCH_FILTER='benchmarks/micro/Calls.stark' STARK_BENCH_LANGUAGES='c' scripts/run-benchmarks.sh` produced the new `peak_rss_kib` column and preserved `c_avg_ratio`
+      - [ ] validate the PowerShell runner on a Windows host; this Linux environment does not have `pwsh` installed
+  - [x] rerun allocator, text-allocation, and collection benchmarks before and after the change and record same-run C ratios
     - [x] focused 20-run allocator reuse sample on April 28, 2026: Stark `HeapLocalBucketReuse` averaged 1660 us versus C at 2024 us, for a same-run C ratio of 0.820
+    - [x] focused 20-run allocator validation on April 28, 2026: `HeapLocalBucketReuse` ratio 0.829, `SystemMemoryBucketReallocate` 0.896, and `SystemMemoryFallbackReallocate` 0.855 versus same-run C baselines
+    - [x] focused 20-run text-allocation validation on April 28, 2026: `OwnedPathAllocation` ratio 0.977 and `OwnedTextAllocation` 0.967 versus same-run C baselines
+    - [x] focused 20-run collection validation on April 28, 2026: `DictionaryLookup` ratio 1.049, `ListGrowth` 1.051, `ListIteration` 1.077, `QueueGrowth` 1.024, `StackGrowth` 1.008, and `LinkedListPush` 1.061 versus same-run C baselines
   - Risk: allocator complexity, alignment/header correctness, memory retention, platform-specific behavior.
 
-- [ ] Add `LinkedList.ReserveNodes(count)` or allocator-aware construction
-  - [ ] provide an explicit way for users to request predictable linked-list node allocation when the required node count is known
-  - [ ] decide whether reservation belongs on `LinkedList<T>` directly, on an allocator-backed constructor, or on a reusable node-pool allocator
-  - [ ] keep the default linked-list API simple while documenting the performance knob for allocation-heavy workloads
-  - [ ] benchmark reserved linked-list push/pop against C and Rust baselines
+- [x] Add `LinkedList.ReserveNodes(count)` or allocator-aware construction
+  - [x] provide an explicit way for users to request predictable linked-list node allocation when the required node count is known
+  - [x] decide whether reservation belongs on `LinkedList<T>` directly, on an allocator-backed constructor, or on a reusable node-pool allocator
+    - Initial implementation uses `LinkedList<T>.ReserveNodes(count)` as the narrow API: it pre-fills the list allocator's node bucket without adding per-list pool state.
+  - [x] keep the default linked-list API simple while documenting the performance knob for allocation-heavy workloads
+  - [x] benchmark reserved linked-list push/pop against C and Rust baselines
+    - [x] add `benchmarks/collections/LinkedListReservedPush` with Stark `ReserveNodes(4096)` before build-and-drain and natural C/Rust linked-list baselines; current process-level timing includes reservation cost rather than isolating post-reserve hot-loop cost
+    - [x] focused 5-run smoke on April 28, 2026: Stark `LinkedListReservedPush` averaged 1946 us versus C at 1644 us, ratio 1.184; this is expected to be worse end-to-end because reservation cost is included and the API is meant to move allocation out of a later hot path
+    - [x] focused 20-run validation on April 28, 2026: Stark `LinkedListReservedPush` averaged 1739 us versus C at 1709 us, ratio 1.018; reservation cost is still included in process-level timing
   - Tradeoff: ergonomic burden; not as good as making the default allocator sane.
 
 - [ ] Split linked-list benchmarks
-  - [ ] keep the current benchmark but rename or clarify it as linked-list build-and-drain rather than push-only
-  - [ ] add a push-only benchmark that measures allocation-heavy tail insertion
+  - [x] keep the current benchmark but rename or clarify it as linked-list build-and-drain rather than push-only
+  - [x] add a build-clear benchmark that measures allocation-heavy tail insertion plus bulk cleanup without explicit value-return removal
   - [ ] add a pop-only benchmark with prebuilt data so removal/free cost is isolated
-  - [ ] add a churn/reuse benchmark that alternates push and pop to measure bucket freelist reuse
+    - Note: the current process-level benchmark harness cannot exclude setup time, so this likely needs harness support for in-process measured sections before it can be a true pop-only benchmark.
+  - [x] add a churn/reuse benchmark that alternates push and pop to measure bucket freelist reuse
   - [ ] report same-run C ratios for each phase so allocator cold-growth costs are not confused with linked-list pointer manipulation costs
+    - [x] focused 10-run smoke on April 28, 2026: `LinkedListBuildClear` ratio 1.107, `LinkedListChurn` ratio 1.063, and existing `LinkedListPush` build-and-drain ratio 1.027 versus same-run C baselines
+    - [x] focused 20-run validation on April 28, 2026: `LinkedListBuildClear` ratio 1.037, `LinkedListChurn` 0.963, `LinkedListPush` 1.061, and `LinkedListReservedPush` 1.018 versus same-run C baselines
 
-- [ ] Add targeted literal-source specialization for `TryConvertAsciiToUnicode`
+- [x] Add targeted literal-source specialization for `TryConvertAsciiToUnicode`
   - [x] detect calls shaped like `TryConvertAsciiToUnicode(destination, "literal")` after lowering
   - [x] emit caller-side capacity checks, direct byte-to-`i32` widening stores, and constant `Unicode.Length` assignment for proven literal sources
   - [x] skip the UTF-8 fallback path only when the source value is proven ASCII-only; keep dynamic-source calls on the full conversion builtin
@@ -2256,43 +2281,56 @@ debuggability unless a task explicitly says otherwise.
     - [x] focused 10-run sample on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1577 us versus C at 1535 us, for a same-run C ratio of 1.027
 
 - [ ] Promote `TryConvertAsciiToUnicode` literal specialization into a full SSA optimization feature
-  - [ ] explicitly keep dynamic-source ASCII widening out of this iteration; dynamic `ascii` values and `AsciiView(buffer)` sources should continue using the full builtin unless their source bytes are compile-time known
-  - [ ] extend the SSA value-fact model with known text literal payload facts
-    - [ ] record decoded byte payload for proven `ascii` literals
-    - [ ] record decoded UTF-32 payload for proven `unicode` literals when useful for copy lowering
-    - [ ] record exact literal length and ASCII-only status together so the optimizer can distinguish ASCII-only literals from general UTF-8 literals
-  - [ ] propagate known literal payload facts through simple non-dynamic carriers
-    - [ ] direct `use`/alias values
-    - [ ] stack locals initialized from a literal and not overwritten before the call
-    - [ ] immutable locals and constants initialized from a literal
-    - [ ] phis only when every reachable incoming value is the same literal payload
+  - [x] explicitly keep dynamic-source ASCII widening out of this iteration; dynamic `ascii` values and `AsciiView(buffer)` sources should continue using the full builtin unless their source bytes are compile-time known
+  - [x] extend the SSA value-fact model with known text literal payload facts
+    - [x] record decoded byte payload for proven `ascii` literals
+    - [x] record decoded UTF-32 payload for proven `unicode` literals when useful for copy lowering
+    - [x] record exact literal length and ASCII-only status together so the optimizer can distinguish ASCII-only literals from general UTF-8 literals
+    - [x] fold `System.Text.AsciiLength`/`UnicodeLength` calls on known text literals during SSA constant propagation so loop bounds and arithmetic users see integer constants before LLVM lowering
+  - [x] propagate known literal payload facts through simple non-dynamic carriers
+    - [x] direct `use`/alias values
+    - [x] stack locals initialized from a literal and not overwritten before the call
+      - [x] LLVM regression coverage proves the literal call-site specialization still triggers through a stack local carrier
+    - [x] immutable locals and constants initialized from a literal
+      - [x] LLVM regression coverage proves the literal call-site specialization still triggers through a `const` carrier
+    - [x] phis only when every reachable incoming value is the same literal payload
   - [ ] move the literal conversion rewrite out of the LLVM emitter and into an SSA rewrite pass
+    - [x] unblock the current emitter-level specialization for forward successor phi nodes by recording the generated split-block exit label and using it in phi incoming labels
     - [ ] rewrite eligible calls into explicit SSA control-flow blocks before ABI lowering
     - [ ] preserve exact `TryConvertAsciiToUnicode` semantics: null destination returns `false`, non-null failures clear `destination.Length`, capacity too small returns `false`, null destination data with non-empty source returns `false`, and success stores the converted data and final length
     - [ ] allow rewritten calls in blocks whose successors have phi nodes by producing normal SSA blocks instead of emitter-local LLVM labels
     - [ ] keep non-ASCII literals on the full UTF-8 conversion builtin
   - [ ] add literal-size-aware lowering strategies
-    - [ ] emit direct constant `i32` stores for small ASCII literals
-    - [ ] emit a precomputed UTF-32 readonly constant plus `llvm.memcpy` for larger ASCII literals
-    - [ ] choose and document the size threshold with benchmark data
+    - [x] emit direct constant `i32` stores for small ASCII literals
+    - [x] emit a precomputed UTF-32 readonly constant plus `llvm.memcpy` for larger ASCII literals as an emitter-level first slice while the full SSA rewrite is still pending
+    - [x] choose and document the size threshold with benchmark data
+      - [x] current cutoff is 32 code units as a code-size-first threshold; focused April 28, 2026 smokes showed tiny scalar ratio 1.006, medium scalar ratio 1.022, and large `llvm.memcpy` ratio 1.051 versus same-run C, with the large path avoiding 40+ emitted scalar stores
   - [ ] add correctness coverage for literal specialization
-    - [ ] direct literal call
-    - [ ] escaped ASCII literal call
-    - [ ] empty literal call
-    - [ ] literal stored in a local
-    - [ ] literal stored in an immutable local or const
-    - [ ] phi-joined identical literal payload
-    - [ ] non-ASCII literal fallback
-    - [ ] too-small destination
-    - [ ] null destination
-    - [ ] null destination data with non-empty source
-    - [ ] call inside a loop
-    - [ ] call in a block flowing into phi nodes
+    - [x] direct literal call
+      - [x] LLVM regression coverage proves small literal calls still specialize to direct stores and large literal calls use `llvm.memcpy`
+    - [x] escaped ASCII literal call
+    - [x] empty literal call
+    - [x] literal stored in a local
+    - [x] literal stored in an immutable local or const
+    - [x] phi-joined identical literal payload
+    - [x] non-ASCII literal fallback
+    - [x] too-small destination
+    - [x] null destination
+    - [x] null destination data with non-empty source
+    - [x] call inside a loop
+    - [x] call in a block flowing into forward successor phi nodes
   - [ ] add performance coverage for literal specialization
-    - [ ] tiny literal benchmark
-    - [ ] medium literal benchmark
-    - [ ] large literal benchmark that exercises the `llvm.memcpy` path
-    - [ ] compare the public API literal path against a raw widening-kernel ceiling benchmark
+    - [x] tiny literal benchmark
+      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionTinyLiteral` averaged 1731 us versus C at 1720 us, for a same-run C ratio of 1.006
+    - [x] medium literal benchmark
+      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1649 us versus C at 1613 us, for a same-run C ratio of 1.022
+    - [x] large literal benchmark that exercises the `llvm.memcpy` path
+      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1692 us versus C at 1628 us, for a same-run C ratio of 1.039
+      - [x] refreshed 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1696 us versus C at 1613 us, for a same-run C ratio of 1.051
+    - [x] compare the public API literal path against a raw widening-kernel ceiling benchmark
+      - [x] add `benchmarks/text/AsciiToUnicodeWideningKernel` to measure direct byte-to-UTF-32 widening without public `Unicode` wrapper checks
+      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeWideningKernel` averaged 1851 us versus C at 1705 us, for a same-run C ratio of 1.086
+      - [x] after folding known text length calls, a refreshed 3-run smoke on April 28, 2026 averaged 1620 us versus C at 1626 us, for a same-run C ratio of 0.996
     - [ ] track `c_avg_ratio`, binary size, and benchmark stability before/after the rewrite
 
 - [ ] Add alias-aware memory optimization
@@ -2302,6 +2340,7 @@ debuggability unless a task explicitly says otherwise.
     - [x] add same-block scalar global tracking with calls, indirect stores, and memory copies as conservative barriers
     - [x] add same-block stack aggregate scalar field-path tracking with unknown indirect stores as conservative barriers
     - [x] track nested stack aggregate scalar field paths without confusing sibling paths that share the same leaf field
+    - [x] track constant fixed-array element lanes for stack aggregate scalar paths without confusing sibling indices; dynamic element indices remain unknown-memory barriers
   - [ ] use ownership validation, borrow kinds, `noalias`, parameter capture summaries, and function memory-effect summaries to decide which operations may alias
     - [x] use function effect summaries so pure/no-sync direct calls preserve scalar global facts
   - [ ] treat `law`/readonly calls as non-barriers for memory they cannot read or write
@@ -2343,6 +2382,7 @@ debuggability unless a task explicitly says otherwise.
     - [x] add SSA regression coverage for single-predecessor scalar stack-field forwarding and join-block conservatism
     - [x] add pipeline regression coverage proving source-level stack-field loads are forwarded
     - [x] add pipeline regression coverage proving source-level nested stack-field loads are forwarded
+    - [x] add SSA and pipeline regression coverage proving source-level fixed-array element lane loads are forwarded while dynamic index stores stay conservative
     - [x] add pipeline regression coverage proving source-level stack-field facts survive pure scalar calls
     - [x] add pipeline regression coverage proving source-level stack-field facts cross simple single-predecessor blocks
     - [x] add a Stark/C/Rust microbenchmark for scalar global forwarding across pure direct calls
@@ -2482,7 +2522,7 @@ debuggability unless a task explicitly says otherwise.
   - [x] add non-erased benchmark variants for literal-heavy text conversion cases
     - [x] create an ASCII-to-Unicode benchmark variant whose source bytes or selected input vary at runtime so C, Rust, and Stark cannot fold the conversion/checksum away completely
     - [x] keep the C and Rust counterparts idiomatic while documenting the specific runtime dependency that prevents whole-benchmark erasure
-    - [ ] compare both public API usage and a raw widening-kernel shape when that distinction is needed to isolate compiler codegen from stdlib boundary overhead
+    - [x] compare both public API usage and a raw widening-kernel shape when that distinction is needed to isolate compiler codegen from stdlib boundary overhead
   - [ ] compare each benchmark against idiomatic Rust, idiomatic C, and hand-tuned C where appropriate
   - [x] support runtime or compile-time metric checks from the benchmark CSV gate
   - [x] emit benchmark executable size and support `binary_bytes` baseline gates

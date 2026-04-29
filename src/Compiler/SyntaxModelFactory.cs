@@ -1344,8 +1344,12 @@ internal static class SyntaxModelFactory
             {
                 "inline" or "inlinehint" =>
                     $"[Backend(Opaque)] conflicts with '{modifierText}' on {targetDescription}; opaque callables are backend boundaries and are forced noinline.",
+                "noinline" =>
+                    $"[Backend(Opaque)] conflicts with 'noinline' on {targetDescription}; opaque callables are already forced noinline.",
                 "hot" =>
                     $"[Backend(Opaque)] conflicts with 'hot' on {targetDescription}; opaque callables emit an unoptimized backend boundary, so hot-path optimization cannot apply.",
+                "cold" =>
+                    $"[Backend(Opaque)] conflicts with 'cold' on {targetDescription}; opaque callables are backend boundaries rather than layout-tuned cold paths.",
                 "ffi" =>
                     $"[Backend(Opaque)] conflicts with 'ffi' on {targetDescription}; FFI callables are ABI boundaries rather than source bodies for backend optimization containment.",
                 _ => null

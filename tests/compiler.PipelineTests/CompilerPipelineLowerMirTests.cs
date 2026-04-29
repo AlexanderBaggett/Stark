@@ -4863,7 +4863,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Buffer(i32[-2147483648 2147483647][] Values, i32[-2147483648 2147483647] Count) { }
+                public record Buffer(mut i32[-2147483648 2147483647][] Values, i32[-2147483648 2147483647] Count) { }
 
                 public fn void WriteValue<T>(borrow mut Buffer buffer, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] next, T tag) {
                     buffer.Count = next;
@@ -4988,7 +4988,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public record Buffer(i32[-2147483648 2147483647][] Values, i32[-2147483648 2147483647] Count) { }
+                public record Buffer(mut i32[-2147483648 2147483647][] Values, i32[-2147483648 2147483647] Count) { }
 
                 public fn void AddValue<T>(borrow mut Buffer buffer, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] next, T tag) {
                     buffer.Count += next;

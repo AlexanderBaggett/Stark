@@ -1,9 +1,10 @@
 param(
-    [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 50 }),
+    [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 20 }),
     [string]$Filter = $env:STARK_BENCH_FILTER,
     [string]$Target = $env:STARK_TARGET,
     [string]$ExtraCompilerArgs = $env:STARK_COMPILER_ARGS,
     [string]$Languages = $(if ($env:STARK_BENCH_LANGUAGES) { $env:STARK_BENCH_LANGUAGES } else { "stark,c,rust" }),
+    [string]$CaptureRss = $(if ($env:STARK_BENCH_CAPTURE_RSS) { $env:STARK_BENCH_CAPTURE_RSS } else { "0" }),
     [string]$CCompiler = $(if ($env:STARK_BENCH_C_COMPILER) { $env:STARK_BENCH_C_COMPILER } else { "clang" }),
     [string]$RustCompiler = $(if ($env:STARK_BENCH_RUST_COMPILER) { $env:STARK_BENCH_RUST_COMPILER } else { "rustc" }),
     [string]$OutputDir = $env:STARK_BENCH_OUTPUT_DIR,
@@ -142,6 +143,23 @@ function Test-LanguageEnabled {
     return $script:selectedLanguages -contains $Language
 }
 
+function ConvertTo-BenchmarkBoolean {
+    param(
+        [string]$Value,
+        [string]$Name
+    )
+
+    if ($Value -eq "0") {
+        return $false
+    }
+
+    if ($Value -eq "1") {
+        return $true
+    }
+
+    throw "$Name must be 0 or 1."
+}
+
 function Test-WindowsHost {
     $isWindowsVariable = Get-Variable -Name IsWindows -ErrorAction SilentlyContinue
     if ($null -ne $isWindowsVariable) {
@@ -219,6 +237,44 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code $LASTEXITCODE`: $FilePath $($Arguments -join ' ')"
     }
+}
+
+function Invoke-BenchmarkExecutable {
+    param([string]$FilePath)
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+
+    if (!$process.Start()) {
+        throw "Unable to start benchmark executable: $FilePath"
+    }
+
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $stdoutTask.Wait()
+    $stderrTask.Wait()
+
+    $exitCode = $process.ExitCode
+    $peakRssKiB = [long][Math]::Ceiling([double]$process.PeakWorkingSet64 / 1024.0)
+    $process.Dispose()
+
+    if ($exitCode -ne 0) {
+        $stderr = $stderrTask.Result
+        if (![string]::IsNullOrWhiteSpace($stderr)) {
+            throw "Benchmark exited with status $exitCode`: $FilePath`n$stderr"
+        }
+
+        throw "Benchmark exited with status $exitCode`: $FilePath"
+    }
+
+    return $peakRssKiB
 }
 
 function Convert-NanosecondsToMicroseconds {
@@ -418,6 +474,9 @@ function Write-MachineMetadata {
         "timing_unit=microseconds",
         "stark_filter=$(if ([string]::IsNullOrWhiteSpace($Filter)) { '<none>' } else { $Filter })",
         "benchmark_languages=$Languages",
+        "benchmark_capture_rss=$(if ($script:captureRss) { '1' } else { '0' })",
+        "benchmark_peak_rss_unit=KiB",
+        "benchmark_peak_rss_source=Process.PeakWorkingSet64 captured after each benchmark process exits when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled",
         "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
@@ -440,7 +499,13 @@ function Time-Executable {
         [string]$OutputPath
     )
 
-    Invoke-Native $OutputPath @() -SuppressOutput
+    [long]$peakRssKiB = 0
+    if ($script:captureRss) {
+        $peakRssKiB = Invoke-BenchmarkExecutable $OutputPath
+    }
+    else {
+        Invoke-Native $OutputPath @() -SuppressOutput
+    }
 
     [long]$totalMicroseconds = 0
     [long]$minMicroseconds = 0
@@ -448,10 +513,20 @@ function Time-Executable {
 
     for ($run = 1; $run -le $Runs; $run++) {
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        Invoke-Native $OutputPath @() -SuppressOutput
+        [long]$runPeakRssKiB = 0
+        if ($script:captureRss) {
+            $runPeakRssKiB = Invoke-BenchmarkExecutable $OutputPath
+        }
+        else {
+            Invoke-Native $OutputPath @() -SuppressOutput
+        }
         $stopwatch.Stop()
         $elapsedMicroseconds = Get-ElapsedMicroseconds $stopwatch
         $totalMicroseconds += $elapsedMicroseconds
+
+        if ($runPeakRssKiB -gt $peakRssKiB) {
+            $peakRssKiB = $runPeakRssKiB
+        }
 
         if ($minMicroseconds -eq 0 -or $elapsedMicroseconds -lt $minMicroseconds) {
             $minMicroseconds = $elapsedMicroseconds
@@ -463,7 +538,7 @@ function Time-Executable {
     }
 
     $avgMicroseconds = [long]($totalMicroseconds / $Runs)
-    Emit-Row "$BenchmarkId,$Language,$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds"
+    Emit-Row "$BenchmarkId,$Language,$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
 }
 
 function Compile-AndTimeStark {
@@ -538,6 +613,7 @@ function Compile-AndTimeRust {
 }
 
 $script:selectedLanguages = @()
+$script:captureRss = ConvertTo-BenchmarkBoolean $CaptureRss "STARK_BENCH_CAPTURE_RSS"
 foreach ($language in $Languages.Split(",")) {
     $normalized = $language.Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($normalized)) {
@@ -602,7 +678,7 @@ try {
         throw "No benchmark sources matched."
     }
 
-    Emit-Row "benchmark,language,runs,compile_us,min_us,avg_us,max_us"
+    Emit-Row "benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
 
     foreach ($benchmark in @($benchmarks)) {
         $sourcePath = $benchmark.FullName
