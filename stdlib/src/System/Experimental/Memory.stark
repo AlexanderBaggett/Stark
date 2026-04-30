@@ -1,0 +1,338 @@
+import System.Memory
+module System.Experimental.Memory
+
+public finite law bool SupportsDynamicAllocator(System.Memory.Allocator allocator) {
+    return allocator.IsDefault();
+}
+
+public fn System.Memory.MemoryStatus ReserveBytes(
+    mut borrow dynamic i8[-128 127] storage,
+    i64[0 max] additional) {
+    if (!storage.TryReserve(additional)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus ReserveCodePoints(
+    mut borrow dynamic i32[-2147483648 2147483647] storage,
+    i64[0 max] additional) {
+    if (!storage.TryReserve(additional)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendBytes(
+    mut borrow dynamic i8[-128 127] storage,
+    borrow i8[-128 127][] source,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack i8[-128 127][] initialized = storage[0, storage.Length];
+    if disjoint(source, initialized) {
+        if (!storage.TryReserve(count)) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            init storage[storage.Length] = source[index];
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic i8[-128 127] snapshot = new();
+    if (!snapshot.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
+        init snapshot[snapshot.Length] = source[snapshotIndex];
+    }
+
+    stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
+    if (!storage.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
+        init storage[storage.Length] = snapshotView[copyIndex];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendFillBytes(
+    mut borrow dynamic i8[-128 127] storage,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (!storage.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init storage[storage.Length] = value;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendCodePoints(
+    mut borrow dynamic i32[-2147483648 2147483647] storage,
+    borrow i32[-2147483648 2147483647][] source,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack i32[-2147483648 2147483647][] initialized = storage[0, storage.Length];
+    if disjoint(source, initialized) {
+        if (!storage.TryReserve(count)) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            init storage[storage.Length] = source[index];
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic i32[-2147483648 2147483647] snapshot = new();
+    if (!snapshot.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
+        init snapshot[snapshot.Length] = source[snapshotIndex];
+    }
+
+    stack i32[-2147483648 2147483647][] snapshotView = snapshot[0, snapshot.Length];
+    if (!storage.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
+        init storage[storage.Length] = snapshotView[copyIndex];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendFillCodePoints(
+    mut borrow dynamic i32[-2147483648 2147483647] storage,
+    i32[-2147483648 2147483647] value,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (!storage.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init storage[storage.Length] = value;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus InitializeBytesDisjoint(
+    disjoint borrow i8[-128 127][] source,
+    disjoint init i8[-128 127][] destination,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus InitializeBytes(
+    borrow i8[-128 127][] source,
+    init i8[-128 127][] destination,
+    i64[0 max] count) {
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus CopyBytesDisjoint(
+    disjoint borrow i8[-128 127][] source,
+    disjoint borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        destination[index] = source[index];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus CopyBytes(
+    borrow i8[-128 127][] source,
+    borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if disjoint(source, destination) {
+        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            destination[index] = source[index];
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic i8[-128 127] snapshot = new();
+    if (!snapshot.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
+        init snapshot[snapshot.Length] = source[snapshotIndex];
+    }
+
+    stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
+    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
+        destination[copyIndex] = snapshotView[copyIndex];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus MoveBytes(
+    borrow i8[-128 127][] source,
+    borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    return CopyBytes(source, destination, count);
+}
+
+public fn System.Memory.MemoryStatus FillBytes(
+    init i8[-128 127][] destination,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = value;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus FillInitializedBytes(
+    borrow mut i8[-128 127][] destination,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        destination[index] = value;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus InitializeCodePointsDisjoint(
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    disjoint init i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus InitializeCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    init i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus CopyCodePointsDisjoint(
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    disjoint borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        destination[index] = source[index];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus CopyCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if disjoint(source, destination) {
+        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            destination[index] = source[index];
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic i32[-2147483648 2147483647] snapshot = new();
+    if (!snapshot.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
+        init snapshot[snapshot.Length] = source[snapshotIndex];
+    }
+
+    stack i32[-2147483648 2147483647][] snapshotView = snapshot[0, snapshot.Length];
+    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
+        destination[copyIndex] = snapshotView[copyIndex];
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus MoveCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    return CopyCodePoints(source, destination, count);
+}
+
+public fn System.Memory.MemoryStatus FillCodePoints(
+    init i32[-2147483648 2147483647][] destination,
+    i32[-2147483648 2147483647] value,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = value;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus FillInitializedCodePoints(
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i32[-2147483648 2147483647] value,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        destination[index] = value;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

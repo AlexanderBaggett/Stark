@@ -75,6 +75,149 @@ function ConvertTo-SafeName {
     return ($Name -replace '[\\/]', '_') -replace '\.stark$', ''
 }
 
+function Get-BenchmarkVariantDescriptor {
+    param([string]$BenchmarkId)
+
+    $parts = $BenchmarkId -split "/"
+    if ($parts.Length -lt 3 -or $parts[0] -ne "benchmarks") {
+        return $null
+    }
+
+    $category = $parts[1]
+    $stem = [IO.Path]::GetFileName($BenchmarkId)
+    if ([string]::IsNullOrWhiteSpace($stem)) {
+        return $null
+    }
+
+    $prefix = ""
+    if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) {
+        $prefix = "Experimental"
+        $stem = $stem.Substring("Experimental".Length)
+    }
+    elseif ($stem.StartsWith("Dynamic", [StringComparison]::Ordinal)) {
+        $prefix = "Dynamic"
+        $stem = $stem.Substring("Dynamic".Length)
+    }
+
+    if ($category -ne "collections") {
+        $subsystem = switch ($category) {
+            "allocator" { "Memory" }
+            "console" { "Console" }
+            "io" { "IO" }
+            "network" { "Network" }
+            "runtime" { "Runtime" }
+            "text" { "Text" }
+            default { "" }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($subsystem)) {
+            return $null
+        }
+
+        return [PSCustomObject]@{
+            Prefix = $prefix
+            Collection = $subsystem
+            Scenario = $stem
+            BenchmarkGroup = "benchmarks/$category/$stem"
+        }
+    }
+
+    $collection = ""
+    $scenario = $stem
+    if ($stem.StartsWith("LinkedList", [StringComparison]::Ordinal)) {
+        $collection = "LinkedList"
+        $scenario = $stem.Substring("LinkedList".Length)
+    }
+    elseif ($stem.StartsWith("RingQueue", [StringComparison]::Ordinal)) {
+        $collection = "Queue"
+        $scenario = $stem.Substring("RingQueue".Length)
+    }
+    elseif ($stem.StartsWith("Dictionary", [StringComparison]::Ordinal)) {
+        $collection = "Dictionary"
+        $scenario = $stem.Substring("Dictionary".Length)
+    }
+    elseif ($stem.StartsWith("Queue", [StringComparison]::Ordinal)) {
+        $collection = "Queue"
+        $scenario = $stem.Substring("Queue".Length)
+    }
+    elseif ($stem.StartsWith("Stack", [StringComparison]::Ordinal)) {
+        $collection = "Stack"
+        $scenario = $stem.Substring("Stack".Length)
+    }
+    elseif ($stem.StartsWith("List", [StringComparison]::Ordinal)) {
+        $collection = "List"
+        $scenario = $stem.Substring("List".Length)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($collection)) {
+        return $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($scenario)) {
+        $scenario = "Default"
+    }
+
+    $canonicalStem = "$collection$scenario"
+    return [PSCustomObject]@{
+        Prefix = $prefix
+        Collection = $collection
+        Scenario = $scenario
+        BenchmarkGroup = "benchmarks/collections/$canonicalStem"
+    }
+}
+
+function Get-BenchmarkLabel {
+    param(
+        [string]$BenchmarkId,
+        [string]$Language
+    )
+
+    $descriptor = Get-BenchmarkVariantDescriptor $BenchmarkId
+    if ($null -eq $descriptor) {
+        return [PSCustomObject]@{
+            BenchmarkGroup = $BenchmarkId
+            Implementation = $Language
+            Collection = ""
+            Scenario = [IO.Path]::GetFileName($BenchmarkId)
+        }
+    }
+
+    $implementation = $Language
+    if ($Language -eq "stark") {
+        if ($descriptor.Prefix -eq "Experimental") {
+            if ([IO.Path]::GetFileName($BenchmarkId).StartsWith("ExperimentalRingQueue", [StringComparison]::Ordinal)) {
+                $implementation = "experimental-ring-stark"
+            }
+            else {
+                $implementation = "experimental-stark"
+            }
+        }
+        elseif ($descriptor.Prefix -eq "Dynamic") {
+            $implementation = "dynamic-stark"
+        }
+        else {
+            $implementation = "stable-stark"
+        }
+    }
+
+    return [PSCustomObject]@{
+        BenchmarkGroup = $descriptor.BenchmarkGroup
+        Implementation = $implementation
+        Collection = $descriptor.Collection
+        Scenario = $descriptor.Scenario
+    }
+}
+
+function Get-BenchmarkSourcePath {
+    param(
+        [string]$BenchmarkId,
+        [string]$Extension
+    )
+
+    $relativePath = ($BenchmarkId -replace '/', [IO.Path]::DirectorySeparatorChar) + $Extension
+    return Join-Path $repoRoot $relativePath
+}
+
 function Split-ArgumentString {
     param([string]$Text)
 
@@ -307,6 +450,7 @@ function Add-CRelativeAverageRatios {
 
     $header = @($lines[0].Split(","))
     $benchmarkIndex = [Array]::IndexOf($header, "benchmark")
+    $benchmarkGroupIndex = [Array]::IndexOf($header, "benchmark_group")
     $languageIndex = [Array]::IndexOf($header, "language")
     $avgIndex = [Array]::IndexOf($header, "avg_us")
     if ($benchmarkIndex -lt 0 -or $languageIndex -lt 0 -or $avgIndex -lt 0) {
@@ -322,6 +466,7 @@ function Add-CRelativeAverageRatios {
     }
 
     $cAverages = @{}
+    $cGroupAverages = @{}
     $rows = New-Object System.Collections.Generic.List[object[]]
     for ($lineIndex = 1; $lineIndex -lt $lines.Count; $lineIndex++) {
         if ([string]::IsNullOrWhiteSpace($lines[$lineIndex])) {
@@ -340,6 +485,13 @@ function Add-CRelativeAverageRatios {
             [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$avg) -and
             $avg -gt 0) {
             $cAverages[$fields[$benchmarkIndex]] = $avg
+            if ($benchmarkGroupIndex -ge 0 -and $fields.Count -gt $benchmarkGroupIndex) {
+                $group = $fields[$benchmarkGroupIndex]
+                if (![string]::IsNullOrWhiteSpace($group) -and
+                    ($fields[$benchmarkIndex] -eq $group -or !$cGroupAverages.ContainsKey($group))) {
+                    $cGroupAverages[$group] = $avg
+                }
+            }
         }
     }
 
@@ -358,10 +510,18 @@ function Add-CRelativeAverageRatios {
 
         $ratio = ""
         [double]$rowAvg = 0
+        [double]$baselineAvg = 0
+        if ($fields.Count -gt $benchmarkIndex -and $cAverages.ContainsKey($fields[$benchmarkIndex])) {
+            $baselineAvg = [double]$cAverages[$fields[$benchmarkIndex]]
+        }
+        elseif ($benchmarkGroupIndex -ge 0 -and $fields.Count -gt $benchmarkGroupIndex -and $cGroupAverages.ContainsKey($fields[$benchmarkGroupIndex])) {
+            $baselineAvg = [double]$cGroupAverages[$fields[$benchmarkGroupIndex]]
+        }
+
         if ($fields.Count -gt [Math]::Max($benchmarkIndex, $avgIndex) -and
-            $cAverages.ContainsKey($fields[$benchmarkIndex]) -and
+            $baselineAvg -gt 0 -and
             [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$rowAvg)) {
-            $ratio = ($rowAvg / [double]$cAverages[$fields[$benchmarkIndex]]).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+            $ratio = ($rowAvg / $baselineAvg).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
         }
 
         $output.Add(($keptFields + @($ratio)) -join ",")
@@ -477,7 +637,8 @@ function Write-MachineMetadata {
         "benchmark_capture_rss=$(if ($script:captureRss) { '1' } else { '0' })",
         "benchmark_peak_rss_unit=KiB",
         "benchmark_peak_rss_source=Process.PeakWorkingSet64 captured after each benchmark process exits when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled",
-        "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us",
+        "benchmark_label_columns=benchmark_group,implementation,collection,scenario",
+        "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us, falling back to benchmark_group C avg_us",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
         "stark_compiler_args=$(if ([string]::IsNullOrWhiteSpace($ExtraCompilerArgs)) { '<none>' } else { $ExtraCompilerArgs })",
@@ -538,7 +699,8 @@ function Time-Executable {
     }
 
     $avgMicroseconds = [long]($totalMicroseconds / $Runs)
-    Emit-Row "$BenchmarkId,$Language,$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
+    $label = Get-BenchmarkLabel $BenchmarkId $Language
+    Emit-Row "$BenchmarkId,$($label.BenchmarkGroup),$($label.Implementation),$($label.Collection),$($label.Scenario),$Language,$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
 }
 
 function Compile-AndTimeStark {
@@ -678,8 +840,9 @@ try {
         throw "No benchmark sources matched."
     }
 
-    Emit-Row "benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
+    Emit-Row "benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
 
+    $timedNativeBenchmarks = @{}
     foreach ($benchmark in @($benchmarks)) {
         $sourcePath = $benchmark.FullName
         $relativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $sourcePath)
@@ -691,58 +854,64 @@ try {
 
         $safeName = ConvertTo-SafeName $relativePath
         $benchmarkId = $relativePath -replace '\.stark$', ''
-        $sourceStem = $sourcePath.Substring(0, $sourcePath.Length - ".stark".Length)
+        $benchmarkGroup = (Get-BenchmarkLabel $benchmarkId "stark").BenchmarkGroup
+        $nativeSafeName = ConvertTo-SafeName $benchmarkGroup
 
         $starkOutputPath = Join-Path $tmpDir "$safeName-stark.exe"
-        $cOutputPath = Join-Path $tmpDir "$safeName-c.exe"
-        $rustOutputPath = Join-Path $tmpDir "$safeName-rust.exe"
+        $cOutputPath = Join-Path $tmpDir "$nativeSafeName-c.exe"
+        $rustOutputPath = Join-Path $tmpDir "$nativeSafeName-rust.exe"
 
         if (Test-LanguageEnabled "stark") {
             Compile-AndTimeStark $sourcePath $benchmarkId $starkOutputPath
         }
 
-        if (Test-LanguageEnabled "c") {
-            $cSourcePath = "$sourceStem.c"
+        $cBenchmarkKey = "c|$benchmarkGroup"
+        if ((Test-LanguageEnabled "c") -and !$timedNativeBenchmarks.ContainsKey($cBenchmarkKey)) {
+            $timedNativeBenchmarks[$cBenchmarkKey] = $true
+            $cSourcePath = Get-BenchmarkSourcePath $benchmarkGroup ".c"
             if (!(Test-Path -LiteralPath $cSourcePath)) {
-                throw "Missing C benchmark counterpart for $relativePath`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $cSourcePath))"
+                throw "Missing C benchmark counterpart for group $benchmarkGroup`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $cSourcePath))"
             }
 
             if ((Test-WindowsHost) -and (Test-BenchmarkDirective $cSourcePath "skip-c-windows")) {
                 $cRelativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $cSourcePath)
-                Write-Status "Skipping C benchmark $benchmarkId on Windows; $cRelativePath is marked // stark-bench: skip-c-windows."
+                Write-Status "Skipping C benchmark group $benchmarkGroup on Windows; $cRelativePath is marked // stark-bench: skip-c-windows."
             }
             else {
-                Compile-AndTimeC $cSourcePath $benchmarkId $cOutputPath
+                Compile-AndTimeC $cSourcePath $benchmarkGroup $cOutputPath
             }
         }
 
-        if (Test-LanguageEnabled "rust") {
-            $rustSourcePath = "$sourceStem.rs"
+        $rustBenchmarkKey = "rust|$benchmarkGroup"
+        if ((Test-LanguageEnabled "rust") -and !$timedNativeBenchmarks.ContainsKey($rustBenchmarkKey)) {
+            $timedNativeBenchmarks[$rustBenchmarkKey] = $true
+            $rustSourcePath = Get-BenchmarkSourcePath $benchmarkGroup ".rs"
             if (!(Test-Path -LiteralPath $rustSourcePath)) {
-                throw "Missing Rust benchmark counterpart for $relativePath`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $rustSourcePath))"
+                throw "Missing Rust benchmark counterpart for group $benchmarkGroup`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $rustSourcePath))"
             }
 
-            Compile-AndTimeRust $rustSourcePath $benchmarkId $rustOutputPath
+            Compile-AndTimeRust $rustSourcePath $benchmarkGroup $rustOutputPath
 
-            $rustVariantPaths = Get-ChildItem -Path "$sourceStem.rust-*.rs" -File -ErrorAction SilentlyContinue |
+            $rustSourceStem = $rustSourcePath.Substring(0, $rustSourcePath.Length - ".rs".Length)
+            $rustVariantPaths = Get-ChildItem -Path "$rustSourceStem.rust-*.rs" -File -ErrorAction SilentlyContinue |
                 Sort-Object FullName
             foreach ($rustVariantPath in @($rustVariantPaths)) {
                 $rustVariantName = [IO.Path]::GetFileName($rustVariantPath.FullName)
-                $rustVariantName = $rustVariantName.Substring(([IO.Path]::GetFileName($sourceStem) + ".rust-").Length)
+                $rustVariantName = $rustVariantName.Substring(([IO.Path]::GetFileName($rustSourceStem) + ".rust-").Length)
                 $rustVariantName = $rustVariantName.Substring(0, $rustVariantName.Length - ".rs".Length)
                 if ($rustVariantName.Contains(",")) {
                     throw "Rust benchmark variant names must not contain commas: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $rustVariantPath.FullName))"
                 }
 
                 $rustVariantSafeName = $rustVariantName -replace '[^A-Za-z0-9_]', '_'
-                $rustVariantOutputPath = Join-Path $tmpDir "$safeName-rust-$rustVariantSafeName.exe"
-                Compile-AndTimeRust $rustVariantPath.FullName $benchmarkId $rustVariantOutputPath "rust-$rustVariantName"
+                $rustVariantOutputPath = Join-Path $tmpDir "$nativeSafeName-rust-$rustVariantSafeName.exe"
+                Compile-AndTimeRust $rustVariantPath.FullName $benchmarkGroup $rustVariantOutputPath "rust-$rustVariantName"
             }
         }
     }
 
     Add-CRelativeAverageRatios $ResultsFile
-    Write-Status "Added c_avg_ratio column using same-benchmark C avg_us baselines."
+    Write-Status "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines."
 }
 finally {
     if (Test-Path -LiteralPath $tmpDir) {

@@ -104,7 +104,8 @@ Use `camelCase` for:
 Examples:
 
 ```stark
-fn i32 Add(i32 left, i32 right) {
+fn i32 Add(i32 left, i32 right) 
+{
     stack i32 total = left + right;
     return total;
 }
@@ -119,7 +120,8 @@ Use `PascalCase` for fields and record members.
 Examples:
 
 ```stark
-struct Box {
+struct Box 
+{
     i32[min max] Width;
     i32[min max] Height;
 }
@@ -213,7 +215,8 @@ If a function exists to satisfy a foreign ABI contract, spell it the way the for
 Examples:
 
 ```stark
-export ffi fn i32 main() {
+export ffi fn i32 main() 
+{
     return 0;
 }
 ```
@@ -241,7 +244,8 @@ Bad:
 ```stark
 ffi fn i32 fputs(ascii text, rawptr<i8> stream);
 
-public fn i32 FPuts(ascii text, rawptr<i8> stream) {
+public fn i32 FPuts(ascii text, rawptr<i8> stream) 
+{
     return fputs(text, stream);
 }
 ```
@@ -265,7 +269,8 @@ Example:
 ffi fn i32 fputs(ascii text, rawptr<i8> stream);
 const rawptr<i8> stdout = null;
 
-public fn void WriteLine(ascii text) {
+public fn void WriteLine(ascii text) 
+{
     fputs(text, stdout);
     fputs("\n", stdout);
     return;
@@ -305,7 +310,8 @@ Do not use tabs in Stark source.
 Use K&R-style braces as in the existing examples:
 
 ```stark
-fn i32 Add(i32 left, i32 right) {
+fn i32 Add(i32 left, i32 right) 
+{
     return left + right;
 }
 ```
@@ -333,7 +339,8 @@ import System
 import Math
 module App
 
-export ffi fn i32 main() {
+export ffi fn i32 main() 
+{
     return Math.Add(1, 2);
 }
 ```
@@ -345,12 +352,14 @@ export ffi fn i32 main() {
 ```stark
 module Geometry
 
-struct Box {
+struct Box 
+{
     i32 Width;
     i32 Height;
 }
 
-public finite law i32 Area(Box box) {
+public finite law i32 Area(Box box) 
+{
     return box.Width * box.Height;
 }
 ```
@@ -363,7 +372,8 @@ module System.Console
 ffi fn i32 fputs(ascii text, rawptr<i8> stream);
 const rawptr<i8> stdout = null;
 
-public fn void Write(ascii text) {
+public fn void Write(ascii text) 
+{
     fputs(text, stdout);
     return;
 }
@@ -375,7 +385,8 @@ public fn void Write(ascii text) {
 import System
 module Hello
 
-export ffi fn i32 main() {
+export ffi fn i32 main() 
+{
     System.Console.WriteLine("Hello, world!");
     return 0;
 }

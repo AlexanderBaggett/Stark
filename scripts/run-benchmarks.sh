@@ -151,6 +151,7 @@ write_machine_metadata() {
     printf 'benchmark_peak_rss_unit=KiB\n'
     printf 'benchmark_peak_rss_source=Linux /proc VmHWM sampled while each benchmark process runs when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled, unavailable, or process exits before sampling\n'
     printf 'benchmark_stability_column=runtime_spread_pct percent spread calculated as (max_us - min_us) / avg_us * 100\n'
+    printf 'benchmark_label_columns=benchmark_group,implementation,collection,scenario\n'
     printf 'benchmark_baseline_file=%s\n' "${baseline_file:-<none>}"
     printf 'benchmark_regression_metric=%s\n' "${STARK_BENCH_REGRESSION_METRIC:-avg_us}"
     printf 'benchmark_require_baseline=%s\n' "${STARK_BENCH_REQUIRE_BASELINE:-0}"
@@ -158,7 +159,7 @@ write_machine_metadata() {
     printf 'benchmark_min_regression_delta=%s\n' "${STARK_BENCH_MIN_REGRESSION_DELTA:-${STARK_BENCH_MIN_REGRESSION_DELTA_US:-50}}"
     printf 'benchmark_max_stark_to_c_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-<disabled>}"
     printf 'benchmark_max_stark_to_rust_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-<disabled>}"
-    printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us\n'
+    printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us, falling back to benchmark_group C avg_us\n'
     printf 'stark_target=%s\n' "${target:-host-default}"
     printf 'stark_flags=--emit-exe -O3\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
@@ -173,6 +174,121 @@ write_machine_metadata() {
 emit_row() {
   printf '%s\n' "$1"
   printf '%s\n' "$1" >> "${results_file}"
+}
+
+benchmark_label_fields() {
+  local benchmark_id="$1"
+  local language="$2"
+
+  local remainder="${benchmark_id#benchmarks/}"
+  local category="${remainder%%/*}"
+  local stem="${benchmark_id##*/}"
+  local prefix=""
+  if [[ "${stem}" == Experimental* ]]; then
+    prefix="Experimental"
+    stem="${stem#Experimental}"
+  elif [[ "${stem}" == Dynamic* ]]; then
+    prefix="Dynamic"
+    stem="${stem#Dynamic}"
+  fi
+
+  if [[ "${benchmark_id}" != benchmarks/collections/* ]]; then
+    local subsystem=""
+    case "${category}" in
+      allocator)
+        subsystem="Memory"
+        ;;
+      console)
+        subsystem="Console"
+        ;;
+      io)
+        subsystem="IO"
+        ;;
+      network)
+        subsystem="Network"
+        ;;
+      runtime)
+        subsystem="Runtime"
+        ;;
+      text)
+        subsystem="Text"
+        ;;
+    esac
+
+    if [[ -z "${subsystem}" ]]; then
+      printf '%s,%s,,%s\n' "${benchmark_id}" "${language}" "${benchmark_id##*/}"
+      return
+    fi
+
+    local implementation="${language}"
+    if [[ "${language}" == "stark" ]]; then
+      if [[ "${prefix}" == "Experimental" ]]; then
+        implementation="experimental-stark"
+      elif [[ "${prefix}" == "Dynamic" ]]; then
+        implementation="dynamic-stark"
+      else
+        implementation="stable-stark"
+      fi
+    fi
+
+    printf 'benchmarks/%s/%s,%s,%s,%s\n' "${category}" "${stem}" "${implementation}" "${subsystem}" "${stem}"
+    return
+  fi
+
+  local collection=""
+  local scenario="${stem}"
+  if [[ "${stem}" == LinkedList* ]]; then
+    collection="LinkedList"
+    scenario="${stem#LinkedList}"
+  elif [[ "${stem}" == RingQueue* ]]; then
+    collection="Queue"
+    scenario="${stem#RingQueue}"
+  elif [[ "${stem}" == Dictionary* ]]; then
+    collection="Dictionary"
+    scenario="${stem#Dictionary}"
+  elif [[ "${stem}" == Queue* ]]; then
+    collection="Queue"
+    scenario="${stem#Queue}"
+  elif [[ "${stem}" == Stack* ]]; then
+    collection="Stack"
+    scenario="${stem#Stack}"
+  elif [[ "${stem}" == List* ]]; then
+    collection="List"
+    scenario="${stem#List}"
+  fi
+
+  if [[ -z "${collection}" ]]; then
+    printf '%s,%s,,%s\n' "${benchmark_id}" "${language}" "${benchmark_id##*/}"
+    return
+  fi
+
+  if [[ -z "${scenario}" ]]; then
+    scenario="Default"
+  fi
+
+  local implementation="${language}"
+  if [[ "${language}" == "stark" ]]; then
+    if [[ "${prefix}" == "Experimental" ]]; then
+      if [[ "${benchmark_id##*/}" == ExperimentalRingQueue* ]]; then
+        implementation="experimental-ring-stark"
+      else
+        implementation="experimental-stark"
+      fi
+    elif [[ "${prefix}" == "Dynamic" ]]; then
+      implementation="dynamic-stark"
+    else
+      implementation="stable-stark"
+    fi
+  fi
+
+  printf 'benchmarks/collections/%s%s,%s,%s,%s\n' "${collection}" "${scenario}" "${implementation}" "${collection}" "${scenario}"
+}
+
+benchmark_group_for_id() {
+  local benchmark_id="$1"
+  local label_fields
+  label_fields="$(benchmark_label_fields "${benchmark_id}" "stark")"
+  printf '%s\n' "${label_fields%%,*}"
 }
 
 ns_to_us() {
@@ -397,7 +513,9 @@ time_executable() {
     }
   }')"
   binary_bytes="$(file_size_bytes "${output_path}")"
-  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
+  local label_fields
+  label_fields="$(benchmark_label_fields "${benchmark_id}" "${language}")"
+  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${label_fields}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
 }
 
 compile_and_time_stark() {
@@ -498,8 +616,9 @@ if [[ -n "${extra_args}" ]]; then
   compiler_args+=(${extra_args})
 fi
 
-emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
+emit_row 'benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
 
+declare -A timed_native_benchmarks=()
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
   if grep -q '^// stark-bench: compile-only' "${source_path}"; then
@@ -510,9 +629,11 @@ for source_path in "${benchmarks[@]}"; do
   safe_name="${rel_path//\//_}"
   safe_name="${safe_name%.stark}"
   benchmark_id="${rel_path%.stark}"
+  benchmark_group="$(benchmark_group_for_id "${benchmark_id}")"
+  native_safe_name="${benchmark_group//\//_}"
   stark_output_path="${tmp_dir}/${safe_name}-stark"
-  c_output_path="${tmp_dir}/${safe_name}-c"
-  rust_output_path="${tmp_dir}/${safe_name}-rust"
+  c_output_path="${tmp_dir}/${native_safe_name}-c"
+  rust_output_path="${tmp_dir}/${native_safe_name}-rust"
   if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OSTYPE:-}" == win32* ]]; then
     stark_output_path="${stark_output_path}.exe"
     c_output_path="${c_output_path}.exe"
@@ -523,29 +644,33 @@ for source_path in "${benchmarks[@]}"; do
     compile_and_time_stark "${source_path}" "${benchmark_id}" "${stark_output_path}"
   fi
 
-  if language_enabled c; then
-    c_source_path="${source_path%.stark}.c"
+  c_benchmark_key="c|${benchmark_group}"
+  if language_enabled c && [[ -z "${timed_native_benchmarks[${c_benchmark_key}]+x}" ]]; then
+    timed_native_benchmarks["${c_benchmark_key}"]=1
+    c_source_path="${repo_root}/${benchmark_group}.c"
     if [[ ! -f "${c_source_path}" ]]; then
-      echo "Missing C benchmark counterpart for ${rel_path}: ${c_source_path#${repo_root}/}" >&2
+      echo "Missing C benchmark counterpart for group ${benchmark_group}: ${c_source_path#${repo_root}/}" >&2
       exit 1
     fi
-    compile_and_time_c "${c_source_path}" "${benchmark_id}" "${c_output_path}"
+    compile_and_time_c "${c_source_path}" "${benchmark_group}" "${c_output_path}"
   fi
 
-  if language_enabled rust; then
-    rust_source_path="${source_path%.stark}.rs"
+  rust_benchmark_key="rust|${benchmark_group}"
+  if language_enabled rust && [[ -z "${timed_native_benchmarks[${rust_benchmark_key}]+x}" ]]; then
+    timed_native_benchmarks["${rust_benchmark_key}"]=1
+    rust_source_path="${repo_root}/${benchmark_group}.rs"
     if [[ ! -f "${rust_source_path}" ]]; then
-      echo "Missing Rust benchmark counterpart for ${rel_path}: ${rust_source_path#${repo_root}/}" >&2
+      echo "Missing Rust benchmark counterpart for group ${benchmark_group}: ${rust_source_path#${repo_root}/}" >&2
       exit 1
     fi
-    compile_and_time_rust "${rust_source_path}" "${benchmark_id}" "${rust_output_path}"
+    compile_and_time_rust "${rust_source_path}" "${benchmark_group}" "${rust_output_path}"
 
     shopt -s nullglob
-    rust_variant_paths=("${source_path%.stark}".rust-*.rs)
+    rust_variant_paths=("${repo_root}/${benchmark_group}".rust-*.rs)
     shopt -u nullglob
     for rust_variant_path in "${rust_variant_paths[@]}"; do
       rust_variant_name="$(basename "${rust_variant_path}")"
-      rust_variant_name="${rust_variant_name#"$(basename "${source_path%.stark}").rust-"}"
+      rust_variant_name="${rust_variant_name#"$(basename "${benchmark_group}").rust-"}"
       rust_variant_name="${rust_variant_name%.rs}"
       if [[ "${rust_variant_name}" == *","* ]]; then
         echo "Rust benchmark variant names must not contain commas: ${rust_variant_path#${repo_root}/}" >&2
@@ -553,14 +678,14 @@ for source_path in "${benchmarks[@]}"; do
       fi
 
       rust_variant_safe_name="$(printf '%s' "${rust_variant_name}" | tr -c 'A-Za-z0-9_' '_')"
-      rust_variant_output_path="${tmp_dir}/${safe_name}-rust-${rust_variant_safe_name}"
+      rust_variant_output_path="${tmp_dir}/${native_safe_name}-rust-${rust_variant_safe_name}"
       if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OSTYPE:-}" == win32* ]]; then
         rust_variant_output_path="${rust_variant_output_path}.exe"
       fi
 
       compile_and_time_rust \
         "${rust_variant_path}" \
-        "${benchmark_id}" \
+        "${benchmark_group}" \
         "${rust_variant_output_path}" \
         "rust-${rust_variant_name}"
     done
@@ -568,7 +693,7 @@ for source_path in "${benchmarks[@]}"; do
 done
 
 "${c_ratio_adder}" "${results_file}"
-echo "Added c_avg_ratio column using same-benchmark C avg_us baselines." >&2
+echo "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines." >&2
 
 if [[ -n "${baseline_file}" || "${STARK_BENCH_REQUIRE_BASELINE:-0}" == "1" || -n "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-}" || -n "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-}" ]]; then
   regression_args=("${results_file}")

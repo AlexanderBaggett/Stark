@@ -1,0 +1,45 @@
+import System.Experimental.IO.Path
+import System.Experimental.Text
+import System.Memory
+module Benchmarks.Text.ExperimentalPathRepeatedSmallOps
+
+fn bool Ok(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut System.Experimental.Text.OwnedAscii output = new();
+    if (!Ok(output.Reserve(64))) {
+        return 1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 5000] i = 0; i < 5000; i += 1) {
+        if (!Ok(System.Experimental.IO.Path.TryJoin(output, "alpha", "beta.txt"))) {
+            return 2;
+        }
+
+        checksum += (i64[min max])output.Length();
+        stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts("alpha/beta.txt");
+        checksum += facts.PathLength() + facts.ExtensionLength() + facts.BaseNameLength() + facts.DirectoryNameLength();
+
+        if (!Ok(System.Experimental.IO.Path.TryJoin(output, "alpha/beta", "gamma.txt"))) {
+            return 3;
+        }
+
+        checksum += (i64[min max])output.Length();
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.Extension("archive.tar.gz"));
+    }
+
+    if (checksum != 320000) {
+        return 4;
+    }
+
+    return 0;
+}

@@ -405,6 +405,44 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemory()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Reserve(mut borrow dynamic i32[0 max] values) {
+                return values.TryReserve(8);
+            }
+
+            fn bool Append(mut borrow dynamic i32[0 max] values) {
+                if (!values.TryReserve(1)) {
+                    return false;
+                }
+
+                init values[values.Length] = 1;
+                return true;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        foreach (var functionName in new[] { "Reserve", "Append" })
+        {
+            var function = validation.Functions[functionName];
+            Assert.NotNull(function.MemoryEffects);
+            Assert.True(function.MemoryEffects!.ReadsArgumentMemory);
+            Assert.True(function.MemoryEffects.WritesArgumentMemory);
+            Assert.NotNull(function.Parameters);
+            var parameter = Assert.Single(function.Parameters!);
+            Assert.True(parameter.Reads);
+            Assert.True(parameter.Writes);
+        }
+    }
+
+    [Fact]
     public void LawsCanCallPlainFnsThatInferAsLaws()
     {
         var result = Compile(

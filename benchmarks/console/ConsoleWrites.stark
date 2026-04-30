@@ -1,0 +1,28 @@
+import System.Console
+import System.IO
+module Benchmarks.Console.ConsoleWrites
+
+const Iterations = 64;
+
+fn bool IOOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    for willexit (stack mut i32[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
+        if (!IOOk(System.Console.Write("small"))
+            || !IOOk(System.Console.WriteLine(" line"))
+            || !IOOk(System.Console.WriteLine((unicode)"wide α"))
+            || !IOOk(System.Console.WriteLine("buffer payload 0123456789ABCDEF"))
+            || !IOOk(System.Console.WriteErrorLine("err"))) {
+            return 1;
+        }
+    }
+
+    return 0;
+}

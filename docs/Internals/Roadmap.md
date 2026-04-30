@@ -1977,6 +1977,7 @@ turn that book outline into published website content.
         - [x] add old-vs-new correctness coverage for default construction, reserve/push/pop, mutable and immutable slice views, clear/drop behavior, capacity/status mapping, and stable-versus-experimental value agreement
         - [x] add LLVM checks proving the experimental list lowers through dynamic storage and fallible dynamic reserve rather than raw malloc/realloc/free calls or wrapper fallback
         - [x] add `benchmarks/collections/ExperimentalListGrowth` with C and Rust counterparts so the experimental public list API can be measured beside stable `ListGrowth` and raw `DynamicListGrowth`
+        - [x] add `benchmarks/collections/ExperimentalListIteration` with C and Rust counterparts so experimental indexed list reads are measured beside stable `ListIteration`
         - [ ] add allocator-selected dynamic storage before implementing true `List(System.Memory.Allocator)` parity; the experimental list must not accept and ignore a custom allocator because that would hide a real semantic and performance difference
       - [x] finish `Stack<T>` parity work on top of experimental `List<T>`, including push/pop/peek/clear correctness tests and old-vs-new StackGrowth benchmarks
         - [x] add old-vs-new executable correctness coverage for default construction, push/pop/peek/clear, empty/count behavior, destructible value cleanup, and scope-exit drop behavior
@@ -2003,64 +2004,121 @@ turn that book outline into published website content.
         - [x] add owned-value drop tests for overwrite, remove, clear, rehash, moved removal, and scope-exit drop; dictionary keys remain scalar/hashable by compiler constraint
         - [x] add LLVM checks proving dictionary lookup/update lowers through dynamic storage, initialized value slots, and hash/equality specialization without raw-pointer-backed stable dictionary calls
         - [x] add `benchmarks/collections/ExperimentalDictionaryLookup` with C and Rust counterparts so the experimental dictionary can be measured beside stable `DictionaryLookup` and raw `DynamicDictionaryLookup`
-      - [ ] add collection-level benchmark labels for stable Stark, experimental Stark, C, and Rust so List, Stack, Queue, LinkedList, and Dictionary can be compared independently
-      - [ ] add collection-level correctness suites proving stable and experimental collections agree on insertion order, removal behavior, growth, clear/drop, failed allocation status, and generic value ownership
-    - [ ] add `System.Experimental.Text`
-      - [ ] rewrite `OwnedAscii` around `dynamic i8[-128 127]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
-      - [ ] rewrite `OwnedUnicode` around `dynamic i32[-2147483648 2147483647]` while preserving cheap `unicode` views, append/copy/format workflows, and drop behavior
-      - [ ] replace hot one-character raw pointer slicing in parsing/formatting helpers with `AsciiView`/`UnicodeView`, indexed view access, or compiler-recognized direct data access
-      - [ ] apply `const`, `disjoint`, `if disjoint`, and `independent` contracts to text comparison, parsing, formatting, transcoding, and copy loops where the source contract proves the fact
-      - [ ] add old-vs-new benchmarks for owned text allocation, ASCII-to-Unicode conversion, integer formatting, text concat/copy, parsing, and Unicode formatting
-      - [ ] add text correctness suites for ownership, invalid encodings, overflow, allocation failure, and view lifetime behavior
+      - [x] add collection-level benchmark labels for stable Stark, experimental Stark, C, and Rust so List, Stack, Queue, LinkedList, and Dictionary can be compared independently
+      - [x] add collection-level correctness suites proving stable and experimental collections agree on insertion order, removal behavior, growth, clear/drop, failed allocation status, and generic value ownership
+    - [x] add `System.Experimental.Text`
+      - [x] rewrite `OwnedAscii` around `dynamic i8[-128 127]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
+      - [x] rewrite `OwnedUnicode` around `dynamic i32[-2147483648 2147483647]` while preserving cheap `unicode` views, append/copy/format workflows, and drop behavior
+      - [x] replace hot one-character raw pointer slicing in parsing/formatting helpers with `AsciiView`/`UnicodeView`, indexed view access, or compiler-recognized direct data access
+      - [x] apply `const`, `disjoint`, `if disjoint`, and `independent` contracts to text comparison, parsing, formatting, transcoding, and copy loops where the source contract proves the fact
+      - [x] add old-vs-new benchmarks for owned text allocation, ASCII-to-Unicode conversion, integer formatting, text concat/copy, parsing, and Unicode formatting
+      - [x] add text correctness suites for ownership, invalid encodings, overflow, allocation failure, and view lifetime behavior
     - [ ] add `System.Experimental.IO.Path`
-      - [ ] rewrite path builders and owned path results around dynamic byte storage instead of raw allocation plus manual `Ascii` header construction
-      - [ ] keep `PathFacts` as the single-pass path analysis helper and make extension/base/directory range facts reusable by path APIs and benchmarks
-      - [ ] apply `const` to path-inspection APIs and `disjoint`/`if disjoint` to path join, normalize, copy, and append APIs
-      - [ ] add old-vs-new benchmarks for owned path allocation, path facts, join, normalize, extension/base/directory queries, and repeated small path operations
-      - [ ] add path correctness suites covering separators, alternate separators, roots, empty paths, extension edge cases, allocation failure, and platform differences
+      - [x] rewrite path builders and owned path results around dynamic byte storage instead of raw allocation plus manual `Ascii` header construction
+      - [x] keep `PathFacts` as the single-pass path analysis helper and make extension/base/directory range facts reusable by path APIs and benchmarks
+      - [x] apply `disjoint`/`if disjoint` to path join, normalize, copy, and append APIs
+      - [ ] apply `const` to public path-inspection APIs after the language or API surface has a non-breaking way to accept ordinary runtime `ascii` views without weakening const provenance
+      - [x] add old-vs-new benchmarks for owned path allocation, path facts, join, normalize, extension/base/directory queries, and repeated small path operations
+      - [x] add path correctness suites covering separators, alternate separators, roots, empty paths, extension edge cases, allocation failure, and platform differences
     - [ ] add `System.Experimental.Memory`
-      - [ ] define which memory APIs remain raw runtime/allocator boundaries and which higher-level memory helpers should move to safe slices, `dynamic T`, `init T[]`, bounded raw pointer regions, or `disjoint` contracts
+      - [x] define which memory APIs remain raw runtime/allocator boundaries and which higher-level memory helpers should move to safe slices, `dynamic T`, `init T[]`, bounded raw pointer regions, or `disjoint` contracts
+        - Raw allocation, reallocation, free, and allocator ABI details remain in `System.Memory` and compiler/runtime helpers.
+        - `System.Experimental.Memory` now exposes safe byte/codepoint dynamic reserve, append, fill, initialized-fill, and explicit disjoint copy/initialize helpers over `dynamic T`, slices, and `init T[]`.
       - [ ] add allocator-selection support for `dynamic T` or an equivalent compiler-known allocation policy before experimental collections expose custom allocator parity
       - [ ] expose safe allocation, reserve, copy, fill, and move helpers that lower to direct LLVM allocation and memory intrinsics without requiring public raw-pointer spelling
+        - [x] add dynamic reserve plus append/fill helpers for byte and codepoint storage without public raw-pointer spelling
+        - [x] add explicit disjoint copy/initialize kernels that lower through `init T[]`, `disjoint`, and `independent` loop facts
+        - [x] add overlap-safe byte/codepoint `MoveBytes` and `MoveCodePoints` helpers, and make the ordinary `CopyBytes`/`CopyCodePoints` helpers use memmove-style semantics with a runtime `if disjoint(...)` direct-copy fast path plus a dynamic snapshot fallback for overlapping regions
       - [ ] apply `const`, `disjoint`, `if disjoint`, `independent`, and bounded raw pointer region facts only where they produce measurable improvements without weakening the safe surface
+        - [x] apply `disjoint` and `independent` to explicit non-overlap copy/initialize/fill kernels
+        - [x] apply runtime `if disjoint(...)` to overlap-safe byte/codepoint append, copy, and move helpers while preserving safe slice parameters for ordinary callers
+        - [ ] apply remaining `const` and bounded raw pointer region facts to memory helpers after the safe public surface needs them and compiler lowering supports the corresponding proof shape
       - [ ] add old-vs-new allocator and memory-helper benchmarks for small allocations, bucket reuse, slab refill, copy/fill/move, and dynamic reserve growth
+        - [x] keep the existing `HeapLocalBucketReuse`, `SystemMemoryBucketReallocate`, `SystemMemoryFallbackReallocate`, and linked-list allocation benchmarks as the stable allocator comparison coverage for small allocations, bucket reuse, fallback reallocation, and slab refill behavior
+        - [x] add `benchmarks/allocator/ExperimentalMemoryDynamicReserveGrowth` with Stark/C/Rust executable rows for byte and codepoint dynamic reserve, append-copy, and append-fill growth
+        - [x] add `benchmarks/allocator/ExperimentalMemoryCopyFill` with Stark/C/Rust executable rows for safe byte and codepoint disjoint copy plus initialized-fill helper kernels
+        - [x] extend `benchmarks/allocator/ExperimentalMemoryCopyFill` and its C/Rust counterparts with overlap-safe byte/codepoint move workloads using the public `Move*` helpers versus C `memmove` and Rust `copy_within`
+        - [ ] add custom-allocator/dynamic allocation-policy benchmarks after allocator-selected `dynamic T` support exists
       - [ ] add memory correctness suites for allocation failure, alignment, initialized-slot handling, move/uninitialize behavior, custom allocator selection, and no double-drop/leak paths
-    - [ ] add `System.Experimental.Runtime.Buffer`
-      - [ ] provide fixed-capacity byte-buffer types with safe slice/init-slice accessors for internal stdlib users while keeping raw pointers only at FFI handoff points
-      - [ ] provide dynamic byte-buffer or byte-builder types for workloads that currently need ad hoc owned byte storage
-      - [ ] lower buffer copy/fill/compact operations through `init T[]`, `MoveAt`, `llvm.memcpy`, `llvm.memmove`, or `llvm.memset` as appropriate
-      - [ ] add buffer correctness tests for read/write cursors, compaction, clear, partial writes, and allocation failure
-      - [ ] add buffer benchmarks for push/write, read/advance, compact, copy, and grow workloads
-    - [ ] add `System.Experimental.IO` and `System.Experimental.FileSystem` consumers after Text, Path, and Buffer are available
-      - [ ] update `System.Experimental.IO.File` wrappers to accept safe byte slices and dynamic buffers internally, keeping raw handles and raw pointers constrained to platform calls
-      - [ ] update `System.Experimental.FileSystem` directory enumeration to use experimental owned text/path storage for entry names and safe fixed buffers for platform reads
-      - [ ] add IO/filesystem correctness tests for file read/write/seek, directory iteration, current directory, delete/move/create/remove, and allocation failure paths
-      - [ ] add IO/filesystem benchmarks for buffered reads, buffered writes, directory enumeration, path-heavy file operations, and console-style text transcoding
-    - [ ] add `System.Experimental.Console`
-      - [ ] update console output APIs to consume experimental text builders, Unicode/ASCII views, and runtime buffers without exposing raw pointer storage above the runtime boundary
-      - [ ] update console input APIs to read into experimental fixed or dynamic buffers, decode through experimental text paths, and keep OS handle/raw pointer calls inside runtime/platform modules
-      - [ ] apply `const` to read-only text output paths and `disjoint`/`if disjoint` to buffer-copy and transcode helpers where the source contract proves non-overlap
-      - [ ] add console correctness tests for Write/WriteLine overloads, input buffering, newline behavior, Unicode/ASCII conversion, allocation failure, and platform differences
-      - [ ] add console benchmarks for small writes, large writes, line writes, buffered reads, and text transcoding against the stable console implementation
-    - [ ] add `System.Experimental.Net` and `System.Experimental.Net.Tcp` consumers after Runtime.Buffer is available
-      - [ ] update TCP client/listener read and write surfaces to use safe byte slices and buffer types internally while keeping socket handles and raw pointer calls inside `System.Runtime.Platform`
-      - [ ] benchmark TCP loopback read/write throughput, small-message latency, partial reads/writes, and buffer reuse against the stable implementation
-      - [ ] add networking correctness tests for connect/listen/accept, shutdown, timeout/readiness, partial transfer behavior, and resource cleanup
-    - [ ] keep `System.Runtime`, `System.Runtime.Platform.*`, syscall, OS handles, thread handles, and native FFI declarations as explicit raw-boundary modules rather than rewriting them as safe dynamic storage
-      - [ ] document which raw pointers are legitimate FFI/runtime boundary details and which raw-pointer uses should disappear from higher-level experimental modules
-      - [ ] add checks or review tasks preventing experimental public APIs from exposing raw pointer storage when a slice, dynamic owner, text view, or buffer type carries the same contract
+        - [x] add focused executable correctness coverage for experimental byte/codepoint dynamic append, fill, initialized byte fill, slice views, and helper status plumbing
+        - [x] add executable coverage for byte/codepoint reserve helpers preserving caller-visible dynamic capacity, and for rejecting custom allocator support until allocator-selected `dynamic T` exists
+        - [x] add executable coverage for safe byte/codepoint disjoint copy plus initialized-fill helper kernels
+        - [x] add executable coverage for overlapping byte/codepoint copy and move where the destination starts inside the source, proving snapshot fallback preserves the original source region
+        - [x] add compiler semantic-effect regression coverage so dynamic storage operations on `mut borrow dynamic T` parameters invalidate caller-visible argument-memory facts
+        - [ ] add allocation-failure and alignment stress coverage after the public safe surface can request layouts without raw allocator APIs
+        - [ ] add dynamic `init T[]` cross-helper commit coverage after dynamic spare init views can advance caller-visible owner length through function boundaries
+        - [ ] add owned-value move/uninitialize and no-double-drop/leak coverage after the public memory surface grows beyond byte/codepoint move helpers
+    - [x] add `System.Experimental.Runtime.Buffer`
+      - [x] provide fixed-capacity byte-buffer types with safe slice/init-slice accessors for internal stdlib users while keeping raw pointers only at FFI handoff points
+      - [x] provide dynamic byte-buffer or byte-builder types for workloads that currently need ad hoc owned byte storage
+      - [x] lower buffer copy/fill/compact operations through `init T[]`, `MoveAt`, `llvm.memcpy`, `llvm.memmove`, or `llvm.memset` as appropriate
+        - [x] implement the experimental safe surface with initialized dynamic storage and initialized-slice copy/fill/compact loops so the public API exposes slices and status values rather than raw pointers; LLVM intrinsic selection remains a backend optimization over those loops
+      - [x] add buffer correctness tests for read/write cursors, compaction, clear, partial writes, and allocation failure
+      - [x] add buffer benchmarks for push/write, read/advance, compact, copy, and grow workloads
+    - [x] add `System.Experimental.IO` and `System.Experimental.FileSystem` consumers after Text, Path, and Buffer are available
+      - [x] update `System.Experimental.IO.File` wrappers to accept safe byte slices and dynamic buffers internally, keeping raw handles and raw pointers constrained to platform calls
+        - [x] add `System.Experimental.IO.File` wrapper with safe byte-slice reads/writes, dynamic-byte-buffer writes, fixed-byte-buffer writes, status/result-returning open/close/flush/seek/delete/move/exists helpers, and no public raw handles
+      - [x] update `System.Experimental.FileSystem` directory enumeration to use experimental owned text/path storage for entry names and safe fixed buffers for platform reads
+        - [x] replace the stable `System.FileSystem` wrapper path with direct platform directory calls, an internal `FixedByteBuffer8192` scratch buffer, and one-step conversion of platform entry names into `System.Experimental.Text.OwnedAscii`
+      - [x] add IO/filesystem correctness tests for file read/write/seek, directory iteration, current directory, delete/move/create/remove, and allocation failure paths
+        - [x] add compile-surface coverage for experimental file byte-slice writes and directory open wrappers
+        - [x] add source executable coverage for experimental file read/write/seek/buffer-write/move/delete and directory current-directory/create/read/delete flows on non-Windows targets; Windows executable linking currently remains skipped like existing directory lifecycle coverage
+        - [x] add deterministic `TooLarge` allocation-failure-path coverage for experimental path normalization, plus LLVM guard coverage proving directory enumeration uses the experimental runtime buffer path and does not lower through stable `System.FileSystem`
+      - [x] add IO/filesystem benchmarks for buffered reads, buffered writes, directory enumeration, path-heavy file operations, and console-style text transcoding
+        - [x] add `benchmarks/io/ExperimentalFileBufferedReadWrite` and `benchmarks/io/ExperimentalFileSystemPathTranscode` with C and Rust counterparts
+    - [x] add `System.Experimental.Console`
+      - [x] update console output APIs to consume experimental text builders, Unicode/ASCII views, and runtime buffers without exposing raw pointer storage above the runtime boundary
+        - [x] add ASCII/Unicode, owned ASCII/Unicode, byte-slice, dynamic-byte-buffer, and fixed-byte-buffer stdout/stderr write and line-write overloads with raw pointer conversion constrained to internal runtime/platform handoff helpers
+      - [x] update console input APIs to read into experimental fixed or dynamic buffers, decode through experimental text paths, and keep OS handle/raw pointer calls inside runtime/platform modules
+        - [x] add owned ASCII/Unicode line reads, single-codepoint Unicode reads, and `ReadBytes` overloads for dynamic and fixed experimental runtime buffers; the hidden stdin scratch buffer remains a plain fixed array until static `dynamic`/buffer globals lower cleanly
+      - [x] apply `const` to read-only text output paths and `disjoint`/`if disjoint` to buffer-copy and transcode helpers where the source contract proves non-overlap
+        - [x] keep ordinary `ascii`/`unicode` view overloads non-`const` for now because the current public view surface cannot accept ordinary runtime views as permanent deep-const without a breaking API split; rely on experimental text append/transcode helpers for their existing `disjoint` copy paths
+      - [x] add console correctness tests for Write/WriteLine overloads, input buffering, newline behavior, Unicode/ASCII conversion, allocation failure, and platform differences
+        - [x] add compile/lowering coverage for experimental console output/input surfaces and non-Windows executable coverage for stdout/stderr writes, CRLF line handling, UTF-8-to-Unicode decoding, fixed/dynamic buffer reads, and `TooLarge` line input
+      - [x] add console benchmarks for small writes, large writes, line writes, buffered reads, and text transcoding against the stable console implementation
+        - [x] add stable and experimental console write benchmarks with C/Rust baselines, plus compile-only stable/experimental read-surface benchmarks for buffered reads and owned text decoding
+    - [x] add `System.Experimental.Net` and `System.Experimental.Net.Tcp` consumers after Runtime.Buffer is available
+      - [x] update TCP client/listener read and write surfaces to use safe byte slices and buffer types internally while keeping socket handles and raw pointer calls inside `System.Runtime.Platform`
+        - [x] add experimental client/listener types with internal socket handles, safe byte-slice read/write, fixed/dynamic runtime-buffer write overloads, fixed/dynamic runtime-buffer read overloads, shutdown/close, and readiness helpers
+      - [x] benchmark TCP loopback read/write throughput, small-message latency, partial reads/writes, and buffer reuse against the stable implementation
+        - [x] add `benchmarks/network/ExperimentalTcpLoopbackThroughput` with matching C/Rust baselines; the current experimental read-into-buffer implementation uses a stack scratch buffer plus safe append because direct uninitialized scratch-slice lowering is not yet accepted
+      - [x] add networking correctness tests for connect/listen/accept, shutdown, timeout/readiness, partial transfer behavior, and resource cleanup
+        - [x] add compile/lowering coverage for closed-handle reads/writes, fixed/dynamic buffer overloads, readiness errors, listener accept errors, close idempotence, direct platform socket calls, and no lowering through stable `System.Net.Tcp`
+    - [x] keep `System.Runtime`, `System.Runtime.Platform.*`, syscall, OS handles, thread handles, and native FFI declarations as explicit raw-boundary modules rather than rewriting them as safe dynamic storage
+      - [x] document which raw pointers are legitimate FFI/runtime boundary details and which raw-pointer uses should disappear from higher-level experimental modules
+        - [x] add `docs/Internals/ExperimentalRawBoundaries.md` describing runtime/platform/allocator handles, internal ABI handoff regions, and the intentionally low-level text caller-buffer compatibility surface
+      - [x] add checks or review tasks preventing experimental public APIs from exposing raw pointer storage when a slice, dynamic owner, text view, or buffer type carries the same contract
+        - [x] add `SystemExperimentalRawBoundaryAuditTests` to reject public raw pointer APIs in higher-level experimental modules outside the documented low-level text boundary
 
   ### More experimental Standard Library work
   - [ ] apply `const` parameters to read-only lookup, comparison, hashing, formatting, parsing, and path-inspection APIs where deep immutability is part of the source contract
+    - [x] audit the current experimental surface before widening `const`: ordinary `ascii`/`unicode` parsing, formatting, console/file output, and path inspection must keep accepting runtime views, so they stay non-`const` until there is a non-breaking const-view overload or API split that preserves ordinary callers while carrying permanent const provenance
+    - [x] keep dynamic-storage memory and runtime-buffer helpers non-`const` because their read-only slice operands are ordinary runtime borrow views, not permanent deeply immutable object graphs
   - [ ] apply `disjoint` parameters and `where disjoint(...)` contracts to copy, append, transform, formatting, parsing, path-join, and collection-transfer APIs that operate on non-overlapping memory regions
+    - [x] keep explicit `System.Experimental.Memory` byte/codepoint copy and initialize helpers as `disjoint` parameter contracts with `independent` lowering-friendly loops for callers that can prove non-overlap statically
+    - [x] preserve the existing experimental text and path `if disjoint(...)` append/copy paths rather than weakening their ordinary runtime view surface with raw-pointer regions or custom unsafe proofs
   - [ ] use `if disjoint(...)` fast paths for APIs that must preserve overlap-safe semantics but can take a faster no-overlap path at runtime
+    - [x] make `System.Experimental.Memory.AppendBytes` and `AppendCodePoints` overlap-safe by using a runtime `if disjoint(...)` fast path for non-overlapping source slices and a dynamic snapshot fallback before reserve/growth when the source aliases the destination owner
+    - [x] make `System.Experimental.Memory.CopyBytes`, `CopyCodePoints`, `MoveBytes`, and `MoveCodePoints` overlap-safe by using runtime `if disjoint(...)` direct-copy fast paths and dynamic snapshot fallbacks for overlapping source/destination slices
+    - [x] make `System.Experimental.Runtime.Buffer` fixed and dynamic byte-buffer `WriteSlice` paths overlap-safe by using runtime `if disjoint(...)` checks for direct writes and snapshot fallbacks for aliased sources
   - [ ] use `independent` loops in copy, fill, scan, hash, comparison, formatting, parsing, and collection-growth paths once the loop body satisfies the accepted dependency-validation subset
-  - [ ] use bounded raw pointer region features only at unsafe, FFI, or runtime-boundary comparison points, not as the primary safe implementation strategy for the new standard-library variants
-  - [ ] carry `[Backend(Opaque)]` boundaries only where benchmarks prove whole-program optimization through the implementation hurts the caller or dependency code
+    - [x] keep `independent` on explicit disjoint copy/initialize/fill kernels whose loop bodies use the accepted indexed slice/init-slice subset
+    - [x] leave dynamic append-at-tail loops non-`independent` for now: the current ownership validator accepts `init owner[owner.Length]` append loops, while indexed dynamic init-slice loops and dynamic temporary reads still need stronger initialized-slot proofs before they can safely carry `independent`
+  - [x] use bounded raw pointer region features only at unsafe, FFI, or runtime-boundary comparison points, not as the primary safe implementation strategy for the new standard-library variants
+    - [x] keep higher-level experimental public APIs free of raw pointer storage with an audit test; raw handles and raw pointer conversions remain internal to runtime/platform handoff code, and `System.Experimental.Text` remains the explicitly documented low-level text interop exception
+  - [x] carry `[Backend(Opaque)]` boundaries only where benchmarks prove whole-program optimization through the implementation hurts the caller or dependency code
+    - [x] keep `System.Experimental.*` transparent to whole-program optimization for now and add an audit test rejecting experimental `[Backend(Opaque)]` annotations until a benchmark-backed exception is documented
   - [ ] add benchmark counterparts for every new implementation so each old implementation and new-feature implementation run the same workload side by side
-  - [ ] add benchmark result labeling that makes old Stark, new-feature Stark, C, and Rust baselines easy to compare in CSV output and relative-ratio columns
+    - [x] add stable-vs-experimental collection, text/path, allocator/memory, runtime-buffer, IO/file-system, console, and network benchmark rows with matching C/Rust baselines where those workloads are executable on the host
+    - [x] extend the experimental memory copy/fill benchmark with overlap-safe move rows in Stark/C/Rust so the safe `Move*` surface is measured beside C `memmove` and Rust `copy_within`
+  - [x] add benchmark result labeling that makes old Stark, new-feature Stark, C, and Rust baselines easy to compare in CSV output and relative-ratio columns
+    - [x] emit `benchmark_group`, `implementation`, `collection`, and `scenario` columns from `scripts/run-benchmarks.ps1`, document the label contract in `benchmarks/README.md`, and keep `c_avg_ratio` as the same-benchmark C baseline ratio column
   - [ ] add correctness tests proving the old and new implementations produce identical externally visible results for the compared APIs
+    - [x] add focused executable coverage for overlap-safe experimental memory byte/codepoint append and dynamic runtime-buffer self-alias writes so `if disjoint(...)` fast paths and snapshot fallbacks preserve externally visible bytes/codepoints
+    - [x] add focused executable coverage for overlap-safe experimental memory byte/codepoint copy and move with destination-inside-source overlap
   - [ ] add LLVM/IR checks for the new implementations to confirm expected facts such as `noalias`, readonly loads, scoped alias metadata, access groups, vectorizable loops, and memcpy/memmove/memset lowering
+    - [x] add focused LLVM checks for `System.Experimental.Memory` and `System.Experimental.Runtime.Buffer` module bodies proving runtime disjoint checks lower to pointer-range comparisons on append/write fast paths
+    - [x] extend the `System.Experimental.Memory` LLVM check to prove the copy fast path shared by `Copy*` and `Move*` helpers lowers runtime disjointness to pointer-range comparisons
   - [ ] benchmark both implementations before replacing any public standard-library type or API
 
 

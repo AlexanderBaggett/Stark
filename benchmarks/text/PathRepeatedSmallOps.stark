@@ -1,0 +1,40 @@
+import System
+module Benchmarks.Text.PathRepeatedSmallOps
+
+export ffi fn i32[min max] main() {
+    stack mut i8[-128 127][64] buffer = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Ascii output = new Ascii() {
+        Data = &buffer[0],
+        Length = 0,
+        Capacity = 64
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 5000] i = 0; i < 5000; i += 1) {
+        if (!System.IO.Path.TryJoin(&output, "alpha", "beta.txt")) {
+            return 1;
+        }
+
+        checksum += output.Length;
+        stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts("alpha/beta.txt");
+        checksum += facts.PathLength() + facts.ExtensionLength() + facts.BaseNameLength() + facts.DirectoryNameLength();
+
+        if (!System.IO.Path.TryJoin(&output, "alpha/beta", "gamma.txt")) {
+            return 2;
+        }
+
+        checksum += output.Length;
+        checksum += System.Text.AsciiLength(System.IO.Path.Extension("archive.tar.gz"));
+    }
+
+    if (checksum != 320000) {
+        return 3;
+    }
+
+    return 0;
+}

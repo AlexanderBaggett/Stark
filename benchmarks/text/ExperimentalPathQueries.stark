@@ -1,0 +1,22 @@
+import System.Experimental.IO.Path
+import System.Experimental.Text
+module Benchmarks.Text.ExperimentalPathQueries
+
+export ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 10000] i = 0; i < 10000; i += 1) {
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.Extension("alpha/beta.txt"));
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.BaseName("alpha/beta.txt"));
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.DirectoryName("alpha/beta.txt"));
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.Extension("archive.tar.gz"));
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.BaseName("archive.tar.gz"));
+        checksum += System.Experimental.Text.AsciiLength(System.Experimental.IO.Path.DirectoryName("archive.tar.gz"));
+    }
+
+    if (checksum != 270000) {
+        return 1;
+    }
+
+    return 0;
+}

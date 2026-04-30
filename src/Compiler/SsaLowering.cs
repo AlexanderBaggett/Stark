@@ -850,7 +850,7 @@ internal sealed class SsaLowerer
                 && local.HasConstProvenance;
         }
 
-        private static bool UsesStackLifetime(string storageClass) => storageClass == "stack";
+        private static bool UsesStackLifetime(string storageClass) => storageClass is "stack" or "match";
 
         private void WriteVariable(int blockId, string name, SsaValue value)
         {

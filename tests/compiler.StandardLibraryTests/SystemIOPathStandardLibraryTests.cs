@@ -188,6 +188,338 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
+    public async Task SourceStdLibExperimentalPathCorrectnessExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-path-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Experimental.IO.Path
+                import System.Experimental.Text
+                import System.Memory
+                module App
+
+                fn bool Ok(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                finite law i8[-128 127] UnitAt(ascii value, i64[0 max] index) {
+                    stack rawptr<i8[-128 127]> data = System.Experimental.Text.AsciiData(value);
+                    return *(&data[index]);
+                }
+
+                finite law i8[-128 127] SeparatorUnit() {
+                    return UnitAt(System.Experimental.IO.Path.DirectorySeparator(), 0);
+                }
+
+                finite law bool IsSeparatorUnit(i8[-128 127] value) {
+                    if (value == SeparatorUnit()) {
+                        return true;
+                    }
+
+                    stack ascii alternate = System.Experimental.IO.Path.AlternateDirectorySeparator();
+                    if (System.Experimental.Text.AsciiLength(alternate) <= 0) {
+                        return false;
+                    }
+
+                    return value == UnitAt(alternate, 0);
+                }
+
+                fn bool IsJoinedPath(ascii value) {
+                    if (System.Experimental.Text.AsciiLength(value) != 14) {
+                        return false;
+                    }
+
+                    return UnitAt(value, 0) == (i8[-128 127])97
+                        && UnitAt(value, 4) == (i8[-128 127])97
+                        && IsSeparatorUnit(UnitAt(value, 5))
+                        && UnitAt(value, 6) == (i8[-128 127])98
+                        && UnitAt(value, 10) == (i8[-128 127])46
+                        && UnitAt(value, 13) == (i8[-128 127])116;
+                }
+
+                fn bool IsNormalizedPath(ascii value) {
+                    if (System.Experimental.Text.AsciiLength(value) != 20) {
+                        return false;
+                    }
+
+                    return UnitAt(value, 5) == SeparatorUnit()
+                        && UnitAt(value, 10) == SeparatorUnit()
+                        && UnitAt(value, 11) == (i8[-128 127])103
+                        && UnitAt(value, 16) == (i8[-128 127])46
+                        && UnitAt(value, 19) == (i8[-128 127])116;
+                }
+
+                fn bool IsTextExtension(ascii value) {
+                    switch (value) {
+                        case ".txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsGzExtension(ascii value) {
+                    switch (value) {
+                        case ".gz":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsBetaBaseName(ascii value) {
+                    switch (value) {
+                        case "beta":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsArchiveBaseName(ascii value) {
+                    switch (value) {
+                        case "archive.tar":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsHiddenBaseName(ascii value) {
+                    switch (value) {
+                        case ".hidden":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsAlphaDirectory(ascii value) {
+                    switch (value) {
+                        case "alpha":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsEmpty(ascii value) {
+                    return System.Experimental.Text.AsciiLength(value) == 0;
+                }
+
+                fn bool CheckFacts() {
+                    stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts("alpha/beta.txt");
+                    if (facts.PathLength() != 14
+                        || facts.ExtensionLength() != 4
+                        || facts.BaseNameLength() != 4
+                        || facts.DirectoryNameLength() != 5
+                        || !IsTextExtension(facts.Extension())
+                        || !IsBetaBaseName(facts.BaseName())
+                        || !IsAlphaDirectory(facts.DirectoryName())) {
+                        return false;
+                    }
+
+                    stack System.Experimental.IO.Path.PathFacts archive = System.Experimental.IO.Path.GetFacts("archive.tar.gz");
+                    if (!IsGzExtension(archive.Extension()) || !IsArchiveBaseName(archive.BaseName()) || archive.DirectoryNameLength() != 0) {
+                        return false;
+                    }
+
+                    stack System.Experimental.IO.Path.PathFacts hidden = System.Experimental.IO.Path.GetFacts("alpha/.hidden");
+                    if (!IsEmpty(hidden.Extension()) || !IsHiddenBaseName(hidden.BaseName()) || !IsAlphaDirectory(hidden.DirectoryName())) {
+                        return false;
+                    }
+
+                    stack System.Experimental.IO.Path.PathFacts root = System.Experimental.IO.Path.GetFacts("/");
+                    return root.PathLength() == 1
+                        && root.DirectoryNameLength() == 1
+                        && root.BaseNameLength() == 0
+                        && IsEmpty(System.Experimental.IO.Path.GetFacts("").BaseName())
+                        && IsEmpty(System.Experimental.IO.Path.Extension(".gitignore"))
+                        && IsHiddenBaseName(System.Experimental.IO.Path.BaseName("alpha/.hidden"));
+                }
+
+                fn i32[min max] CheckJoinAndNormalize() {
+                    stack mut System.Experimental.Text.OwnedAscii joined = new();
+                    if (!Ok(System.Experimental.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                        return 1;
+                    }
+
+                    if (System.Experimental.Text.AsciiLength(joined.View()) != 14) {
+                        return 7;
+                    }
+
+                    if (!IsSeparatorUnit(UnitAt(joined.View(), 5))) {
+                        return 8;
+                    }
+
+                    if (!IsJoinedPath(joined.View())) {
+                        return 9;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii normalized = new();
+                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt")) || !IsNormalizedPath(normalized.View())) {
+                        return 2;
+                    }
+
+                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedJoin = System.Experimental.IO.Path.Join("alpha", "beta.txt");
+                    switch (ownedJoin) {
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedJoinValue):
+                            if (!IsJoinedPath(ownedJoinValue.View())) {
+                                return 3;
+                            }
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedJoinError):
+                            return 4;
+                    }
+
+                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedNormalize = System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt");
+                    switch (ownedNormalize) {
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedNormalizeValue):
+                            if (!IsNormalizedPath(ownedNormalizeValue.View())) {
+                                return 5;
+                            }
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedNormalizeError):
+                            return 6;
+                    }
+
+                    return 0;
+                }
+
+                fn bool CheckSelfViewAliases() {
+                    stack mut System.Experimental.Text.OwnedAscii selfJoin = new();
+                    if (!Ok(selfJoin.AppendAscii("alpha"))) {
+                        return false;
+                    }
+
+                    stack ascii sameView = selfJoin.View();
+                    if (!Ok(System.Experimental.IO.Path.TryJoin(selfJoin, sameView, sameView))) {
+                        return false;
+                    }
+
+                    if (System.Experimental.Text.AsciiLength(selfJoin.View()) != 11
+                        || UnitAt(selfJoin.View(), 5) != SeparatorUnit()
+                        || UnitAt(selfJoin.View(), 6) != (i8[-128 127])97) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii rightAlias = new();
+                    if (!Ok(rightAlias.AppendAscii("beta.txt"))) {
+                        return false;
+                    }
+
+                    stack ascii rightView = rightAlias.View();
+                    if (!Ok(System.Experimental.IO.Path.TryJoin(rightAlias, "alpha", rightView)) || !IsJoinedPath(rightAlias.View())) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii normalizeAlias = new();
+                    if (!Ok(normalizeAlias.AppendAscii("alpha//beta///gamma.txt"))) {
+                        return false;
+                    }
+
+                    stack ascii normalizeView = normalizeAlias.View();
+                    return Ok(System.Experimental.IO.Path.TryNormalizeSeparators(normalizeAlias, normalizeView))
+                        && IsNormalizedPath(normalizeAlias.View());
+                }
+
+                fn i32[min max] CheckTooLargeNormalization() {
+                    stack mut i8[-128 127][1] storage = { 47 };
+                    stack Ascii huge = new Ascii() {
+                        Data = &storage[0],
+                        Length = (i64[min max])((2**63) - 1),
+                        Capacity = (i64[min max])((2**63) - 1)
+                    };
+                    stack mut System.Experimental.Text.OwnedAscii destination = new();
+                    stack ascii hugeView = System.Experimental.Text.AsciiView(huge);
+                    if (System.Experimental.Text.AsciiLength(hugeView) == 0) {
+                        return 1;
+                    }
+
+                    stack System.Memory.MemoryStatus status = System.Experimental.IO.Path.TryNormalizeSeparators(destination, hugeView);
+                    if (Ok(status)) {
+                        return 2;
+                    }
+
+                    if (destination.Length() != 0) {
+                        return 3;
+                    }
+
+                    return 0;
+                }
+
+                export ffi fn i32[min max] main() {
+                    if (!CheckFacts()) {
+                        return 1;
+                    }
+
+                    stack i32[min max] joinAndNormalize = CheckJoinAndNormalize();
+                    if (joinAndNormalize != 0) {
+                        return 20 + joinAndNormalize;
+                    }
+
+                    if (!CheckSelfViewAliases()) {
+                        return 3;
+                    }
+
+                    stack i32[min max] tooLarge = CheckTooLargeNormalization();
+                    if (tooLarge != 0) {
+                        return 40 + tooLarge;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBuffer()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)

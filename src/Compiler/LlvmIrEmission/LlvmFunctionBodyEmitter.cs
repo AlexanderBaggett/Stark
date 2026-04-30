@@ -9314,6 +9314,7 @@ internal sealed class LlvmFunctionBodyEmitter
         switch (GetLocalStorageClass(localName))
         {
             case "stack":
+            case "match":
                 QueueStaticAlloca($"%{slotName}", localType);
                 return;
             case "heap":

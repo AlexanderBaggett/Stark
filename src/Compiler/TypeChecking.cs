@@ -6852,7 +6852,8 @@ internal sealed class TypeChecker
                     targetType,
                     NamedType: ResolveNamedTypeSymbol(targetType),
                     TextLiteral: convertedOperand.TextLiteral,
-                    TextLiteralKind: convertedOperand.TextLiteralKind);
+                    TextLiteralKind: convertedOperand.TextLiteralKind,
+                    HasConstProvenance: HasConstProvenance(convertedOperand));
             }
 
             if (targetType.Kind == StarkTypeKind.RawPointer
@@ -10475,7 +10476,11 @@ internal sealed class TypeChecker
         }
 
         _literals.Add(new LiteralTypingRecord(literal.GetText(), type, Location(literal)));
-        return new ExpressionBinding(type, TextLiteral: textLiteral, TextLiteralKind: textLiteralKind);
+        return new ExpressionBinding(
+            type,
+            TextLiteral: textLiteral,
+            TextLiteralKind: textLiteralKind,
+            HasConstProvenance: textLiteral is not null && type.Kind is (StarkTypeKind.Ascii or StarkTypeKind.Unicode));
     }
 
     private ExpressionBinding EvaluateInterpolatedTextLiteral(
@@ -11611,7 +11616,8 @@ internal sealed class TypeChecker
             current = new ExpressionBinding(
                 FindCommonTextType(current.Type, next.Type),
                 TextLiteral: literalText,
-                TextLiteralKind: TextLiteralKind.String);
+                TextLiteralKind: TextLiteralKind.String,
+                HasConstProvenance: HasConstProvenance(current) && HasConstProvenance(next));
         }
 
         if (isFixedTextStorageConcat)
@@ -11629,7 +11635,8 @@ internal sealed class TypeChecker
             return new ExpressionBinding(
                 expectedType,
                 TextLiteral: current.TextLiteral,
-                TextLiteralKind: current.TextLiteralKind);
+                TextLiteralKind: current.TextLiteralKind,
+                HasConstProvenance: HasConstProvenance(current));
         }
 
         return current;
@@ -12633,6 +12640,11 @@ internal sealed class TypeChecker
         }
 
         if (target.Kind == StarkTypeKind.Unicode && source.Type.Kind == StarkTypeKind.Ascii)
+        {
+            return true;
+        }
+
+        if (target.Kind == source.Type.Kind)
         {
             return true;
         }

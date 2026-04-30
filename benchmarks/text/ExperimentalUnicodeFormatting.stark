@@ -1,0 +1,48 @@
+import System.Experimental.Text
+module Benchmarks.Text.ExperimentalUnicodeFormatting
+
+const Iterations = 50;
+
+fn i64[min max] UnicodeChecksum(borrow Unicode text) {
+    return text.Length
+        + (i64[min max])(*text.Data)
+        + (i64[min max])(*(&text.Data[text.Length - 1]));
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i32[-2147483648 2147483647][320] storage;
+    stack mut Unicode text = new Unicode() {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = 320
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut i32[0 50] i = 0; i < Iterations; i += 1) {
+        if (!System.Experimental.Text.TryFormatEncodingUnicode(&text, System.Experimental.Text.Encoding.UTF16)) {
+            return 1;
+        }
+        checksum += UnicodeChecksum(text);
+
+        if (!System.Experimental.Text.TryFormatTextErrorUnicode(&text, System.Experimental.Text.TextError.InvalidFormat)) {
+            return 2;
+        }
+        checksum += UnicodeChecksum(text);
+
+        if (!System.Experimental.Text.TryFormatI1024Unicode(&text, -(2**1023))) {
+            return 3;
+        }
+        checksum += UnicodeChecksum(text);
+
+        if (!System.Experimental.Text.TryFormatU1024Unicode(&text, (u1024[0 max])((2**1024) - 1))) {
+            return 4;
+        }
+        checksum += UnicodeChecksum(text);
+    }
+
+    if (checksum != 58350) {
+        return 5;
+    }
+
+    return 0;
+}

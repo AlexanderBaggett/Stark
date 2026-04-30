@@ -937,6 +937,530 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
+    private const string ExperimentalCollectionsCrossFamilyParityProgram = """
+        import System.Collections
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        static mut i32[min max] DropCounter = 0;
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool TooLarge(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return false;
+                case MemoryStatus.Err(var error):
+                    return error == MemoryError.TooLarge;
+            }
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        fn bool CheckListParity() {
+            stack mut System.Collections.List<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.List<i32[0 max]> experimental = new();
+            if (!Ok(stable.Reserve(3)) || !Ok(experimental.Reserve(3))) {
+                return false;
+            }
+
+            for willexit (stack mut i32[0 40] i = 0; i < 40; i += 1) {
+                stack i32[0 max] value = (i32[0 max])((i * 3) + 1);
+                if (!Ok(stable.Push(value)) || !Ok(experimental.Push(value))) {
+                    return false;
+                }
+            }
+
+            if (stable.Count() != experimental.Count() || stable.Capacity() < stable.Count() || experimental.Capacity() < experimental.Count()) {
+                return false;
+            }
+
+            stable.GetMut(5) = 55;
+            experimental.GetMut(5) = 55;
+            stable.AsMutableSlice()[7] = 77;
+            experimental.AsMutableSlice()[7] = 77;
+
+            for willexit (stack mut i32[0 40] i = 0; i < 40; i += 1) {
+                if (stable.Get(i) != experimental.Get(i) || stable.AsSlice()[i] != experimental.AsSlice()[i]) {
+                    return false;
+                }
+            }
+
+            stack mut i64[min max] checksum = 0;
+            for willexit (stack mut i32[0 20] i = 0; i < 20; i += 1) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue) || stableValue != experimentalValue) {
+                    return false;
+                }
+
+                checksum += (i64[min max])experimentalValue;
+            }
+
+            if (stable.Count() != 20 || experimental.Count() != 20 || checksum != 1790) {
+                return false;
+            }
+
+            stable.Clear();
+            experimental.Clear();
+            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            return stable.IsEmpty()
+                && experimental.IsEmpty()
+                && TooLarge(stable.Reserve(impossible))
+                && TooLarge(experimental.Reserve(impossible));
+        }
+
+        fn bool CheckStackParity() {
+            stack mut System.Collections.Stack<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.Stack<i32[0 max]> experimental = new();
+            if (!Ok(stable.Reserve(2)) || !Ok(experimental.Reserve(2))) {
+                return false;
+            }
+
+            for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
+                if (!Ok(stable.Push(i)) || !Ok(experimental.Push(i)) || stable.Peek() != experimental.Peek()) {
+                    return false;
+                }
+            }
+
+            stack mut i64[min max] checksum = 0;
+            while willexit (!experimental.IsEmpty()) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue) || stableValue != experimentalValue) {
+                    return false;
+                }
+
+                checksum += (i64[min max])experimentalValue;
+            }
+
+            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            return stable.IsEmpty()
+                && experimental.IsEmpty()
+                && checksum == 496
+                && TooLarge(stable.Reserve(impossible))
+                && TooLarge(experimental.Reserve(impossible));
+        }
+
+        fn bool CheckQueueParity() {
+            stack mut System.Collections.Queue<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.Queue<i32[0 max]> experimental = new();
+            if (!Ok(stable.Reserve(4)) || !Ok(experimental.Reserve(4))) {
+                return false;
+            }
+
+            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(experimental.Enqueue(i)) || stable.Peek() != experimental.Peek()) {
+                    return false;
+                }
+            }
+
+            stack mut i64[min max] checksum = 0;
+            for willexit (stack mut i32[0 16] i = 0; i < 16; i += 1) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryDequeue(stableValue) || !experimental.TryDequeue(experimentalValue) || stableValue != experimentalValue) {
+                    return false;
+                }
+
+                checksum += (i64[min max])experimentalValue;
+            }
+
+            for willexit (stack mut i32[0 72] i = 48; i < 72; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(experimental.Enqueue(i))) {
+                    return false;
+                }
+            }
+
+            while willexit (!experimental.IsEmpty()) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] experimentalValue = 0;
+                if (!stable.TryDequeue(stableValue) || !experimental.TryDequeue(experimentalValue) || stableValue != experimentalValue) {
+                    return false;
+                }
+
+                checksum += (i64[min max])experimentalValue;
+            }
+
+            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            return stable.IsEmpty()
+                && experimental.IsEmpty()
+                && checksum == 2556
+                && TooLarge(stable.Reserve(impossible))
+                && TooLarge(experimental.Reserve(impossible));
+        }
+
+        fn bool CheckRingQueueParity() {
+            stack mut System.Collections.Queue<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.RingQueue<i32[0 max]> ring = new();
+            for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
+                    return false;
+                }
+            }
+
+            stack mut i64[min max] checksum = 0;
+            for willexit (stack mut i32[0 12] i = 0; i < 12; i += 1) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] ringValue = 0;
+                if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue) || stableValue != ringValue) {
+                    return false;
+                }
+
+                checksum += (i64[min max])ringValue;
+            }
+
+            for willexit (stack mut i32[0 64] i = 32; i < 64; i += 1) {
+                if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
+                    return false;
+                }
+            }
+
+            while willexit (!ring.IsEmpty()) {
+                stack mut i32[0 max] stableValue = 0;
+                stack mut i32[0 max] ringValue = 0;
+                if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue) || stableValue != ringValue) {
+                    return false;
+                }
+
+                checksum += (i64[min max])ringValue;
+            }
+
+            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            return stable.IsEmpty()
+                && ring.IsEmpty()
+                && checksum == 2016
+                && TooLarge(ring.Reserve(impossible));
+        }
+
+        fn bool CheckLinkedListParity() {
+            stack mut System.Collections.LinkedList<i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.LinkedList<i32[0 max]> experimental = new();
+            if (!Ok(stable.ReserveNodes(3)) || !Ok(experimental.ReserveNodes(3))) {
+                return false;
+            }
+
+            if (!Ok(stable.AddLast(10)) || !Ok(experimental.AddLast(10))
+                || !Ok(stable.AddLast(20)) || !Ok(experimental.AddLast(20))
+                || !Ok(stable.AddFirst(5)) || !Ok(experimental.AddFirst(5))
+                || !Ok(stable.AddLast(30)) || !Ok(experimental.AddLast(30))) {
+                return false;
+            }
+
+            stack mut i32[0 max] stableValue = 0;
+            stack mut i32[0 max] experimentalValue = 0;
+            if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue) || stableValue != 5 || experimentalValue != 5) {
+                return false;
+            }
+
+            if (!stable.TryRemoveLast(stableValue) || !experimental.TryRemoveLast(experimentalValue) || stableValue != 30 || experimentalValue != 30) {
+                return false;
+            }
+
+            if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue) || stableValue != 10 || experimentalValue != 10) {
+                return false;
+            }
+
+            if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue) || stableValue != 20 || experimentalValue != 20) {
+                return false;
+            }
+
+            if (!stable.IsEmpty() || !experimental.IsEmpty()) {
+                return false;
+            }
+
+            for willexit (stack mut i32[0 24] i = 0; i < 24; i += 1) {
+                if (!Ok(stable.AddLast(i)) || !Ok(experimental.AddLast(i))) {
+                    return false;
+                }
+            }
+
+            stable.Clear();
+            experimental.Clear();
+            return stable.Count() == 0 && experimental.Count() == 0;
+        }
+
+        fn bool CheckDictionaryParity() {
+            stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> stable = new();
+            stack mut System.Experimental.Collections.Dictionary<i32[0 max], i32[0 max]> experimental = new();
+            if (!Ok(stable.Reserve(5)) || !Ok(experimental.Reserve(5))) {
+                return false;
+            }
+
+            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
+                stack i32[0 max] key = (i32[0 max])(i * 2);
+                stack i32[0 max] value = (i32[0 max])(i + 100);
+                if (!Ok(stable.Set(key, value)) || !Ok(experimental.Set(key, value))) {
+                    return false;
+                }
+            }
+
+            if (stable.Count() != experimental.Count() || stable.Capacity() < stable.Count() || experimental.Capacity() < experimental.Count()) {
+                return false;
+            }
+
+            stack mut i64[min max] checksum = 0;
+            stack mut i32[0 max] stableFound = 0;
+            stack mut i32[0 max] experimentalFound = 0;
+            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
+                stack i32[0 max] key = (i32[0 max])(i * 2);
+                if (!stable.TryGet(key, stableFound) || !experimental.TryGet(key, experimentalFound) || stableFound != experimentalFound) {
+                    return false;
+                }
+
+                checksum += (i64[min max])experimentalFound;
+            }
+
+            if (checksum != 5928) {
+                return false;
+            }
+
+            stack i32[0 max] updateKey = 20;
+            if (!Ok(stable.Set(updateKey, 999)) || !Ok(experimental.Set(updateKey, 999))
+                || stable.Count() != experimental.Count()
+                || !stable.TryGet(updateKey, stableFound)
+                || !experimental.TryGet(updateKey, experimentalFound)
+                || stableFound != experimentalFound
+                || experimentalFound != 999) {
+                return false;
+            }
+
+            for willexit (stack mut i32[0 12] i = 0; i < 12; i += 1) {
+                stack i32[0 max] key = (i32[0 max])(i * 4);
+                if (!stable.Remove(key) || !experimental.Remove(key) || stable.ContainsKey(key) || experimental.ContainsKey(key)) {
+                    return false;
+                }
+            }
+
+            stack i32[0 max] tombstoneKey = 777;
+            if (stable.Count() != 36
+                || experimental.Count() != 36
+                || !Ok(stable.Set(tombstoneKey, 12345))
+                || !Ok(experimental.Set(tombstoneKey, 12345))
+                || !stable.TryGet(tombstoneKey, stableFound)
+                || !experimental.TryGet(tombstoneKey, experimentalFound)
+                || stableFound != experimentalFound) {
+                return false;
+            }
+
+            stable.Clear();
+            experimental.Clear();
+            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            return stable.IsEmpty()
+                && experimental.IsEmpty()
+                && TooLarge(stable.Reserve(impossible))
+                && TooLarge(experimental.Reserve(impossible));
+        }
+
+        fn bool CheckOwnedValueCleanup() {
+            DropCounter = 0;
+            {
+                stack mut System.Collections.List<Resource> values = new();
+                if (!Ok(values.Push(new Resource() { Value = 1 })) || !Ok(values.Push(new Resource() { Value = 2 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 3) {
+                return false;
+            }
+
+            {
+                stack mut System.Experimental.Collections.List<Resource> values = new();
+                if (!Ok(values.Push(new Resource() { Value = 3 })) || !Ok(values.Push(new Resource() { Value = 4 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 10) {
+                return false;
+            }
+
+            {
+                stack mut System.Collections.Stack<Resource> values = new();
+                if (!Ok(values.Push(new Resource() { Value = 5 })) || !Ok(values.Push(new Resource() { Value = 6 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 21) {
+                return false;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Stack<Resource> values = new();
+                if (!Ok(values.Push(new Resource() { Value = 7 })) || !Ok(values.Push(new Resource() { Value = 8 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 36) {
+                return false;
+            }
+
+            {
+                stack mut System.Collections.Queue<Resource> values = new();
+                if (!Ok(values.Enqueue(new Resource() { Value = 9 })) || !Ok(values.Enqueue(new Resource() { Value = 10 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 55) {
+                return false;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Queue<Resource> values = new();
+                if (!Ok(values.Enqueue(new Resource() { Value = 11 })) || !Ok(values.Enqueue(new Resource() { Value = 12 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 78) {
+                return false;
+            }
+
+            {
+                stack mut System.Collections.LinkedList<Resource> values = new();
+                if (!Ok(values.AddLast(new Resource() { Value = 13 })) || !Ok(values.AddFirst(new Resource() { Value = 14 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 105) {
+                return false;
+            }
+
+            {
+                stack mut System.Experimental.Collections.LinkedList<Resource> values = new();
+                if (!Ok(values.AddLast(new Resource() { Value = 15 })) || !Ok(values.AddFirst(new Resource() { Value = 16 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 136) {
+                return false;
+            }
+
+            {
+                stack mut System.Collections.Dictionary<i32[0 max], Resource> values = new();
+                stack i32[0 max] one = 1;
+                stack i32[0 max] two = 2;
+                if (!Ok(values.Set(one, new Resource() { Value = 17 })) || !Ok(values.Set(two, new Resource() { Value = 18 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 171) {
+                return false;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Dictionary<i32[0 max], Resource> values = new();
+                stack i32[0 max] three = 3;
+                stack i32[0 max] four = 4;
+                if (!Ok(values.Set(three, new Resource() { Value = 19 })) || !Ok(values.Set(four, new Resource() { Value = 20 }))) {
+                    return false;
+                }
+
+                values.Clear();
+            }
+
+            if (DropCounter != 210) {
+                return false;
+            }
+
+            {
+                stack mut System.Collections.List<Resource> stableScoped = new();
+                if (!Ok(stableScoped.Push(new Resource() { Value = 21 })) || !Ok(stableScoped.Push(new Resource() { Value = 22 }))) {
+                    return false;
+                }
+            }
+
+            if (DropCounter != 253) {
+                return false;
+            }
+
+            {
+                stack mut System.Experimental.Collections.List<Resource> experimentalScoped = new();
+                if (!Ok(experimentalScoped.Push(new Resource() { Value = 23 })) || !Ok(experimentalScoped.Push(new Resource() { Value = 24 }))) {
+                    return false;
+                }
+            }
+
+            return DropCounter == 300;
+        }
+
+        export ffi fn i32[min max] main() {
+            if (!CheckListParity()) {
+                return 1;
+            }
+
+            if (!CheckStackParity()) {
+                return 2;
+            }
+
+            if (!CheckQueueParity()) {
+                return 3;
+            }
+
+            if (!CheckRingQueueParity()) {
+                return 4;
+            }
+
+            if (!CheckLinkedListParity()) {
+                return 5;
+            }
+
+            if (!CheckDictionaryParity()) {
+                return 6;
+            }
+
+            if (!CheckOwnedValueCleanup()) {
+                return 7;
+            }
+
+            return 0;
+        }
+        """;
+
     [Fact]
     public void StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface()
     {
@@ -1689,6 +2213,56 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         try
         {
             await File.WriteAllTextAsync(appPath, ExperimentalDictionaryProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalCollectionsCrossFamilyParityExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-collections-cross-family-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalCollectionsCrossFamilyParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();

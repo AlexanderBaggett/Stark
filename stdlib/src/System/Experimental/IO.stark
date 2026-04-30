@@ -1,2 +1,3 @@
+export import System.Experimental.IO.File
 export import System.Experimental.IO.Path
 module System.Experimental.IO

@@ -11,10 +11,11 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/Calls,c,50,1000,0,0,0,10000,900,1000,1100,20.000000,2048",
-            "benchmarks/micro/Calls,stark,50,1000,200,100,300,10000,700,800,900,25.000000,4096",
-            "benchmarks/micro/Calls,rust,50,1000,0,0,0,10000,1100,1200,1300,16.666667,3072",
-            "benchmarks/micro/NoC,stark,50,1000,200,100,300,10000,400,500,600,40.000000,4096");
+            "benchmarks/micro/Calls,benchmarks/micro/Calls,c,,Calls,c,50,1000,0,0,0,10000,900,1000,1100,20.000000,2048",
+            "benchmarks/micro/Calls,benchmarks/micro/Calls,stark,,Calls,stark,50,1000,200,100,300,10000,700,800,900,25.000000,4096",
+            "benchmarks/micro/ExperimentalCalls,benchmarks/micro/Calls,stark,,Calls,stark,50,1000,200,100,300,10000,1200,1250,1300,8.000000,4096",
+            "benchmarks/micro/Calls,benchmarks/micro/Calls,rust,,Calls,rust,50,1000,0,0,0,10000,1100,1200,1300,16.666667,3072",
+            "benchmarks/micro/NoC,benchmarks/micro/NoC,stark,,NoC,stark,50,1000,200,100,300,10000,400,500,600,40.000000,4096");
 
         var result = await RunScriptAsync(
             repositoryRoot,
@@ -26,12 +27,13 @@ public sealed class BenchmarkRegressionScriptTests
 
         var lines = File.ReadAllLines(current);
         Assert.Equal(
-            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio",
+            "benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio",
             lines[0]);
         Assert.EndsWith(",1.000000", lines[1], StringComparison.Ordinal);
         Assert.EndsWith(",0.800000", lines[2], StringComparison.Ordinal);
-        Assert.EndsWith(",1.200000", lines[3], StringComparison.Ordinal);
-        Assert.EndsWith(",", lines[4], StringComparison.Ordinal);
+        Assert.EndsWith(",1.250000", lines[3], StringComparison.Ordinal);
+        Assert.EndsWith(",1.200000", lines[4], StringComparison.Ordinal);
+        Assert.EndsWith(",", lines[5], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -41,10 +43,10 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var baseline = files.WriteCsv(
             "baseline.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1075,1150,23.255814,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1075,1150,23.255814,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -67,10 +69,10 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var baseline = files.WriteCsv(
             "baseline.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1100,1250,1300,16.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1100,1250,1300,16.000000,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -93,8 +95,8 @@ public sealed class BenchmarkRegressionScriptTests
         using var files = new TemporaryBenchmarkFiles();
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1800,2100,2300,23.809524,4096",
-            "benchmarks/micro/StackScalarLoadForwarding,rust,50,1000,0,0,0,10000,900,1000,1100,20.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1800,2100,2300,23.809524,4096",
+            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,rust,,StackScalarLoadForwarding,rust,50,1000,0,0,0,10000,900,1000,1100,20.000000,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -187,7 +189,7 @@ public sealed class BenchmarkRegressionScriptTests
     private sealed class TemporaryBenchmarkFiles : IDisposable
     {
         private const string Header =
-            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib";
+            "benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib";
 
         private readonly string _directory = Path.Combine(
             Path.GetTempPath(),

@@ -1735,6 +1735,8 @@ internal sealed class SemanticValidator
                     ExpressionObservation.Read);
             }
 
+            RecordObservedMemoryRead(receiver, summary);
+            RecordObservedMemoryWrite(receiver, summary);
             RecordDynamicStorageMutationEffects(function, effects, summary, arguments);
             result = new ValidationValue(
                 receiver.Type.ElementType ?? StarkTypeSymbols.Error,
@@ -1754,6 +1756,8 @@ internal sealed class SemanticValidator
                 ExpressionObservation.Read);
         }
 
+        RecordObservedMemoryRead(receiver, summary);
+        RecordObservedMemoryWrite(receiver, summary);
         RecordDynamicStorageRuntimeEffects(function, effects, summary, arguments);
         result = new ValidationValue(isTryReserve ? StarkTypeSymbols.Bool : StarkTypeSymbols.Void);
         return true;
@@ -3252,7 +3256,8 @@ internal sealed class SemanticValidator
             return;
         }
 
-        if (value.RootSymbol.Origin == SymbolOrigin.Parameter && value.IsIndirectStorageAccess)
+        if (value.RootSymbol.Origin == SymbolOrigin.Parameter
+            && (value.IsIndirectStorageAccess || value.Type.Kind == StarkTypeKind.Dynamic))
         {
             summary.MarkParameterRead(value.RootSymbol.Name);
             return;
@@ -3271,7 +3276,8 @@ internal sealed class SemanticValidator
             return;
         }
 
-        if (value.RootSymbol.Origin == SymbolOrigin.Parameter && value.IsIndirectStorageAccess)
+        if (value.RootSymbol.Origin == SymbolOrigin.Parameter
+            && (value.IsIndirectStorageAccess || value.Type.Kind == StarkTypeKind.Dynamic))
         {
             summary.MarkParameterWrite(value.RootSymbol.Name);
             return;

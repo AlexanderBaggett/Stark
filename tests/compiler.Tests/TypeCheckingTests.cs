@@ -3185,6 +3185,33 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("found 'init i32", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void TextLiteralsHaveConstProvenanceForConstParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool AcceptAscii(const ascii value) {
+                return true;
+            }
+
+            fn bool AcceptUnicode(const unicode value) {
+                return true;
+            }
+
+            fn bool Run() {
+                return AcceptAscii("alpha")
+                    && AcceptAscii("al" + "pha")
+                    && AcceptAscii((ascii)"alpha")
+                    && AcceptUnicode((unicode)"alpha");
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
     private static void AssertIntegerRange(StarkTypeSymbol type, int bitWidth, BigInteger min, BigInteger max, bool isUnsigned = false)
     {
         Assert.Equal(StarkTypeKind.Integer, type.Kind);
