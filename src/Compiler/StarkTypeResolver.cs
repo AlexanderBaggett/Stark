@@ -202,7 +202,9 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.Named(qualifiedName);
         }
 
-        if (_namedTypes.ContainsKey(qualifiedName))
+        if (!qualifiedName.Contains('.', StringComparison.Ordinal)
+            && string.Equals(currentModuleName, _moduleGraph.RootModuleName, StringComparison.Ordinal)
+            && _namedTypes.ContainsKey(qualifiedName))
         {
             return StarkTypeSymbols.Named(qualifiedName);
         }
@@ -232,6 +234,11 @@ internal sealed class StarkTypeResolver
                     token);
                 return StarkTypeSymbols.Error;
             }
+        }
+
+        if (_namedTypes.ContainsKey(qualifiedName))
+        {
+            return StarkTypeSymbols.Named(qualifiedName);
         }
 
         if (TryResolveTypeAlias(qualifiedName, currentModuleName, token, typeArguments: null, out var aliasType))

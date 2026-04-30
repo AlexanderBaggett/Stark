@@ -132,6 +132,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         import System.Memory
         module App
 
+        static mut i32[min max] DropCounter = 0;
+
         fn bool Ok(MemoryStatus status) {
             switch (status) {
                 case MemoryStatus.Ok:
@@ -757,6 +759,184 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
+    private const string ExperimentalDictionaryProgram = """
+        import System.Experimental.Collections
+        import System.Memory
+        module App
+
+        static mut i32[min max] DropCounter = 0;
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool IsPowerOfTwo(i64[0 max] value) {
+            if (value == 0) {
+                return false;
+            }
+
+            stack i64[0 max] mask = (i64[0 max])(value - 1);
+            return (value & mask) == 0;
+        }
+
+        fn void Bump(i32[min max] value) {
+            DropCounter = DropCounter + value;
+            return;
+        }
+
+        struct Resource {
+            i32[min max] Value;
+
+            drop {
+                Bump(self.Value);
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack mut System.Experimental.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+            if (!Ok(dictionary.Reserve(3)) || !IsPowerOfTwo(dictionary.Capacity())) {
+                return 1;
+            }
+
+            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                stack i32[0 max] key = i;
+                stack i32[0 max] value = (i32[0 max])(i * 5);
+                if (!Ok(dictionary.Set(key, value)) || !IsPowerOfTwo(dictionary.Capacity())) {
+                    return 2;
+                }
+            }
+
+            if (dictionary.Count() != 128 || dictionary.IsEmpty()) {
+                return 3;
+            }
+
+            stack mut i64[min max] checksum = 0;
+            stack mut i32[0 max] found = 0;
+            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                stack i32[0 max] key = i;
+                if (!dictionary.ContainsKey(key) || !dictionary.TryGet(key, found) || found != (i32[0 max])(i * 5)) {
+                    return 4;
+                }
+
+                checksum += (i64[min max])found;
+            }
+
+            if (checksum != 40640) {
+                return 5;
+            }
+
+            stack i32[0 max] updateKey = 64;
+            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128) {
+                return 6;
+            }
+
+            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
+                stack i32[0 max] key = (i32[0 max])(i * 2);
+                if (!dictionary.Remove(key)) {
+                    return 7;
+                }
+            }
+
+            if (dictionary.Count() != 64) {
+                return 8;
+            }
+
+            stack i32[0 max] removedKey = 65;
+            if (!dictionary.TryRemove(removedKey, found) || found != 325 || dictionary.ContainsKey(removedKey) || dictionary.Count() != 63) {
+                return 9;
+            }
+
+            stack i32[0 max] tombstoneKey = 4096;
+            if (!Ok(dictionary.Set(tombstoneKey, 12345)) || !dictionary.TryGet(tombstoneKey, found) || found != 12345) {
+                return 10;
+            }
+
+            dictionary.Clear();
+            if (!dictionary.IsEmpty() || dictionary.Count() != 0 || dictionary.ContainsKey(tombstoneKey)) {
+                return 11;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Dictionary<i32[0 max], Resource> drops = new();
+                stack i32[0 max] keyOne = 1;
+                stack i32[0 max] keyTwo = 2;
+                stack i32[0 max] keyThree = 3;
+                stack i32[0 max] keyFour = 4;
+                if (!Ok(drops.Set(keyOne, new Resource() { Value = 10 }))
+                    || !Ok(drops.Set(keyTwo, new Resource() { Value = 20 }))
+                    || !Ok(drops.Set(keyOne, new Resource() { Value = 30 }))) {
+                    return 12;
+                }
+
+                if (DropCounter != 10) {
+                    return 13;
+                }
+
+                if (!drops.Remove(keyTwo)) {
+                    return 14;
+                }
+
+                if (DropCounter != 30) {
+                    return 15;
+                }
+
+                {
+                    stack DictionaryRemoveResult<Resource> removedResult = drops.RemoveMove(keyOne);
+                    switch (removedResult) {
+                        case DictionaryRemoveResult<Resource>.Missing:
+                            return 16;
+                        case DictionaryRemoveResult<Resource>.Removed(var removed):
+                            if (DropCounter != 30 || removed.Value != 30) {
+                                return 17;
+                            }
+                    }
+                }
+
+                if (DropCounter != 60) {
+                    return 18;
+                }
+
+                if (!Ok(drops.Set(keyThree, new Resource() { Value = 40 }))
+                    || !Ok(drops.Set(keyFour, new Resource() { Value = 50 }))
+                    || !Ok(drops.Reserve(64))) {
+                    return 19;
+                }
+
+                if (DropCounter != 60) {
+                    return 20;
+                }
+
+                drops.Clear();
+                if (DropCounter != 150 || drops.Count() != 0) {
+                    return 21;
+                }
+            }
+
+            if (DropCounter != 150) {
+                return 22;
+            }
+
+            {
+                stack mut System.Experimental.Collections.Dictionary<i32[0 max], Resource> scopedDrops = new();
+                stack i32[0 max] scopedKey = 7;
+                if (!Ok(scopedDrops.Set(scopedKey, new Resource() { Value = 60 }))) {
+                    return 23;
+                }
+            }
+
+            if (DropCounter != 210) {
+                return 24;
+            }
+
+            return 0;
+        }
+        """;
+
     [Fact]
     public void StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface()
     {
@@ -985,6 +1165,28 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
+                    if (!dictionary.TryRemove(dictionaryKey, found) || found != 44 || dictionary.ContainsKey(dictionaryKey) || dictionary.Count() != 0) {
+                        return false;
+                    }
+
+                    if (!Ok(dictionary.Set(dictionaryKey, 55))) {
+                        return false;
+                    }
+
+                    stack DictionaryRemoveResult<i32[0 max]> removed = dictionary.RemoveMove(dictionaryKey);
+                    switch (removed) {
+                        case DictionaryRemoveResult<i32[0 max]>.Missing:
+                            return false;
+                        case DictionaryRemoveResult<i32[0 max]>.Removed(var removedValue):
+                            if (removedValue != 55 || dictionary.ContainsKey(dictionaryKey) || dictionary.Count() != 0) {
+                                return false;
+                            }
+                    }
+
+                    if (!Ok(dictionary.Set(dictionaryKey, 66))) {
+                        return false;
+                    }
+
                     return dictionary.Remove(dictionaryKey) && !dictionary.ContainsKey(dictionaryKey) && dictionary.Count() == 0;
                 }
                 """,
@@ -1049,6 +1251,64 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("dynamic_try_reserve_needed", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("extractvalue { ptr, i64, i64 }", llvm.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalDictionaryLowersThroughDynamicStorage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalDictionaryLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.Collections
+                import System.Memory
+                module Demo
+
+                fn bool Ok(MemoryStatus status) {
+                    switch (status) {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool GrowDictionary() {
+                    stack mut System.Experimental.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+                    for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
+                        stack i32[0 max] value = (i32[0 max])(i + 7);
+                        if (!Ok(dictionary.Set(i, value))) {
+                            return false;
+                        }
+                    }
+
+                    stack i32[0 max] lookupKey = 17;
+                    stack mut i32[0 max] found = 0;
+                    return dictionary.Capacity() >= 32
+                        && dictionary.TryGet(lookupKey, found)
+                        && found == 24
+                        && dictionary.Remove(lookupKey)
+                        && dictionary.Count() == 31;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("dynamic_try_reserve", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("System_Experimental_Collections", llvm.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1379,6 +1639,56 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         try
         {
             await File.WriteAllTextAsync(appPath, ExperimentalLinkedListParityProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalDictionaryExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-dictionary-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalDictionaryProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();

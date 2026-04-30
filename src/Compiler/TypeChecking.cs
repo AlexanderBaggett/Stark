@@ -10851,7 +10851,7 @@ internal sealed class TypeChecker
         if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
             || coreType.NamedType is null
             || coreType.TypeArguments is not { Count: 2 }
-            || !string.Equals(StarkTypeSymbols.GetGenericBaseName(coreType.NamedType), "System.Collections.Dictionary", StringComparison.Ordinal))
+            || StarkTypeSymbols.GetGenericBaseName(coreType.NamedType) is not ("System.Collections.Dictionary" or "System.Experimental.Collections.Dictionary"))
         {
             return false;
         }
@@ -11243,7 +11243,9 @@ internal sealed class TypeChecker
     {
         ambiguousImportedNames = [];
 
-        if (_namedTypes.TryGetValue(typeName, out namedType!))
+        if (!typeName.Contains('.', StringComparison.Ordinal)
+            && string.Equals(CurrentFunctionModuleName, _syntaxModel.ModuleName, StringComparison.Ordinal)
+            && _namedTypes.TryGetValue(typeName, out namedType!))
         {
             return true;
         }
@@ -11269,6 +11271,11 @@ internal sealed class TypeChecker
             {
                 ambiguousImportedNames = importedMatches;
             }
+        }
+
+        if (_namedTypes.TryGetValue(typeName, out namedType!))
+        {
+            return true;
         }
 
         namedType = null!;
@@ -12521,6 +12528,14 @@ internal sealed class TypeChecker
             return target.ElementType is not null
                 && source.ElementType is not null
                 && CanAssign(target.ElementType, source.ElementType);
+        }
+
+        if (target.Kind == StarkTypeKind.Dynamic && source.Kind == StarkTypeKind.Dynamic)
+        {
+            return target.ElementType is not null
+                && source.ElementType is not null
+                && CanAssign(target.ElementType, source.ElementType)
+                && CanAssign(source.ElementType, target.ElementType);
         }
 
         if (target.Kind == StarkTypeKind.FunctionPointer && source.Kind == StarkTypeKind.FunctionPointer)

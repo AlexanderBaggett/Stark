@@ -101,6 +101,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool RequiresRuntimeDropCore(StarkTypeSymbol type, HashSet<string> visiting)
         {
+            type = ApplyGenericSubstitution(type);
             if (type.BorrowKind != StarkBorrowKind.None)
             {
                 return false;
@@ -140,7 +141,8 @@ internal sealed partial class MidLevelIrLowerer
                     {
                         foreach (var field in variant.Fields)
                         {
-                            if (RequiresRuntimeDropCore(field.Type, visiting))
+                            var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
+                            if (RequiresRuntimeDropCore(fieldType, visiting))
                             {
                                 return true;
                             }
@@ -158,7 +160,8 @@ internal sealed partial class MidLevelIrLowerer
 
                 foreach (var field in namedType.OrderedFields)
                 {
-                    if (RequiresRuntimeDropCore(field.Type, visiting))
+                    var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
+                    if (RequiresRuntimeDropCore(fieldType, visiting))
                     {
                         return true;
                     }
@@ -203,6 +206,45 @@ internal sealed partial class MidLevelIrLowerer
             return _enumLayoutModel.Layouts.TryGetValue(key, out layout!);
         }
 
+        private StarkTypeSymbol ApplyRuntimeDropGenericSubstitution(StarkTypeSymbol type, StarkTypeSymbol ownerType)
+        {
+            var substitution = BuildRuntimeDropGenericSubstitution(ownerType);
+            return substitution is { Count: > 0 }
+                ? FunctionOverloadFacts.SubstituteType(type, substitution)
+                : ApplyGenericSubstitution(type);
+        }
+
+        private IReadOnlyDictionary<string, StarkTypeSymbol>? BuildRuntimeDropGenericSubstitution(StarkTypeSymbol ownerType)
+        {
+            Dictionary<string, StarkTypeSymbol>? substitution = _activeGenericTypeSubstitution is { Count: > 0 }
+                ? new Dictionary<string, StarkTypeSymbol>(_activeGenericTypeSubstitution, StringComparer.Ordinal)
+                : null;
+            var concreteOwnerType = substitution is { Count: > 0 }
+                ? FunctionOverloadFacts.SubstituteType(ownerType, substitution)
+                : ownerType;
+
+            if (concreteOwnerType.NamedType is null
+                || concreteOwnerType.TypeArguments is not { Count: > 0 } typeArguments)
+            {
+                return substitution;
+            }
+
+            var baseTypeName = StarkTypeSymbols.GetGenericBaseName(concreteOwnerType.NamedType);
+            if (!_typeModel.NamedTypes.TryGetValue(baseTypeName, out var template)
+                || template.GenericParams.Count == 0)
+            {
+                return substitution;
+            }
+
+            substitution ??= new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            for (var index = 0; index < template.GenericParams.Count && index < typeArguments.Count; index++)
+            {
+                substitution[template.GenericParams[index]] = typeArguments[index];
+            }
+
+            return substitution;
+        }
+
         private void EmitRuntimeDropFromNamedValueCore(string name, StarkTypeSymbol type)
         {
             var source = ResolveNamedOperand(name);
@@ -216,6 +258,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private void EmitRuntimeDropFromOperandCore(MidLevelIrOperand operand, StarkTypeSymbol type)
         {
+            type = ApplyGenericSubstitution(type);
             if (!RequiresRuntimeDropCore(type))
             {
                 return;
@@ -335,6 +378,7 @@ internal sealed partial class MidLevelIrLowerer
             StarkTypeSymbol type,
             HashSet<string> visiting)
         {
+            type = ApplyGenericSubstitution(type);
             if (type.Kind != StarkTypeKind.Named
                 || type.NamedType is null
                 || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
@@ -347,13 +391,14 @@ internal sealed partial class MidLevelIrLowerer
             for (var index = namedType.OrderedFields.Count - 1; index >= 0; index--)
             {
                 var field = namedType.OrderedFields[index];
-                if (!RequiresRuntimeDropCore(field.Type))
+                var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
+                if (!RequiresRuntimeDropCore(fieldType))
                 {
                     continue;
                 }
 
-                var fieldValue = LowerKnownFieldAccess(aggregate, field.Name, index, field.Type, field.Name);
-                EmitRuntimeDropFromOperandCore(fieldValue, field.Type);
+                var fieldValue = LowerKnownFieldAccess(aggregate, field.Name, index, fieldType, field.Name);
+                EmitRuntimeDropFromOperandCore(fieldValue, fieldType);
             }
 
             visiting.Remove(type.NamedType);
@@ -388,6 +433,7 @@ internal sealed partial class MidLevelIrLowerer
             EnumLayoutSymbol layout,
             HashSet<string> visiting)
         {
+            type = ApplyGenericSubstitution(type);
             if (!visiting.Add(layout.EnumName))
             {
                 return;
@@ -399,7 +445,9 @@ internal sealed partial class MidLevelIrLowerer
                     .Select(variant => (
                         Variant: variant,
                         Fields: variant.Fields
-                            .Where(field => RequiresRuntimeDropCore(field.Type, visiting))
+                            .Where(field => RequiresRuntimeDropCore(
+                                ApplyRuntimeDropGenericSubstitution(field.Type, type),
+                                visiting))
                             .ToArray()))
                     .Where(static item => item.Fields.Length > 0)
                     .OrderBy(static item => item.Variant.TagValue)
@@ -440,14 +488,15 @@ internal sealed partial class MidLevelIrLowerer
                     for (var fieldIndex = fields.Length - 1; fieldIndex >= 0; fieldIndex--)
                     {
                         var field = fields[fieldIndex];
+                        var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
                         var displayName = field.SourceFieldName ?? $"[{field.SourcePosition}]";
                         var fieldValue = LowerKnownFieldAccess(
                             aggregate,
                             field.StorageFieldName,
                             field.StorageFieldIndex,
-                            field.Type,
+                            fieldType,
                             displayName);
-                        EmitRuntimeDropFromOperandCore(fieldValue, field.Type);
+                        EmitRuntimeDropFromOperandCore(fieldValue, fieldType);
                     }
 
                     EnsureGoto(joinBlock.Id);

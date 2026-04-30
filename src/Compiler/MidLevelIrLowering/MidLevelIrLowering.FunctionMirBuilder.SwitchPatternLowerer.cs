@@ -206,7 +206,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     RestoreRuntimeDropStates(switchEntryDropStates);
                     CurrentBlock = section.Block;
-                    LowerSwitchSectionStatements(section.Section);
+                    LowerSwitchSectionStatements(section.Section, section.Labels, switchValue.Type);
                     var sectionFallsThrough = !CurrentBlock.HasTerminator;
                     var sectionDropStates = SnapshotRuntimeDropStates();
 
@@ -350,7 +350,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     RestoreRuntimeDropStates(switchEntryDropStates);
                     CurrentBlock = section.Block;
-                    LowerSwitchSectionStatements(section.Section);
+                    LowerSwitchSectionStatements(section.Section, [], switchValue.Type);
                     var sectionFallsThrough = !CurrentBlock.HasTerminator;
                     var sectionDropStates = SnapshotRuntimeDropStates();
 
@@ -452,7 +452,7 @@ internal sealed partial class MidLevelIrLowerer
                             ? bodyEntryDropState
                             : switchEntryDropStates);
                     CurrentBlock = section.BodyBlock;
-                    LowerSwitchSectionStatements(section.Section);
+                    LowerSwitchSectionStatements(section.Section, section.Labels, switchValue.Type);
                     var sectionFallsThrough = !CurrentBlock.HasTerminator;
                     var sectionDropStates = SnapshotRuntimeDropStates();
 
@@ -473,9 +473,13 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
-        private void LowerSwitchSectionStatements(StarkParser.SwitchSectionContext section)
+        private void LowerSwitchSectionStatements(
+            StarkParser.SwitchSectionContext section,
+            IReadOnlyList<LowerableSwitchLabel> labels,
+            StarkTypeSymbol switchType)
         {
             _scopes.Push(new ScopeFrame());
+            TrackSwitchSectionCaptureLocals(labels, switchType);
             _compileTimeConstantState.PushScope();
 
             try
@@ -493,6 +497,61 @@ internal sealed partial class MidLevelIrLowerer
             var scope = _scopes.Pop();
             EmitStorageDead(scope);
             RestoreScopedNameAliases(scope);
+        }
+
+        private void TrackSwitchSectionCaptureLocals(IReadOnlyList<LowerableSwitchLabel> labels, StarkTypeSymbol switchType)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var label in labels)
+            {
+                if (label.CaptureName is { } captureName)
+                {
+                    TrackSwitchSectionCaptureLocal(captureName, switchType, seen);
+                }
+
+                if (label.AggregatePattern is { } aggregatePattern)
+                {
+                    TrackAggregatePatternCaptureLocals(aggregatePattern, switchType, seen);
+                }
+            }
+        }
+
+        private void TrackAggregatePatternCaptureLocals(
+            LowerableAggregatePattern aggregatePattern,
+            StarkTypeSymbol aggregateValueType,
+            HashSet<string> seen)
+        {
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            {
+                TrackSwitchSectionCaptureLocal(wholeCaptureName, aggregateValueType, seen);
+            }
+
+            foreach (var fieldPattern in aggregatePattern.FieldPatterns)
+            {
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Capture && fieldPattern.CaptureName is not null)
+                {
+                    TrackSwitchSectionCaptureLocal(fieldPattern.CaptureName, fieldPattern.FieldType, seen);
+                    continue;
+                }
+
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Nested && fieldPattern.NestedPattern is not null)
+                {
+                    TrackAggregatePatternCaptureLocals(fieldPattern.NestedPattern, fieldPattern.FieldType, seen);
+                }
+            }
+        }
+
+        private void TrackSwitchSectionCaptureLocal(string name, StarkTypeSymbol type, HashSet<string> seen)
+        {
+            if (!seen.Add(name))
+            {
+                return;
+            }
+
+            var trackedType = _localsByName.TryGetValue(name, out var local)
+                ? local.Type
+                : type;
+            TrackDeclaredLocal(name, trackedType);
         }
 
         private bool EmitSwitchSectionDecisionCore(
@@ -1303,6 +1362,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 RegisterLocal(captureName, switchType, storageClass: "match", isMutable: false, isConstant: false);
+                InitializeRuntimeDropState(captureName, switchType, isActive: false);
             }
 
             return true;
@@ -1318,6 +1378,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 RegisterLocal(wholeCaptureName, aggregateValueType, storageClass: "match", isMutable: false, isConstant: false);
+                InitializeRuntimeDropState(wholeCaptureName, aggregateValueType, isActive: false);
             }
 
             foreach (var fieldPattern in aggregatePattern.FieldPatterns)
@@ -1332,6 +1393,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     RegisterLocal(fieldPattern.CaptureName, fieldPattern.FieldType, storageClass: "match", isMutable: false, isConstant: false);
+                    InitializeRuntimeDropState(fieldPattern.CaptureName, fieldPattern.FieldType, isActive: false);
                     continue;
                 }
 
@@ -1532,7 +1594,9 @@ internal sealed partial class MidLevelIrLowerer
             foreach (var binding in bindings)
             {
                 var capture = new MidLevelIrLocalOperand(binding.Name, binding.Source.Type);
+                Emit(MidLevelIrStatementKind.StorageLive, binding.Name, binding.Name, binding.Source.Type);
                 EmitOperandAssignment(capture, binding.Source, binding.Source.Text);
+                SetRuntimeDropState(binding.Name, isActive: true);
                 if (binding.RuntimeMoveSource is not null)
                 {
                     RecordMoveFromOperand(binding.RuntimeMoveSource, binding.RuntimeMoveSource.Type);
