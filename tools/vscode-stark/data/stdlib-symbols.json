@@ -1,0 +1,4198 @@
+{
+  "schemaVersion": 1,
+  "source": "stdlib/src",
+  "modules": [
+    {
+      "name": "System",
+      "exports": [
+        "System.BitOperations",
+        "System.Collections",
+        "System.Console",
+        "System.FileSystem",
+        "System.IO",
+        "System.Math",
+        "System.Memory",
+        "System.Net",
+        "System.Net.Tcp",
+        "System.Process",
+        "System.Text",
+        "System.Threading"
+      ]
+    },
+    {
+      "name": "System.BitOperations",
+      "exports": []
+    },
+    {
+      "name": "System.Collections",
+      "exports": []
+    },
+    {
+      "name": "System.Console",
+      "exports": []
+    },
+    {
+      "name": "System.FileSystem",
+      "exports": []
+    },
+    {
+      "name": "System.IO",
+      "exports": [
+        "System.IO.File",
+        "System.IO.Path"
+      ]
+    },
+    {
+      "name": "System.IO.File",
+      "exports": []
+    },
+    {
+      "name": "System.IO.Path",
+      "exports": []
+    },
+    {
+      "name": "System.Math",
+      "exports": []
+    },
+    {
+      "name": "System.Memory",
+      "exports": []
+    },
+    {
+      "name": "System.Net",
+      "exports": []
+    },
+    {
+      "name": "System.Net.Tcp",
+      "exports": []
+    },
+    {
+      "name": "System.Process",
+      "exports": []
+    },
+    {
+      "name": "System.Runtime",
+      "exports": []
+    },
+    {
+      "name": "System.Runtime.Buffer",
+      "exports": []
+    },
+    {
+      "name": "System.Runtime.ConsoleInput",
+      "exports": []
+    },
+    {
+      "name": "System.Runtime.Platform",
+      "exports": []
+    },
+    {
+      "name": "System.Runtime.Platform.Linux",
+      "exports": []
+    },
+    {
+      "name": "System.Runtime.Platform.Windows",
+      "exports": []
+    },
+    {
+      "name": "System.Syscall",
+      "exports": []
+    },
+    {
+      "name": "System.Text",
+      "exports": []
+    },
+    {
+      "name": "System.Threading",
+      "exports": []
+    }
+  ],
+  "symbols": [
+    {
+      "name": "LeadingZeroCount",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i32[-2147483648 2147483647] LeadingZeroCount(i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/BitOperations.stark:3"
+    },
+    {
+      "name": "LeadingZeroCount",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] LeadingZeroCount(i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/BitOperations.stark:4"
+    },
+    {
+      "name": "PopCount",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i32[-2147483648 2147483647] PopCount(i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/BitOperations.stark:9"
+    },
+    {
+      "name": "PopCount",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] PopCount(i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/BitOperations.stark:10"
+    },
+    {
+      "name": "RotateLeft",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i32[-2147483648 2147483647] RotateLeft(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] amount)",
+      "source": "stdlib/src/System/BitOperations.stark:12"
+    },
+    {
+      "name": "RotateLeft",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] RotateLeft(i64[-9223372036854775808 9223372036854775807] value, i64[-9223372036854775808 9223372036854775807] amount)",
+      "source": "stdlib/src/System/BitOperations.stark:13"
+    },
+    {
+      "name": "RotateRight",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i32[-2147483648 2147483647] RotateRight(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] amount)",
+      "source": "stdlib/src/System/BitOperations.stark:15"
+    },
+    {
+      "name": "RotateRight",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] RotateRight(i64[-9223372036854775808 9223372036854775807] value, i64[-9223372036854775808 9223372036854775807] amount)",
+      "source": "stdlib/src/System/BitOperations.stark:16"
+    },
+    {
+      "name": "TrailingZeroCount",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i32[-2147483648 2147483647] TrailingZeroCount(i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/BitOperations.stark:6"
+    },
+    {
+      "name": "TrailingZeroCount",
+      "kind": "Law",
+      "module": "System.BitOperations",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] TrailingZeroCount(i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/BitOperations.stark:7"
+    },
+    {
+      "name": "Dictionary",
+      "kind": "Struct",
+      "module": "System.Collections",
+      "detail": "public struct Dictionary<K, V>",
+      "source": "stdlib/src/System/Collections.stark:90"
+    },
+    {
+      "name": "DictionaryKey",
+      "kind": "Doctrine",
+      "module": "System.Collections",
+      "detail": "public doctrine DictionaryKey<T>",
+      "source": "stdlib/src/System/Collections.stark:12"
+    },
+    {
+      "name": "Equatable",
+      "kind": "Trait",
+      "module": "System.Collections",
+      "detail": "public trait Equatable<T>",
+      "source": "stdlib/src/System/Collections.stark:4"
+    },
+    {
+      "name": "Hashable",
+      "kind": "Trait",
+      "module": "System.Collections",
+      "detail": "public trait Hashable<T>",
+      "source": "stdlib/src/System/Collections.stark:8"
+    },
+    {
+      "name": "LinkedList",
+      "kind": "Struct",
+      "module": "System.Collections",
+      "detail": "public struct LinkedList<T>",
+      "source": "stdlib/src/System/Collections.stark:910"
+    },
+    {
+      "name": "List",
+      "kind": "Struct",
+      "module": "System.Collections",
+      "detail": "public struct List<T>",
+      "source": "stdlib/src/System/Collections.stark:521"
+    },
+    {
+      "name": "Queue",
+      "kind": "Struct",
+      "module": "System.Collections",
+      "detail": "public struct Queue<T>",
+      "source": "stdlib/src/System/Collections.stark:738"
+    },
+    {
+      "name": "Stack",
+      "kind": "Struct",
+      "module": "System.Collections",
+      "detail": "public struct Stack<T>",
+      "source": "stdlib/src/System/Collections.stark:676"
+    },
+    {
+      "name": "Capacity",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Capacity(borrow Dictionary<K, V> self)",
+      "source": "stdlib/src/System/Collections.stark:179",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "Clear",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn void Clear(mut borrow Dictionary<K, V> self)",
+      "source": "stdlib/src/System/Collections.stark:479",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "ContainsKey",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool ContainsKey(borrow Dictionary<K, V> self, borrow K key)",
+      "source": "stdlib/src/System/Collections.stark:384",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "Count",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Count(borrow Dictionary<K, V> self)",
+      "source": "stdlib/src/System/Collections.stark:175",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "IsEmpty",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool IsEmpty(borrow Dictionary<K, V> self)",
+      "source": "stdlib/src/System/Collections.stark:183",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "Remove",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key)",
+      "source": "stdlib/src/System/Collections.stark:445",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "Reserve",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Reserve(mut borrow Dictionary<K, V> self, i64[0 max] additional)",
+      "source": "stdlib/src/System/Collections.stark:187",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "Set",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Set(mut borrow Dictionary<K, V> self, K key, V value)",
+      "source": "stdlib/src/System/Collections.stark:311",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "TryGet",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool TryGet(borrow Dictionary<K, V> self, borrow K key, out V value)",
+      "source": "stdlib/src/System/Collections.stark:414",
+      "container": "Dictionary<K, V>"
+    },
+    {
+      "name": "Equals",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool Equals(borrow T left, borrow T right)",
+      "source": "stdlib/src/System/Collections.stark:13",
+      "container": "DictionaryKey<T>"
+    },
+    {
+      "name": "Hash",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law u64[0 max] Hash(borrow T value)",
+      "source": "stdlib/src/System/Collections.stark:14",
+      "container": "DictionaryKey<T>"
+    },
+    {
+      "name": "Equals",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool Equals(borrow T left, borrow T right)",
+      "source": "stdlib/src/System/Collections.stark:5",
+      "container": "Equatable<T>"
+    },
+    {
+      "name": "Hash",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law u64[0 max] Hash(borrow T value)",
+      "source": "stdlib/src/System/Collections.stark:9",
+      "container": "Hashable<T>"
+    },
+    {
+      "name": "AddFirst",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus AddFirst(mut borrow LinkedList<T> self, T value)",
+      "source": "stdlib/src/System/Collections.stark:970",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "AddLast",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus AddLast(mut borrow LinkedList<T> self, T value)",
+      "source": "stdlib/src/System/Collections.stark:998",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "Clear",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn void Clear(mut borrow LinkedList<T> self)",
+      "source": "stdlib/src/System/Collections.stark:1080",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "Count",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Count(borrow LinkedList<T> self)",
+      "source": "stdlib/src/System/Collections.stark:934",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "IsEmpty",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool IsEmpty(borrow LinkedList<T> self)",
+      "source": "stdlib/src/System/Collections.stark:938",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "ReserveNodes",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus ReserveNodes(mut borrow LinkedList<T> self, i64[0 max] count)",
+      "source": "stdlib/src/System/Collections.stark:942",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "TryRemoveFirst",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool TryRemoveFirst(mut borrow LinkedList<T> self, out T value)",
+      "source": "stdlib/src/System/Collections.stark:1026",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "TryRemoveLast",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool TryRemoveLast(mut borrow LinkedList<T> self, out T value)",
+      "source": "stdlib/src/System/Collections.stark:1053",
+      "container": "LinkedList<T>"
+    },
+    {
+      "name": "AsMutableSlice",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite retborrow mut T[] AsMutableSlice(mut borrow List<T> self)",
+      "source": "stdlib/src/System/Collections.stark:662",
+      "container": "List<T>"
+    },
+    {
+      "name": "AsSlice",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law retborrow T[] AsSlice(borrow List<T> self)",
+      "source": "stdlib/src/System/Collections.stark:661",
+      "container": "List<T>"
+    },
+    {
+      "name": "Capacity",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Capacity(borrow List<T> self)",
+      "source": "stdlib/src/System/Collections.stark:574",
+      "container": "List<T>"
+    },
+    {
+      "name": "Clear",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn void Clear(mut borrow List<T> self)",
+      "source": "stdlib/src/System/Collections.stark:664",
+      "container": "List<T>"
+    },
+    {
+      "name": "Count",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Count(borrow List<T> self)",
+      "source": "stdlib/src/System/Collections.stark:570",
+      "container": "List<T>"
+    },
+    {
+      "name": "Get",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "law retborrow T Get(borrow List<T> self, i64[0 max] index)",
+      "source": "stdlib/src/System/Collections.stark:653",
+      "container": "List<T>"
+    },
+    {
+      "name": "GetMut",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn retborrow mut T GetMut(mut borrow List<T> self, i64[0 max] index)",
+      "source": "stdlib/src/System/Collections.stark:657",
+      "container": "List<T>"
+    },
+    {
+      "name": "IsEmpty",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool IsEmpty(borrow List<T> self)",
+      "source": "stdlib/src/System/Collections.stark:578",
+      "container": "List<T>"
+    },
+    {
+      "name": "Push",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Push(mut borrow List<T> self, T value)",
+      "source": "stdlib/src/System/Collections.stark:630",
+      "container": "List<T>"
+    },
+    {
+      "name": "Reserve",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Reserve(mut borrow List<T> self, i64[0 max] additional)",
+      "source": "stdlib/src/System/Collections.stark:582",
+      "container": "List<T>"
+    },
+    {
+      "name": "TryPop",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool TryPop(mut borrow List<T> self, out T value)",
+      "source": "stdlib/src/System/Collections.stark:643",
+      "container": "List<T>"
+    },
+    {
+      "name": "Clear",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn void Clear(mut borrow Queue<T> self)",
+      "source": "stdlib/src/System/Collections.stark:892",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "Count",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Count(borrow Queue<T> self)",
+      "source": "stdlib/src/System/Collections.stark:791",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "Enqueue",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Enqueue(mut borrow Queue<T> self, T value)",
+      "source": "stdlib/src/System/Collections.stark:851",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "IsEmpty",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool IsEmpty(borrow Queue<T> self)",
+      "source": "stdlib/src/System/Collections.stark:795",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "Peek",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "law retborrow T Peek(borrow Queue<T> self)",
+      "source": "stdlib/src/System/Collections.stark:888",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "Reserve",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Reserve(mut borrow Queue<T> self, i64[0 max] additional)",
+      "source": "stdlib/src/System/Collections.stark:799",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "TryDequeue",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool TryDequeue(mut borrow Queue<T> self, out T value)",
+      "source": "stdlib/src/System/Collections.stark:869",
+      "container": "Queue<T>"
+    },
+    {
+      "name": "Clear",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn void Clear(mut borrow Stack<T> self)",
+      "source": "stdlib/src/System/Collections.stark:726",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "Count",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law i64[0 max] Count(borrow Stack<T> self)",
+      "source": "stdlib/src/System/Collections.stark:687",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "IsEmpty",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "finite law bool IsEmpty(borrow Stack<T> self)",
+      "source": "stdlib/src/System/Collections.stark:691",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "Peek",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "law retborrow T Peek(borrow Stack<T> self)",
+      "source": "stdlib/src/System/Collections.stark:722",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "Push",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Push(mut borrow Stack<T> self, T value)",
+      "source": "stdlib/src/System/Collections.stark:699",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "Reserve",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn System.Memory.MemoryStatus Reserve(mut borrow Stack<T> self, i64[0 max] additional)",
+      "source": "stdlib/src/System/Collections.stark:695",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "TryPop",
+      "kind": "Method",
+      "module": "System.Collections",
+      "detail": "fn bool TryPop(mut borrow Stack<T> self, out T value)",
+      "source": "stdlib/src/System/Collections.stark:712",
+      "container": "Stack<T>"
+    },
+    {
+      "name": "Read",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn Unicode Read()",
+      "source": "stdlib/src/System/Console.stark:432"
+    },
+    {
+      "name": "ReadAsciiLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn Ascii ReadAsciiLine()",
+      "source": "stdlib/src/System/Console.stark:404"
+    },
+    {
+      "name": "ReadLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn Unicode ReadLine()",
+      "source": "stdlib/src/System/Console.stark:369"
+    },
+    {
+      "name": "ReadUnicodeLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn Unicode ReadUnicodeLine()",
+      "source": "stdlib/src/System/Console.stark:428"
+    },
+    {
+      "name": "Write",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus Write(ascii text)",
+      "source": "stdlib/src/System/Console.stark:313"
+    },
+    {
+      "name": "Write",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus Write(unicode text)",
+      "source": "stdlib/src/System/Console.stark:317"
+    },
+    {
+      "name": "WriteError",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus WriteError(ascii text)",
+      "source": "stdlib/src/System/Console.stark:341"
+    },
+    {
+      "name": "WriteError",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus WriteError(unicode text)",
+      "source": "stdlib/src/System/Console.stark:345"
+    },
+    {
+      "name": "WriteErrorLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus WriteErrorLine(ascii text)",
+      "source": "stdlib/src/System/Console.stark:349"
+    },
+    {
+      "name": "WriteErrorLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus WriteErrorLine(unicode text)",
+      "source": "stdlib/src/System/Console.stark:359"
+    },
+    {
+      "name": "WriteLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus WriteLine(ascii text)",
+      "source": "stdlib/src/System/Console.stark:321"
+    },
+    {
+      "name": "WriteLine",
+      "kind": "Function",
+      "module": "System.Console",
+      "detail": "public fn System.IO.IOStatus WriteLine(unicode text)",
+      "source": "stdlib/src/System/Console.stark:331"
+    },
+    {
+      "name": "CreateDirectory",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOStatus CreateDirectory(ascii path)",
+      "source": "stdlib/src/System/FileSystem.stark:221"
+    },
+    {
+      "name": "DeleteDirectory",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOStatus DeleteDirectory(ascii path)",
+      "source": "stdlib/src/System/FileSystem.stark:225"
+    },
+    {
+      "name": "Directory",
+      "kind": "Struct",
+      "module": "System.FileSystem",
+      "detail": "public struct Directory",
+      "source": "stdlib/src/System/FileSystem.stark:44"
+    },
+    {
+      "name": "DirectoryReadResult",
+      "kind": "Enum",
+      "module": "System.FileSystem",
+      "detail": "public enum DirectoryReadResult",
+      "source": "stdlib/src/System/FileSystem.stark:38"
+    },
+    {
+      "name": "Exists",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOResult<bool> Exists(ascii path)",
+      "source": "stdlib/src/System/FileSystem.stark:242"
+    },
+    {
+      "name": "FileSystemEntry",
+      "kind": "Struct",
+      "module": "System.FileSystem",
+      "detail": "public struct FileSystemEntry",
+      "source": "stdlib/src/System/FileSystem.stark:14"
+    },
+    {
+      "name": "FileSystemEntryKind",
+      "kind": "Enum",
+      "module": "System.FileSystem",
+      "detail": "public enum FileSystemEntryKind",
+      "source": "stdlib/src/System/FileSystem.stark:7"
+    },
+    {
+      "name": "IsDirectory",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOResult<bool> IsDirectory(ascii path)",
+      "source": "stdlib/src/System/FileSystem.stark:250"
+    },
+    {
+      "name": "IsFile",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOResult<bool> IsFile(ascii path)",
+      "source": "stdlib/src/System/FileSystem.stark:246"
+    },
+    {
+      "name": "Move",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath)",
+      "source": "stdlib/src/System/FileSystem.stark:254"
+    },
+    {
+      "name": "OpenDirectory",
+      "kind": "Function",
+      "module": "System.FileSystem",
+      "detail": "public fn System.IO.IOResult<Directory> OpenDirectory(ascii path)",
+      "source": "stdlib/src/System/FileSystem.stark:238"
+    },
+    {
+      "name": "Close",
+      "kind": "Method",
+      "module": "System.FileSystem",
+      "detail": "fn System.IO.IOStatus Close(mut borrow Directory self)",
+      "source": "stdlib/src/System/FileSystem.stark:55",
+      "container": "Directory"
+    },
+    {
+      "name": "IsOpen",
+      "kind": "Method",
+      "module": "System.FileSystem",
+      "detail": "finite law bool IsOpen(borrow Directory self)",
+      "source": "stdlib/src/System/FileSystem.stark:51",
+      "container": "Directory"
+    },
+    {
+      "name": "ReadNext",
+      "kind": "Method",
+      "module": "System.FileSystem",
+      "detail": "fn DirectoryReadResult ReadNext(mut borrow Directory self)",
+      "source": "stdlib/src/System/FileSystem.stark:72",
+      "container": "Directory"
+    },
+    {
+      "name": "End",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "DirectoryReadResult",
+      "detail": "DirectoryReadResult.End",
+      "source": "stdlib/src/System/FileSystem.stark:40"
+    },
+    {
+      "name": "Entry",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "DirectoryReadResult",
+      "detail": "DirectoryReadResult.Entry",
+      "source": "stdlib/src/System/FileSystem.stark:39"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "DirectoryReadResult",
+      "detail": "DirectoryReadResult.Err",
+      "source": "stdlib/src/System/FileSystem.stark:41"
+    },
+    {
+      "name": "Directory",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "FileSystemEntryKind",
+      "detail": "FileSystemEntryKind.Directory",
+      "source": "stdlib/src/System/FileSystem.stark:9"
+    },
+    {
+      "name": "File",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "FileSystemEntryKind",
+      "detail": "FileSystemEntryKind.File",
+      "source": "stdlib/src/System/FileSystem.stark:8"
+    },
+    {
+      "name": "Other",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "FileSystemEntryKind",
+      "detail": "FileSystemEntryKind.Other",
+      "source": "stdlib/src/System/FileSystem.stark:11"
+    },
+    {
+      "name": "Symlink",
+      "kind": "EnumMember",
+      "module": "System.FileSystem",
+      "container": "FileSystemEntryKind",
+      "detail": "FileSystemEntryKind.Symlink",
+      "source": "stdlib/src/System/FileSystem.stark:10"
+    },
+    {
+      "name": "IOError",
+      "kind": "Enum",
+      "module": "System.IO",
+      "detail": "public enum IOError",
+      "source": "stdlib/src/System/IO.stark:5"
+    },
+    {
+      "name": "IOResult",
+      "kind": "Enum",
+      "module": "System.IO",
+      "detail": "public enum IOResult<T>",
+      "source": "stdlib/src/System/IO.stark:15"
+    },
+    {
+      "name": "IOStatus",
+      "kind": "Enum",
+      "module": "System.IO",
+      "detail": "public enum IOStatus",
+      "source": "stdlib/src/System/IO.stark:20"
+    },
+    {
+      "name": "AlreadyExists",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.AlreadyExists",
+      "source": "stdlib/src/System/IO.stark:8"
+    },
+    {
+      "name": "BrokenPipe",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.BrokenPipe",
+      "source": "stdlib/src/System/IO.stark:10"
+    },
+    {
+      "name": "DiskFull",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.DiskFull",
+      "source": "stdlib/src/System/IO.stark:11"
+    },
+    {
+      "name": "InvalidPath",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.InvalidPath",
+      "source": "stdlib/src/System/IO.stark:9"
+    },
+    {
+      "name": "NotFound",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.NotFound",
+      "source": "stdlib/src/System/IO.stark:6"
+    },
+    {
+      "name": "PermissionDenied",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.PermissionDenied",
+      "source": "stdlib/src/System/IO.stark:7"
+    },
+    {
+      "name": "Unknown",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOError",
+      "detail": "IOError.Unknown",
+      "source": "stdlib/src/System/IO.stark:12"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOResult<T>",
+      "detail": "IOResult<T>.Err",
+      "source": "stdlib/src/System/IO.stark:17"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOResult<T>",
+      "detail": "IOResult<T>.Ok",
+      "source": "stdlib/src/System/IO.stark:16"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOStatus",
+      "detail": "IOStatus.Err",
+      "source": "stdlib/src/System/IO.stark:22"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.IO",
+      "container": "IOStatus",
+      "detail": "IOStatus.Ok",
+      "source": "stdlib/src/System/IO.stark:21"
+    },
+    {
+      "name": "Close",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i32[-2147483648 2147483647] Close(rawptr<i8[-128 127]> handle)",
+      "source": "stdlib/src/System/IO/File.stark:792"
+    },
+    {
+      "name": "Delete",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i32[-2147483648 2147483647] Delete(ascii path)",
+      "source": "stdlib/src/System/IO/File.stark:832"
+    },
+    {
+      "name": "Exists",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn bool Exists(ascii path)",
+      "source": "stdlib/src/System/IO/File.stark:840"
+    },
+    {
+      "name": "File",
+      "kind": "Struct",
+      "module": "System.IO.File",
+      "detail": "public struct File",
+      "source": "stdlib/src/System/IO/File.stark:403"
+    },
+    {
+      "name": "FileBuffering",
+      "kind": "Enum",
+      "module": "System.IO.File",
+      "detail": "public enum FileBuffering",
+      "source": "stdlib/src/System/IO/File.stark:13"
+    },
+    {
+      "name": "FileMode",
+      "kind": "Enum",
+      "module": "System.IO.File",
+      "detail": "public enum FileMode",
+      "source": "stdlib/src/System/IO/File.stark:6"
+    },
+    {
+      "name": "Flush",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i32[-2147483648 2147483647] Flush(rawptr<i8[-128 127]> handle)",
+      "source": "stdlib/src/System/IO/File.stark:796"
+    },
+    {
+      "name": "Move",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i32[-2147483648 2147483647] Move(ascii oldPath, ascii newPath)",
+      "source": "stdlib/src/System/IO/File.stark:836"
+    },
+    {
+      "name": "Open",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn File Open(ascii path, FileMode mode, FileBuffering buffering)",
+      "source": "stdlib/src/System/IO/File.stark:766"
+    },
+    {
+      "name": "Open",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering)",
+      "source": "stdlib/src/System/IO/File.stark:775"
+    },
+    {
+      "name": "Open",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding)",
+      "source": "stdlib/src/System/IO/File.stark:770"
+    },
+    {
+      "name": "Open",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn File Open(ascii path, FileMode mode)",
+      "source": "stdlib/src/System/IO/File.stark:762"
+    },
+    {
+      "name": "OpenAppend",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn rawptr<i8[-128 127]> OpenAppend(ascii path)",
+      "source": "stdlib/src/System/IO/File.stark:788"
+    },
+    {
+      "name": "OpenRead",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn rawptr<i8[-128 127]> OpenRead(ascii path)",
+      "source": "stdlib/src/System/IO/File.stark:780"
+    },
+    {
+      "name": "OpenWrite",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn rawptr<i8[-128 127]> OpenWrite(ascii path)",
+      "source": "stdlib/src/System/IO/File.stark:784"
+    },
+    {
+      "name": "ReadBytes",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i64[-9223372036854775808 9223372036854775807] ReadBytes(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle)",
+      "source": "stdlib/src/System/IO/File.stark:800"
+    },
+    {
+      "name": "Seek",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i64[-9223372036854775808 9223372036854775807] Seek(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin)",
+      "source": "stdlib/src/System/IO/File.stark:808"
+    },
+    {
+      "name": "SeekOrigin",
+      "kind": "Enum",
+      "module": "System.IO.File",
+      "detail": "public enum SeekOrigin",
+      "source": "stdlib/src/System/IO/File.stark:19"
+    },
+    {
+      "name": "WriteBytes",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn i64[-9223372036854775808 9223372036854775807] WriteBytes(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle)",
+      "source": "stdlib/src/System/IO/File.stark:804"
+    },
+    {
+      "name": "WriteLine",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn void WriteLine(rawptr<i8[-128 127]> handle, ascii text)",
+      "source": "stdlib/src/System/IO/File.stark:822"
+    },
+    {
+      "name": "WriteLine",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn void WriteLine(rawptr<i8[-128 127]> handle, unicode text)",
+      "source": "stdlib/src/System/IO/File.stark:827"
+    },
+    {
+      "name": "WriteText",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn void WriteText(rawptr<i8[-128 127]> handle, ascii text)",
+      "source": "stdlib/src/System/IO/File.stark:812"
+    },
+    {
+      "name": "WriteText",
+      "kind": "Function",
+      "module": "System.IO.File",
+      "detail": "public fn void WriteText(rawptr<i8[-128 127]> handle, unicode text)",
+      "source": "stdlib/src/System/IO/File.stark:817"
+    },
+    {
+      "name": "BufferedAscii",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn ascii BufferedAscii(mut borrow File self)",
+      "source": "stdlib/src/System/IO/File.stark:416",
+      "container": "File"
+    },
+    {
+      "name": "Close",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn i32[-2147483648 2147483647] Close(mut borrow File self)",
+      "source": "stdlib/src/System/IO/File.stark:469",
+      "container": "File"
+    },
+    {
+      "name": "Flush",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn i32[-2147483648 2147483647] Flush(mut borrow File self)",
+      "source": "stdlib/src/System/IO/File.stark:488",
+      "container": "File"
+    },
+    {
+      "name": "FlushBufferedWrite",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn i32[-2147483648 2147483647] FlushBufferedWrite(mut borrow File self)",
+      "source": "stdlib/src/System/IO/File.stark:431",
+      "container": "File"
+    },
+    {
+      "name": "IsOpen",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn bool IsOpen(borrow File self)",
+      "source": "stdlib/src/System/IO/File.stark:412",
+      "container": "File"
+    },
+    {
+      "name": "ReadBytes",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn i64[-9223372036854775808 9223372036854775807] ReadBytes(mut borrow File self, rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count)",
+      "source": "stdlib/src/System/IO/File.stark:501",
+      "container": "File"
+    },
+    {
+      "name": "Seek",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn i64[-9223372036854775808 9223372036854775807] Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin)",
+      "source": "stdlib/src/System/IO/File.stark:525",
+      "container": "File"
+    },
+    {
+      "name": "TryAppendBufferedAscii",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn bool TryAppendBufferedAscii(mut borrow File self, ascii text)",
+      "source": "stdlib/src/System/IO/File.stark:445",
+      "container": "File"
+    },
+    {
+      "name": "WriteBytes",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn i64[-9223372036854775808 9223372036854775807] WriteBytes(mut borrow File self, rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count)",
+      "source": "stdlib/src/System/IO/File.stark:513",
+      "container": "File"
+    },
+    {
+      "name": "WriteLine",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn void WriteLine(mut borrow File self, ascii text)",
+      "source": "stdlib/src/System/IO/File.stark:657",
+      "container": "File"
+    },
+    {
+      "name": "WriteLine",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn void WriteLine(mut borrow File self, unicode text)",
+      "source": "stdlib/src/System/IO/File.stark:718",
+      "container": "File"
+    },
+    {
+      "name": "WriteText",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn void WriteText(mut borrow File self, ascii text)",
+      "source": "stdlib/src/System/IO/File.stark:537",
+      "container": "File"
+    },
+    {
+      "name": "WriteText",
+      "kind": "Method",
+      "module": "System.IO.File",
+      "detail": "fn void WriteText(mut borrow File self, unicode text)",
+      "source": "stdlib/src/System/IO/File.stark:620",
+      "container": "File"
+    },
+    {
+      "name": "Full",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileBuffering",
+      "detail": "FileBuffering.Full",
+      "source": "stdlib/src/System/IO/File.stark:16"
+    },
+    {
+      "name": "Line",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileBuffering",
+      "detail": "FileBuffering.Line",
+      "source": "stdlib/src/System/IO/File.stark:15"
+    },
+    {
+      "name": "None",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileBuffering",
+      "detail": "FileBuffering.None",
+      "source": "stdlib/src/System/IO/File.stark:14"
+    },
+    {
+      "name": "Append",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileMode",
+      "detail": "FileMode.Append",
+      "source": "stdlib/src/System/IO/File.stark:9"
+    },
+    {
+      "name": "Read",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileMode",
+      "detail": "FileMode.Read",
+      "source": "stdlib/src/System/IO/File.stark:7"
+    },
+    {
+      "name": "ReadWrite",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileMode",
+      "detail": "FileMode.ReadWrite",
+      "source": "stdlib/src/System/IO/File.stark:10"
+    },
+    {
+      "name": "Write",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "FileMode",
+      "detail": "FileMode.Write",
+      "source": "stdlib/src/System/IO/File.stark:8"
+    },
+    {
+      "name": "Begin",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "SeekOrigin",
+      "detail": "SeekOrigin.Begin",
+      "source": "stdlib/src/System/IO/File.stark:20"
+    },
+    {
+      "name": "Current",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "SeekOrigin",
+      "detail": "SeekOrigin.Current",
+      "source": "stdlib/src/System/IO/File.stark:21"
+    },
+    {
+      "name": "End",
+      "kind": "EnumMember",
+      "module": "System.IO.File",
+      "container": "SeekOrigin",
+      "detail": "SeekOrigin.End",
+      "source": "stdlib/src/System/IO/File.stark:22"
+    },
+    {
+      "name": "AlternateDirectorySeparator",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii AlternateDirectorySeparator()",
+      "source": "stdlib/src/System/IO/Path.stark:138"
+    },
+    {
+      "name": "BaseName",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii BaseName(ascii path)",
+      "source": "stdlib/src/System/IO/Path.stark:437"
+    },
+    {
+      "name": "CurrentDirectory",
+      "kind": "Function",
+      "module": "System.IO.Path",
+      "detail": "public fn bool CurrentDirectory(rawmutptr<Ascii> destination)",
+      "source": "stdlib/src/System/IO/Path.stark:146"
+    },
+    {
+      "name": "DirectoryName",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii DirectoryName(ascii path)",
+      "source": "stdlib/src/System/IO/Path.stark:486"
+    },
+    {
+      "name": "DirectorySeparator",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii DirectorySeparator()",
+      "source": "stdlib/src/System/IO/Path.stark:134"
+    },
+    {
+      "name": "Extension",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii Extension(ascii path)",
+      "source": "stdlib/src/System/IO/Path.stark:388"
+    },
+    {
+      "name": "GetFacts",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law PathFacts GetFacts(ascii path)",
+      "source": "stdlib/src/System/IO/Path.stark:326"
+    },
+    {
+      "name": "Join",
+      "kind": "Function",
+      "module": "System.IO.Path",
+      "detail": "public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right)",
+      "source": "stdlib/src/System/IO/Path.stark:245"
+    },
+    {
+      "name": "ParentDirectory",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii ParentDirectory()",
+      "source": "stdlib/src/System/IO/Path.stark:150"
+    },
+    {
+      "name": "PathFacts",
+      "kind": "Struct",
+      "module": "System.IO.Path",
+      "detail": "public struct PathFacts",
+      "source": "stdlib/src/System/IO/Path.stark:43"
+    },
+    {
+      "name": "PathSeparator",
+      "kind": "Law",
+      "module": "System.IO.Path",
+      "detail": "public finite law ascii PathSeparator()",
+      "source": "stdlib/src/System/IO/Path.stark:142"
+    },
+    {
+      "name": "TryJoin",
+      "kind": "Function",
+      "module": "System.IO.Path",
+      "detail": "public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right)",
+      "source": "stdlib/src/System/IO/Path.stark:154"
+    },
+    {
+      "name": "BaseName",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law ascii BaseName(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:84",
+      "container": "PathFacts"
+    },
+    {
+      "name": "BaseNameLength",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law i64[-9223372036854775808 9223372036854775807] BaseNameLength(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:72",
+      "container": "PathFacts"
+    },
+    {
+      "name": "DirectoryName",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law ascii DirectoryName(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:100",
+      "container": "PathFacts"
+    },
+    {
+      "name": "DirectoryNameLength",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law i64[-9223372036854775808 9223372036854775807] DirectoryNameLength(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:96",
+      "container": "PathFacts"
+    },
+    {
+      "name": "Extension",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law ascii Extension(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:64",
+      "container": "PathFacts"
+    },
+    {
+      "name": "ExtensionLength",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law i64[-9223372036854775808 9223372036854775807] ExtensionLength(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:56",
+      "container": "PathFacts"
+    },
+    {
+      "name": "PathLength",
+      "kind": "Method",
+      "module": "System.IO.Path",
+      "detail": "finite law i64[-9223372036854775808 9223372036854775807] PathLength(borrow PathFacts self)",
+      "source": "stdlib/src/System/IO/Path.stark:52",
+      "container": "PathFacts"
+    },
+    {
+      "name": "Acos",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Acos(f32 value)",
+      "source": "stdlib/src/System/Math.stark:40"
+    },
+    {
+      "name": "Acos",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Acos(f64 value)",
+      "source": "stdlib/src/System/Math.stark:41"
+    },
+    {
+      "name": "Asin",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Asin(f32 value)",
+      "source": "stdlib/src/System/Math.stark:37"
+    },
+    {
+      "name": "Asin",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Asin(f64 value)",
+      "source": "stdlib/src/System/Math.stark:38"
+    },
+    {
+      "name": "Atan",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Atan(f32 value)",
+      "source": "stdlib/src/System/Math.stark:43"
+    },
+    {
+      "name": "Atan",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Atan(f64 value)",
+      "source": "stdlib/src/System/Math.stark:44"
+    },
+    {
+      "name": "Atan2",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Atan2(f32 y, f32 x)",
+      "source": "stdlib/src/System/Math.stark:46"
+    },
+    {
+      "name": "Atan2",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Atan2(f64 y, f64 x)",
+      "source": "stdlib/src/System/Math.stark:47"
+    },
+    {
+      "name": "Ceiling",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Ceiling(f32 value)",
+      "source": "stdlib/src/System/Math.stark:69"
+    },
+    {
+      "name": "Ceiling",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Ceiling(f64 value)",
+      "source": "stdlib/src/System/Math.stark:70"
+    },
+    {
+      "name": "Cos",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Cos(f32 value)",
+      "source": "stdlib/src/System/Math.stark:16"
+    },
+    {
+      "name": "Cos",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Cos(f64 value)",
+      "source": "stdlib/src/System/Math.stark:17"
+    },
+    {
+      "name": "Cosh",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Cosh(f32 value)",
+      "source": "stdlib/src/System/Math.stark:55"
+    },
+    {
+      "name": "Cosh",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Cosh(f64 value)",
+      "source": "stdlib/src/System/Math.stark:56"
+    },
+    {
+      "name": "Exp",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Exp(f32 value)",
+      "source": "stdlib/src/System/Math.stark:22"
+    },
+    {
+      "name": "Exp",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Exp(f64 value)",
+      "source": "stdlib/src/System/Math.stark:23"
+    },
+    {
+      "name": "Exp2",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Exp2(f32 value)",
+      "source": "stdlib/src/System/Math.stark:25"
+    },
+    {
+      "name": "Exp2",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Exp2(f64 value)",
+      "source": "stdlib/src/System/Math.stark:26"
+    },
+    {
+      "name": "Floor",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Floor(f32 value)",
+      "source": "stdlib/src/System/Math.stark:72"
+    },
+    {
+      "name": "Floor",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Floor(f64 value)",
+      "source": "stdlib/src/System/Math.stark:73"
+    },
+    {
+      "name": "FusedMultiplyAdd",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 FusedMultiplyAdd(f32 left, f32 right, f32 addend)",
+      "source": "stdlib/src/System/Math.stark:66"
+    },
+    {
+      "name": "FusedMultiplyAdd",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 FusedMultiplyAdd(f64 left, f64 right, f64 addend)",
+      "source": "stdlib/src/System/Math.stark:67"
+    },
+    {
+      "name": "Log",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Log(f32 value)",
+      "source": "stdlib/src/System/Math.stark:28"
+    },
+    {
+      "name": "Log",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Log(f64 value)",
+      "source": "stdlib/src/System/Math.stark:29"
+    },
+    {
+      "name": "Log10",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Log10(f32 value)",
+      "source": "stdlib/src/System/Math.stark:34"
+    },
+    {
+      "name": "Log10",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Log10(f64 value)",
+      "source": "stdlib/src/System/Math.stark:35"
+    },
+    {
+      "name": "Log2",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Log2(f32 value)",
+      "source": "stdlib/src/System/Math.stark:31"
+    },
+    {
+      "name": "Log2",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Log2(f64 value)",
+      "source": "stdlib/src/System/Math.stark:32"
+    },
+    {
+      "name": "Max",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Max(f32 left, f32 right)",
+      "source": "stdlib/src/System/Math.stark:82"
+    },
+    {
+      "name": "Max",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Max(f64 left, f64 right)",
+      "source": "stdlib/src/System/Math.stark:83"
+    },
+    {
+      "name": "Min",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Min(f32 left, f32 right)",
+      "source": "stdlib/src/System/Math.stark:80"
+    },
+    {
+      "name": "Min",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Min(f64 left, f64 right)",
+      "source": "stdlib/src/System/Math.stark:81"
+    },
+    {
+      "name": "Pow",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Pow(f32 value, f32 exponent)",
+      "source": "stdlib/src/System/Math.stark:49"
+    },
+    {
+      "name": "Pow",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Pow(f64 value, f64 exponent)",
+      "source": "stdlib/src/System/Math.stark:50"
+    },
+    {
+      "name": "ReciprocalEstimate",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 ReciprocalEstimate(f32 value)",
+      "source": "stdlib/src/System/Math.stark:85"
+    },
+    {
+      "name": "ReciprocalSqrtEstimate",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 ReciprocalSqrtEstimate(f32 value)",
+      "source": "stdlib/src/System/Math.stark:86"
+    },
+    {
+      "name": "Round",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Round(f32 value)",
+      "source": "stdlib/src/System/Math.stark:78"
+    },
+    {
+      "name": "Round",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Round(f64 value)",
+      "source": "stdlib/src/System/Math.stark:79"
+    },
+    {
+      "name": "Sin",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Sin(f32 value)",
+      "source": "stdlib/src/System/Math.stark:13"
+    },
+    {
+      "name": "Sin",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Sin(f64 value)",
+      "source": "stdlib/src/System/Math.stark:14"
+    },
+    {
+      "name": "SinCos",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law SinCosF32 SinCos(f32 value)",
+      "source": "stdlib/src/System/Math.stark:61"
+    },
+    {
+      "name": "SinCos",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law SinCosF64 SinCos(f64 value)",
+      "source": "stdlib/src/System/Math.stark:62"
+    },
+    {
+      "name": "SinCosF32",
+      "kind": "Struct",
+      "module": "System.Math",
+      "detail": "public struct SinCosF32",
+      "source": "stdlib/src/System/Math.stark:3"
+    },
+    {
+      "name": "SinCosF64",
+      "kind": "Struct",
+      "module": "System.Math",
+      "detail": "public struct SinCosF64",
+      "source": "stdlib/src/System/Math.stark:8"
+    },
+    {
+      "name": "Sinh",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Sinh(f32 value)",
+      "source": "stdlib/src/System/Math.stark:52"
+    },
+    {
+      "name": "Sinh",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Sinh(f64 value)",
+      "source": "stdlib/src/System/Math.stark:53"
+    },
+    {
+      "name": "Sqrt",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Sqrt(f32 value)",
+      "source": "stdlib/src/System/Math.stark:64"
+    },
+    {
+      "name": "Sqrt",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Sqrt(f64 value)",
+      "source": "stdlib/src/System/Math.stark:65"
+    },
+    {
+      "name": "Tan",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Tan(f32 value)",
+      "source": "stdlib/src/System/Math.stark:19"
+    },
+    {
+      "name": "Tan",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Tan(f64 value)",
+      "source": "stdlib/src/System/Math.stark:20"
+    },
+    {
+      "name": "Tanh",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Tanh(f32 value)",
+      "source": "stdlib/src/System/Math.stark:58"
+    },
+    {
+      "name": "Tanh",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Tanh(f64 value)",
+      "source": "stdlib/src/System/Math.stark:59"
+    },
+    {
+      "name": "Truncate",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f32 Truncate(f32 value)",
+      "source": "stdlib/src/System/Math.stark:75"
+    },
+    {
+      "name": "Truncate",
+      "kind": "Law",
+      "module": "System.Math",
+      "detail": "public finite law f64 Truncate(f64 value)",
+      "source": "stdlib/src/System/Math.stark:76"
+    },
+    {
+      "name": "Allocator",
+      "kind": "Struct",
+      "module": "System.Memory",
+      "detail": "public struct Allocator",
+      "source": "stdlib/src/System/Memory.stark:20"
+    },
+    {
+      "name": "MemoryError",
+      "kind": "Enum",
+      "module": "System.Memory",
+      "detail": "public enum MemoryError",
+      "source": "stdlib/src/System/Memory.stark:3"
+    },
+    {
+      "name": "MemoryResult",
+      "kind": "Enum",
+      "module": "System.Memory",
+      "detail": "public enum MemoryResult<T>",
+      "source": "stdlib/src/System/Memory.stark:15"
+    },
+    {
+      "name": "MemoryStatus",
+      "kind": "Enum",
+      "module": "System.Memory",
+      "detail": "public enum MemoryStatus",
+      "source": "stdlib/src/System/Memory.stark:10"
+    },
+    {
+      "name": "Default",
+      "kind": "Method",
+      "module": "System.Memory",
+      "detail": "static finite law Allocator Default()",
+      "source": "stdlib/src/System/Memory.stark:23",
+      "container": "Allocator"
+    },
+    {
+      "name": "IsDefault",
+      "kind": "Method",
+      "module": "System.Memory",
+      "detail": "finite law bool IsDefault(borrow Allocator self)",
+      "source": "stdlib/src/System/Memory.stark:29",
+      "container": "Allocator"
+    },
+    {
+      "name": "InvalidLayout",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryError",
+      "detail": "MemoryError.InvalidLayout",
+      "source": "stdlib/src/System/Memory.stark:5"
+    },
+    {
+      "name": "OutOfMemory",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryError",
+      "detail": "MemoryError.OutOfMemory",
+      "source": "stdlib/src/System/Memory.stark:4"
+    },
+    {
+      "name": "TooLarge",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryError",
+      "detail": "MemoryError.TooLarge",
+      "source": "stdlib/src/System/Memory.stark:7"
+    },
+    {
+      "name": "UnsupportedAlignment",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryError",
+      "detail": "MemoryError.UnsupportedAlignment",
+      "source": "stdlib/src/System/Memory.stark:6"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryResult<T>",
+      "detail": "MemoryResult<T>.Err",
+      "source": "stdlib/src/System/Memory.stark:17"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryResult<T>",
+      "detail": "MemoryResult<T>.Ok",
+      "source": "stdlib/src/System/Memory.stark:16"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryStatus",
+      "detail": "MemoryStatus.Err",
+      "source": "stdlib/src/System/Memory.stark:12"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Memory",
+      "container": "MemoryStatus",
+      "detail": "MemoryStatus.Ok",
+      "source": "stdlib/src/System/Memory.stark:11"
+    },
+    {
+      "name": "IPv4Address",
+      "kind": "Struct",
+      "module": "System.Net",
+      "detail": "public struct IPv4Address",
+      "source": "stdlib/src/System/Net.stark:25"
+    },
+    {
+      "name": "IPv4Endpoint",
+      "kind": "Struct",
+      "module": "System.Net",
+      "detail": "public struct IPv4Endpoint",
+      "source": "stdlib/src/System/Net.stark:32"
+    },
+    {
+      "name": "NetResult",
+      "kind": "Enum",
+      "module": "System.Net",
+      "detail": "public enum NetResult<T>",
+      "source": "stdlib/src/System/Net.stark:20"
+    },
+    {
+      "name": "NetStatus",
+      "kind": "Enum",
+      "module": "System.Net",
+      "detail": "public enum NetStatus",
+      "source": "stdlib/src/System/Net.stark:15"
+    },
+    {
+      "name": "NetworkError",
+      "kind": "Enum",
+      "module": "System.Net",
+      "detail": "public enum NetworkError",
+      "source": "stdlib/src/System/Net.stark:3"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetResult<T>",
+      "detail": "NetResult<T>.Err",
+      "source": "stdlib/src/System/Net.stark:22"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetResult<T>",
+      "detail": "NetResult<T>.Ok",
+      "source": "stdlib/src/System/Net.stark:21"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetStatus",
+      "detail": "NetStatus.Err",
+      "source": "stdlib/src/System/Net.stark:17"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetStatus",
+      "detail": "NetStatus.Ok",
+      "source": "stdlib/src/System/Net.stark:16"
+    },
+    {
+      "name": "AddressInUse",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.AddressInUse",
+      "source": "stdlib/src/System/Net.stark:5"
+    },
+    {
+      "name": "AddressInvalid",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.AddressInvalid",
+      "source": "stdlib/src/System/Net.stark:4"
+    },
+    {
+      "name": "ConnectionRefused",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.ConnectionRefused",
+      "source": "stdlib/src/System/Net.stark:6"
+    },
+    {
+      "name": "ConnectionReset",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.ConnectionReset",
+      "source": "stdlib/src/System/Net.stark:7"
+    },
+    {
+      "name": "NotConnected",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.NotConnected",
+      "source": "stdlib/src/System/Net.stark:9"
+    },
+    {
+      "name": "TimedOut",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.TimedOut",
+      "source": "stdlib/src/System/Net.stark:8"
+    },
+    {
+      "name": "Unknown",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.Unknown",
+      "source": "stdlib/src/System/Net.stark:12"
+    },
+    {
+      "name": "Unsupported",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.Unsupported",
+      "source": "stdlib/src/System/Net.stark:11"
+    },
+    {
+      "name": "WouldBlock",
+      "kind": "EnumMember",
+      "module": "System.Net",
+      "container": "NetworkError",
+      "detail": "NetworkError.WouldBlock",
+      "source": "stdlib/src/System/Net.stark:10"
+    },
+    {
+      "name": "TcpClient",
+      "kind": "Struct",
+      "module": "System.Net.Tcp",
+      "detail": "public struct TcpClient",
+      "source": "stdlib/src/System/Net/Tcp.stark:12"
+    },
+    {
+      "name": "TcpListener",
+      "kind": "Struct",
+      "module": "System.Net.Tcp",
+      "detail": "public struct TcpListener",
+      "source": "stdlib/src/System/Net/Tcp.stark:110"
+    },
+    {
+      "name": "TcpShutdown",
+      "kind": "Enum",
+      "module": "System.Net.Tcp",
+      "detail": "public enum TcpShutdown",
+      "source": "stdlib/src/System/Net/Tcp.stark:6"
+    },
+    {
+      "name": "Close",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "fn System.Net.NetStatus Close(mut borrow TcpClient self)",
+      "source": "stdlib/src/System/Net/Tcp.stark:92",
+      "container": "TcpClient"
+    },
+    {
+      "name": "Connect",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "static fn System.Net.NetResult<TcpClient> Connect(System.Net.IPv4Endpoint endpoint)",
+      "source": "stdlib/src/System/Net/Tcp.stark:21",
+      "container": "TcpClient"
+    },
+    {
+      "name": "IsOpen",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "finite law bool IsOpen(borrow TcpClient self)",
+      "source": "stdlib/src/System/Net/Tcp.stark:46",
+      "container": "TcpClient"
+    },
+    {
+      "name": "Read",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "fn System.Net.NetResult<i64[0 max]> Read(mut borrow TcpClient self, mut borrow i8[-128 127][] destination)",
+      "source": "stdlib/src/System/Net/Tcp.stark:50",
+      "container": "TcpClient"
+    },
+    {
+      "name": "Shutdown",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "fn System.Net.NetStatus Shutdown(mut borrow TcpClient self, TcpShutdown how)",
+      "source": "stdlib/src/System/Net/Tcp.stark:84",
+      "container": "TcpClient"
+    },
+    {
+      "name": "Write",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "fn System.Net.NetResult<i64[0 max]> Write(mut borrow TcpClient self, borrow i8[-128 127][] source)",
+      "source": "stdlib/src/System/Net/Tcp.stark:67",
+      "container": "TcpClient"
+    },
+    {
+      "name": "Accept",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "fn System.Net.NetResult<TcpClient> Accept(mut borrow TcpListener self)",
+      "source": "stdlib/src/System/Net/Tcp.stark:148",
+      "container": "TcpListener"
+    },
+    {
+      "name": "Close",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "fn System.Net.NetStatus Close(mut borrow TcpListener self)",
+      "source": "stdlib/src/System/Net/Tcp.stark:171",
+      "container": "TcpListener"
+    },
+    {
+      "name": "IsOpen",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "finite law bool IsOpen(borrow TcpListener self)",
+      "source": "stdlib/src/System/Net/Tcp.stark:144",
+      "container": "TcpListener"
+    },
+    {
+      "name": "Listen",
+      "kind": "Method",
+      "module": "System.Net.Tcp",
+      "detail": "static fn System.Net.NetResult<TcpListener> Listen(System.Net.IPv4Endpoint endpoint)",
+      "source": "stdlib/src/System/Net/Tcp.stark:119",
+      "container": "TcpListener"
+    },
+    {
+      "name": "Both",
+      "kind": "EnumMember",
+      "module": "System.Net.Tcp",
+      "container": "TcpShutdown",
+      "detail": "TcpShutdown.Both",
+      "source": "stdlib/src/System/Net/Tcp.stark:9"
+    },
+    {
+      "name": "Receive",
+      "kind": "EnumMember",
+      "module": "System.Net.Tcp",
+      "container": "TcpShutdown",
+      "detail": "TcpShutdown.Receive",
+      "source": "stdlib/src/System/Net/Tcp.stark:7"
+    },
+    {
+      "name": "Send",
+      "kind": "EnumMember",
+      "module": "System.Net.Tcp",
+      "container": "TcpShutdown",
+      "detail": "TcpShutdown.Send",
+      "source": "stdlib/src/System/Net/Tcp.stark:8"
+    },
+    {
+      "name": "CurrentId",
+      "kind": "Function",
+      "module": "System.Process",
+      "detail": "public fn i32[-2147483648 2147483647] CurrentId()",
+      "source": "stdlib/src/System/Process.stark:4"
+    },
+    {
+      "name": "Exit",
+      "kind": "Function",
+      "module": "System.Process",
+      "detail": "public fn void Exit(i32[-2147483648 2147483647] code)",
+      "source": "stdlib/src/System/Process.stark:8"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number) in( ) number, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:80"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall1(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1) in( ) number, in( ) arg1, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:87"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2) in( ) number, in( ) arg1, in( ) arg2, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:95"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:104"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall4(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:114"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall5(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:125"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall6(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5, i64[-9223372036854775808 9223372036854775807] arg6) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, in( ) arg6, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:137"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number) in( ) number, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:290"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall1(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1) in( ) number, in( ) arg1, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:297"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2) in( ) number, in( ) arg1, in( ) arg2, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:305"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:314"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall4(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:324"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall5(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:335"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] Syscall6(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5, i64[-9223372036854775808 9223372036854775807] arg6) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, in( ) arg6, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:347"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number) in( ) number, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:150"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall1(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1) in( ) number, in( ) arg1, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:157"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2) in( ) number, in( ) arg1, in( ) arg2, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:165"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:174"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall4(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:184"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall5(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:195"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Syscall6(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5, i64[-9223372036854775808 9223372036854775807] arg6) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, in( ) arg6, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:207"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number) in( ) number, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:3"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall1(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1) in( ) number, in( ) arg1, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:11"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2) in( ) number, in( ) arg1, in( ) arg2, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:20"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:30"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall4(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:41"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall5(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:53"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall6(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5, i64[-9223372036854775808 9223372036854775807] arg6) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, in( ) arg6, out( ) return, clobber( , )",
+      "source": "stdlib/src/System/Syscall.stark:66"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number) in( ) number, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:220"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall1(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1) in( ) number, in( ) arg1, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:227"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2) in( ) number, in( ) arg1, in( ) arg2, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:235"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:244"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall4(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:254"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall5(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:265"
+    },
+    {
+      "name": "asm",
+      "kind": "Function",
+      "module": "System.Syscall",
+      "detail": "public ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] Syscall6(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3, i64[-9223372036854775808 9223372036854775807] arg4, i64[-9223372036854775808 9223372036854775807] arg5, i64[-9223372036854775808 9223372036854775807] arg6) in( ) number, in( ) arg1, in( ) arg2, in( ) arg3, in( ) arg4, in( ) arg5, in( ) arg6, out( ) return",
+      "source": "stdlib/src/System/Syscall.stark:277"
+    },
+    {
+      "name": "AsciiData",
+      "kind": "Law",
+      "module": "System.Text",
+      "detail": "public finite law rawptr<i8[-128 127]> AsciiData(ascii source)",
+      "source": "stdlib/src/System/Text.stark:24"
+    },
+    {
+      "name": "AsciiLength",
+      "kind": "Law",
+      "module": "System.Text",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source)",
+      "source": "stdlib/src/System/Text.stark:25"
+    },
+    {
+      "name": "AsciiView",
+      "kind": "Law",
+      "module": "System.Text",
+      "detail": "public finite law ascii AsciiView(Ascii source)",
+      "source": "stdlib/src/System/Text.stark:22"
+    },
+    {
+      "name": "ConcatAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right)",
+      "source": "stdlib/src/System/Text.stark:3038"
+    },
+    {
+      "name": "ConcatUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedUnicode> right)",
+      "source": "stdlib/src/System/Text.stark:3482"
+    },
+    {
+      "name": "Encoding",
+      "kind": "Enum",
+      "module": "System.Text",
+      "detail": "public enum Encoding",
+      "source": "stdlib/src/System/Text.stark:5"
+    },
+    {
+      "name": "OwnedAscii",
+      "kind": "Struct",
+      "module": "System.Text",
+      "detail": "public struct OwnedAscii",
+      "source": "stdlib/src/System/Text.stark:29"
+    },
+    {
+      "name": "OwnedUnicode",
+      "kind": "Struct",
+      "module": "System.Text",
+      "detail": "public struct OwnedUnicode",
+      "source": "stdlib/src/System/Text.stark:60"
+    },
+    {
+      "name": "ParseBoolAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<bool> ParseBoolAscii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:196"
+    },
+    {
+      "name": "ParseBoolUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<bool> ParseBoolUnicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:229"
+    },
+    {
+      "name": "ParseEncodingAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<Encoding> ParseEncodingAscii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:262"
+    },
+    {
+      "name": "ParseEncodingUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<Encoding> ParseEncodingUnicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:282"
+    },
+    {
+      "name": "ParseI1024Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i1024[min max]> ParseI1024Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:782"
+    },
+    {
+      "name": "ParseI1024Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:838"
+    },
+    {
+      "name": "ParseI128Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i128[min max]> ParseI128Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1000"
+    },
+    {
+      "name": "ParseI128Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i128[min max]> ParseI128Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1056"
+    },
+    {
+      "name": "ParseI16Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i16[-32768 32767]> ParseI16Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:510"
+    },
+    {
+      "name": "ParseI16Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i16[-32768 32767]> ParseI16Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:524"
+    },
+    {
+      "name": "ParseI192Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i192[min max]> ParseI192Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1112"
+    },
+    {
+      "name": "ParseI192Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i192[min max]> ParseI192Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1126"
+    },
+    {
+      "name": "ParseI24Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i24[-8388608 8388607]> ParseI24Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:538"
+    },
+    {
+      "name": "ParseI24Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i24[-8388608 8388607]> ParseI24Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:552"
+    },
+    {
+      "name": "ParseI256Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i256[min max]> ParseI256Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1140"
+    },
+    {
+      "name": "ParseI256Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i256[min max]> ParseI256Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1154"
+    },
+    {
+      "name": "ParseI32Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i32[-2147483648 2147483647]> ParseI32Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:566"
+    },
+    {
+      "name": "ParseI32Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i32[-2147483648 2147483647]> ParseI32Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:580"
+    },
+    {
+      "name": "ParseI384Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i384[min max]> ParseI384Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1168"
+    },
+    {
+      "name": "ParseI384Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i384[min max]> ParseI384Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1182"
+    },
+    {
+      "name": "ParseI48Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i48[-140737488355328 140737488355327]> ParseI48Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:594"
+    },
+    {
+      "name": "ParseI48Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i48[-140737488355328 140737488355327]> ParseI48Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:608"
+    },
+    {
+      "name": "ParseI512Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i512[min max]> ParseI512Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1196"
+    },
+    {
+      "name": "ParseI512Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i512[min max]> ParseI512Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1210"
+    },
+    {
+      "name": "ParseI64Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i64[-9223372036854775808 9223372036854775807]> ParseI64Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:340"
+    },
+    {
+      "name": "ParseI64Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i64[-9223372036854775808 9223372036854775807]> ParseI64Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:382"
+    },
+    {
+      "name": "ParseI768Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i768[min max]> ParseI768Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1224"
+    },
+    {
+      "name": "ParseI768Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i768[min max]> ParseI768Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1238"
+    },
+    {
+      "name": "ParseI8Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i8[-128 127]> ParseI8Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:482"
+    },
+    {
+      "name": "ParseI8Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i8[-128 127]> ParseI8Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:496"
+    },
+    {
+      "name": "ParseI96Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i96[min max]> ParseI96Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:972"
+    },
+    {
+      "name": "ParseI96Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<i96[min max]> ParseI96Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:986"
+    },
+    {
+      "name": "ParseTextErrorAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<TextError> ParseTextErrorAscii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:302"
+    },
+    {
+      "name": "ParseTextErrorUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<TextError> ParseTextErrorUnicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:314"
+    },
+    {
+      "name": "ParseU1024Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u1024[0 max]> ParseU1024Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:894"
+    },
+    {
+      "name": "ParseU1024Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:923"
+    },
+    {
+      "name": "ParseU128Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u128[0 max]> ParseU128Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1280"
+    },
+    {
+      "name": "ParseU128Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u128[0 max]> ParseU128Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1309"
+    },
+    {
+      "name": "ParseU16Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u16[0 max]> ParseU16Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:650"
+    },
+    {
+      "name": "ParseU16Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u16[0 max]> ParseU16Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:664"
+    },
+    {
+      "name": "ParseU192Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u192[0 max]> ParseU192Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1338"
+    },
+    {
+      "name": "ParseU192Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u192[0 max]> ParseU192Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1352"
+    },
+    {
+      "name": "ParseU24Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u24[0 max]> ParseU24Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:678"
+    },
+    {
+      "name": "ParseU24Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u24[0 max]> ParseU24Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:692"
+    },
+    {
+      "name": "ParseU256Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u256[0 max]> ParseU256Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1366"
+    },
+    {
+      "name": "ParseU256Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u256[0 max]> ParseU256Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1380"
+    },
+    {
+      "name": "ParseU32Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u32[0 max]> ParseU32Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:706"
+    },
+    {
+      "name": "ParseU32Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u32[0 max]> ParseU32Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:720"
+    },
+    {
+      "name": "ParseU384Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u384[0 max]> ParseU384Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1394"
+    },
+    {
+      "name": "ParseU384Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u384[0 max]> ParseU384Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1408"
+    },
+    {
+      "name": "ParseU48Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u48[0 max]> ParseU48Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:734"
+    },
+    {
+      "name": "ParseU48Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u48[0 max]> ParseU48Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:748"
+    },
+    {
+      "name": "ParseU512Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u512[0 max]> ParseU512Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1422"
+    },
+    {
+      "name": "ParseU512Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u512[0 max]> ParseU512Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1436"
+    },
+    {
+      "name": "ParseU64Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u64[0 max]> ParseU64Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:424"
+    },
+    {
+      "name": "ParseU64Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u64[0 max]> ParseU64Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:453"
+    },
+    {
+      "name": "ParseU768Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u768[0 max]> ParseU768Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1450"
+    },
+    {
+      "name": "ParseU768Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u768[0 max]> ParseU768Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1464"
+    },
+    {
+      "name": "ParseU8Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u8[0 max]> ParseU8Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:622"
+    },
+    {
+      "name": "ParseU8Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u8[0 max]> ParseU8Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:636"
+    },
+    {
+      "name": "ParseU96Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u96[0 max]> ParseU96Ascii(ascii source)",
+      "source": "stdlib/src/System/Text.stark:1252"
+    },
+    {
+      "name": "ParseU96Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite TextResult<u96[0 max]> ParseU96Unicode(unicode source)",
+      "source": "stdlib/src/System/Text.stark:1266"
+    },
+    {
+      "name": "TextError",
+      "kind": "Enum",
+      "module": "System.Text",
+      "detail": "public enum TextError",
+      "source": "stdlib/src/System/Text.stark:12"
+    },
+    {
+      "name": "TextResult",
+      "kind": "Enum",
+      "module": "System.Text",
+      "detail": "public enum TextResult<T>",
+      "source": "stdlib/src/System/Text.stark:17"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(bool value)",
+      "source": "stdlib/src/System/Text.stark:2659"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(Encoding value)",
+      "source": "stdlib/src/System/Text.stark:2986"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(f32 value)",
+      "source": "stdlib/src/System/Text.stark:2982"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(f64 value)",
+      "source": "stdlib/src/System/Text.stark:2956"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i1024[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2896"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i128[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2872"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i16[-32768 32767] value)",
+      "source": "stdlib/src/System/Text.stark:2848"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i192[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2876"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i24[-8388608 8388607] value)",
+      "source": "stdlib/src/System/Text.stark:2852"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i256[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2880"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/Text.stark:2856"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i384[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2884"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i48[-140737488355328 140737488355327] value)",
+      "source": "stdlib/src/System/Text.stark:2860"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i512[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2888"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/Text.stark:2864"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i768[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2892"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i8[-128 127] value)",
+      "source": "stdlib/src/System/Text.stark:2844"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i96[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2868"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(TextError value)",
+      "source": "stdlib/src/System/Text.stark:3012"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u1024[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2952"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u128[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2928"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u16[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2904"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u192[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2932"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u24[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2908"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u256[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2936"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u32[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2912"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u384[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2940"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u48[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2916"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u512[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2944"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u64[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2920"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u768[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2948"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u8[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2900"
+    },
+    {
+      "name": "ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(u96[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2924"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(bool value)",
+      "source": "stdlib/src/System/Text.stark:3081"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(Encoding value)",
+      "source": "stdlib/src/System/Text.stark:3430"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(f32 value)",
+      "source": "stdlib/src/System/Text.stark:3426"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(f64 value)",
+      "source": "stdlib/src/System/Text.stark:3400"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i1024[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3340"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i128[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3316"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i16[-32768 32767] value)",
+      "source": "stdlib/src/System/Text.stark:3292"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i192[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3320"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i24[-8388608 8388607] value)",
+      "source": "stdlib/src/System/Text.stark:3296"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i256[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3324"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/Text.stark:3300"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i384[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3328"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i48[-140737488355328 140737488355327] value)",
+      "source": "stdlib/src/System/Text.stark:3304"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i512[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3332"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/Text.stark:3308"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i768[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3336"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i8[-128 127] value)",
+      "source": "stdlib/src/System/Text.stark:3288"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i96[min max] value)",
+      "source": "stdlib/src/System/Text.stark:3312"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value)",
+      "source": "stdlib/src/System/Text.stark:3456"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u1024[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3396"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u128[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3372"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u16[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3348"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u192[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3376"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u24[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3352"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u256[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3380"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u32[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3356"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u384[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3384"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u48[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3360"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u512[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3388"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u64[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3364"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u768[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3392"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u8[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3344"
+    },
+    {
+      "name": "ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(u96[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:3368"
+    },
+    {
+      "name": "TryConcatAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right)",
+      "source": "stdlib/src/System/Text.stark:1705"
+    },
+    {
+      "name": "TryConcatUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right)",
+      "source": "stdlib/src/System/Text.stark:1706"
+    },
+    {
+      "name": "TryConvertAsciiToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source)",
+      "source": "stdlib/src/System/Text.stark:3531"
+    },
+    {
+      "name": "TryConvertAsciiToUtf16",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryConvertAsciiToUtf16(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, ascii source, rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength)",
+      "source": "stdlib/src/System/Text.stark:3533"
+    },
+    {
+      "name": "TryConvertUnicodeToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source)",
+      "source": "stdlib/src/System/Text.stark:3660"
+    },
+    {
+      "name": "TryConvertUnicodeToUtf16",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryConvertUnicodeToUtf16(rawmutptr<i16[-32768 32767]> destination, i64[-9223372036854775808 9223372036854775807] capacity, unicode source, rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength)",
+      "source": "stdlib/src/System/Text.stark:3731"
+    },
+    {
+      "name": "TryConvertUtf16ToAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryConvertUtf16ToAscii(rawmutptr<Ascii> destination, rawptr<i16[-32768 32767]> source, i64[-9223372036854775808 9223372036854775807] sourceLength)",
+      "source": "stdlib/src/System/Text.stark:3777"
+    },
+    {
+      "name": "TryConvertUtf16ToUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryConvertUtf16ToUnicode(rawmutptr<Unicode> destination, rawptr<i16[-32768 32767]> source, i64[-9223372036854775808 9223372036854775807] sourceLength)",
+      "source": "stdlib/src/System/Text.stark:3576"
+    },
+    {
+      "name": "TryFormatBoolAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatBoolAscii(rawmutptr<Ascii> destination, bool value)",
+      "source": "stdlib/src/System/Text.stark:1708"
+    },
+    {
+      "name": "TryFormatBoolUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatBoolUnicode(rawmutptr<Unicode> destination, bool value)",
+      "source": "stdlib/src/System/Text.stark:2262"
+    },
+    {
+      "name": "TryFormatEncodingAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatEncodingAscii(rawmutptr<Ascii> destination, Encoding value)",
+      "source": "stdlib/src/System/Text.stark:1716"
+    },
+    {
+      "name": "TryFormatEncodingUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatEncodingUnicode(rawmutptr<Unicode> destination, Encoding value)",
+      "source": "stdlib/src/System/Text.stark:2279"
+    },
+    {
+      "name": "TryFormatF32Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatF32Ascii(rawmutptr<Ascii> destination, f32 value)",
+      "source": "stdlib/src/System/Text.stark:2258"
+    },
+    {
+      "name": "TryFormatF32Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatF32Unicode(rawmutptr<Unicode> destination, f32 value)",
+      "source": "stdlib/src/System/Text.stark:2598"
+    },
+    {
+      "name": "TryFormatF64Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatF64Ascii(rawmutptr<Ascii> destination, f64 value)",
+      "source": "stdlib/src/System/Text.stark:2229"
+    },
+    {
+      "name": "TryFormatF64Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatF64Unicode(rawmutptr<Unicode> destination, f64 value)",
+      "source": "stdlib/src/System/Text.stark:2583"
+    },
+    {
+      "name": "TryFormatI1024Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI1024Ascii(rawmutptr<Ascii> destination, i1024[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1870"
+    },
+    {
+      "name": "TryFormatI1024Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI1024Unicode(rawmutptr<Unicode> destination, i1024[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2371"
+    },
+    {
+      "name": "TryFormatI128Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI128Ascii(rawmutptr<Ascii> destination, i128[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1902"
+    },
+    {
+      "name": "TryFormatI128Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI128Unicode(rawmutptr<Unicode> destination, i128[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2406"
+    },
+    {
+      "name": "TryFormatI16Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI16Ascii(rawmutptr<Ascii> destination, i16[-32768 32767] value)",
+      "source": "stdlib/src/System/Text.stark:1990"
+    },
+    {
+      "name": "TryFormatI16Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI16Unicode(rawmutptr<Unicode> destination, i16[-32768 32767] value)",
+      "source": "stdlib/src/System/Text.stark:2442"
+    },
+    {
+      "name": "TryFormatI192Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI192Ascii(rawmutptr<Ascii> destination, i192[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1898"
+    },
+    {
+      "name": "TryFormatI192Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI192Unicode(rawmutptr<Unicode> destination, i192[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2402"
+    },
+    {
+      "name": "TryFormatI24Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI24Ascii(rawmutptr<Ascii> destination, i24[-8388608 8388607] value)",
+      "source": "stdlib/src/System/Text.stark:1986"
+    },
+    {
+      "name": "TryFormatI24Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI24Unicode(rawmutptr<Unicode> destination, i24[-8388608 8388607] value)",
+      "source": "stdlib/src/System/Text.stark:2438"
+    },
+    {
+      "name": "TryFormatI256Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI256Ascii(rawmutptr<Ascii> destination, i256[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1894"
+    },
+    {
+      "name": "TryFormatI256Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI256Unicode(rawmutptr<Unicode> destination, i256[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2398"
+    },
+    {
+      "name": "TryFormatI32Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/Text.stark:1982"
+    },
+    {
+      "name": "TryFormatI32Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value)",
+      "source": "stdlib/src/System/Text.stark:2434"
+    },
+    {
+      "name": "TryFormatI384Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI384Ascii(rawmutptr<Ascii> destination, i384[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1890"
+    },
+    {
+      "name": "TryFormatI384Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI384Unicode(rawmutptr<Unicode> destination, i384[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2394"
+    },
+    {
+      "name": "TryFormatI48Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI48Ascii(rawmutptr<Ascii> destination, i48[-140737488355328 140737488355327] value)",
+      "source": "stdlib/src/System/Text.stark:1978"
+    },
+    {
+      "name": "TryFormatI48Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI48Unicode(rawmutptr<Unicode> destination, i48[-140737488355328 140737488355327] value)",
+      "source": "stdlib/src/System/Text.stark:2430"
+    },
+    {
+      "name": "TryFormatI512Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI512Ascii(rawmutptr<Ascii> destination, i512[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1886"
+    },
+    {
+      "name": "TryFormatI512Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI512Unicode(rawmutptr<Unicode> destination, i512[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2390"
+    },
+    {
+      "name": "TryFormatI64Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI64Ascii(rawmutptr<Ascii> destination, i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/Text.stark:1738"
+    },
+    {
+      "name": "TryFormatI64Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i64[-9223372036854775808 9223372036854775807] value)",
+      "source": "stdlib/src/System/Text.stark:2301"
+    },
+    {
+      "name": "TryFormatI768Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI768Ascii(rawmutptr<Ascii> destination, i768[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1882"
+    },
+    {
+      "name": "TryFormatI768Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI768Unicode(rawmutptr<Unicode> destination, i768[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2386"
+    },
+    {
+      "name": "TryFormatI8Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI8Ascii(rawmutptr<Ascii> destination, i8[-128 127] value)",
+      "source": "stdlib/src/System/Text.stark:1994"
+    },
+    {
+      "name": "TryFormatI8Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI8Unicode(rawmutptr<Unicode> destination, i8[-128 127] value)",
+      "source": "stdlib/src/System/Text.stark:2446"
+    },
+    {
+      "name": "TryFormatI96Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatI96Ascii(rawmutptr<Ascii> destination, i96[min max] value)",
+      "source": "stdlib/src/System/Text.stark:1974"
+    },
+    {
+      "name": "TryFormatI96Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatI96Unicode(rawmutptr<Unicode> destination, i96[min max] value)",
+      "source": "stdlib/src/System/Text.stark:2426"
+    },
+    {
+      "name": "TryFormatTextErrorAscii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatTextErrorAscii(rawmutptr<Ascii> destination, TextError value)",
+      "source": "stdlib/src/System/Text.stark:1729"
+    },
+    {
+      "name": "TryFormatTextErrorUnicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatTextErrorUnicode(rawmutptr<Unicode> destination, TextError value)",
+      "source": "stdlib/src/System/Text.stark:2292"
+    },
+    {
+      "name": "TryFormatU1024Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU1024Ascii(rawmutptr<Ascii> destination, u1024[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2052"
+    },
+    {
+      "name": "TryFormatU1024Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU1024Unicode(rawmutptr<Unicode> destination, u1024[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2504"
+    },
+    {
+      "name": "TryFormatU128Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU128Ascii(rawmutptr<Ascii> destination, u128[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2076"
+    },
+    {
+      "name": "TryFormatU128Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU128Unicode(rawmutptr<Unicode> destination, u128[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2539"
+    },
+    {
+      "name": "TryFormatU16Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU16Ascii(rawmutptr<Ascii> destination, u16[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2146"
+    },
+    {
+      "name": "TryFormatU16Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU16Unicode(rawmutptr<Unicode> destination, u16[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2575"
+    },
+    {
+      "name": "TryFormatU192Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU192Ascii(rawmutptr<Ascii> destination, u192[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2072"
+    },
+    {
+      "name": "TryFormatU192Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU192Unicode(rawmutptr<Unicode> destination, u192[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2535"
+    },
+    {
+      "name": "TryFormatU24Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU24Ascii(rawmutptr<Ascii> destination, u24[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2142"
+    },
+    {
+      "name": "TryFormatU24Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU24Unicode(rawmutptr<Unicode> destination, u24[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2571"
+    },
+    {
+      "name": "TryFormatU256Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU256Ascii(rawmutptr<Ascii> destination, u256[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2068"
+    },
+    {
+      "name": "TryFormatU256Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU256Unicode(rawmutptr<Unicode> destination, u256[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2531"
+    },
+    {
+      "name": "TryFormatU32Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU32Ascii(rawmutptr<Ascii> destination, u32[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2138"
+    },
+    {
+      "name": "TryFormatU32Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU32Unicode(rawmutptr<Unicode> destination, u32[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2567"
+    },
+    {
+      "name": "TryFormatU384Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU384Ascii(rawmutptr<Ascii> destination, u384[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2064"
+    },
+    {
+      "name": "TryFormatU384Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU384Unicode(rawmutptr<Unicode> destination, u384[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2527"
+    },
+    {
+      "name": "TryFormatU48Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU48Ascii(rawmutptr<Ascii> destination, u48[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2134"
+    },
+    {
+      "name": "TryFormatU48Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU48Unicode(rawmutptr<Unicode> destination, u48[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2563"
+    },
+    {
+      "name": "TryFormatU512Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU512Ascii(rawmutptr<Ascii> destination, u512[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2060"
+    },
+    {
+      "name": "TryFormatU512Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU512Unicode(rawmutptr<Unicode> destination, u512[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2523"
+    },
+    {
+      "name": "TryFormatU64Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU64Ascii(rawmutptr<Ascii> destination, u64[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:1998"
+    },
+    {
+      "name": "TryFormatU64Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u64[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2450"
+    },
+    {
+      "name": "TryFormatU768Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU768Ascii(rawmutptr<Ascii> destination, u768[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2056"
+    },
+    {
+      "name": "TryFormatU768Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU768Unicode(rawmutptr<Unicode> destination, u768[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2519"
+    },
+    {
+      "name": "TryFormatU8Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU8Ascii(rawmutptr<Ascii> destination, u8[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2150"
+    },
+    {
+      "name": "TryFormatU8Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU8Unicode(rawmutptr<Unicode> destination, u8[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2579"
+    },
+    {
+      "name": "TryFormatU96Ascii",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public finite bool TryFormatU96Ascii(rawmutptr<Ascii> destination, u96[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2130"
+    },
+    {
+      "name": "TryFormatU96Unicode",
+      "kind": "Function",
+      "module": "System.Text",
+      "detail": "public fn bool TryFormatU96Unicode(rawmutptr<Unicode> destination, u96[0 max] value)",
+      "source": "stdlib/src/System/Text.stark:2559"
+    },
+    {
+      "name": "UnicodeData",
+      "kind": "Law",
+      "module": "System.Text",
+      "detail": "public finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source)",
+      "source": "stdlib/src/System/Text.stark:26"
+    },
+    {
+      "name": "UnicodeLength",
+      "kind": "Law",
+      "module": "System.Text",
+      "detail": "public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source)",
+      "source": "stdlib/src/System/Text.stark:27"
+    },
+    {
+      "name": "UnicodeView",
+      "kind": "Law",
+      "module": "System.Text",
+      "detail": "public finite law unicode UnicodeView(Unicode source)",
+      "source": "stdlib/src/System/Text.stark:23"
+    },
+    {
+      "name": "Binary",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "Encoding",
+      "detail": "Encoding.Binary",
+      "source": "stdlib/src/System/Text.stark:6"
+    },
+    {
+      "name": "UTF16",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "Encoding",
+      "detail": "Encoding.UTF16",
+      "source": "stdlib/src/System/Text.stark:8"
+    },
+    {
+      "name": "UTF32",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "Encoding",
+      "detail": "Encoding.UTF32",
+      "source": "stdlib/src/System/Text.stark:9"
+    },
+    {
+      "name": "UTF8",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "Encoding",
+      "detail": "Encoding.UTF8",
+      "source": "stdlib/src/System/Text.stark:7"
+    },
+    {
+      "name": "Length",
+      "kind": "Method",
+      "module": "System.Text",
+      "detail": "finite law i64[-9223372036854775808 9223372036854775807] Length(borrow OwnedAscii self)",
+      "source": "stdlib/src/System/Text.stark:37",
+      "container": "OwnedAscii"
+    },
+    {
+      "name": "View",
+      "kind": "Method",
+      "module": "System.Text",
+      "detail": "finite ascii View(borrow OwnedAscii self)",
+      "source": "stdlib/src/System/Text.stark:33",
+      "container": "OwnedAscii"
+    },
+    {
+      "name": "Length",
+      "kind": "Method",
+      "module": "System.Text",
+      "detail": "finite law i64[-9223372036854775808 9223372036854775807] Length(borrow OwnedUnicode self)",
+      "source": "stdlib/src/System/Text.stark:68",
+      "container": "OwnedUnicode"
+    },
+    {
+      "name": "View",
+      "kind": "Method",
+      "module": "System.Text",
+      "detail": "finite unicode View(borrow OwnedUnicode self)",
+      "source": "stdlib/src/System/Text.stark:64",
+      "container": "OwnedUnicode"
+    },
+    {
+      "name": "InvalidFormat",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "TextError",
+      "detail": "TextError.InvalidFormat",
+      "source": "stdlib/src/System/Text.stark:13"
+    },
+    {
+      "name": "Overflow",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "TextError",
+      "detail": "TextError.Overflow",
+      "source": "stdlib/src/System/Text.stark:14"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "TextResult<T>",
+      "detail": "TextResult<T>.Err",
+      "source": "stdlib/src/System/Text.stark:19"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Text",
+      "container": "TextResult<T>",
+      "detail": "TextResult<T>.Ok",
+      "source": "stdlib/src/System/Text.stark:18"
+    },
+    {
+      "name": "Thread",
+      "kind": "Struct",
+      "module": "System.Threading",
+      "detail": "public struct Thread",
+      "source": "stdlib/src/System/Threading.stark:24"
+    },
+    {
+      "name": "ThreadEntry",
+      "kind": "TypeAlias",
+      "module": "System.Threading",
+      "detail": "public alias ThreadEntry = fnptr<fn i32[-2147483648 2147483647]()>",
+      "source": "stdlib/src/System/Threading.stark:4"
+    },
+    {
+      "name": "ThreadError",
+      "kind": "Enum",
+      "module": "System.Threading",
+      "detail": "public enum ThreadError",
+      "source": "stdlib/src/System/Threading.stark:6"
+    },
+    {
+      "name": "ThreadJoinResult",
+      "kind": "Enum",
+      "module": "System.Threading",
+      "detail": "public enum ThreadJoinResult",
+      "source": "stdlib/src/System/Threading.stark:19"
+    },
+    {
+      "name": "ThreadStatus",
+      "kind": "Enum",
+      "module": "System.Threading",
+      "detail": "public enum ThreadStatus",
+      "source": "stdlib/src/System/Threading.stark:14"
+    },
+    {
+      "name": "Detach",
+      "kind": "Method",
+      "module": "System.Threading",
+      "detail": "fn ThreadStatus Detach(mut borrow Thread self)",
+      "source": "stdlib/src/System/Threading.stark:69",
+      "container": "Thread"
+    },
+    {
+      "name": "IsJoinable",
+      "kind": "Method",
+      "module": "System.Threading",
+      "detail": "finite law bool IsJoinable(borrow Thread self)",
+      "source": "stdlib/src/System/Threading.stark:37",
+      "container": "Thread"
+    },
+    {
+      "name": "Join",
+      "kind": "Method",
+      "module": "System.Threading",
+      "detail": "fn ThreadJoinResult Join(mut borrow Thread self)",
+      "source": "stdlib/src/System/Threading.stark:41",
+      "container": "Thread"
+    },
+    {
+      "name": "SleepMilliseconds",
+      "kind": "Method",
+      "module": "System.Threading",
+      "detail": "static fn void SleepMilliseconds(i64[0 max] milliseconds)",
+      "source": "stdlib/src/System/Threading.stark:102",
+      "container": "Thread"
+    },
+    {
+      "name": "Yield",
+      "kind": "Method",
+      "module": "System.Threading",
+      "detail": "static fn void Yield()",
+      "source": "stdlib/src/System/Threading.stark:97",
+      "container": "Thread"
+    },
+    {
+      "name": "AlreadyDetached",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadError",
+      "detail": "ThreadError.AlreadyDetached",
+      "source": "stdlib/src/System/Threading.stark:10"
+    },
+    {
+      "name": "AlreadyJoined",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadError",
+      "detail": "ThreadError.AlreadyJoined",
+      "source": "stdlib/src/System/Threading.stark:9"
+    },
+    {
+      "name": "InvalidState",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadError",
+      "detail": "ThreadError.InvalidState",
+      "source": "stdlib/src/System/Threading.stark:11"
+    },
+    {
+      "name": "JoinFailed",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadError",
+      "detail": "ThreadError.JoinFailed",
+      "source": "stdlib/src/System/Threading.stark:8"
+    },
+    {
+      "name": "StartFailed",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadError",
+      "detail": "ThreadError.StartFailed",
+      "source": "stdlib/src/System/Threading.stark:7"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadJoinResult",
+      "detail": "ThreadJoinResult.Err",
+      "source": "stdlib/src/System/Threading.stark:21"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadJoinResult",
+      "detail": "ThreadJoinResult.Ok",
+      "source": "stdlib/src/System/Threading.stark:20"
+    },
+    {
+      "name": "Err",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadStatus",
+      "detail": "ThreadStatus.Err",
+      "source": "stdlib/src/System/Threading.stark:16"
+    },
+    {
+      "name": "Ok",
+      "kind": "EnumMember",
+      "module": "System.Threading",
+      "container": "ThreadStatus",
+      "detail": "ThreadStatus.Ok",
+      "source": "stdlib/src/System/Threading.stark:15"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "Module Declaration": {
+    "prefix": "module",
+    "body": [
+      "module ${1:Module.Name}",
+      "",
+      "$0"
+    ],
+    "description": "Declare a Stark module"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "import ${1:System.Console}"
+    ],
+    "description": "Import a Stark module"
+  },
+  "Export Import": {
+    "prefix": "export import",
+    "body": [
+      "export import ${1:System.Console}"
+    ],
+    "description": "Re-export a Stark module"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "${1:public }fn ${2:void} ${3:Name}(${4}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a Stark function"
+  },
+  "Finite Law": {
+    "prefix": "finite law",
+    "body": [
+      "${1:public }finite law ${2:bool} ${3:Name}(${4});"
+    ],
+    "description": "Declare a finite law"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "${1:public }struct ${2:Name} {",
+      "    ${3:i32[0 max]} ${4:Value};",
+      "",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a Stark struct"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "${1:public }enum ${2:Name} {",
+      "    ${3:First},",
+      "    ${4:Second}",
+      "}"
+    ],
+    "description": "Declare a Stark enum"
+  },
+  "For Willexit": {
+    "prefix": "for willexit",
+    "body": [
+      "for willexit (stack mut i64[0 max] ${1:index} = 0; ${1:index} < ${2:count}; ${1:index} += 1) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Create a willexit for loop"
+  },
+  "Independent Loop": {
+    "prefix": "for independent",
+    "body": [
+      "for willexit independent (stack mut i64[0 max] ${1:index} = 0; ${1:index} < ${2:count}; ${1:index} += 1) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Create an independent willexit for loop"
+  },
+  "Where Disjoint": {
+    "prefix": "where disjoint",
+    "body": [
+      "where disjoint(${1:left}, ${2:right})"
+    ],
+    "description": "Add a disjoint memory contract"
+  },
+  "If Disjoint": {
+    "prefix": "if disjoint",
+    "body": [
+      "if disjoint(${1:left}, ${2:right}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Create a runtime disjointness branch"
+  }
+}
