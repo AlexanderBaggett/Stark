@@ -363,6 +363,55 @@ function Get-FirstCommandLine {
     return "unknown"
 }
 
+function Join-ProcessArguments {
+    param([string[]]$Arguments)
+
+    $quoted = New-Object System.Collections.Generic.List[string]
+    foreach ($argument in @($Arguments)) {
+        if ($null -eq $argument) {
+            $argument = ""
+        }
+
+        if ($argument.Length -gt 0 -and $argument -notmatch '[\s"]') {
+            $quoted.Add($argument)
+            continue
+        }
+
+        $builder = New-Object System.Text.StringBuilder
+        [void]$builder.Append('"')
+        $backslashes = 0
+        foreach ($character in $argument.ToCharArray()) {
+            if ($character -eq '\') {
+                $backslashes += 1
+                continue
+            }
+
+            if ($character -eq '"') {
+                [void]$builder.Append(('\' * (($backslashes * 2) + 1)))
+                [void]$builder.Append('"')
+                $backslashes = 0
+                continue
+            }
+
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * $backslashes))
+                $backslashes = 0
+            }
+
+            [void]$builder.Append($character)
+        }
+
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * ($backslashes * 2)))
+        }
+
+        [void]$builder.Append('"')
+        $quoted.Add($builder.ToString())
+    }
+
+    return $quoted -join " "
+}
+
 function Invoke-Native {
     param(
         [string]$FilePath,
@@ -371,7 +420,42 @@ function Invoke-Native {
     )
 
     if ($SuppressOutput) {
-        & $FilePath @Arguments *> $null
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $FilePath
+        $argumentListProperty = [System.Diagnostics.ProcessStartInfo].GetProperty("ArgumentList")
+        if ($null -ne $argumentListProperty) {
+            foreach ($argument in @($Arguments)) {
+                [void]$startInfo.ArgumentList.Add($argument)
+            }
+        }
+        else {
+            $startInfo.Arguments = Join-ProcessArguments $Arguments
+        }
+
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (!$process.Start()) {
+            throw "Unable to start command: $FilePath"
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdoutTask.Wait()
+        $stderrTask.Wait()
+        $exitCode = $process.ExitCode
+        $process.Dispose()
+
+        if ($exitCode -ne 0) {
+            throw "Command failed with exit code $exitCode`: $FilePath $($Arguments -join ' ')"
+        }
+
+        return
     }
     else {
         & $FilePath @Arguments
@@ -528,6 +612,27 @@ function Add-CRelativeAverageRatios {
     }
 
     Set-Content -LiteralPath $Path -Value $output
+}
+
+function Complete-ResultsFile {
+    param([string]$Reason)
+
+    if (!(Test-Path -LiteralPath $ResultsFile)) {
+        return
+    }
+
+    $firstLine = Get-Content -LiteralPath $ResultsFile -TotalCount 1
+    if ([string]::IsNullOrWhiteSpace($firstLine) -or !$firstLine.StartsWith("benchmark,")) {
+        return
+    }
+
+    try {
+        Add-CRelativeAverageRatios $ResultsFile
+        Write-Status "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines$Reason."
+    }
+    catch {
+        Write-Status "Unable to add c_avg_ratio column$Reason`: $($_.Exception.Message)"
+    }
 }
 
 function Write-Status {
@@ -823,6 +928,7 @@ if (![string]::IsNullOrWhiteSpace($Target)) {
 }
 
 $script:compilerArgs += Split-ArgumentString $ExtraCompilerArgs
+$script:benchmarkRunnerExitCode = 0
 
 try {
     Write-MachineMetadata $MachineFile
@@ -913,8 +1019,17 @@ try {
     Add-CRelativeAverageRatios $ResultsFile
     Write-Status "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines."
 }
+catch {
+    Complete-ResultsFile " before exiting after failure"
+    Write-Status $_.Exception.Message
+    $script:benchmarkRunnerExitCode = 1
+}
 finally {
     if (Test-Path -LiteralPath $tmpDir) {
         Remove-Item -LiteralPath $tmpDir -Recurse -Force
     }
+}
+
+if ($script:benchmarkRunnerExitCode -ne 0) {
+    exit $script:benchmarkRunnerExitCode
 }
