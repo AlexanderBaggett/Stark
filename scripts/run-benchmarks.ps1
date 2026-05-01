@@ -94,10 +94,6 @@ function Get-BenchmarkVariantDescriptor {
         $prefix = "Experimental"
         $stem = $stem.Substring("Experimental".Length)
     }
-    elseif ($stem.StartsWith("Dynamic", [StringComparison]::Ordinal)) {
-        $prefix = "Dynamic"
-        $stem = $stem.Substring("Dynamic".Length)
-    }
 
     if ($category -ne "collections") {
         $subsystem = switch ($category) {
@@ -116,8 +112,6 @@ function Get-BenchmarkVariantDescriptor {
 
         return [PSCustomObject]@{
             Prefix = $prefix
-            Collection = $subsystem
-            Scenario = $stem
             BenchmarkGroup = "benchmarks/$category/$stem"
         }
     }
@@ -127,10 +121,6 @@ function Get-BenchmarkVariantDescriptor {
     if ($stem.StartsWith("LinkedList", [StringComparison]::Ordinal)) {
         $collection = "LinkedList"
         $scenario = $stem.Substring("LinkedList".Length)
-    }
-    elseif ($stem.StartsWith("RingQueue", [StringComparison]::Ordinal)) {
-        $collection = "Queue"
-        $scenario = $stem.Substring("RingQueue".Length)
     }
     elseif ($stem.StartsWith("Dictionary", [StringComparison]::Ordinal)) {
         $collection = "Dictionary"
@@ -160,8 +150,6 @@ function Get-BenchmarkVariantDescriptor {
     $canonicalStem = "$collection$scenario"
     return [PSCustomObject]@{
         Prefix = $prefix
-        Collection = $collection
-        Scenario = $scenario
         BenchmarkGroup = "benchmarks/collections/$canonicalStem"
     }
 }
@@ -176,35 +164,20 @@ function Get-BenchmarkLabel {
     if ($null -eq $descriptor) {
         return [PSCustomObject]@{
             BenchmarkGroup = $BenchmarkId
-            Implementation = $Language
-            Collection = ""
-            Scenario = [IO.Path]::GetFileName($BenchmarkId)
+            Language = $Language
         }
     }
 
-    $implementation = $Language
+    $languageLabel = $Language
     if ($Language -eq "stark") {
         if ($descriptor.Prefix -eq "Experimental") {
-            if ([IO.Path]::GetFileName($BenchmarkId).StartsWith("ExperimentalRingQueue", [StringComparison]::Ordinal)) {
-                $implementation = "experimental-ring-stark"
-            }
-            else {
-                $implementation = "experimental-stark"
-            }
-        }
-        elseif ($descriptor.Prefix -eq "Dynamic") {
-            $implementation = "dynamic-stark"
-        }
-        else {
-            $implementation = "stable-stark"
+            $languageLabel = "stark-experimental"
         }
     }
 
     return [PSCustomObject]@{
         BenchmarkGroup = $descriptor.BenchmarkGroup
-        Implementation = $implementation
-        Collection = $descriptor.Collection
-        Scenario = $descriptor.Scenario
+        Language = $languageLabel
     }
 }
 
@@ -534,7 +507,6 @@ function Add-CRelativeAverageRatios {
 
     $header = @($lines[0].Split(","))
     $benchmarkIndex = [Array]::IndexOf($header, "benchmark")
-    $benchmarkGroupIndex = [Array]::IndexOf($header, "benchmark_group")
     $languageIndex = [Array]::IndexOf($header, "language")
     $avgIndex = [Array]::IndexOf($header, "avg_us")
     if ($benchmarkIndex -lt 0 -or $languageIndex -lt 0 -or $avgIndex -lt 0) {
@@ -550,7 +522,6 @@ function Add-CRelativeAverageRatios {
     }
 
     $cAverages = @{}
-    $cGroupAverages = @{}
     $rows = New-Object System.Collections.Generic.List[object[]]
     for ($lineIndex = 1; $lineIndex -lt $lines.Count; $lineIndex++) {
         if ([string]::IsNullOrWhiteSpace($lines[$lineIndex])) {
@@ -569,13 +540,6 @@ function Add-CRelativeAverageRatios {
             [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$avg) -and
             $avg -gt 0) {
             $cAverages[$fields[$benchmarkIndex]] = $avg
-            if ($benchmarkGroupIndex -ge 0 -and $fields.Count -gt $benchmarkGroupIndex) {
-                $group = $fields[$benchmarkGroupIndex]
-                if (![string]::IsNullOrWhiteSpace($group) -and
-                    ($fields[$benchmarkIndex] -eq $group -or !$cGroupAverages.ContainsKey($group))) {
-                    $cGroupAverages[$group] = $avg
-                }
-            }
         }
     }
 
@@ -597,9 +561,6 @@ function Add-CRelativeAverageRatios {
         [double]$baselineAvg = 0
         if ($fields.Count -gt $benchmarkIndex -and $cAverages.ContainsKey($fields[$benchmarkIndex])) {
             $baselineAvg = [double]$cAverages[$fields[$benchmarkIndex]]
-        }
-        elseif ($benchmarkGroupIndex -ge 0 -and $fields.Count -gt $benchmarkGroupIndex -and $cGroupAverages.ContainsKey($fields[$benchmarkGroupIndex])) {
-            $baselineAvg = [double]$cGroupAverages[$fields[$benchmarkGroupIndex]]
         }
 
         if ($fields.Count -gt [Math]::Max($benchmarkIndex, $avgIndex) -and
@@ -628,7 +589,7 @@ function Complete-ResultsFile {
 
     try {
         Add-CRelativeAverageRatios $ResultsFile
-        Write-Status "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines$Reason."
+        Write-Status "Added c_avg_ratio column using same-benchmark C avg_us baselines$Reason."
     }
     catch {
         Write-Status "Unable to add c_avg_ratio column$Reason`: $($_.Exception.Message)"
@@ -742,8 +703,7 @@ function Write-MachineMetadata {
         "benchmark_capture_rss=$(if ($script:captureRss) { '1' } else { '0' })",
         "benchmark_peak_rss_unit=KiB",
         "benchmark_peak_rss_source=Process.PeakWorkingSet64 captured after each benchmark process exits when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled",
-        "benchmark_label_columns=benchmark_group,implementation,collection,scenario",
-        "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us, falling back to benchmark_group C avg_us",
+        "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
         "stark_compiler_args=$(if ([string]::IsNullOrWhiteSpace($ExtraCompilerArgs)) { '<none>' } else { $ExtraCompilerArgs })",
@@ -805,7 +765,7 @@ function Time-Executable {
 
     $avgMicroseconds = [long]($totalMicroseconds / $Runs)
     $label = Get-BenchmarkLabel $BenchmarkId $Language
-    Emit-Row "$BenchmarkId,$($label.BenchmarkGroup),$($label.Implementation),$($label.Collection),$($label.Scenario),$Language,$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
+    Emit-Row "$($label.BenchmarkGroup),$($label.Language),$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
 }
 
 function Compile-AndTimeStark {
@@ -939,14 +899,22 @@ try {
         Sort-Object FullName
 
     if (![string]::IsNullOrWhiteSpace($Filter)) {
-        $benchmarks = $benchmarks | Where-Object { $_.FullName -like "*$Filter*" }
+        $normalizedFilter = $Filter -replace '\\', '/'
+        $benchmarks = $benchmarks | Where-Object {
+            $relativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $_.FullName)
+            $benchmarkId = $relativePath -replace '\.stark$', ''
+            $benchmarkGroup = (Get-BenchmarkLabel $benchmarkId "stark").BenchmarkGroup
+            $relativePath -like "*$normalizedFilter*" -or
+                $benchmarkId -like "*$normalizedFilter*" -or
+                $benchmarkGroup -like "*$normalizedFilter*"
+        }
     }
 
     if ($null -eq $benchmarks -or @($benchmarks).Count -eq 0) {
         throw "No benchmark sources matched."
     }
 
-    Emit-Row "benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
+    Emit-Row "benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
 
     $timedNativeBenchmarks = @{}
     foreach ($benchmark in @($benchmarks)) {
@@ -1017,7 +985,7 @@ try {
     }
 
     Add-CRelativeAverageRatios $ResultsFile
-    Write-Status "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines."
+    Write-Status "Added c_avg_ratio column using same-benchmark C avg_us baselines."
 }
 catch {
     Complete-ResultsFile " before exiting after failure"

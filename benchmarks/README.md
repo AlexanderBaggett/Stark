@@ -28,24 +28,14 @@ The Bash runner records executable size plus Stark object/link/toolchain timing
 and writes CSV rows:
 
 ```text
-benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
 ```
 
 The Windows PowerShell runner currently writes:
 
 ```text
-benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
+benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
 ```
-
-The label columns make side-by-side comparisons explicit. `benchmark_group`
-normalizes stable, experimental, dynamic, C, and Rust variants of the same
-scenario, `implementation` labels rows such as `stable-stark`,
-`experimental-stark`, `experimental-ring-stark`, `dynamic-stark`, `c`, and
-`rust`, and `collection`/`scenario` split collection benchmarks into families
-such as `List`/`Growth`, `Queue`/`Growth`, `LinkedList`/`Churn`, and
-`Dictionary`/`Lookup`. For non-collection standard-library benchmarks, the
-`collection` column carries the subsystem label, such as `Text`, `Console`,
-`Network`, `Memory`, `Runtime`, or `IO`.
 
 Set `STARK_BENCH_CAPTURE_RSS=1` to capture peak RSS. On Linux, the Bash runner
 samples `/proc/<pid>/status` while each benchmark process runs and records the
@@ -55,12 +45,11 @@ runner records `Process.PeakWorkingSet64` after each benchmark process exits. A
 Linux process exited before the sampler observed it.
 
 The `c_avg_ratio` column is calculated after the last benchmark finishes. It
-uses the average runtime for the same benchmark when a same-stem C row exists,
-then falls back to the shared `benchmark_group` C row: `row avg_us / C avg_us`.
+uses the average runtime for the same benchmark: `row avg_us / C avg_us`.
 The C row is `1.000000`; faster rows are below `1.0`, slower rows are above
-`1.0`. Rows without a same-benchmark or same-group C result leave the ratio
-blank. To add or refresh this column on an existing Linux/macOS result file
-without rerunning benchmarks:
+`1.0`. Rows without a same-benchmark C result leave the ratio blank. To add or
+refresh this column on an existing Linux/macOS result file without rerunning
+benchmarks:
 
 ```bash
 scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
@@ -70,22 +59,17 @@ The Bash runner also records `runtime_spread_pct`, calculated from one run's
 samples as `(max_us - min_us) / avg_us * 100`. Treat high spread as a warning
 that the average may not be stable enough for a performance conclusion.
 
-Each executable Stark benchmark belongs to a `benchmark_group`. The runner
-compiles every matching Stark source in that group, but compiles the C and Rust
-baselines once from the canonical group path. That keeps stable,
-experimental, and dynamic Stark variants beside one shared native baseline
-instead of duplicating C/Rust files for each Stark namespace. For example:
+Stable and experimental Stark variants share one canonical benchmark name in the
+CSV; the variant lives in the `language` column as either `stark` or
+`stark-experimental`. The `benchmark` column never includes implementation
+prefixes such as `Experimental`; C and Rust baselines are compiled once from the
+canonical scenario path. For example:
 
 ```text
-benchmarks/micro/Calls.stark
-benchmarks/micro/Calls.c
-benchmarks/micro/Calls.rs
-
-benchmarks/text/OwnedTextAllocation.stark
-benchmarks/text/ExperimentalOwnedTextAllocation.stark
-benchmarks/text/DynamicOwnedTextAllocation.stark
-benchmarks/text/OwnedTextAllocation.c
-benchmarks/text/OwnedTextAllocation.rs
+benchmarks/text/OwnedTextAllocation,stark
+benchmarks/text/OwnedTextAllocation,stark-experimental
+benchmarks/text/OwnedTextAllocation,c
+benchmarks/text/OwnedTextAllocation,rust
 ```
 
 Useful environment variables:
@@ -200,61 +184,53 @@ The locked default flags are:
 - `allocator/HeapLocalBucketReuse.stark` exercises heap-local allocation and
   scope cleanup through the default allocator buckets. It includes an additional
   `rust-fixed-batch` baseline that stores `Box` allocations in a fixed
-  `Option<Box<_>>` batch instead of a `Vec`.
+  `Option<Box<_>>` batch instead of a `Vec`. A `stark-experimental` row runs
+  the same Stark heap-local workload for side-by-side reporting.
 - `allocator/SystemMemoryBucketReallocate.stark` exercises bucket-backed
-  `System.Memory.Reallocate` in-place reuse.
+  `System.Memory.Reallocate` in-place reuse. A `stark-experimental` row runs
+  the same allocator workload for side-by-side reporting.
 - `allocator/SystemMemoryFallbackReallocate.stark` exercises the conservative
   allocate-copy-free fallback when a reallocation no longer fits the old bucket.
-- `allocator/ExperimentalMemoryDynamicReserveGrowth.stark` exercises
-  `System.Experimental.Memory` byte and codepoint dynamic reserve,
-  append-copy, and append-fill helpers against natural C/Rust growable-buffer
-  baselines.
-- `allocator/ExperimentalMemoryCopyFill.stark` exercises the experimental safe
-  byte and codepoint copy/fill helper surface, including disjoint copy kernels
-  and initialized-fill kernels plus overlap-safe move helpers, against natural
-  C/Rust copy/fill/memmove baselines.
-- `runtime/ExperimentalRuntimeBufferFixed.stark` exercises
+  A `stark-experimental` row runs the same allocator workload for side-by-side
+  reporting.
+- `allocator/MemoryDynamicReserveGrowth` compares regular Stark dynamic reserve,
+  append-copy, and append-fill code with the `System.Experimental.Memory`
+  helper row against natural C/Rust growable-buffer baselines.
+- `allocator/MemoryCopyFill` compares regular Stark byte/codepoint copy, fill,
+  and move code with the experimental safe helper row, including disjoint copy
+  kernels, initialized-fill kernels, and overlap-safe move work.
+- The `runtime/RuntimeBufferFixed` `stark-experimental` row exercises
   `System.Experimental.Runtime.Buffer.FixedByteBuffer512` write/copy, fill,
   read/advance, compact, and clear operations against natural C/Rust
   fixed-capacity byte-buffer baselines.
-- `runtime/ExperimentalRuntimeBufferDynamic.stark` exercises
+- The `runtime/RuntimeBufferDynamic` `stark-experimental` row exercises
   `System.Experimental.Runtime.Buffer.DynamicByteBuffer` repeated growth,
   slice writes, read advancement, compaction, and fill appends against natural
   C/Rust growable byte-buffer baselines.
-- `io/ExperimentalFileBufferedReadWrite.stark` exercises
+- The `io/FileBufferedReadWrite` `stark-experimental` row exercises
   `System.Experimental.IO.File` safe byte-slice reads/writes, dynamic-buffer
   writes, fixed-buffer writes, seeks, flush/close, and file cleanup against
   natural C/Rust buffered file baselines.
-- `io/ExperimentalFileSystemPathTranscode.stark` exercises
+- The `io/FileSystemPathTranscode` `stark-experimental` row exercises
   `System.Experimental.FileSystem` directory create/open/read/delete flows,
   `System.Experimental.IO.Path` join/normalize helpers, path-heavy file moves,
   and UTF-16-style text writes against natural C/Rust filesystem baselines.
 - `collections/ListGrowth.stark`, `collections/StackGrowth.stark`, and
   `collections/QueueGrowth.stark` are executable growth benchmarks for the
   contiguous owned collections.
-- `collections/ExperimentalListGrowth.stark` exercises the
+- The `collections/ListGrowth` `stark-experimental` row exercises the
   `System.Experimental.Collections.List<T>` comparison implementation through
   its public API so it can be measured directly against the stable raw-pointer
   list and the natural C/Rust baselines.
-- `collections/ExperimentalListIteration.stark` runs the same push-and-indexed
-  iteration workload as `collections/ListIteration.stark` through
+- The `collections/ListIteration` `stark-experimental` row runs the same
+  push-and-indexed iteration workload through
   `System.Experimental.Collections.List<T>`.
-- `collections/ExperimentalStackGrowth.stark` does the same for
+- The `collections/StackGrowth` `stark-experimental` row does the same for
   `System.Experimental.Collections.Stack<T>`, keeping the stack API in the
   measured path instead of benchmarking only the underlying dynamic storage.
-- `collections/ExperimentalQueueGrowth.stark` measures the safe dense-prefix
-  experimental queue candidate, while
-  `collections/ExperimentalRingQueueGrowth.stark` measures the ring-buffer
-  candidate that uses explicit sparse-slot proof internally. Both use the same
-  natural C/Rust ring queue baselines as `QueueGrowth`.
-- `collections/DynamicListGrowth.stark`,
-  `collections/DynamicQueueGrowth.stark`, and
-  `collections/DynamicDictionaryLookup.stark` exercise equivalent list,
-  queue-like contiguous drain, and integer-key hash-table workloads built
-  directly on `dynamic T` initialized storage and ordinary initialized slices.
-  These benchmarks compare the new language-level storage primitive against
-  the current raw-pointer-backed standard-library implementations and natural
-  C/Rust baselines.
+- The `collections/QueueGrowth` `stark-experimental` row measures the same
+  queue growth workload through `System.Experimental.Collections.Queue<T>` with
+  the same natural C/Rust baselines as `QueueGrowth`.
 - `collections/ListIteration.stark`, `collections/LinkedListPush.stark`,
   `collections/LinkedListBuildClear.stark`, `collections/LinkedListPopOnly.stark`,
   `collections/LinkedListChurn.stark`, `collections/LinkedListReservedPush.stark`,
@@ -269,55 +245,42 @@ The locked default flags are:
   linked-list baselines rather than isolating post-reserve hot-loop cost.
   `DictionaryLookup` pre-reserves the Stark dictionary so setup matches the C
   fixed-capacity table and Rust `HashMap::with_capacity` baseline.
-- `collections/ExperimentalLinkedListPush.stark`,
-  `collections/ExperimentalLinkedListBuildClear.stark`,
-  `collections/ExperimentalLinkedListPopOnly.stark`,
-  `collections/ExperimentalLinkedListChurn.stark`, and
-  `collections/ExperimentalLinkedListReservedPush.stark` run the same linked-list
-  scenarios through `System.Experimental.Collections.LinkedList<T>`. The C and
-  Rust files are intentionally the same natural baselines as the stable
-  linked-list benchmarks so the Stark stable-vs-experimental comparison changes
-  only the Stark implementation under test.
+- The `collections/LinkedListPush`, `collections/LinkedListBuildClear`,
+  `collections/LinkedListPopOnly`, `collections/LinkedListChurn`, and
+  `collections/LinkedListReservedPush` `stark-experimental` rows run the same
+  linked-list scenarios through `System.Experimental.Collections.LinkedList<T>`.
+  The C and Rust files are intentionally the same natural baselines as the
+  stable linked-list benchmarks so the Stark stable-vs-experimental comparison
+  changes only the Stark implementation under test.
 - `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-
   visible owned `ToAscii`/`ToUnicode` conversion and literal-prefix
   concatenation through `System.Memory`.
-- `text/ExperimentalOwnedTextAllocation.stark` runs the same allocation-visible
-  owned conversion and literal-prefix concatenation scenario through
-  `System.Experimental.Text`.
+- The `text/OwnedTextAllocation` `stark-experimental` row runs the same
+  allocation-visible owned conversion and literal-prefix concatenation scenario
+  through `System.Experimental.Text`.
 - `text/OwnedPathAllocation.stark` is an executable benchmark for allocation-
   visible owned path joining plus path-view inspection helpers.
-- `text/ExperimentalOwnedPathAllocation.stark` runs the same allocation-visible
-  path joining and inspection scenario through `System.Experimental.IO.Path`.
-- `text/TextConcatCopy.stark` and `text/ExperimentalTextConcatCopy.stark`,
-  `text/IntegerFormatting.stark` and `text/ExperimentalIntegerFormatting.stark`,
-  `text/UnicodeFormatting.stark` and `text/ExperimentalUnicodeFormatting.stark`,
-  and `text/TextParsing.stark` and `text/ExperimentalTextParsing.stark`
-  compare stable and experimental text copy/concat, fixed-buffer integer
-  formatting, Unicode formatting, and parsing paths with one C/Rust baseline
-  per scenario.
-- `text/PathFacts.stark` and `text/ExperimentalPathFacts.stark` isolate
-  single-pass path analysis and extension/base/directory range reuse for stable
-  and experimental path APIs.
-- `text/PathJoin.stark`, `text/ExperimentalPathJoin.stark`, and
-  `text/ExperimentalPathNormalize.stark` cover owned join and separator
-  normalization on path-heavy loops.
-- `text/PathQueries.stark`, `text/ExperimentalPathQueries.stark`,
-  `text/PathRepeatedSmallOps.stark`, and
-  `text/ExperimentalPathRepeatedSmallOps.stark` cover extension/base/directory
-  queries and repeated small path operations.
-- `text/DynamicOwnedTextAllocation.stark` and
-  `text/DynamicOwnedPathAllocation.stark` exercise owned text and path-buffer
-  construction directly on `dynamic T` storage. They checksum written content,
-  not only lengths, so stores cannot be optimized away while comparing the
-  dynamic-storage path against the current standard-library allocation path.
+- The `text/OwnedPathAllocation` `stark-experimental` row runs the same
+  allocation-visible path joining and inspection scenario through
+  `System.Experimental.IO.Path`.
+- `text/TextConcatCopy`, `text/IntegerFormatting`, `text/UnicodeFormatting`,
+  and `text/TextParsing` compare `stark` and `stark-experimental` text
+  copy/concat, fixed-buffer integer formatting, Unicode formatting, and parsing
+  paths with one C/Rust baseline per scenario.
+- `text/PathFacts` isolates single-pass path analysis and extension/base/
+  directory range reuse for stable and experimental path APIs.
+- `text/PathJoin`, `text/PathNormalize`, `text/PathQueries`, and
+  `text/PathRepeatedSmallOps` cover owned join, separator normalization,
+  extension/base/directory queries, and repeated small path operations across
+  the available stable and experimental rows.
 - `text/AsciiToUnicodeConversionTinyLiteral.stark` is an executable benchmark
   for tiny known-ASCII literals that should lower to direct scalar widening
   stores.
 - `text/AsciiToUnicodeConversion.stark` is an executable benchmark for the
   caller-buffer ASCII-to-Unicode conversion fast path on a medium known-ASCII
   literal.
-- `text/ExperimentalAsciiToUnicodeConversion.stark` runs the same medium
-  literal conversion scenario through `System.Experimental.Text`.
+- The `text/AsciiToUnicodeConversion` `stark-experimental` row runs the same
+  medium literal conversion scenario through `System.Experimental.Text`.
 - `text/AsciiToUnicodeConversionLargeLiteral.stark` is an executable benchmark
   for larger known-ASCII literals that should lower through the UTF-32
   constant plus `llvm.memcpy` specialization path.
@@ -329,16 +292,14 @@ The locked default flags are:
   checks.
 - `text/TextPathCallerBuffer.stark` is a compile-only benchmark for the current
   caller-owned path buffer helpers and low-level text conversion helpers.
-- `console/ConsoleWrites.stark` and `console/ExperimentalConsoleWrites.stark`
-  compare stable and experimental console small writes, line writes,
-  Unicode writes, stderr writes, and buffer-shaped output against natural
-  C/Rust output baselines.
-- `console/ConsoleReadSurface.stark` and
-  `console/ExperimentalConsoleReadSurface.stark` are compile-only sources for
-  stable and experimental console read APIs, including experimental owned text
-  decoding and caller-provided fixed/dynamic byte buffers.
+- `console/ConsoleWrites` compares stable and experimental console small writes,
+  line writes, Unicode writes, stderr writes, and buffer-shaped output against
+  natural C/Rust output baselines.
+- `console/ConsoleReadSurface` compile-only sources cover stable and
+  experimental console read APIs, including experimental owned text decoding and
+  caller-provided fixed/dynamic byte buffers.
 - `network/TcpLoopbackThroughput.stark` is an executable loopback benchmark for
   the public `System.Net.Tcp` listener/client write-read path.
-- `network/ExperimentalTcpLoopbackThroughput.stark` runs the same loopback
-  throughput scenario through `System.Experimental.Net.Tcp`, including
+- The `network/TcpLoopbackThroughput` `stark-experimental` row runs the same
+  loopback throughput scenario through `System.Experimental.Net.Tcp`, including
   fixed runtime-buffer writes and reads, with equivalent C/Rust socket baselines.

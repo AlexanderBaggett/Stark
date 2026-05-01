@@ -6,12 +6,12 @@ usage() {
 Usage: scripts/add-benchmark-c-ratios.sh <results.csv>
 
 Adds or refreshes a c_avg_ratio column in a benchmark CSV. The ratio is based on
-avg_us for each benchmark id, falling back to benchmark_group when present:
+avg_us for each benchmark id:
 
   row c_avg_ratio = row avg_us / same-benchmark C avg_us
 
-The C row is therefore 1.000000. Rows without a same-benchmark or same-group C
-result get an empty ratio.
+The C row is therefore 1.000000. Rows without a same-benchmark C result get an
+empty ratio.
 USAGE
 }
 
@@ -57,7 +57,6 @@ function read_header(    i) {
   }
 
   benchmark_col = header["benchmark"]
-  benchmark_group_col = header["benchmark_group"]
   language_col = header["language"]
   avg_col = header["avg_us"]
   if (!benchmark_col || !language_col || !avg_col) {
@@ -96,12 +95,6 @@ FNR == NR {
 
   if ($language_col == "c" && $avg_col + 0 > 0) {
     c_avg[$benchmark_col] = $avg_col + 0
-    if (benchmark_group_col && $benchmark_group_col != "") {
-      group = $benchmark_group_col
-      if (($benchmark_col == group) || !(group in c_group_avg)) {
-        c_group_avg[group] = $avg_col + 0
-      }
-    }
   }
 
   next
@@ -117,8 +110,6 @@ FNR == 1 {
   baseline = 0
   if (($benchmark_col in c_avg) && c_avg[$benchmark_col] > 0) {
     baseline = c_avg[$benchmark_col]
-  } else if (benchmark_group_col && ($benchmark_group_col in c_group_avg) && c_group_avg[$benchmark_group_col] > 0) {
-    baseline = c_group_avg[$benchmark_group_col]
   }
 
   if (baseline > 0 && $avg_col != "") {

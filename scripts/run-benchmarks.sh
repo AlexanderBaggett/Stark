@@ -151,7 +151,6 @@ write_machine_metadata() {
     printf 'benchmark_peak_rss_unit=KiB\n'
     printf 'benchmark_peak_rss_source=Linux /proc VmHWM sampled while each benchmark process runs when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled, unavailable, or process exits before sampling\n'
     printf 'benchmark_stability_column=runtime_spread_pct percent spread calculated as (max_us - min_us) / avg_us * 100\n'
-    printf 'benchmark_label_columns=benchmark_group,implementation,collection,scenario\n'
     printf 'benchmark_baseline_file=%s\n' "${baseline_file:-<none>}"
     printf 'benchmark_regression_metric=%s\n' "${STARK_BENCH_REGRESSION_METRIC:-avg_us}"
     printf 'benchmark_require_baseline=%s\n' "${STARK_BENCH_REQUIRE_BASELINE:-0}"
@@ -159,7 +158,7 @@ write_machine_metadata() {
     printf 'benchmark_min_regression_delta=%s\n' "${STARK_BENCH_MIN_REGRESSION_DELTA:-${STARK_BENCH_MIN_REGRESSION_DELTA_US:-50}}"
     printf 'benchmark_max_stark_to_c_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-<disabled>}"
     printf 'benchmark_max_stark_to_rust_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-<disabled>}"
-    printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us, falling back to benchmark_group C avg_us\n'
+    printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us\n'
     printf 'stark_target=%s\n' "${target:-host-default}"
     printf 'stark_flags=--emit-exe -O3\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
@@ -187,9 +186,6 @@ benchmark_label_fields() {
   if [[ "${stem}" == Experimental* ]]; then
     prefix="Experimental"
     stem="${stem#Experimental}"
-  elif [[ "${stem}" == Dynamic* ]]; then
-    prefix="Dynamic"
-    stem="${stem#Dynamic}"
   fi
 
   if [[ "${benchmark_id}" != benchmarks/collections/* ]]; then
@@ -216,22 +212,18 @@ benchmark_label_fields() {
     esac
 
     if [[ -z "${subsystem}" ]]; then
-      printf '%s,%s,,%s\n' "${benchmark_id}" "${language}" "${benchmark_id##*/}"
+      printf '%s,%s\n' "${benchmark_id}" "${language}"
       return
     fi
 
-    local implementation="${language}"
+    local language_label="${language}"
     if [[ "${language}" == "stark" ]]; then
       if [[ "${prefix}" == "Experimental" ]]; then
-        implementation="experimental-stark"
-      elif [[ "${prefix}" == "Dynamic" ]]; then
-        implementation="dynamic-stark"
-      else
-        implementation="stable-stark"
+        language_label="stark-experimental"
       fi
     fi
 
-    printf 'benchmarks/%s/%s,%s,%s,%s\n' "${category}" "${stem}" "${implementation}" "${subsystem}" "${stem}"
+    printf 'benchmarks/%s/%s,%s\n' "${category}" "${stem}" "${language_label}"
     return
   fi
 
@@ -240,9 +232,6 @@ benchmark_label_fields() {
   if [[ "${stem}" == LinkedList* ]]; then
     collection="LinkedList"
     scenario="${stem#LinkedList}"
-  elif [[ "${stem}" == RingQueue* ]]; then
-    collection="Queue"
-    scenario="${stem#RingQueue}"
   elif [[ "${stem}" == Dictionary* ]]; then
     collection="Dictionary"
     scenario="${stem#Dictionary}"
@@ -258,7 +247,7 @@ benchmark_label_fields() {
   fi
 
   if [[ -z "${collection}" ]]; then
-    printf '%s,%s,,%s\n' "${benchmark_id}" "${language}" "${benchmark_id##*/}"
+    printf '%s,%s\n' "${benchmark_id}" "${language}"
     return
   fi
 
@@ -266,22 +255,14 @@ benchmark_label_fields() {
     scenario="Default"
   fi
 
-  local implementation="${language}"
+  local language_label="${language}"
   if [[ "${language}" == "stark" ]]; then
     if [[ "${prefix}" == "Experimental" ]]; then
-      if [[ "${benchmark_id##*/}" == ExperimentalRingQueue* ]]; then
-        implementation="experimental-ring-stark"
-      else
-        implementation="experimental-stark"
-      fi
-    elif [[ "${prefix}" == "Dynamic" ]]; then
-      implementation="dynamic-stark"
-    else
-      implementation="stable-stark"
+      language_label="stark-experimental"
     fi
   fi
 
-  printf 'benchmarks/collections/%s%s,%s,%s,%s\n' "${collection}" "${scenario}" "${implementation}" "${collection}" "${scenario}"
+  printf 'benchmarks/collections/%s%s,%s\n' "${collection}" "${scenario}" "${language_label}"
 }
 
 benchmark_group_for_id() {
@@ -515,7 +496,7 @@ time_executable() {
   binary_bytes="$(file_size_bytes "${output_path}")"
   local label_fields
   label_fields="$(benchmark_label_fields "${benchmark_id}" "${language}")"
-  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${label_fields}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
+  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${label_fields}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
 }
 
 compile_and_time_stark() {
@@ -592,9 +573,16 @@ echo "Machine metadata: ${machine_file}" >&2
 
 mapfile -t benchmarks < <(find "${bench_root}" -type f -name '*.stark' | sort)
 if [[ -n "${filter}" ]]; then
+  normalized_filter="${filter//\\//}"
   filtered=()
   for benchmark in "${benchmarks[@]}"; do
-    if [[ "${benchmark}" == *"${filter}"* ]]; then
+    rel_path="${benchmark#"${repo_root}/"}"
+    benchmark_id="${rel_path%.stark}"
+    benchmark_group="$(benchmark_group_for_id "${benchmark_id}")"
+    if [[ "${benchmark}" == *"${filter}"* ||
+          "${rel_path}" == *"${normalized_filter}"* ||
+          "${benchmark_id}" == *"${normalized_filter}"* ||
+          "${benchmark_group}" == *"${normalized_filter}"* ]]; then
       filtered+=("${benchmark}")
     fi
   done
@@ -616,7 +604,7 @@ if [[ -n "${extra_args}" ]]; then
   compiler_args+=(${extra_args})
 fi
 
-emit_row 'benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
+emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
 
 declare -A timed_native_benchmarks=()
 for source_path in "${benchmarks[@]}"; do
@@ -693,7 +681,7 @@ for source_path in "${benchmarks[@]}"; do
 done
 
 "${c_ratio_adder}" "${results_file}"
-echo "Added c_avg_ratio column using same-benchmark or same-group C avg_us baselines." >&2
+echo "Added c_avg_ratio column using same-benchmark C avg_us baselines." >&2
 
 if [[ -n "${baseline_file}" || "${STARK_BENCH_REQUIRE_BASELINE:-0}" == "1" || -n "${STARK_BENCH_MAX_STARK_TO_C_RATIO:-}" || -n "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-}" ]]; then
   regression_args=("${results_file}")

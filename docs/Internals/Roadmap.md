@@ -1976,24 +1976,24 @@ turn that book outline into published website content.
       - [ ] finish `List<T>` parity work: constructors, reserve semantics, slice views, drop behavior, status mapping, old-vs-new correctness tests, LLVM fact checks, and ListGrowth benchmarks
         - [x] add old-vs-new correctness coverage for default construction, reserve/push/pop, mutable and immutable slice views, clear/drop behavior, capacity/status mapping, and stable-versus-experimental value agreement
         - [x] add LLVM checks proving the experimental list lowers through dynamic storage and fallible dynamic reserve rather than raw malloc/realloc/free calls or wrapper fallback
-        - [x] add `benchmarks/collections/ExperimentalListGrowth` with C and Rust counterparts so the experimental public list API can be measured beside stable `ListGrowth` and raw `DynamicListGrowth`
-        - [x] add `benchmarks/collections/ExperimentalListIteration` with C and Rust counterparts so experimental indexed list reads are measured beside stable `ListIteration`
+        - [x] add the `benchmarks/collections/ListGrowth` `stark-experimental` row with C and Rust counterparts so the experimental public list API can be measured beside `stark`
+        - [x] add the `benchmarks/collections/ListIteration` `stark-experimental` row with C and Rust counterparts so experimental indexed list reads are measured beside `stark`
         - [ ] add allocator-selected dynamic storage before implementing true `List(System.Memory.Allocator)` parity; the experimental list must not accept and ignore a custom allocator because that would hide a real semantic and performance difference
       - [x] finish `Stack<T>` parity work on top of experimental `List<T>`, including push/pop/peek/clear correctness tests and old-vs-new StackGrowth benchmarks
         - [x] add old-vs-new executable correctness coverage for default construction, push/pop/peek/clear, empty/count behavior, destructible value cleanup, and scope-exit drop behavior
-        - [x] add `benchmarks/collections/ExperimentalStackGrowth` with C and Rust counterparts so the experimental public stack API can be measured beside stable `StackGrowth`
+        - [x] add the `benchmarks/collections/StackGrowth` `stark-experimental` row with C and Rust counterparts so the experimental public stack API can be measured beside `stark`
       - [x] implement experimental `Queue<T>` and benchmark two candidates before choosing a replacement path: a simple dense-prefix `MoveAt(0)` design and a performance-oriented ring-buffer design; if the ring-buffer design requires sparse initialized slots, record the required language primitive instead of hiding raw pointers
         - [x] add `System.Experimental.Collections.Queue<T>` as the simple dense-prefix candidate using `dynamic T`, `init`, and `MoveAt(0)`
         - [x] add `System.Experimental.Collections.RingQueue<T>` as the performance-oriented candidate using initialized `Empty`/`Full` slots and explicit unsafe sparse-slot proof boundaries instead of raw pointers
         - [x] make ring-buffer growth preserve FIFO order when the logical queue wraps before capacity growth
         - [x] add old-vs-new executable correctness coverage for FIFO order, reserve/growth, clear/drop, scope-exit drop behavior, and ring wraparound
-        - [x] add `benchmarks/collections/ExperimentalQueueGrowth` and `benchmarks/collections/ExperimentalRingQueueGrowth` with C and Rust counterparts so both candidates can be measured beside stable `QueueGrowth`
+        - [x] add the `benchmarks/collections/QueueGrowth` `stark-experimental` row with C and Rust counterparts so the experimental queue can be measured beside `stark`
         - [x] record the remaining replacement gap: full ring-buffer API parity for borrowed payload inspection, such as `Peek`, needs borrowed enum-payload projection or a first-class sparse initialized-slot view so the implementation can expose safe borrows without raw pointers
       - [x] implement experimental `LinkedList<T>` or an index-node equivalent only after choosing the storage model: dynamic node arena with stable indices, slab-backed node reserve, or an explicit sparse-slot primitive; benchmark AddFirst/AddLast/remove/build-and-drain/churn separately
         - [x] choose an index-node arena over raw node pointers for the comparison implementation: dynamic value slots hold `Free`/`Occupied(T)` state, a parallel dynamic links array holds stable next/previous indices, and the free list reuses node slots without public raw pointers
         - [x] add old-vs-new executable correctness coverage for default construction, `ReserveNodes`, `AddFirst`, `AddLast`, front/back removal, order parity, clear/drop behavior, and scope-exit destructible cleanup
         - [x] fix switch-case runtime drop lowering so enum payload captures from dynamic-backed slots drop exactly once and sibling cases do not poison each other's drop state
-        - [x] add `benchmarks/collections/ExperimentalLinkedListPush`, `ExperimentalLinkedListBuildClear`, `ExperimentalLinkedListPopOnly`, `ExperimentalLinkedListChurn`, and `ExperimentalLinkedListReservedPush` with C and Rust counterparts so the index-node candidate can be measured beside stable `LinkedList<T>`
+        - [x] add `benchmarks/collections/LinkedListPush`, `LinkedListBuildClear`, `LinkedListPopOnly`, `LinkedListChurn`, and `LinkedListReservedPush` `stark-experimental` rows with C and Rust counterparts so the index-node candidate can be measured beside `stark`
       - [x] implement experimental `Dictionary<K, V>` with a storage model that preserves uninitialized value safety for empty/deleted buckets; evaluate packed slot records, separate state/key/value arrays, and sparse-slot proof support before replacing the raw-pointer-backed version
         - [x] add the initial separate-state/key/value dynamic-storage candidate in `System.Experimental.Collections.Dictionary<K, V>`
         - [x] keep bucket state as dense initialized `dynamic u8[0 2]` storage, keep keys initialized only for occupied buckets, and store values in a dense initialized `DictionaryValueSlot<V>` enum so empty/deleted buckets never expose uninitialized values
@@ -2003,8 +2003,8 @@ turn that book outline into published website content.
         - [x] design the owned-value dictionary API before treating the experimental dictionary as a replacement: keep `TryGet(out V)`/`TryRemove(out V)` for copy-like values and add `RemoveMove` plus `DictionaryRemoveResult<T>` for moving non-copy values out safely
         - [x] add owned-value drop tests for overwrite, remove, clear, rehash, moved removal, and scope-exit drop; dictionary keys remain scalar/hashable by compiler constraint
         - [x] add LLVM checks proving dictionary lookup/update lowers through dynamic storage, initialized value slots, and hash/equality specialization without raw-pointer-backed stable dictionary calls
-        - [x] add `benchmarks/collections/ExperimentalDictionaryLookup` with C and Rust counterparts so the experimental dictionary can be measured beside stable `DictionaryLookup` and raw `DynamicDictionaryLookup`
-      - [x] add collection-level benchmark labels for stable Stark, experimental Stark, C, and Rust so List, Stack, Queue, LinkedList, and Dictionary can be compared independently
+        - [x] add the `benchmarks/collections/DictionaryLookup` `stark-experimental` row with C and Rust counterparts so the experimental dictionary can be measured beside `stark`
+      - [x] add collection-level benchmark labels for Stark, Stark experimental, C, and Rust so List, Stack, Queue, LinkedList, and Dictionary can be compared independently
       - [x] add collection-level correctness suites proving stable and experimental collections agree on insertion order, removal behavior, growth, clear/drop, failed allocation status, and generic value ownership
     - [x] add `System.Experimental.Text`
       - [x] rewrite `OwnedAscii` around `dynamic i8[-128 127]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
@@ -2035,9 +2035,9 @@ turn that book outline into published website content.
         - [ ] apply remaining `const` and bounded raw pointer region facts to memory helpers after the safe public surface needs them and compiler lowering supports the corresponding proof shape
       - [ ] add old-vs-new allocator and memory-helper benchmarks for small allocations, bucket reuse, slab refill, copy/fill/move, and dynamic reserve growth
         - [x] keep the existing `HeapLocalBucketReuse`, `SystemMemoryBucketReallocate`, `SystemMemoryFallbackReallocate`, and linked-list allocation benchmarks as the stable allocator comparison coverage for small allocations, bucket reuse, fallback reallocation, and slab refill behavior
-        - [x] add `benchmarks/allocator/ExperimentalMemoryDynamicReserveGrowth` with Stark/C/Rust executable rows for byte and codepoint dynamic reserve, append-copy, and append-fill growth
-        - [x] add `benchmarks/allocator/ExperimentalMemoryCopyFill` with Stark/C/Rust executable rows for safe byte and codepoint disjoint copy plus initialized-fill helper kernels
-        - [x] extend `benchmarks/allocator/ExperimentalMemoryCopyFill` and its C/Rust counterparts with overlap-safe byte/codepoint move workloads using the public `Move*` helpers versus C `memmove` and Rust `copy_within`
+        - [x] add `benchmarks/allocator/MemoryDynamicReserveGrowth` with Stark/C/Rust executable rows for byte and codepoint dynamic reserve, append-copy, and append-fill growth
+        - [x] add `benchmarks/allocator/MemoryCopyFill` with Stark/C/Rust executable rows for safe byte and codepoint disjoint copy plus initialized-fill helper kernels
+        - [x] extend `benchmarks/allocator/MemoryCopyFill` and its C/Rust counterparts with overlap-safe byte/codepoint move workloads using the public `Move*` helpers versus C `memmove` and Rust `copy_within`
         - [ ] add custom-allocator/dynamic allocation-policy benchmarks after allocator-selected `dynamic T` support exists
       - [ ] add memory correctness suites for allocation failure, alignment, initialized-slot handling, move/uninitialize behavior, custom allocator selection, and no double-drop/leak paths
         - [x] add focused executable correctness coverage for experimental byte/codepoint dynamic append, fill, initialized byte fill, slice views, and helper status plumbing
@@ -2065,7 +2065,7 @@ turn that book outline into published website content.
         - [x] add source executable coverage for experimental file read/write/seek/buffer-write/move/delete and directory current-directory/create/read/delete flows on non-Windows targets; Windows executable linking currently remains skipped like existing directory lifecycle coverage
         - [x] add deterministic `TooLarge` allocation-failure-path coverage for experimental path normalization, plus LLVM guard coverage proving directory enumeration uses the experimental runtime buffer path and does not lower through stable `System.FileSystem`
       - [x] add IO/filesystem benchmarks for buffered reads, buffered writes, directory enumeration, path-heavy file operations, and console-style text transcoding
-        - [x] add `benchmarks/io/ExperimentalFileBufferedReadWrite` and `benchmarks/io/ExperimentalFileSystemPathTranscode` with C and Rust counterparts
+        - [x] add `benchmarks/io/FileBufferedReadWrite` and `benchmarks/io/FileSystemPathTranscode` with C and Rust counterparts
     - [x] add `System.Experimental.Console`
       - [x] update console output APIs to consume experimental text builders, Unicode/ASCII views, and runtime buffers without exposing raw pointer storage above the runtime boundary
         - [x] add ASCII/Unicode, owned ASCII/Unicode, byte-slice, dynamic-byte-buffer, and fixed-byte-buffer stdout/stderr write and line-write overloads with raw pointer conversion constrained to internal runtime/platform handoff helpers
@@ -2081,7 +2081,7 @@ turn that book outline into published website content.
       - [x] update TCP client/listener read and write surfaces to use safe byte slices and buffer types internally while keeping socket handles and raw pointer calls inside `System.Runtime.Platform`
         - [x] add experimental client/listener types with internal socket handles, safe byte-slice read/write, fixed/dynamic runtime-buffer write overloads, fixed/dynamic runtime-buffer read overloads, shutdown/close, and readiness helpers
       - [x] benchmark TCP loopback read/write throughput, small-message latency, partial reads/writes, and buffer reuse against the stable implementation
-        - [x] add `benchmarks/network/ExperimentalTcpLoopbackThroughput` with matching C/Rust baselines; the current experimental read-into-buffer implementation uses a stack scratch buffer plus safe append because direct uninitialized scratch-slice lowering is not yet accepted
+        - [x] add the `benchmarks/network/TcpLoopbackThroughput` `stark-experimental` row with matching C/Rust baselines; the current experimental read-into-buffer implementation uses a stack scratch buffer plus safe append because direct uninitialized scratch-slice lowering is not yet accepted
       - [x] add networking correctness tests for connect/listen/accept, shutdown, timeout/readiness, partial transfer behavior, and resource cleanup
         - [x] add compile/lowering coverage for closed-handle reads/writes, fixed/dynamic buffer overloads, readiness errors, listener accept errors, close idempotence, direct platform socket calls, and no lowering through stable `System.Net.Tcp`
     - [x] keep `System.Runtime`, `System.Runtime.Platform.*`, syscall, OS handles, thread handles, and native FFI declarations as explicit raw-boundary modules rather than rewriting them as safe dynamic storage
@@ -2112,7 +2112,7 @@ turn that book outline into published website content.
     - [x] add stable-vs-experimental collection, text/path, allocator/memory, runtime-buffer, IO/file-system, console, and network benchmark rows with matching C/Rust baselines where those workloads are executable on the host
     - [x] extend the experimental memory copy/fill benchmark with overlap-safe move rows in Stark/C/Rust so the safe `Move*` surface is measured beside C `memmove` and Rust `copy_within`
   - [x] add benchmark result labeling that makes old Stark, new-feature Stark, C, and Rust baselines easy to compare in CSV output and relative-ratio columns
-    - [x] emit `benchmark_group`, `implementation`, `collection`, and `scenario` columns from `scripts/run-benchmarks.ps1`, document the label contract in `benchmarks/README.md`, and keep `c_avg_ratio` as the same-benchmark C baseline ratio column
+    - [x] emit compact benchmark rows with `stark` and `stark-experimental` distinguished in the `language` column, document the label contract in `benchmarks/README.md`, and keep `c_avg_ratio` as the same-benchmark C baseline ratio column
   - [ ] add correctness tests proving the old and new implementations produce identical externally visible results for the compared APIs
     - [x] add focused executable coverage for overlap-safe experimental memory byte/codepoint append and dynamic runtime-buffer self-alias writes so `if disjoint(...)` fast paths and snapshot fallbacks preserve externally visible bytes/codepoints
     - [x] add focused executable coverage for overlap-safe experimental memory byte/codepoint copy and move with destination-inside-source overlap

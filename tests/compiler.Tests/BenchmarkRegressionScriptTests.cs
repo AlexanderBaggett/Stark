@@ -7,15 +7,20 @@ public sealed class BenchmarkRegressionScriptTests
     [Fact]
     public async Task AddBenchmarkCRatiosUsesAverageRuntimeByBenchmark()
     {
+        if (!IsCommandAvailable("bash"))
+        {
+            return;
+        }
+
         var repositoryRoot = FindRepositoryRoot();
         using var files = new TemporaryBenchmarkFiles();
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/Calls,benchmarks/micro/Calls,c,,Calls,c,50,1000,0,0,0,10000,900,1000,1100,20.000000,2048",
-            "benchmarks/micro/Calls,benchmarks/micro/Calls,stark,,Calls,stark,50,1000,200,100,300,10000,700,800,900,25.000000,4096",
-            "benchmarks/micro/ExperimentalCalls,benchmarks/micro/Calls,stark,,Calls,stark,50,1000,200,100,300,10000,1200,1250,1300,8.000000,4096",
-            "benchmarks/micro/Calls,benchmarks/micro/Calls,rust,,Calls,rust,50,1000,0,0,0,10000,1100,1200,1300,16.666667,3072",
-            "benchmarks/micro/NoC,benchmarks/micro/NoC,stark,,NoC,stark,50,1000,200,100,300,10000,400,500,600,40.000000,4096");
+            "benchmarks/micro/Calls,c,50,1000,0,0,0,10000,900,1000,1100,20.000000,2048",
+            "benchmarks/micro/Calls,stark,50,1000,200,100,300,10000,700,800,900,25.000000,4096",
+            "benchmarks/micro/Calls,stark-experimental,50,1000,200,100,300,10000,1200,1250,1300,8.000000,4096",
+            "benchmarks/micro/Calls,rust,50,1000,0,0,0,10000,1100,1200,1300,16.666667,3072",
+            "benchmarks/micro/NoC,stark,50,1000,200,100,300,10000,400,500,600,40.000000,4096");
 
         var result = await RunScriptAsync(
             repositoryRoot,
@@ -27,7 +32,7 @@ public sealed class BenchmarkRegressionScriptTests
 
         var lines = File.ReadAllLines(current);
         Assert.Equal(
-            "benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio",
+            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio",
             lines[0]);
         Assert.EndsWith(",1.000000", lines[1], StringComparison.Ordinal);
         Assert.EndsWith(",0.800000", lines[2], StringComparison.Ordinal);
@@ -39,14 +44,19 @@ public sealed class BenchmarkRegressionScriptTests
     [Fact]
     public async Task CheckBenchmarkRegressionsPassesWithinConfiguredBaselineThreshold()
     {
+        if (!IsCommandAvailable("bash"))
+        {
+            return;
+        }
+
         var repositoryRoot = FindRepositoryRoot();
         using var files = new TemporaryBenchmarkFiles();
         var baseline = files.WriteCsv(
             "baseline.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1075,1150,23.255814,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1075,1150,23.255814,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -65,14 +75,19 @@ public sealed class BenchmarkRegressionScriptTests
     [Fact]
     public async Task CheckBenchmarkRegressionsFailsWhenBaselineRuntimeRegressesPastThreshold()
     {
+        if (!IsCommandAvailable("bash"))
+        {
+            return;
+        }
+
         var repositoryRoot = FindRepositoryRoot();
         using var files = new TemporaryBenchmarkFiles();
         var baseline = files.WriteCsv(
             "baseline.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,900,1000,1100,20.000000,4096");
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1100,1250,1300,16.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1100,1250,1300,16.000000,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -91,12 +106,17 @@ public sealed class BenchmarkRegressionScriptTests
     [Fact]
     public async Task CheckBenchmarkRegressionsFailsWhenStarkToRustRatioExceedsThreshold()
     {
+        if (!IsCommandAvailable("bash"))
+        {
+            return;
+        }
+
         var repositoryRoot = FindRepositoryRoot();
         using var files = new TemporaryBenchmarkFiles();
         var current = files.WriteCsv(
             "current.csv",
-            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,stark,,StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1800,2100,2300,23.809524,4096",
-            "benchmarks/micro/StackScalarLoadForwarding,benchmarks/micro/StackScalarLoadForwarding,rust,,StackScalarLoadForwarding,rust,50,1000,0,0,0,10000,900,1000,1100,20.000000,4096");
+            "benchmarks/micro/StackScalarLoadForwarding,stark,50,1000,200,100,300,10000,1800,2100,2300,23.809524,4096",
+            "benchmarks/micro/StackScalarLoadForwarding,rust,50,1000,0,0,0,10000,900,1000,1100,20.000000,4096");
 
         var result = await RunRegressionCheckerAsync(
             repositoryRoot,
@@ -186,10 +206,37 @@ public sealed class BenchmarkRegressionScriptTests
         throw new InvalidOperationException("Unable to locate the Stark repository root for benchmark regression script tests.");
     }
 
+    private static bool IsCommandAvailable(string name)
+    {
+        var pathVariable = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathVariable))
+        {
+            return false;
+        }
+
+        var extensions = OperatingSystem.IsWindows()
+            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';', StringSplitOptions.RemoveEmptyEntries)
+            : new[] { string.Empty };
+
+        foreach (var directory in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var extension in extensions)
+            {
+                var candidate = Path.Combine(directory, name + extension);
+                if (File.Exists(candidate))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private sealed class TemporaryBenchmarkFiles : IDisposable
     {
         private const string Header =
-            "benchmark,benchmark_group,implementation,collection,scenario,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib";
+            "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib";
 
         private readonly string _directory = Path.Combine(
             Path.GetTempPath(),

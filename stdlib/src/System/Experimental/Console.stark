@@ -163,16 +163,17 @@ fn System.IO.IOStatus WriteBytesToStdout(borrow i8[min max][] source) {
         return System.IO.IOStatus.Ok;
     }
 
-    if (sourceParts.Data == null) {
-        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+    stack mut System.Experimental.Text.OwnedAscii text = new();
+    for willexit (stack mut i64[0 max] index = 0; index < sourceParts.Length; index += 1) {
+        stack System.Memory.MemoryStatus status = text.AppendByte((i8[-128 127])source[index]);
+        switch (status) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+            case System.Memory.MemoryStatus.Ok:
+        }
     }
 
-    stack Ascii text = new Ascii() {
-        Data = sourceParts.Data,
-        Length = sourceParts.Length,
-        Capacity = sourceParts.Length
-    };
-    return Write(System.Experimental.Text.AsciiView(text));
+    return Write(text);
 }
 
 fn System.IO.IOStatus WriteBytesToStderr(borrow i8[min max][] source) {
@@ -181,16 +182,17 @@ fn System.IO.IOStatus WriteBytesToStderr(borrow i8[min max][] source) {
         return System.IO.IOStatus.Ok;
     }
 
-    if (sourceParts.Data == null) {
-        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+    stack mut System.Experimental.Text.OwnedAscii text = new();
+    for willexit (stack mut i64[0 max] index = 0; index < sourceParts.Length; index += 1) {
+        stack System.Memory.MemoryStatus status = text.AppendByte((i8[-128 127])source[index]);
+        switch (status) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+            case System.Memory.MemoryStatus.Ok:
+        }
     }
 
-    stack Ascii text = new Ascii() {
-        Data = sourceParts.Data,
-        Length = sourceParts.Length,
-        Capacity = sourceParts.Length
-    };
-    return WriteError(System.Experimental.Text.AsciiView(text));
+    return WriteError(text);
 }
 
 public fn System.IO.IOStatus Write(ascii text) {
