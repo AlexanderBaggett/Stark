@@ -2748,3 +2748,162 @@ debuggability unless a task explicitly says otherwise.
   - [x] extend benchmark gates to track LLVM optimization time
   - [ ] require regressions against Rust to be triaged before marking a pass complete
   - [ ] document cases where Stark beats C because range, ownership, alias, law, or closed-world facts are stronger than C can express
+
+
+### Experimental Standard Library Optimizations
+
+- [ ] Optimize `System.Experimental.Memory` move helpers.
+  - [ ] implement `MoveBytes` as a true overlap-safe in-place move instead of delegating to `CopyBytes`
+  - [ ] implement `MoveCodePoints` as a true overlap-safe in-place move instead of delegating to `CopyCodePoints`
+  - [ ] use forward copy when destination starts before source and backward copy when destination starts inside/after the source range
+  - [ ] preserve zero-count and disjoint fast paths
+  - [ ] verify the generated LLVM does not allocate a dynamic snapshot for `MoveBytes` or `MoveCodePoints`
+  - [ ] add runtime tests covering forward overlap, backward overlap, exact same source/destination, disjoint move, and zero-count move for bytes and code points
+
+- [ ] Add explicit disjoint append fast paths to `System.Experimental.Memory`.
+  - [ ] add `AppendBytesDisjoint` for callers that can prove source and destination storage do not overlap
+  - [ ] add `AppendCodePointsDisjoint` for callers that can prove source and destination storage do not overlap
+  - [ ] keep the existing overlap-safe `AppendBytes` and `AppendCodePoints` APIs for aliased source slices
+  - [ ] ensure disjoint append helpers use `disjoint` parameters and `independent` loops where valid
+  - [ ] after reserve, form explicit tail `init` slices such as `init storage[oldLength, count]` instead of appending through `storage.Length` inside the copy loop
+  - [ ] route disjoint byte and code point appends through `InitializeBytesDisjoint` and `InitializeCodePointsDisjoint` so optimized builds lower to `llvm.memcpy` where applicable
+  - [ ] route append-fill helpers through tail `init` slices so optimized builds lower to `llvm.memset` where applicable
+  - [ ] update dynamic-reserve benchmarks to use the disjoint append APIs when the source is stack-owned and independent from the dynamic destination
+  - [ ] add LLVM checks proving the disjoint append helpers avoid runtime pointer-range disjoint checks and snapshot allocation
+  - [ ] add LLVM checks proving hot append loops do not retain a loop-carried `storage.Length` dependency after optimization
+
+- [ ] Rewrite experimental append-through-length loops into explicit destination regions.
+  - [ ] update `OwnedAscii.AppendSlice`, `OwnedAscii.AppendAscii`, `OwnedUnicode.AppendSlice`, and `OwnedUnicode.AppendUnicode` to reserve once, capture the old length, create a tail `init` slice, and copy into that region
+  - [ ] update `DynamicByteBuffer.WriteSlice` and `DynamicByteBuffer.WriteFill` to reserve once and write into a tail region rather than repeatedly appending to `self.Storage[self.Storage.Length]`
+  - [ ] update `Path.TryJoin` and separator normalization to write into planned destination ranges after one reserve instead of appending through `destination.Bytes.Length`
+  - [ ] update dictionary and ring-queue capacity initialization loops to use tail initialization regions where safe
+  - [ ] keep append-through-length only for genuinely scalar one-element appends where the extra region setup is not profitable
+  - [ ] add LLVM checks for memcpy/memset recognition, removed length-update loop carries, and unchanged ownership/drop behavior
+
+- [ ] Audit experimental loops for `independent` eligibility.
+  - [ ] mark disjoint copy and fill true-branches as `independent` when they are not replaced by memory intrinsics
+  - [ ] mark dictionary state/value initialization loops independent when each iteration writes a distinct slot
+  - [ ] mark ASCII-to-Unicode widening loops independent when source and destination regions are proven separate and the conversion is one-to-one
+  - [ ] do not mark variable-length UTF-8 or UTF-16 decode/encode loops independent when write indexes are data-dependent
+  - [ ] add LLVM checks for `llvm.loop.parallel_accesses` on retained loops that are meant to vectorize
+
+- [ ] Reduce experimental memory helper call overhead.
+  - [ ] mark non-allocating bounded helpers `finite` where the implementation can prove termination
+  - [ ] review `inline`/`inlinehint` annotations on hot `System.Experimental.Memory` helpers and make the benchmark-critical wrappers inline aggressively enough
+  - [ ] audit imported helper declarations so function effects preserve `willreturn`, `mustprogress`, memory effects, `nocapture`, readonly/writeonly, and noalias facts across module boundaries
+  - [ ] add regression tests comparing same-module helper calls and imported stdlib helper calls for equivalent LLVM attributes
+
+- [ ] Reduce `MemoryStatus` overhead in hot infallible helper paths.
+  - [ ] identify helpers that always return `MemoryStatus.Ok` after local validation, such as initialized fill and disjoint copy
+  - [ ] either expose infallible variants for those operations or ensure status construction plus caller `Ok(...)` checks are folded away at `-O3`
+  - [ ] add LLVM checks that hot copy/fill benchmark loops do not retain unnecessary enum switch branches after optimization
+
+- [ ] Improve benchmark confidence for experimental standard library comparisons.
+  - [ ] interleave `stark` and `stark-experimental` executions within each benchmark group to reduce order, thermal, and cache effects
+  - [ ] report or gate on medians in addition to averages for noisy allocator benchmarks
+  - [ ] keep raw allocator benchmarks that are implementation-identical from being interpreted as experimental standard-library regressions unless the generated LLVM differs materially
+  - [ ] add a focused benchmark or IR gate proving `MemoryCopyFill` experimental move paths no longer allocate snapshots
+
+- [ ] Optimize experimental fixed runtime buffers.
+  - [ ] replace heap-backed `dynamic` storage in `FixedByteBuffer512`, `FixedByteBuffer4096`, and `FixedByteBuffer8192` with true inline fixed storage, or make fixed storage initialization one-time and allocation-free
+  - [ ] remove repeated `EnsureFixedStorage` checks from hot read/write paths after construction or reset establishes the buffer invariant
+  - [ ] preserve the existing read cursor, write cursor, clear, reserve, and slice APIs
+  - [ ] add LLVM checks proving fixed buffer byte reads and writes do not call dynamic reserve/allocation helpers
+  - [ ] add benchmarks covering fixed-buffer write, read, clear, and reuse behavior
+
+- [ ] Optimize experimental runtime buffer slice movement.
+  - [ ] add disjoint `WriteSlice` fast paths that use `disjoint` parameters and `independent` loops when callers can prove non-overlap
+  - [ ] keep the existing overlap-safe write path for aliased source slices
+  - [ ] rewrite `WriteSliceToStorage` to copy into `storage[writePosition, count]` so the destination range is explicit to the optimizer
+  - [ ] rewrite `WriteFillToStorage` to fill `storage[writePosition, count]` through an explicit destination region
+  - [ ] rewrite buffer compaction to use the optimized in-place move helpers instead of snapshot allocation
+  - [ ] add tests covering aliased writes, disjoint writes, partial compaction, full compaction, and empty compaction
+  - [ ] add LLVM checks proving disjoint slice writes and compaction avoid dynamic snapshots
+
+- [ ] Optimize experimental TCP buffer reads.
+  - [ ] avoid the scratch-buffer plus per-byte `WriteByte` loop in `TcpClient.Read(FixedByteBuffer*)`
+  - [ ] read directly into the destination writable range when the platform API can safely target it
+  - [ ] otherwise perform one reserve and one slice write instead of one status-producing write per byte
+  - [ ] expose writable tail slices for fixed and dynamic byte buffers so socket reads can target contiguous spare capacity directly
+  - [ ] apply the same reserve-once strategy to dynamic buffer reads
+  - [ ] add correctness tests for returned byte counts, cursor advancement, zero-byte reads, and partial reads
+  - [ ] add LLVM or benchmark checks proving the hot path has no per-byte `MemoryStatus` branch
+
+- [ ] Optimize experimental console byte writes.
+  - [ ] replace byte-by-byte `OwnedAscii` construction in `WriteBytesToStdout` and `WriteBytesToStderr` with a direct byte-slice platform write path where supported
+  - [ ] if a direct platform write is not available yet, construct a transient non-owning ASCII view without allocating or copying
+  - [ ] coalesce `WriteLine` newline emission with the preceding write when the destination supports a single contiguous byte slice
+  - [ ] add tests for stdout, stderr, empty writes, newline writes, and invalid byte handling
+  - [ ] add console benchmarks that distinguish formatting cost from platform write cost
+
+- [ ] Optimize experimental linked list allocation paths.
+  - [ ] add a fresh-node fast path for append/prepend when reserved capacity is available and no removed node needs to be reused
+  - [ ] stop eagerly initializing the free-list for every reserved node; use the free-list only for nodes that have actually been removed
+  - [ ] reduce `LinkedListValueSlot<T>` enum/switch overhead when ownership and drop safety can be preserved without a value tag on every access
+  - [ ] keep churn behavior correct for removed-node reuse, clear, drop, and iteration
+  - [ ] add benchmarks and LLVM checks for linked-list push, reserved push, churn, pop-only, and iteration
+
+- [ ] Restore ring-buffer behavior for experimental queue hot paths.
+  - [ ] replace the default experimental `Queue.TryDequeue` `MoveAt(0)` behavior with head/length ring-buffer semantics
+  - [ ] keep `RingQueue` as an explicit type if it still adds API value, but make the default FIFO queue efficient
+  - [ ] ensure enqueue, dequeue, peek, clear, reserve, wraparound, and growth preserve item ownership correctly
+  - [ ] add dequeue-heavy and churn benchmarks in addition to growth-only benchmarks
+  - [ ] add tests that cover wraparound growth, full-to-empty transitions, and repeated reuse
+
+- [ ] Reduce experimental dictionary access overhead.
+  - [ ] investigate replacing per-value `DictionaryValueSlot<V>` switches with separate occupancy metadata plus initialized value storage
+  - [ ] preserve drop safety, moved-out value safety, tombstone reuse, and probe-chain correctness
+  - [ ] add lookup APIs such as `TryGetRef` or contains-plus-reference helpers where they avoid copying large values
+  - [ ] add const-provenance lookup variants for key graphs that can be deeply readonly without changing the ordinary `borrow` APIs
+  - [ ] review `DictionaryKey.Hash` and `DictionaryKey.Equals` calls so readonly/law/const facts remain visible through doctrine dispatch
+  - [ ] review remove/update paths for avoidable value moves and status branches
+  - [ ] add benchmarks for lookup, insert, update, remove, and mixed workloads
+
+- [ ] Add static disjoint fast paths to experimental text append APIs.
+  - [ ] add disjoint/literal append variants for `OwnedAscii` and `OwnedUnicode` callers with statically non-aliased input
+  - [ ] route literal, stack-owned, and independent source appends through the disjoint variants
+  - [ ] use tail `init` slices after reserve so text append copies expose fixed source and destination ranges
+  - [ ] make literal append helpers preserve literal length and const-provenance facts through `AsciiView` and `UnicodeView`
+  - [ ] keep existing overlap-safe append APIs for aliased slices
+  - [ ] use `disjoint` parameters and `independent` loops where valid
+  - [ ] add LLVM checks proving common text appends avoid runtime alias checks and snapshot allocation
+
+- [ ] Add const-provenance fast paths for experimental text and path APIs.
+  - [ ] add const/literal-specialized overloads or internal helpers for text append, path join, path normalization, and path queries without replacing the general `borrow` APIs
+  - [ ] route string literals, immutable locals, const globals, and known static platform separator strings through const-preserving helpers
+  - [ ] ensure const parameters are used only where callers can actually supply permanent const provenance
+  - [ ] combine `const` with `disjoint` on immutable source plus mutable destination helpers when both facts are true
+  - [ ] add LLVM checks proving const/literal paths retain readonly, nocapture, and constant length/data facts through imported stdlib calls
+
+- [ ] Optimize experimental path construction and normalization.
+  - [ ] add disjoint/literal fast paths for `Path.TryJoin` and separator normalization
+  - [ ] reserve destination capacity once, then write directly without snapshotting independent inputs
+  - [ ] inline separator insertion in the hot path so it does not leave an avoidable `MemoryStatus` switch
+  - [ ] prefer `PathFacts` or combined query helpers when callers need extension, base name, and directory name from the same path
+  - [ ] add benchmarks for join, normalize, separate path queries, and combined path queries
+
+- [ ] Optimize experimental Unicode formatting.
+  - [ ] implement direct Unicode digit emission for `TryFormatI1024Unicode`, `TryFormatU1024Unicode`, and the I128/U128 Unicode wrappers
+  - [ ] remove the temporary ASCII formatting plus ASCII-to-Unicode conversion pass on hot integer formatting paths
+  - [ ] mark formatting wrappers `finite` where the digit loop bounds prove termination
+  - [ ] write formatted digits into planned destination ranges rather than appending through `OwnedUnicode.CodePoints.Length`
+  - [ ] add tests for sign handling, zero, min/max values, and large powers of ten
+  - [ ] add benchmarks and LLVM checks proving direct Unicode formatting avoids the temporary ASCII buffer
+
+- [ ] Use bounded raw pointer region facts at experimental encoding and platform edges.
+  - [ ] replace internal unbounded raw pointer helpers such as UTF-8/UTF-16 encode/decode helpers with bounded `rawptr<T>[count]` and `rawmutptr<T>[capacity]` parameters
+  - [ ] add `where disjoint(...)` contracts for source and destination raw regions when conversion helpers can require non-overlap
+  - [ ] keep raw pointers contained at FFI/platform boundaries and convert to slices or bounded raw regions immediately inside the stdlib
+  - [ ] update file, console, TCP, and filesystem direct byte paths to preserve slice length, mutability, readonly, and noalias facts up to the platform call
+  - [ ] add diagnostics or tests preventing unbounded raw pointer helpers from creeping back into non-FFI stdlib internals
+
+- [ ] Improve cross-module optimization visibility for the experimental standard library.
+  - [ ] preserve imported function summaries for `willreturn`, `mustprogress`, memory effects, `nocapture`, readonly/writeonly, and noalias facts across module boundaries
+  - [ ] review experimental memory, runtime, text, IO, console, net, and collection helper declarations for missing effect and alias facts
+  - [ ] consider link-before-opt, LTO-style stdlib body visibility, or summary-based inlining for benchmark-critical stdlib helpers
+  - [ ] add regression tests comparing same-module helper calls and imported experimental stdlib calls for equivalent optimizer attributes
+
+- [ ] Expand experimental standard library benchmark gates.
+  - [ ] add focused gates for fixed runtime buffers, runtime buffer compaction, TCP reads, console byte writes, linked-list push/churn, queue dequeue/churn, dictionary mixed workloads, text append, path join/normalize/query, and Unicode formatting
+  - [ ] make each gate compare `stark` and `stark-experimental` with the same benchmark name and only the language column differing
+  - [ ] include generated LLVM or call-count checks for the optimizations where wall-clock noise hides the root cause
