@@ -61,7 +61,12 @@ public struct TcpClient {
             return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
         }
 
-        return ByteCountFromPlatformResult(System.Runtime.Platform.ReadSocket(self.Handle, destinationParts.Data, destinationParts.Length));
+        stack mut i64[-9223372036854775808 9223372036854775807] result = 0;
+        unsafe {
+            result = System.Runtime.Platform.ReadSocket(self.Handle, destinationParts.Data, destinationParts.Length);
+        }
+
+        return ByteCountFromPlatformResult(result);
     }
 
     fn System.Net.NetResult<i64[0 max]> Write(mut borrow TcpClient self, borrow i8[-128 127][] source) {
@@ -78,7 +83,12 @@ public struct TcpClient {
             return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
         }
 
-        return ByteCountFromPlatformResult(System.Runtime.Platform.WriteSocket(self.Handle, sourceParts.Data, sourceParts.Length));
+        stack mut i64[-9223372036854775808 9223372036854775807] result = 0;
+        unsafe {
+            result = System.Runtime.Platform.WriteSocket(self.Handle, sourceParts.Data, sourceParts.Length);
+        }
+
+        return ByteCountFromPlatformResult(result);
     }
 
     fn System.Net.NetStatus Shutdown(mut borrow TcpClient self, TcpShutdown how) {

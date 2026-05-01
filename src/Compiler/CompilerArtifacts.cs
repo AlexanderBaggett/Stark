@@ -2442,8 +2442,14 @@ public sealed record MidLevelIrCallRValue(
     string Text,
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     StarkTypeSymbol? SourceReturnType = null,
-    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null)
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? PostCallDynamicLengthCommits = null)
     : MidLevelIrRValue(Type, Text);
+
+public sealed record MidLevelIrDynamicStorageLengthCommit(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand InitializedLength);
 
 public sealed record MidLevelIrIndirectCallRValue(
     MidLevelIrOperand Target,

@@ -81,14 +81,17 @@ public struct Directory {
             Capacity = 256
         };
         stack mut i32[-2147483648 2147483647] kindCode = 0;
-        System.Runtime.Platform.ReadDirectoryEntry(
-            self.Handle,
-            &self.Buffer[0],
-            8192,
-            &self.BufferReadPos,
-            &self.BufferWritePos,
-            &name,
-            &kindCode);
+        unsafe {
+            System.Runtime.Platform.ReadDirectoryEntry(
+                self.Handle,
+                &self.Buffer[0],
+                8192,
+                &self.BufferReadPos,
+                &self.BufferWritePos,
+                &name,
+                &kindCode);
+        }
+
         return DirectoryReadResultFromPlatformResult(name, kindCode);
     }
 

@@ -490,6 +490,22 @@ function Get-ElapsedMicroseconds {
     return Convert-NanosecondsToMicroseconds $nanoseconds
 }
 
+function Get-MedianMicroseconds {
+    param([long[]]$Values)
+
+    if ($Values.Count -eq 0) {
+        return 0
+    }
+
+    $sorted = @($Values | Sort-Object)
+    $middle = [int]($sorted.Count / 2)
+    if (($sorted.Count % 2) -eq 1) {
+        return [long]$sorted[$middle]
+    }
+
+    return [long](($sorted[$middle - 1] + $sorted[$middle]) / 2)
+}
+
 function Emit-Row {
     param([string]$Row)
 
@@ -703,6 +719,7 @@ function Write-MachineMetadata {
         "benchmark_capture_rss=$(if ($script:captureRss) { '1' } else { '0' })",
         "benchmark_peak_rss_unit=KiB",
         "benchmark_peak_rss_source=Process.PeakWorkingSet64 captured after each benchmark process exits when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled",
+        "benchmark_median_column=median_us median of timed runs",
         "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
@@ -736,6 +753,7 @@ function Time-Executable {
     [long]$totalMicroseconds = 0
     [long]$minMicroseconds = 0
     [long]$maxMicroseconds = 0
+    $runMicroseconds = New-Object System.Collections.Generic.List[long]
 
     for ($run = 1; $run -le $Runs; $run++) {
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -749,6 +767,7 @@ function Time-Executable {
         $stopwatch.Stop()
         $elapsedMicroseconds = Get-ElapsedMicroseconds $stopwatch
         $totalMicroseconds += $elapsedMicroseconds
+        $runMicroseconds.Add($elapsedMicroseconds)
 
         if ($runPeakRssKiB -gt $peakRssKiB) {
             $peakRssKiB = $runPeakRssKiB
@@ -764,8 +783,9 @@ function Time-Executable {
     }
 
     $avgMicroseconds = [long]($totalMicroseconds / $Runs)
+    $medianMicroseconds = Get-MedianMicroseconds $runMicroseconds.ToArray()
     $label = Get-BenchmarkLabel $BenchmarkId $Language
-    Emit-Row "$($label.BenchmarkGroup),$($label.Language),$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
+    Emit-Row "$($label.BenchmarkGroup),$($label.Language),$Runs,$CompileMicroseconds,$minMicroseconds,$medianMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
 }
 
 function Compile-AndTimeStark {
@@ -914,12 +934,33 @@ try {
         throw "No benchmark sources matched."
     }
 
-    Emit-Row "benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
+    $benchmarkEntries = @($benchmarks | ForEach-Object {
+        $sourcePath = $_.FullName
+        $relativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $sourcePath)
+        $benchmarkId = $relativePath -replace '\.stark$', ''
+        $label = Get-BenchmarkLabel $benchmarkId "stark"
+        $stem = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
+
+        [PSCustomObject]@{
+            SourcePath = $sourcePath
+            RelativePath = $relativePath
+            BenchmarkId = $benchmarkId
+            BenchmarkGroup = $label.BenchmarkGroup
+            VariantOrder = if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) { 1 } else { 0 }
+        }
+    } | Sort-Object BenchmarkGroup, VariantOrder, RelativePath)
+
+    $lastBenchmarkPathByGroup = @{}
+    foreach ($entry in $benchmarkEntries) {
+        $lastBenchmarkPathByGroup[$entry.BenchmarkGroup] = $entry.RelativePath
+    }
+
+    Emit-Row "benchmark,language,runs,compile_us,min_us,median_us,avg_us,max_us,peak_rss_kib"
 
     $timedNativeBenchmarks = @{}
-    foreach ($benchmark in @($benchmarks)) {
-        $sourcePath = $benchmark.FullName
-        $relativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $sourcePath)
+    foreach ($entry in $benchmarkEntries) {
+        $sourcePath = $entry.SourcePath
+        $relativePath = $entry.RelativePath
 
         if (Test-BenchmarkDirective $sourcePath "compile-only") {
             Write-Status "Skipping compile-only benchmark $relativePath; compiler tests still validate it lowers successfully."
@@ -927,9 +968,10 @@ try {
         }
 
         $safeName = ConvertTo-SafeName $relativePath
-        $benchmarkId = $relativePath -replace '\.stark$', ''
-        $benchmarkGroup = (Get-BenchmarkLabel $benchmarkId "stark").BenchmarkGroup
+        $benchmarkId = $entry.BenchmarkId
+        $benchmarkGroup = $entry.BenchmarkGroup
         $nativeSafeName = ConvertTo-SafeName $benchmarkGroup
+        $runNativeForGroup = $lastBenchmarkPathByGroup[$benchmarkGroup] -eq $relativePath
 
         $starkOutputPath = Join-Path $tmpDir "$safeName-stark.exe"
         $cOutputPath = Join-Path $tmpDir "$nativeSafeName-c.exe"
@@ -940,7 +982,7 @@ try {
         }
 
         $cBenchmarkKey = "c|$benchmarkGroup"
-        if ((Test-LanguageEnabled "c") -and !$timedNativeBenchmarks.ContainsKey($cBenchmarkKey)) {
+        if ($runNativeForGroup -and (Test-LanguageEnabled "c") -and !$timedNativeBenchmarks.ContainsKey($cBenchmarkKey)) {
             $timedNativeBenchmarks[$cBenchmarkKey] = $true
             $cSourcePath = Get-BenchmarkSourcePath $benchmarkGroup ".c"
             if (!(Test-Path -LiteralPath $cSourcePath)) {
@@ -957,7 +999,7 @@ try {
         }
 
         $rustBenchmarkKey = "rust|$benchmarkGroup"
-        if ((Test-LanguageEnabled "rust") -and !$timedNativeBenchmarks.ContainsKey($rustBenchmarkKey)) {
+        if ($runNativeForGroup -and (Test-LanguageEnabled "rust") -and !$timedNativeBenchmarks.ContainsKey($rustBenchmarkKey)) {
             $timedNativeBenchmarks[$rustBenchmarkKey] = $true
             $rustSourcePath = Get-BenchmarkSourcePath $benchmarkGroup ".rs"
             if (!(Test-Path -LiteralPath $rustSourcePath)) {

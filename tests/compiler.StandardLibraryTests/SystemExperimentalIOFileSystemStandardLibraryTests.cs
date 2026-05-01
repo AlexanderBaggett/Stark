@@ -385,7 +385,14 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
 
         Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer8192_WriteFill", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadDirectoryEntry", llvm, StringComparison.Ordinal);
+        Assert.Contains("ReadFileBytes", llvm, StringComparison.Ordinal);
+        Assert.Contains("WriteFileBytes", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("System_FileSystem_", llvm, StringComparison.Ordinal);
+
+        var platformSource = File.ReadAllText(Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark"));
+        Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteFileBytes(rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
     }
 
     [Fact]

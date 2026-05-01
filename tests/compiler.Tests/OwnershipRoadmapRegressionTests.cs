@@ -972,6 +972,48 @@ public sealed class OwnershipRoadmapRegressionTests
     }
 
     [Fact]
+    public void DynamicInitSliceIndependentInductionLoopTracksRuntimeSlots()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run(i64[0 max] count) {
+                stack mut dynamic i64[0 max] values = new(8);
+                stack init i64[0 max][] spare = init values[values.Length, count];
+                for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                    init spare[index] = index;
+                }
+
+                return values.Length;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicInitSliceIndependentInductionLoopRejectsRepeatedSlotProof()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i64[0 max] count) {
+                stack mut dynamic i64[0 max] values = new(8);
+                stack init i64[0 max][] spare = init values[values.Length, count];
+                for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                    init spare[index] = index;
+                    init spare[index] = index;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "repeats the same dynamic loop slot proof");
+    }
+
+    [Fact]
     public void DynamicInitSliceRejectsOutOfOrderSlotInitialization()
     {
         var result = Compile(

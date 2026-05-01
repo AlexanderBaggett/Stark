@@ -11,6 +11,9 @@ public sealed class SystemTextStandardLibraryTests
         import System.Memory
         module ExperimentalTextParity
 
+        const ascii ConstAsciiSuffix = "Const";
+        const ascii ConstUnicodeAsciiSuffix = " AZ";
+
         fn bool Ok(System.Memory.MemoryStatus status) {
             switch (status) {
                 case System.Memory.MemoryStatus.Ok:
@@ -242,7 +245,11 @@ public sealed class SystemTextStandardLibraryTests
                 return false;
             }
 
-            return true;
+            if (!Ok(text.AppendConstAscii(ConstAsciiSuffix)) || text.Length() != 27) {
+                return false;
+            }
+
+            return text.AsSlice()[22] == (i8[-128 127])67 && text.AsSlice()[26] == (i8[-128 127])116;
         }
 
         fn bool ProbeOwnedUnicode() {
@@ -276,7 +283,20 @@ public sealed class SystemTextStandardLibraryTests
             }
 
             stack i32[-2147483648 2147483647][] aliased = text.AsSlice();
-            return aliased[13] == 86 && aliased[25] == 90;
+            if (aliased[13] != 86 || aliased[25] != 90) {
+                return false;
+            }
+
+            if (!Ok(text.AppendConstUnicode((unicode)" ok")) || text.Length() != 29) {
+                return false;
+            }
+
+            if (!Ok(text.AppendConstAscii(ConstUnicodeAsciiSuffix)) || text.Length() != 32) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] constAppended = text.AsSlice();
+            return constAppended[26] == 32 && constAppended[31] == 90;
         }
 
         export ffi fn i32[min max] main() {
@@ -363,7 +383,28 @@ public sealed class SystemTextStandardLibraryTests
             if (!System.Experimental.Text.TryFormatTextErrorUnicode(&formattedUnicode, System.Experimental.Text.TextError.Overflow)
                 || formattedUnicode.Length != 8
                 || !System.Experimental.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])((2**1024) - 1))
-                || formattedUnicode.Length != 309) {
+                || formattedUnicode.Length != 309
+                || *(&formattedUnicode.Data[0]) != 49
+                || *(&formattedUnicode.Data[308]) != 53
+                || !System.Experimental.Text.TryFormatI1024Unicode(&formattedUnicode, -(2**1023))
+                || formattedUnicode.Length != 309
+                || *(&formattedUnicode.Data[0]) != 45
+                || *(&formattedUnicode.Data[308]) != 56
+                || !System.Experimental.Text.TryFormatI128Unicode(&formattedUnicode, -(2**127))
+                || formattedUnicode.Length != 40
+                || *(&formattedUnicode.Data[0]) != 45
+                || *(&formattedUnicode.Data[39]) != 56
+                || !System.Experimental.Text.TryFormatU128Unicode(&formattedUnicode, (u128[0 max])((2**128) - 1))
+                || formattedUnicode.Length != 39
+                || *(&formattedUnicode.Data[0]) != 51
+                || *(&formattedUnicode.Data[38]) != 53
+                || !System.Experimental.Text.TryFormatI1024Unicode(&formattedUnicode, (i1024[min max])0)
+                || formattedUnicode.Length != 1
+                || *(&formattedUnicode.Data[0]) != 48
+                || !System.Experimental.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])(10**300))
+                || formattedUnicode.Length != 301
+                || *(&formattedUnicode.Data[0]) != 49
+                || *(&formattedUnicode.Data[300]) != 48) {
                 return 13;
             }
 
@@ -445,6 +486,160 @@ public sealed class SystemTextStandardLibraryTests
         Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalTextAppendsUseTailRegionMemoryHelpers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Text.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var asciiSliceBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendSlice(",
+            "Expected OwnedAscii.AppendSlice to lower as a defined function.");
+        var asciiLiteralBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendAscii(",
+            "Expected OwnedAscii.AppendAscii to lower as a defined function.");
+        var unicodeSliceBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendSlice(",
+            "Expected OwnedUnicode.AppendSlice to lower as a defined function.");
+        var unicodeLiteralBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendUnicode(",
+            "Expected OwnedUnicode.AppendUnicode to lower as a defined function.");
+        var asciiSliceDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendSliceDisjoint(",
+            "Expected OwnedAscii.AppendSliceDisjoint to lower as a defined function.");
+        var asciiLiteralDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendAsciiDisjoint(",
+            "Expected OwnedAscii.AppendAsciiDisjoint to lower as a defined function.");
+        var asciiConstBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendConstAscii(",
+            "Expected OwnedAscii.AppendConstAscii to lower as a defined function.");
+        var asciiConstDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendConstAsciiDisjoint(",
+            "Expected OwnedAscii.AppendConstAsciiDisjoint to lower as a defined function.");
+        var unicodeSliceDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendSliceDisjoint(",
+            "Expected OwnedUnicode.AppendSliceDisjoint to lower as a defined function.");
+        var unicodeLiteralDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendUnicodeDisjoint(",
+            "Expected OwnedUnicode.AppendUnicodeDisjoint to lower as a defined function.");
+        var unicodeConstBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendConstUnicode(",
+            "Expected OwnedUnicode.AppendConstUnicode to lower as a defined function.");
+        var unicodeConstDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendConstUnicodeDisjoint(",
+            "Expected OwnedUnicode.AppendConstUnicodeDisjoint to lower as a defined function.");
+
+        Assert.Contains("@OwnedAscii_AppendSliceDisjoint", asciiSliceBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedAscii_AppendAsciiDisjoint", asciiLiteralBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedAscii_AppendConstAsciiDisjoint", asciiConstBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedUnicode_AppendSliceDisjoint", unicodeSliceBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedUnicode_AppendUnicodeDisjoint", unicodeLiteralBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedUnicode_AppendConstUnicodeDisjoint", unicodeConstBody, StringComparison.Ordinal);
+
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesDisjoint", asciiSliceDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesFromPointerDisjoint", asciiLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesFromPointerDisjoint", asciiConstDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeCodePointsDisjoint", unicodeSliceDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeCodePointsFromPointerDisjoint", unicodeLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeCodePointsFromPointerDisjoint", unicodeConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", asciiSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", asciiLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", asciiConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", unicodeSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", unicodeLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", unicodeConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", asciiSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", asciiLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", asciiConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", unicodeSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", unicodeLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", unicodeConstDisjointBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalWideUnicodeIntegerFormattingWritesUnicodeDirectly()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Text.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var i1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatI1024Unicode(",
+            "Expected TryFormatI1024Unicode to lower as a defined function.");
+        var u1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatU1024Unicode(",
+            "Expected TryFormatU1024Unicode to lower as a defined function.");
+        var i128Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatI128Unicode(",
+            "Expected TryFormatI128Unicode to lower as a defined function.");
+        var u128Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatU128Unicode(",
+            "Expected TryFormatU128Unicode to lower as a defined function.");
+
+        Assert.Contains("@TryFormatSignedU1024Unicode", i1024Body, StringComparison.Ordinal);
+        Assert.Contains("@TryFormatSignedU1024Unicode", u1024Body, StringComparison.Ordinal);
+        Assert.Contains("@TryFormatSignedU128Unicode", i128Body, StringComparison.Ordinal);
+        Assert.Contains("@TryFormatSignedU128Unicode", u128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatI1024Ascii", i1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatU1024Ascii", u1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatI128Ascii", i128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatU128Ascii", u128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", i1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", u1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", i128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", u128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [309 x i8]", u1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [39 x i8]", u128Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalTextEncodingHelpersUseBoundedRawPointerRegions()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var modulePath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Experimental", "Text.stark");
+        var source = File.ReadAllText(modulePath);
+
+        Assert.Contains("rawptr<i8[-128 127]>[length] data", source, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<i8[-128 127]>[capacity] destination", source, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<i16[-32768 32767]>[capacity] destination", source, StringComparison.Ordinal);
+        Assert.Contains("rawptr<i16[-32768 32767]>[sourceLength] source", source, StringComparison.Ordinal);
+        Assert.Contains("where disjoint(source, destination[0, capacity])", source, StringComparison.Ordinal);
+        Assert.Contains("decoded = TryDecodeUtf8CodePoint", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1921,5 +2116,34 @@ public sealed class SystemTextStandardLibraryTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root for stdlib integration tests.");
+    }
+
+    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
+    {
+        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
+        Assert.True(functionStart >= 0, missingMessage);
+
+        var bodyStart = llvm.IndexOf('{', functionStart);
+        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+
+        var depth = 0;
+        for (var index = bodyStart; index < llvm.Length; index++)
+        {
+            var current = llvm[index];
+            if (current == '{')
+            {
+                depth++;
+            }
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return llvm.Substring(functionStart, index - functionStart + 1);
+                }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 }

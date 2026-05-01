@@ -34,6 +34,22 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             return values[0] == 65 && values[7] == 90;
         }
 
+        fn bool CopiedBytesOk(borrow i8[-128 127][] values) {
+            return values[2] == 1 && values[3] == 2 && values[4] == 3 && values[5] == 4;
+        }
+
+        fn bool MovedBytesOk(borrow i8[-128 127][] values) {
+            return values[0] == 3 && values[1] == 4 && values[2] == 5 && values[3] == 6;
+        }
+
+        fn bool CopiedCodePointsOk(borrow i32[-2147483648 2147483647][] values) {
+            return values[2] == 65 && values[3] == 66 && values[4] == 67 && values[5] == 68;
+        }
+
+        fn bool MovedCodePointsOk(borrow i32[-2147483648 2147483647][] values) {
+            return values[0] == 67 && values[1] == 68 && values[2] == 69 && values[3] == 70;
+        }
+
         export ffi fn i32[min max] main() {
             if (!System.Experimental.Memory.SupportsDynamicAllocator(Allocator.Default())) {
                 return 1;
@@ -146,17 +162,24 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 25;
             }
 
-            stack i8[-128 127][] movedBytesAfterCopy = byteMoveBuffer[0, byteMoveBuffer.Length];
-            if (movedBytesAfterCopy[2] != 1 || movedBytesAfterCopy[3] != 2 || movedBytesAfterCopy[4] != 3 || movedBytesAfterCopy[5] != 4) {
+            if (!CopiedBytesOk(byteMoveBuffer[0, byteMoveBuffer.Length])) {
                 return 26;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(byteMoveBuffer[two, four], byteMoveBuffer[0, four], four))) {
+            stack mut dynamic i8[-128 127] byteMoveOnlyBuffer = new();
+            if (!Ok(System.Experimental.Memory.ReserveBytes(byteMoveOnlyBuffer, eight))) {
                 return 27;
             }
 
-            stack i8[-128 127][] movedBytesAfterMove = byteMoveBuffer[0, byteMoveBuffer.Length];
-            if (movedBytesAfterMove[0] != 1 || movedBytesAfterMove[1] != 2 || movedBytesAfterMove[2] != 3 || movedBytesAfterMove[3] != 4) {
+            for willexit (stack mut i64[0 max] byteMoveOnlyIndex = 0; byteMoveOnlyIndex < eight; byteMoveOnlyIndex += 1) {
+                init byteMoveOnlyBuffer[byteMoveOnlyBuffer.Length] = (i8[-128 127])(byteMoveOnlyIndex + 1);
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(byteMoveOnlyBuffer[two, four], byteMoveOnlyBuffer[0, four], four))) {
+                return 27;
+            }
+
+            if (!MovedBytesOk(byteMoveOnlyBuffer[0, byteMoveOnlyBuffer.Length])) {
                 return 28;
             }
 
@@ -174,17 +197,25 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 30;
             }
 
-            stack i32[-2147483648 2147483647][] movedCodePointsAfterCopy = codePointMoveBuffer[0, codePointMoveBuffer.Length];
-            if (movedCodePointsAfterCopy[2] != 65 || movedCodePointsAfterCopy[3] != 66 || movedCodePointsAfterCopy[4] != 67 || movedCodePointsAfterCopy[5] != 68) {
+            if (!CopiedCodePointsOk(codePointMoveBuffer[0, codePointMoveBuffer.Length])) {
                 return 31;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(codePointMoveBuffer[two, four], codePointMoveBuffer[0, four], four))) {
+            stack mut dynamic i32[-2147483648 2147483647] codePointMoveOnlyBuffer = new();
+            if (!Ok(System.Experimental.Memory.ReserveCodePoints(codePointMoveOnlyBuffer, eight))) {
                 return 32;
             }
 
-            stack i32[-2147483648 2147483647][] movedCodePointsAfterMove = codePointMoveBuffer[0, codePointMoveBuffer.Length];
-            if (movedCodePointsAfterMove[0] != 65 || movedCodePointsAfterMove[1] != 66 || movedCodePointsAfterMove[2] != 67 || movedCodePointsAfterMove[3] != 68) {
+            for willexit (stack mut i64[0 max] codePointMoveOnlyIndex = 0; codePointMoveOnlyIndex < eight; codePointMoveOnlyIndex += 1) {
+                init codePointMoveOnlyBuffer[codePointMoveOnlyBuffer.Length] =
+                    (i32[-2147483648 2147483647])(65 + codePointMoveOnlyIndex);
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(codePointMoveOnlyBuffer[two, four], codePointMoveOnlyBuffer[0, four], four))) {
+                return 32;
+            }
+
+            if (!MovedCodePointsOk(codePointMoveOnlyBuffer[0, codePointMoveOnlyBuffer.Length])) {
                 return 33;
             }
 
@@ -279,6 +310,307 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         }
         """;
 
+    private const string ExperimentalMemoryMoveProgram = """
+        import System.Experimental.Memory
+        import System.Memory
+        module MoveApp
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn MemoryStatus SeedBytes(mut borrow dynamic i8[-128 127] values, i64[0 max] count) {
+            if (!values.TryReserve(count)) {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                init values[values.Length] = (i8[-128 127])(index + 1);
+            }
+
+            return MemoryStatus.Ok;
+        }
+
+        fn MemoryStatus SeedCodePoints(mut borrow dynamic i32[-2147483648 2147483647] values, i64[0 max] count) {
+            if (!values.TryReserve(count)) {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                init values[values.Length] = (i32[-2147483648 2147483647])(65 + index);
+            }
+
+            return MemoryStatus.Ok;
+        }
+
+        fn i32[min max] CheckByteMoves() {
+            stack i64[0 max] zero = 0;
+            stack i64[0 max] two = 2;
+            stack i64[0 max] four = 4;
+            stack i64[0 max] eight = 8;
+
+            stack mut dynamic i8[-128 127] copyThenMove = new();
+            if (!Ok(SeedBytes(copyThenMove, eight))) {
+                return 1;
+            }
+
+            if (!Ok(System.Experimental.Memory.CopyBytes(copyThenMove[zero, four], copyThenMove[two, four], four))) {
+                return 2;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(copyThenMove[two, four], copyThenMove[zero, four], four))) {
+                return 3;
+            }
+
+            stack i8[-128 127][] copyThenMoveValues = copyThenMove[zero, copyThenMove.Length];
+            if (copyThenMoveValues[0] != 1 || copyThenMoveValues[1] != 2 || copyThenMoveValues[2] != 3 || copyThenMoveValues[3] != 4 || copyThenMoveValues[4] != 3 || copyThenMoveValues[5] != 4) {
+                return 4;
+            }
+
+            stack mut dynamic i8[-128 127] forwardOverlap = new();
+            if (!Ok(SeedBytes(forwardOverlap, eight))) {
+                return 5;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(forwardOverlap[two, four], forwardOverlap[zero, four], four))) {
+                return 6;
+            }
+
+            stack i8[-128 127][] forwardOverlapValues = forwardOverlap[zero, forwardOverlap.Length];
+            if (forwardOverlapValues[0] != 3 || forwardOverlapValues[1] != 4 || forwardOverlapValues[2] != 5 || forwardOverlapValues[3] != 6 || forwardOverlapValues[4] != 5 || forwardOverlapValues[5] != 6) {
+                return 7;
+            }
+
+            stack mut dynamic i8[-128 127] backwardOverlap = new();
+            if (!Ok(SeedBytes(backwardOverlap, eight))) {
+                return 8;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(backwardOverlap[zero, four], backwardOverlap[two, four], four))) {
+                return 9;
+            }
+
+            stack i8[-128 127][] backwardOverlapValues = backwardOverlap[zero, backwardOverlap.Length];
+            if (backwardOverlapValues[0] != 1 || backwardOverlapValues[1] != 2 || backwardOverlapValues[2] != 1 || backwardOverlapValues[3] != 2 || backwardOverlapValues[4] != 3 || backwardOverlapValues[5] != 4 || backwardOverlapValues[6] != 7 || backwardOverlapValues[7] != 8) {
+                return 10;
+            }
+
+            stack mut dynamic i8[-128 127] sameRange = new();
+            if (!Ok(SeedBytes(sameRange, eight))) {
+                return 11;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(sameRange[zero, four], sameRange[zero, four], four))) {
+                return 12;
+            }
+
+            stack i8[-128 127][] sameRangeValues = sameRange[zero, sameRange.Length];
+            if (sameRangeValues[0] != 1 || sameRangeValues[1] != 2 || sameRangeValues[2] != 3 || sameRangeValues[3] != 4 || sameRangeValues[7] != 8) {
+                return 13;
+            }
+
+            stack mut dynamic i8[-128 127] disjointMove = new();
+            if (!Ok(SeedBytes(disjointMove, eight))) {
+                return 14;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(disjointMove[zero, two], disjointMove[four, two], two))) {
+                return 15;
+            }
+
+            stack i8[-128 127][] disjointMoveValues = disjointMove[zero, disjointMove.Length];
+            if (disjointMoveValues[0] != 1 || disjointMoveValues[1] != 2 || disjointMoveValues[4] != 1 || disjointMoveValues[5] != 2 || disjointMoveValues[6] != 7 || disjointMoveValues[7] != 8) {
+                return 16;
+            }
+
+            stack mut dynamic i8[-128 127] zeroMove = new();
+            if (!Ok(SeedBytes(zeroMove, eight))) {
+                return 17;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveBytes(zeroMove[zero, zero], zeroMove[two, zero], zero))) {
+                return 18;
+            }
+
+            stack i8[-128 127][] zeroMoveValues = zeroMove[zero, zeroMove.Length];
+            if (zeroMoveValues[0] != 1 || zeroMoveValues[1] != 2 || zeroMoveValues[2] != 3 || zeroMoveValues[7] != 8) {
+                return 19;
+            }
+
+            return 0;
+        }
+
+        fn i32[min max] CheckCodePointMoves() {
+            stack i64[0 max] zero = 0;
+            stack i64[0 max] two = 2;
+            stack i64[0 max] four = 4;
+            stack i64[0 max] eight = 8;
+
+            stack mut dynamic i32[-2147483648 2147483647] copyThenMove = new();
+            if (!Ok(SeedCodePoints(copyThenMove, eight))) {
+                return 1;
+            }
+
+            if (!Ok(System.Experimental.Memory.CopyCodePoints(copyThenMove[zero, four], copyThenMove[two, four], four))) {
+                return 2;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(copyThenMove[two, four], copyThenMove[zero, four], four))) {
+                return 3;
+            }
+
+            stack i32[-2147483648 2147483647][] copyThenMoveValues = copyThenMove[zero, copyThenMove.Length];
+            if (copyThenMoveValues[0] != 65 || copyThenMoveValues[1] != 66 || copyThenMoveValues[2] != 67 || copyThenMoveValues[3] != 68 || copyThenMoveValues[4] != 67 || copyThenMoveValues[5] != 68) {
+                return 4;
+            }
+
+            stack mut dynamic i32[-2147483648 2147483647] forwardOverlap = new();
+            if (!Ok(SeedCodePoints(forwardOverlap, eight))) {
+                return 5;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(forwardOverlap[two, four], forwardOverlap[zero, four], four))) {
+                return 6;
+            }
+
+            stack i32[-2147483648 2147483647][] forwardOverlapValues = forwardOverlap[zero, forwardOverlap.Length];
+            if (forwardOverlapValues[0] != 67 || forwardOverlapValues[1] != 68 || forwardOverlapValues[2] != 69 || forwardOverlapValues[3] != 70 || forwardOverlapValues[4] != 69 || forwardOverlapValues[5] != 70) {
+                return 7;
+            }
+
+            stack mut dynamic i32[-2147483648 2147483647] backwardOverlap = new();
+            if (!Ok(SeedCodePoints(backwardOverlap, eight))) {
+                return 8;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(backwardOverlap[zero, four], backwardOverlap[two, four], four))) {
+                return 9;
+            }
+
+            stack i32[-2147483648 2147483647][] backwardOverlapValues = backwardOverlap[zero, backwardOverlap.Length];
+            if (backwardOverlapValues[0] != 65 || backwardOverlapValues[1] != 66 || backwardOverlapValues[2] != 65 || backwardOverlapValues[3] != 66 || backwardOverlapValues[4] != 67 || backwardOverlapValues[5] != 68 || backwardOverlapValues[6] != 71 || backwardOverlapValues[7] != 72) {
+                return 10;
+            }
+
+            stack mut dynamic i32[-2147483648 2147483647] sameRange = new();
+            if (!Ok(SeedCodePoints(sameRange, eight))) {
+                return 11;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(sameRange[zero, four], sameRange[zero, four], four))) {
+                return 12;
+            }
+
+            stack i32[-2147483648 2147483647][] sameRangeValues = sameRange[zero, sameRange.Length];
+            if (sameRangeValues[0] != 65 || sameRangeValues[1] != 66 || sameRangeValues[2] != 67 || sameRangeValues[3] != 68 || sameRangeValues[7] != 72) {
+                return 13;
+            }
+
+            stack mut dynamic i32[-2147483648 2147483647] disjointMove = new();
+            if (!Ok(SeedCodePoints(disjointMove, eight))) {
+                return 14;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(disjointMove[zero, two], disjointMove[four, two], two))) {
+                return 15;
+            }
+
+            stack i32[-2147483648 2147483647][] disjointMoveValues = disjointMove[zero, disjointMove.Length];
+            if (disjointMoveValues[0] != 65 || disjointMoveValues[1] != 66 || disjointMoveValues[4] != 65 || disjointMoveValues[5] != 66 || disjointMoveValues[6] != 71 || disjointMoveValues[7] != 72) {
+                return 16;
+            }
+
+            stack mut dynamic i32[-2147483648 2147483647] zeroMove = new();
+            if (!Ok(SeedCodePoints(zeroMove, eight))) {
+                return 17;
+            }
+
+            if (!Ok(System.Experimental.Memory.MoveCodePoints(zeroMove[zero, zero], zeroMove[two, zero], zero))) {
+                return 18;
+            }
+
+            stack i32[-2147483648 2147483647][] zeroMoveValues = zeroMove[zero, zeroMove.Length];
+            if (zeroMoveValues[0] != 65 || zeroMoveValues[1] != 66 || zeroMoveValues[2] != 67 || zeroMoveValues[7] != 72) {
+                return 19;
+            }
+
+            return 0;
+        }
+
+        export ffi fn i32[min max] main() {
+            stack i32[min max] byteStatus = CheckByteMoves();
+            if (byteStatus != 0) {
+                return byteStatus;
+            }
+
+            stack i32[min max] codePointStatus = CheckCodePointMoves();
+            if (codePointStatus != 0) {
+                return codePointStatus + 100;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string ExperimentalMemoryAppendDisjointProgram = """
+        import System.Experimental.Memory
+        import System.Memory
+        module AppendDisjointApp
+
+        fn bool Ok(MemoryStatus status) {
+            switch (status) {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        export ffi fn i32[min max] main() {
+            stack i64[0 max] four = 4;
+            stack mut i8[-128 127][4] byteSource = { 1, 2, 3, 4 };
+            stack mut dynamic i8[-128 127] bytes = new();
+            unsafe {
+                if (!Ok(System.Experimental.Memory.AppendBytesDisjoint(bytes, byteSource, four))) {
+                    return 1;
+                }
+            }
+
+            if (bytes.Length != 4) {
+                return 2;
+            }
+
+            stack i8[-128 127][] byteView = bytes[0, bytes.Length];
+            if (byteView[0] != 1 || byteView[1] != 2 || byteView[2] != 3 || byteView[3] != 4) {
+                return 3;
+            }
+
+            stack mut i32[-2147483648 2147483647][4] codePointSource = { 65, 66, 67, 68 };
+            stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
+            unsafe {
+                if (!Ok(System.Experimental.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, four))) {
+                    return 4;
+                }
+            }
+
+            if (codePoints.Length != 4) {
+                return 5;
+            }
+
+            stack i32[-2147483648 2147483647][] codePointView = codePoints[0, codePoints.Length];
+            if (codePointView[0] != 65 || codePointView[1] != 66 || codePointView[2] != 67 || codePointView[3] != 68) {
+                return 6;
+            }
+
+            return 0;
+        }
+        """;
+
     [Fact]
     public void StdLibSourceExperimentalMemorySurfaceCompilesAndLowersIntrinsics()
     {
@@ -310,6 +642,13 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                     return System.Experimental.Memory.AppendBytes(destination, source, count);
                 }
 
+                fn MemoryStatus AppendBytesDisjoint(
+                    disjoint mut borrow dynamic i8[-128 127] destination,
+                    disjoint borrow i8[-128 127][] source,
+                    i64[0 max] count) {
+                    return System.Experimental.Memory.AppendBytesDisjoint(destination, source, count);
+                }
+
                 fn MemoryStatus CopyCodePoints(
                     disjoint borrow i32[-2147483648 2147483647][] source,
                     disjoint borrow mut i32[-2147483648 2147483647][] destination,
@@ -334,6 +673,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
 
         Assert.Contains("System_Experimental_Memory_InitializeBytesDisjoint", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Experimental_Memory_FillBytes", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Experimental_Memory_AppendBytesDisjoint", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Experimental_Memory_CopyCodePointsDisjoint", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Experimental_Memory_MoveBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
@@ -356,13 +696,170 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var appendBytesBody = ExtractLlvmFunctionBody(llvm, "@AppendBytes(");
         var appendCodePointsBody = ExtractLlvmFunctionBody(llvm, "@AppendCodePoints(");
+        var appendBytesDisjointBody = ExtractLlvmFunctionBody(llvm, "@AppendBytesDisjoint(");
+        var appendCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "@AppendCodePointsDisjoint(");
         var copyBytesBody = ExtractLlvmFunctionBody(llvm, "@CopyBytes(");
         var copyCodePointsBody = ExtractLlvmFunctionBody(llvm, "@CopyCodePoints(");
+        var moveBytesBody = ExtractLlvmFunctionBody(llvm, "@MoveBytes(");
+        var moveCodePointsBody = ExtractLlvmFunctionBody(llvm, "@MoveCodePoints(");
+        var moveBytesInfallibleBody = ExtractLlvmFunctionBody(llvm, "@MoveBytesInfallible(");
+        var moveCodePointsInfallibleBody = ExtractLlvmFunctionBody(llvm, "@MoveCodePointsInfallible(");
 
         Assert.Contains("icmp ule ptr", appendBytesBody, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", appendCodePointsBody, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", copyBytesBody, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", copyCodePointsBody, StringComparison.Ordinal);
+        Assert.Contains("icmp ule ptr", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("icmp ule ptr", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", appendBytesDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", appendCodePointsDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("snapshot", appendBytesDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("snapshot", appendCodePointsDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@MoveBytesInfallible", moveBytesBody, StringComparison.Ordinal);
+        Assert.Contains("@MoveCodePointsInfallible", moveCodePointsBody, StringComparison.Ordinal);
+        Assert.Contains("icmp ult ptr", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("icmp ult ptr", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_alloc", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_alloc", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_try_realloc", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_try_realloc", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_dynamic_try_reserve", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_dynamic_try_reserve", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("!llvm.access.group", copyBytesBody, StringComparison.Ordinal);
+        Assert.Contains("!llvm.access.group", copyCodePointsBody, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalMemoryModuleLowersHotByteTailAppendsToIntrinsics()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Memory.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var appendBytesDisjointBody = ExtractLlvmFunctionBody(llvm, "@AppendBytesDisjoint(");
+        var appendCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "@AppendCodePointsDisjoint(");
+        var appendFillBytesBody = ExtractLlvmFunctionBody(llvm, "@AppendFillBytes(");
+        var initializeBytesDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %System_Memory_MemoryStatus @InitializeBytesDisjoint(");
+        var initializeCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %System_Memory_MemoryStatus @InitializeCodePointsDisjoint(");
+        var fillBytesBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %System_Memory_MemoryStatus @FillBytes(");
+
+        Assert.Contains("@InitializeBytesDisjoint", appendBytesDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@InitializeCodePointsDisjoint", appendCodePointsDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@FillBytes", appendFillBytesBody, StringComparison.Ordinal);
+        Assert.Contains("@llvm.memcpy.p0.p0.i64", initializeBytesDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@llvm.memcpy.p0.p0.i64", initializeCodePointsDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@llvm.memset.p0.i64", fillBytesBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("_phi = phi", appendBytesDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("_phi = phi", appendCodePointsDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("_phi = phi", appendFillBytesBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PackagedExperimentalMemoryHelpersPreserveImportedAttributes()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Memory.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-memory-package-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var libraryFileName = OperatingSystem.IsWindows() ? "ExperimentalMemory.lib" : "libExperimentalMemory.a";
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var llvmPath = Path.Combine(tempDirectory.FullName, "App.ll");
+
+        try
+        {
+            var packageStdout = new StringWriter();
+            var packageStderr = new StringWriter();
+            var packageExitCode = await CompilerCli.RunAsync(
+                [modulePath, "--emit-pkg", "--package-library-file", libraryFileName, "-I", sourceRoot, "-o", manifestPath],
+                new StringReader(string.Empty),
+                packageStdout,
+                packageStderr);
+
+            Assert.True(packageExitCode == 0, packageStdout + Environment.NewLine + packageStderr);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Experimental.Memory
+                import System.Memory
+                module App
+
+                fn System.Memory.MemoryStatus UseCopy(
+                    disjoint borrow i8[-128 127][] source,
+                    disjoint init i8[-128 127][] destination,
+                    i64[0 max] count) {
+                    return System.Experimental.Memory.InitializeBytesDisjoint(source, destination, count);
+                }
+
+                fn System.Memory.MemoryStatus UseFill(
+                    init i8[-128 127][] destination,
+                    i8[-128 127] value,
+                    i64[0 max] count) {
+                    return System.Experimental.Memory.FillBytes(destination, value, count);
+                }
+                """);
+
+            var llvmStdout = new StringWriter();
+            var llvmStderr = new StringWriter();
+            var llvmExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-llvm", "-I", packageDirectory, "-o", llvmPath],
+                new StringReader(string.Empty),
+                llvmStdout,
+                llvmStderr);
+
+            Assert.True(llvmExitCode == 0, llvmStdout + Environment.NewLine + llvmStderr);
+            var llvm = await File.ReadAllTextAsync(llvmPath);
+
+            var copyDeclaration = ExtractLlvmDeclaration(llvm, "@System_Experimental_Memory_InitializeBytesDisjoint(");
+            var fillDeclaration = ExtractLlvmDeclaration(llvm, "@System_Experimental_Memory_FillBytes(");
+
+            var sourceResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(File.ReadAllText(modulePath), modulePath),
+                new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O3,
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+            Assert.True(sourceResult.Succeeded, string.Join(Environment.NewLine, sourceResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var sourceLlvm = sourceResult.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+            var copyDefinition = ExtractLlvmFunctionBody(
+                sourceLlvm,
+                "define fastcc noundef %System_Memory_MemoryStatus @InitializeBytesDisjoint(");
+            var fillDefinition = ExtractLlvmFunctionBody(
+                sourceLlvm,
+                "define fastcc noundef %System_Memory_MemoryStatus @FillBytes(");
+
+            string[] copyAttributes = ["readonly nocapture", "noalias nocapture", "nounwind willreturn mustprogress", "alwaysinline"];
+            string[] fillAttributes = ["noalias nocapture", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
+            AssertContainsAll(copyDeclaration, copyAttributes);
+            AssertContainsAll(copyDefinition, copyAttributes);
+            AssertContainsAll(fillDeclaration, fillAttributes);
+            AssertContainsAll(fillDefinition, fillAttributes);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]
@@ -375,6 +872,18 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
     public async Task SourceStdLibExperimentalMemoryCopyExecutableRuns()
     {
         await AssertSourceExecutableRunsAsync(ExperimentalMemoryCopyProgram, "stark-stdlib-experimental-memory-copy-");
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalMemoryMoveExecutableRuns()
+    {
+        await AssertSourceExecutableRunsAsync(ExperimentalMemoryMoveProgram, "stark-stdlib-experimental-memory-move-");
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalMemoryAppendDisjointExecutableRuns()
+    {
+        await AssertSourceExecutableRunsAsync(ExperimentalMemoryAppendDisjointProgram, "stark-stdlib-experimental-memory-append-disjoint-");
     }
 
     private async Task AssertSourceExecutableRunsAsync(string source, string tempPrefix)
@@ -446,5 +955,35 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         }
 
         return llvm[start..next];
+    }
+
+    private static void AssertContainsAll(string text, IEnumerable<string> fragments)
+    {
+        foreach (var fragment in fragments)
+        {
+            Assert.Contains(fragment, text, StringComparison.Ordinal);
+        }
+    }
+
+    private static string ExtractLlvmDeclaration(string llvm, string functionSignatureFragment)
+    {
+        var signatureIndex = llvm.IndexOf(functionSignatureFragment, StringComparison.Ordinal);
+        Assert.True(signatureIndex >= 0, $"Unable to find LLVM declaration fragment '{functionSignatureFragment}'.");
+
+        var start = llvm.LastIndexOf("\ndeclare ", signatureIndex, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            start = llvm.LastIndexOf("declare ", signatureIndex, StringComparison.Ordinal);
+        }
+
+        Assert.True(start >= 0, $"Unable to find LLVM declaration start for '{functionSignatureFragment}'.");
+
+        var end = llvm.IndexOf('\n', signatureIndex);
+        if (end < 0)
+        {
+            end = llvm.Length;
+        }
+
+        return llvm[start..end];
     }
 }

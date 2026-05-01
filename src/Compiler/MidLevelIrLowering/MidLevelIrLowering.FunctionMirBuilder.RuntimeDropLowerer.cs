@@ -646,6 +646,33 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
+            EmitDynamicStorageLengthCommitCore(
+                new MidLevelIrDynamicStorageLengthCommit(
+                    update.StorageAddress,
+                    update.StorageType,
+                    initializedLength),
+                text);
+        }
+
+        private void EmitDynamicStorageLengthCommitCore(MidLevelIrDynamicStorageLengthCommit commit, string text)
+        {
+            var lengthType = NonNegativeI64Type;
+            var lengthAddress = EmitTemporary(
+                new MidLevelIrFieldAddressRValue(
+                    commit.StorageAddress,
+                    commit.StorageType,
+                    "Length",
+                    1,
+                    AddressType(lengthType, isMutable: true),
+                    $"{commit.StorageAddress.Text}.Length"),
+                "addr");
+            if (lengthAddress is null)
+            {
+                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
+                return;
+            }
+
+            var initializedLength = CoerceOperand(commit.InitializedLength, lengthType) ?? commit.InitializedLength;
             Emit(
                 MidLevelIrStatementKind.StoreIndirect,
                 $"{text}: length",

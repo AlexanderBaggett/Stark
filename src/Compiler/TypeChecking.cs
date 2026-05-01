@@ -2758,6 +2758,13 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (TryGetDirectAssignmentTargetName(target, out var targetName)
+            && string.Equals(targetName, inductionName, StringComparison.Ordinal))
+        {
+            reason = "memory-backed independent loop bodies cannot assign to the induction variable";
+            return false;
+        }
+
         if (TryValidateIndependentAssignmentTarget(target, scope, out reason))
         {
             return true;

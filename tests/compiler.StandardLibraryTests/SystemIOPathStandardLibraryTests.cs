@@ -59,6 +59,61 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
+    public void StdLibSourceExperimentalPathTryJoinUsesTailRegionPointerCopies()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "IO", "Path.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var tryJoinBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
+            "Expected experimental TryJoin definition in path module.");
+        var tryJoinPointerRangesBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges(",
+            "Expected experimental TryJoinPointerRanges definition in path module.");
+        var tryJoinConstBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinConst(",
+            "Expected experimental TryJoinConst definition in path module.");
+        var tryNormalizeBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryNormalizeSeparators(",
+            "Expected experimental TryNormalizeSeparators definition in path module.");
+        var tryNormalizeConstBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryNormalizeSeparatorsConst(",
+            "Expected experimental TryNormalizeSeparatorsConst definition in path module.");
+        var getConstFactsBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc void @GetConstFacts(",
+            "Expected experimental GetConstFacts definition in path module.");
+
+        Assert.Contains("@TryJoinPointerRanges", tryJoinBody, StringComparison.Ordinal);
+        Assert.Contains("@TryJoinPointerRanges", tryJoinConstBody, StringComparison.Ordinal);
+        Assert.True(
+            CountOccurrences(tryJoinPointerRangesBody, "@System_Experimental_Memory_InitializeBytesFromPointerDisjoint") >= 2,
+            "Expected TryJoin pointer core to copy left and right path ranges through explicit tail-region pointer initialization helpers.");
+        Assert.DoesNotContain("@System_Experimental_Text_OwnedAscii_AppendAscii", tryJoinConstBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Experimental_Text_OwnedAscii_AppendAscii", tryNormalizeConstBody, StringComparison.Ordinal);
+        Assert.Contains("@AppendNormalizedSeparatorsCore", tryNormalizeBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@AppendNormalizedSeparators(", tryNormalizeBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", tryJoinConstBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", tryNormalizeConstBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Text_AsciiLength", getConstFactsBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Text_AsciiData", getConstFactsBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StdLibSourceExperimentalPathCorrectnessSurfaceCompiles()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -71,6 +126,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System.Experimental.Text
                 import System.Memory
                 module Demo
+
+                const ascii ConstLeft = "alpha";
+                const ascii ConstRight = "beta.txt";
+                const ascii ConstNormalizedSource = "alpha//beta///gamma.txt";
 
                 fn bool Ok(System.Memory.MemoryStatus status) {
                     switch (status) {
@@ -169,10 +228,29 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
+                    stack System.Experimental.IO.Path.PathFacts constFacts = System.Experimental.IO.Path.GetConstFacts("alpha/beta.txt");
+                    if (!IsTextExtension(constFacts.Extension())
+                        || !IsBetaBaseName(System.Experimental.IO.Path.BaseNameConst("alpha/beta.txt"))
+                        || !IsAlphaDirectory(System.Experimental.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii constJoined = new();
+                    if (!Ok(System.Experimental.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
+                        return false;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii constNormalized = new();
+                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
+                        return false;
+                    }
+
                     return IsNormalizedPath(normalized.View())
                         && IsOwnedJoinedPath(System.Experimental.IO.Path.Join("alpha", "beta.txt"))
+                        && IsOwnedJoinedPath(System.Experimental.IO.Path.JoinConst(ConstLeft, ConstRight))
                         && IsOwnedJoinedPath(System.Experimental.IO.Path.Join("alpha/", "/beta.txt"))
-                        && IsOwnedNormalizedPath(System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt"));
+                        && IsOwnedNormalizedPath(System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt"))
+                        && IsOwnedNormalizedPath(System.Experimental.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource));
                 }
                 """,
                 appPath),
@@ -210,6 +288,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System.Experimental.Text
                 import System.Memory
                 module App
+
+                const ascii ConstLeft = "alpha";
+                const ascii ConstRight = "beta.txt";
+                const ascii ConstNormalizedSource = "alpha//beta///gamma.txt";
 
                 fn bool Ok(System.Memory.MemoryStatus status) {
                     switch (status) {
@@ -337,6 +419,17 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
+                    stack System.Experimental.IO.Path.PathFacts constFacts = System.Experimental.IO.Path.GetConstFacts("alpha/beta.txt");
+                    if (constFacts.PathLength() != 14
+                        || constFacts.ExtensionLength() != 4
+                        || constFacts.BaseNameLength() != 4
+                        || constFacts.DirectoryNameLength() != 5
+                        || !IsTextExtension(System.Experimental.IO.Path.ExtensionConst("alpha/beta.txt"))
+                        || !IsBetaBaseName(System.Experimental.IO.Path.BaseNameConst("alpha/beta.txt"))
+                        || !IsAlphaDirectory(System.Experimental.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
+                        return false;
+                    }
+
                     stack System.Experimental.IO.Path.PathFacts archive = System.Experimental.IO.Path.GetFacts("archive.tar.gz");
                     if (!IsGzExtension(archive.Extension()) || !IsArchiveBaseName(archive.BaseName()) || archive.DirectoryNameLength() != 0) {
                         return false;
@@ -379,6 +472,16 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 2;
                     }
 
+                    stack mut System.Experimental.Text.OwnedAscii constJoined = new();
+                    if (!Ok(System.Experimental.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
+                        return 10;
+                    }
+
+                    stack mut System.Experimental.Text.OwnedAscii constNormalized = new();
+                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
+                        return 11;
+                    }
+
                     stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedJoin = System.Experimental.IO.Path.Join("alpha", "beta.txt");
                     switch (ownedJoin) {
                         case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedJoinValue):
@@ -389,6 +492,16 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                             return 4;
                     }
 
+                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedConstJoin = System.Experimental.IO.Path.JoinConst(ConstLeft, ConstRight);
+                    switch (ownedConstJoin) {
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedConstJoinValue):
+                            if (!IsJoinedPath(ownedConstJoinValue.View())) {
+                                return 12;
+                            }
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedConstJoinError):
+                            return 13;
+                    }
+
                     stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedNormalize = System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt");
                     switch (ownedNormalize) {
                         case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedNormalizeValue):
@@ -397,6 +510,16 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                             }
                         case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedNormalizeError):
                             return 6;
+                    }
+
+                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedConstNormalize = System.Experimental.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource);
+                    switch (ownedConstNormalize) {
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedConstNormalizeValue):
+                            if (!IsNormalizedPath(ownedConstNormalizeValue.View())) {
+                                return 14;
+                            }
+                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedConstNormalizeError):
+                            return 15;
                     }
 
                     return 0;
@@ -1121,5 +1244,18 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 // Best effort cleanup only.
             }
         }
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 }

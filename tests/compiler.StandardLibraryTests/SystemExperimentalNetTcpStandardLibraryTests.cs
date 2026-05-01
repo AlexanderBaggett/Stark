@@ -124,4 +124,73 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         Assert.Contains("System_Runtime_Platform_WaitWritable", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("System_Net_Tcp", llvm, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void StdLibSourceExperimentalNetTcpBufferReadsUseBulkPaths()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Net", "Tcp.stark");
+        var platformPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        var fixed512Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_FixedByteBuffer512_(");
+        var fixed4096Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_FixedByteBuffer4096_(");
+        var fixed8192Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_FixedByteBuffer8192_(");
+        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_DynamicByteBuffer_i64_0max__(");
+        var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
+
+        Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Platform_ReadSocket", fixedReads, StringComparison.Ordinal);
+        Assert.Contains("FixedByteBuffer512_WriteSlice__mutborrowFixedByteBuffer512_", fixed512Read, StringComparison.Ordinal);
+        Assert.Contains("FixedByteBuffer512_AdvanceWrite", fixed512Read, StringComparison.Ordinal);
+        Assert.Contains("FixedByteBuffer4096_WriteSlice__mutborrowFixedByteBuffer4096_", fixed4096Read, StringComparison.Ordinal);
+        Assert.Contains("FixedByteBuffer4096_AdvanceWrite", fixed4096Read, StringComparison.Ordinal);
+        Assert.Contains("FixedByteBuffer8192_WriteSlice__mutborrowFixedByteBuffer8192_", fixed8192Read, StringComparison.Ordinal);
+        Assert.Contains("FixedByteBuffer8192_AdvanceWrite", fixed8192Read, StringComparison.Ordinal);
+        Assert.DoesNotContain("FixedByteBuffer512_WriteByte", fixed512Read, StringComparison.Ordinal);
+        Assert.DoesNotContain("FixedByteBuffer4096_WriteByte", fixed4096Read, StringComparison.Ordinal);
+        Assert.DoesNotContain("FixedByteBuffer8192_WriteByte", fixed8192Read, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [512 x i8]", fixed512Read, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [4096 x i8]", fixed4096Read, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [8192 x i8]", fixed8192Read, StringComparison.Ordinal);
+
+        Assert.Contains("System_Runtime_Platform_ReadSocket", dynamicRead, StringComparison.Ordinal);
+        Assert.Contains("DynamicByteBuffer_WriteSlice", dynamicRead, StringComparison.Ordinal);
+        Assert.DoesNotContain("DynamicByteBuffer_WriteByte", dynamicRead, StringComparison.Ordinal);
+
+        var platformSource = File.ReadAllText(platformPath);
+        Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
+    }
+
+    private static string ExtractLlvmFunctionBody(string llvm, string functionSignatureFragment)
+    {
+        var signatureIndex = llvm.IndexOf(functionSignatureFragment, StringComparison.Ordinal);
+        Assert.True(signatureIndex >= 0, $"Unable to find LLVM function fragment '{functionSignatureFragment}'.");
+
+        var start = llvm.LastIndexOf("\ndefine ", signatureIndex, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            start = llvm.LastIndexOf("define ", signatureIndex, StringComparison.Ordinal);
+        }
+
+        Assert.True(start >= 0, $"Unable to find LLVM function start for '{functionSignatureFragment}'.");
+
+        var next = llvm.IndexOf("\ndefine ", signatureIndex + functionSignatureFragment.Length, StringComparison.Ordinal);
+        if (next < 0)
+        {
+            next = llvm.Length;
+        }
+
+        return llvm[start..next];
+    }
 }

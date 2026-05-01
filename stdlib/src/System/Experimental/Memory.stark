@@ -25,6 +25,24 @@ public fn System.Memory.MemoryStatus ReserveCodePoints(
     return System.Memory.MemoryStatus.Ok;
 }
 
+public inline fn System.Memory.MemoryStatus AppendBytesDisjoint(
+    disjoint mut borrow dynamic i8[-128 127] storage,
+    disjoint borrow i8[-128 127][] source,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (!storage.TryReserve(count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    stack init i8[-128 127][] tail = init storage[storage.Length, count];
+    unsafe {
+        return InitializeBytesDisjoint(source, tail, count);
+    }
+}
+
 public fn System.Memory.MemoryStatus AppendBytes(
     mut borrow dynamic i8[-128 127] storage,
     borrow i8[-128 127][] source,
@@ -35,15 +53,9 @@ public fn System.Memory.MemoryStatus AppendBytes(
 
     stack i8[-128 127][] initialized = storage[0, storage.Length];
     if disjoint(source, initialized) {
-        if (!storage.TryReserve(count)) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        unsafe {
+            return AppendBytesDisjoint(storage, source, count);
         }
-
-        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-            init storage[storage.Length] = source[index];
-        }
-
-        return System.Memory.MemoryStatus.Ok;
     }
 
     stack mut dynamic i8[-128 127] snapshot = new();
@@ -51,23 +63,18 @@ public fn System.Memory.MemoryStatus AppendBytes(
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
     }
 
-    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
-        init snapshot[snapshot.Length] = source[snapshotIndex];
+    stack init i8[-128 127][] snapshotTail = init snapshot[snapshot.Length, count];
+    unsafe {
+        InitializeBytesDisjoint(source, snapshotTail, count);
     }
 
     stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
-    if (!storage.TryReserve(count)) {
-        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    unsafe {
+        return AppendBytesDisjoint(storage, snapshotView, count);
     }
-
-    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
-        init storage[storage.Length] = snapshotView[copyIndex];
-    }
-
-    return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus AppendFillBytes(
+public inline fn System.Memory.MemoryStatus AppendFillBytes(
     mut borrow dynamic i8[-128 127] storage,
     i8[-128 127] value,
     i64[0 max] count) {
@@ -79,11 +86,30 @@ public fn System.Memory.MemoryStatus AppendFillBytes(
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
     }
 
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-        init storage[storage.Length] = value;
+    stack init i8[-128 127][] tail = init storage[storage.Length, count];
+    return FillBytes(tail, value, count);
+}
+
+public inline fn System.Memory.MemoryStatus AppendCodePointsDisjoint(
+    disjoint mut borrow dynamic i32[-2147483648 2147483647] storage,
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    i64[0 max] count) {
+    if (count == 0) {
+        return System.Memory.MemoryStatus.Ok;
     }
 
-    return System.Memory.MemoryStatus.Ok;
+    if (count > ((2 ** 61) - 1)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    if (!storage.TryReserve((i64[0 (2 ** 61) - 1])count)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    stack init i32[-2147483648 2147483647][] tail = init storage[storage.Length, (i64[0 (2 ** 61) - 1])count];
+    unsafe {
+        return InitializeCodePointsDisjoint(source, tail, (i64[0 (2 ** 61) - 1])count);
+    }
 }
 
 public fn System.Memory.MemoryStatus AppendCodePoints(
@@ -94,41 +120,35 @@ public fn System.Memory.MemoryStatus AppendCodePoints(
         return System.Memory.MemoryStatus.Ok;
     }
 
+    if (count > ((2 ** 61) - 1)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
     stack i32[-2147483648 2147483647][] initialized = storage[0, storage.Length];
     if disjoint(source, initialized) {
-        if (!storage.TryReserve(count)) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        unsafe {
+            return AppendCodePointsDisjoint(storage, source, safeCount);
         }
-
-        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-            init storage[storage.Length] = source[index];
-        }
-
-        return System.Memory.MemoryStatus.Ok;
     }
 
     stack mut dynamic i32[-2147483648 2147483647] snapshot = new();
-    if (!snapshot.TryReserve(count)) {
+    if (!snapshot.TryReserve(safeCount)) {
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
     }
 
-    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
-        init snapshot[snapshot.Length] = source[snapshotIndex];
+    stack init i32[-2147483648 2147483647][] snapshotTail = init snapshot[snapshot.Length, safeCount];
+    unsafe {
+        InitializeCodePointsDisjoint(source, snapshotTail, safeCount);
     }
 
     stack i32[-2147483648 2147483647][] snapshotView = snapshot[0, snapshot.Length];
-    if (!storage.TryReserve(count)) {
-        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    unsafe {
+        return AppendCodePointsDisjoint(storage, snapshotView, safeCount);
     }
-
-    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
-        init storage[storage.Length] = snapshotView[copyIndex];
-    }
-
-    return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus AppendFillCodePoints(
+public inline fn System.Memory.MemoryStatus AppendFillCodePoints(
     mut borrow dynamic i32[-2147483648 2147483647] storage,
     i32[-2147483648 2147483647] value,
     i64[0 max] count) {
@@ -136,18 +156,20 @@ public fn System.Memory.MemoryStatus AppendFillCodePoints(
         return System.Memory.MemoryStatus.Ok;
     }
 
-    if (!storage.TryReserve(count)) {
+    if (count > ((2 ** 61) - 1)) {
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
     }
 
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-        init storage[storage.Length] = value;
+    stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
+    if (!storage.TryReserve(safeCount)) {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
     }
 
-    return System.Memory.MemoryStatus.Ok;
+    stack init i32[-2147483648 2147483647][] tail = init storage[storage.Length, safeCount];
+    return FillCodePoints(tail, value, safeCount);
 }
 
-public fn System.Memory.MemoryStatus InitializeBytesDisjoint(
+public inline finite System.Memory.MemoryStatus InitializeBytesDisjoint(
     disjoint borrow i8[-128 127][] source,
     disjoint init i8[-128 127][] destination,
     i64[0 max] count) {
@@ -158,7 +180,7 @@ public fn System.Memory.MemoryStatus InitializeBytesDisjoint(
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus InitializeBytes(
+public inline finite System.Memory.MemoryStatus InitializeBytes(
     borrow i8[-128 127][] source,
     init i8[-128 127][] destination,
     i64[0 max] count) {
@@ -169,7 +191,18 @@ public fn System.Memory.MemoryStatus InitializeBytes(
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus CopyBytesDisjoint(
+public inline finite System.Memory.MemoryStatus InitializeBytesFromPointerDisjoint(
+    i64[0 max] count,
+    disjoint rawptr<i8[-128 127]>[count] source,
+    disjoint init i8[-128 127][] destination) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = *(&source[index]);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public inline finite void CopyBytesDisjointInfallible(
     disjoint borrow i8[-128 127][] source,
     disjoint borrow mut i8[-128 127][] destination,
     i64[0 max] count) {
@@ -177,6 +210,14 @@ public fn System.Memory.MemoryStatus CopyBytesDisjoint(
         destination[index] = source[index];
     }
 
+    return;
+}
+
+public inline finite System.Memory.MemoryStatus CopyBytesDisjoint(
+    disjoint borrow i8[-128 127][] source,
+    disjoint borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    CopyBytesDisjointInfallible(source, destination, count);
     return System.Memory.MemoryStatus.Ok;
 }
 
@@ -189,7 +230,7 @@ public fn System.Memory.MemoryStatus CopyBytes(
     }
 
     if disjoint(source, destination) {
-        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
             destination[index] = source[index];
         }
 
@@ -213,14 +254,47 @@ public fn System.Memory.MemoryStatus CopyBytes(
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus MoveBytes(
+public inline finite void MoveBytesInfallible(
     borrow i8[-128 127][] source,
     borrow mut i8[-128 127][] destination,
     i64[0 max] count) {
-    return CopyBytes(source, destination, count);
+    if (count == 0) {
+        return;
+    }
+
+    if disjoint(source, destination) {
+        CopyBytesDisjointInfallible(source, destination, count);
+        return;
+    }
+
+    stack rawptr<i8[-128 127]> sourceStart = &source[0];
+    stack rawptr<i8[-128 127]> destinationStart = (rawptr<i8[-128 127]>)(&destination[0]);
+    if (destinationStart < sourceStart) {
+        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            destination[index] = source[index];
+        }
+
+        return;
+    }
+
+    stack mut i64[0 max] remaining = count;
+    while willexit (remaining > 0) {
+        remaining -= 1;
+        destination[remaining] = source[remaining];
+    }
+
+    return;
 }
 
-public fn System.Memory.MemoryStatus FillBytes(
+public inline finite System.Memory.MemoryStatus MoveBytes(
+    borrow i8[-128 127][] source,
+    borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    MoveBytesInfallible(source, destination, count);
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public inline finite System.Memory.MemoryStatus FillBytes(
     init i8[-128 127][] destination,
     i8[-128 127] value,
     i64[0 max] count) {
@@ -231,7 +305,7 @@ public fn System.Memory.MemoryStatus FillBytes(
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus FillInitializedBytes(
+public inline finite void FillInitializedBytesInfallible(
     borrow mut i8[-128 127][] destination,
     i8[-128 127] value,
     i64[0 max] count) {
@@ -239,32 +313,51 @@ public fn System.Memory.MemoryStatus FillInitializedBytes(
         destination[index] = value;
     }
 
+    return;
+}
+
+public inline finite System.Memory.MemoryStatus FillInitializedBytes(
+    borrow mut i8[-128 127][] destination,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    FillInitializedBytesInfallible(destination, value, count);
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus InitializeCodePointsDisjoint(
+public inline finite System.Memory.MemoryStatus InitializeCodePointsDisjoint(
     disjoint borrow i32[-2147483648 2147483647][] source,
     disjoint init i32[-2147483648 2147483647][] destination,
-    i64[0 max] count) {
-    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
     }
 
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus InitializeCodePoints(
+public inline finite System.Memory.MemoryStatus InitializeCodePoints(
     borrow i32[-2147483648 2147483647][] source,
     init i32[-2147483648 2147483647][] destination,
-    i64[0 max] count) {
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
     }
 
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus CopyCodePointsDisjoint(
+public inline finite System.Memory.MemoryStatus InitializeCodePointsFromPointerDisjoint(
+    i64[0 (2 ** 61) - 1] count,
+    disjoint rawptr<i32[-2147483648 2147483647]>[count] source,
+    disjoint init i32[-2147483648 2147483647][] destination) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        init destination[index] = *(&source[index]);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public inline finite void CopyCodePointsDisjointInfallible(
     disjoint borrow i32[-2147483648 2147483647][] source,
     disjoint borrow mut i32[-2147483648 2147483647][] destination,
     i64[0 max] count) {
@@ -272,6 +365,14 @@ public fn System.Memory.MemoryStatus CopyCodePointsDisjoint(
         destination[index] = source[index];
     }
 
+    return;
+}
+
+public inline finite System.Memory.MemoryStatus CopyCodePointsDisjoint(
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    disjoint borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    CopyCodePointsDisjointInfallible(source, destination, count);
     return System.Memory.MemoryStatus.Ok;
 }
 
@@ -284,7 +385,7 @@ public fn System.Memory.MemoryStatus CopyCodePoints(
     }
 
     if disjoint(source, destination) {
-        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
             destination[index] = source[index];
         }
 
@@ -308,25 +409,58 @@ public fn System.Memory.MemoryStatus CopyCodePoints(
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus MoveCodePoints(
+public inline finite void MoveCodePointsInfallible(
     borrow i32[-2147483648 2147483647][] source,
     borrow mut i32[-2147483648 2147483647][] destination,
     i64[0 max] count) {
-    return CopyCodePoints(source, destination, count);
+    if (count == 0) {
+        return;
+    }
+
+    if disjoint(source, destination) {
+        CopyCodePointsDisjointInfallible(source, destination, count);
+        return;
+    }
+
+    stack rawptr<i32[-2147483648 2147483647]> sourceStart = &source[0];
+    stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)(&destination[0]);
+    if (destinationStart < sourceStart) {
+        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            destination[index] = source[index];
+        }
+
+        return;
+    }
+
+    stack mut i64[0 max] remaining = count;
+    while willexit (remaining > 0) {
+        remaining -= 1;
+        destination[remaining] = source[remaining];
+    }
+
+    return;
 }
 
-public fn System.Memory.MemoryStatus FillCodePoints(
+public inline finite System.Memory.MemoryStatus MoveCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    MoveCodePointsInfallible(source, destination, count);
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public inline finite System.Memory.MemoryStatus FillCodePoints(
     init i32[-2147483648 2147483647][] destination,
     i32[-2147483648 2147483647] value,
-    i64[0 max] count) {
-    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
         init destination[index] = value;
     }
 
     return System.Memory.MemoryStatus.Ok;
 }
 
-public fn System.Memory.MemoryStatus FillInitializedCodePoints(
+public inline finite void FillInitializedCodePointsInfallible(
     borrow mut i32[-2147483648 2147483647][] destination,
     i32[-2147483648 2147483647] value,
     i64[0 max] count) {
@@ -334,5 +468,13 @@ public fn System.Memory.MemoryStatus FillInitializedCodePoints(
         destination[index] = value;
     }
 
+    return;
+}
+
+public inline finite System.Memory.MemoryStatus FillInitializedCodePoints(
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i32[-2147483648 2147483647] value,
+    i64[0 max] count) {
+    FillInitializedCodePointsInfallible(destination, value, count);
     return System.Memory.MemoryStatus.Ok;
 }

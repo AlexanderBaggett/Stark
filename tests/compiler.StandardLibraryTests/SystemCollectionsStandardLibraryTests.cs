@@ -817,6 +817,18 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stack mut i64[min max] checksum = 0;
             stack mut i32[0 max] found = 0;
+            stack i32[0 max] refKey = 7;
+            stack i64[0 max] refIndex = dictionary.FindIndex(refKey);
+            if (!dictionary.ContainsIndex(refIndex) || dictionary.GetAtIndex(refIndex) != 35) {
+                return 25;
+            }
+
+            dictionary.GetMutAtIndex(refIndex) = 36;
+            if (dictionary.GetAtIndex(refIndex) != 36) {
+                return 26;
+            }
+
+            dictionary.GetMutAtIndex(refIndex) = 35;
             for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
                 stack i32[0 max] key = i;
                 if (!dictionary.ContainsKey(key) || !dictionary.TryGet(key, found) || found != (i32[0 max])(i * 5)) {
@@ -1778,7 +1790,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void StdLibSourceExperimentalDictionaryLowersThroughDynamicStorage()
+    public void StdLibSourceExperimentalDictionaryUsesSparseRawValueStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -1830,9 +1842,79 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("dynamic_try_reserve", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Collections", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryValueSlot", llvm.Text, StringComparison.Ordinal);
+
+        var reserveBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Dictionary_Reserve__i32_0_2147483647__i32_0_2147483647(",
+            "Expected Dictionary.Reserve specialization to be emitted.");
+        var tryGetBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Dictionary_TryGet__i32_0_2147483647__i32_0_2147483647(",
+            "Expected Dictionary.TryGet specialization to be emitted.");
+
+        Assert.Contains("@System_Memory_Allocate(", reserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", reserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("switch", tryGetBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DictionaryValueSlot", tryGetBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalCollectionReservesUseTailInitializationRegions()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalCollectionReserveLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.Collections
+                import System.Memory
+                module Demo
+
+                fn bool Ok(MemoryStatus status) {
+                    switch (status) {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool GrowCollections() {
+                    stack mut System.Experimental.Collections.RingQueue<i32[0 max]> queue = new();
+                    stack mut System.Experimental.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+                    return Ok(queue.Reserve(32)) && Ok(dictionary.Reserve(32));
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+
+        var ringQueueReserveBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_RingQueue_Reserve__i32_0_2147483647(",
+            "Expected RingQueue.Reserve specialization to be emitted.");
+        var dictionaryReserveBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Dictionary_Reserve__i32_0_2147483647__i32_0_2147483647(",
+            "Expected Dictionary.Reserve specialization to be emitted.");
+
+        Assert.Contains("%slot_addedSlots", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Allocate(", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryValueSlot", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("%slot_nextValueSlots", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.Contains("!llvm.access.group", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2197,6 +2279,73 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void ExperimentalLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var benchmarkPath = Path.Combine(repositoryRoot, "benchmarks", "collections", "ExperimentalLinkedListReservedPush.stark");
+        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var reserveBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_LinkedList_ReserveNodes__i32_0_2147483647(");
+        var allocateBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_LinkedList_AllocateNode__i32_0_2147483647(");
+
+        Assert.Contains("__stark_dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("LinkedListValueSlot", reserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("LinkedListLinks", reserveBody, StringComparison.Ordinal);
+        Assert.Contains("LinkedListValueSlot", allocateBody, StringComparison.Ordinal);
+        Assert.Contains("LinkedList_ReserveNodes__i32_0_2147483647", allocateBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue %System_Experimental_Collections_LinkedListValueSlot_i32_0_2147483647__ zeroinitializer, i8 1", allocateBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExperimentalQueueTryDequeueUsesHeadLengthRingPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var benchmarkPath = Path.Combine(repositoryRoot, "benchmarks", "collections", "ExperimentalQueueChurn.stark");
+        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var tryDequeueBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Queue_TryDequeue__i32_0_2147483647(");
+
+        Assert.Contains("getelementptr i32", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("i32 0, i32 2", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("i32 0, i32 3", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("i32 0, i32 4", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_dynamic_move_at", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("llvm.memmove", tryDequeueBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SourceStdLibExperimentalDictionaryExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -2364,5 +2513,34 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 // Best effort cleanup only.
             }
         }
+    }
+
+    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix)
+    {
+        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
+        Assert.True(functionStart >= 0, $"Expected '{signaturePrefix}' definition to be emitted.");
+
+        var bodyStart = llvm.IndexOf('{', functionStart);
+        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+
+        var depth = 0;
+        for (var index = bodyStart; index < llvm.Length; index++)
+        {
+            var current = llvm[index];
+            if (current == '{')
+            {
+                depth++;
+            }
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return llvm.Substring(functionStart, index - functionStart + 1);
+                }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 }

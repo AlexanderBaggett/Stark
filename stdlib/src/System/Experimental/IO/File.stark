@@ -151,7 +151,12 @@ public struct File {
             return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.InvalidPath);
         }
 
-        return ByteCountFromPlatformResult(self.Inner.ReadBytes(destinationParts.Data, 1, destinationParts.Length));
+        stack mut i64[-9223372036854775808 9223372036854775807] readCount = 0;
+        unsafe {
+            readCount = self.Inner.ReadByteRegion(destinationParts.Data, destinationParts.Length);
+        }
+
+        return ByteCountFromPlatformResult(readCount);
     }
 
     fn System.IO.IOResult<i64[0 max]> Write(mut borrow File self, borrow i8[-128 127][] source) {
@@ -171,8 +176,11 @@ public struct File {
         stack mut i64[0 max] totalWritten = 0;
         while willexit (totalWritten < sourceParts.Length) {
             stack rawptr<i8[-128 127]> chunk = &sourceParts.Data[totalWritten];
-            stack i64[-9223372036854775808 9223372036854775807] written =
-                self.Inner.WriteBytes(chunk, 1, sourceParts.Length - totalWritten);
+            stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
+            unsafe {
+                written = self.Inner.WriteByteRegion(chunk, sourceParts.Length - totalWritten);
+            }
+
             if (written <= 0) {
                 return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.BrokenPipe);
             }

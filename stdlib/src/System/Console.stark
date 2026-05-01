@@ -228,9 +228,13 @@ fn bool RefillConsoleInput() {
         return false;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] readCount = System.Runtime.Platform.ReadStdin(
-        &ConsoleInputStorage.Storage[0],
-        ConsoleInputByteCapacity);
+    stack mut i64[-9223372036854775808 9223372036854775807] readCount = 0;
+    unsafe {
+        readCount = System.Runtime.Platform.ReadStdin(
+            &ConsoleInputStorage.Storage[0],
+            ConsoleInputByteCapacity);
+    }
+
     if (readCount <= 0) {
         CloseConsoleInputHandle();
         return false;

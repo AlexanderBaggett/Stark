@@ -2564,7 +2564,101 @@ internal sealed class SemanticValidator
             BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
             arguments.Start));
 
-        return new ValidationValue(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
+        return BuildCallReturnValue(target, argumentValues, receiverOffset, explicitParameterCount);
+    }
+
+    private ValidationValue BuildCallReturnValue(
+        ValidationValue target,
+        IReadOnlyList<ValidationValue> argumentValues,
+        int receiverOffset,
+        int explicitParameterCount)
+    {
+        if (target.Function is null)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        var returnType = target.Function.ReturnType;
+        if (returnType.BorrowKind == StarkBorrowKind.None)
+        {
+            return new ValidationValue(returnType, NamedType: ResolveNamedTypeSymbol(returnType));
+        }
+
+        var returnedRoot = TryInferBorrowedCallReturnRoot(
+            target,
+            argumentValues,
+            receiverOffset,
+            explicitParameterCount);
+        if (returnedRoot is null)
+        {
+            return new ValidationValue(returnType, NamedType: ResolveNamedTypeSymbol(returnType));
+        }
+
+        var source = returnedRoot.Value;
+        var isAddressMutable = CanMutateReturnedBorrow(returnType, source.Value);
+        return new ValidationValue(
+            returnType,
+            IsAssignable: isAddressMutable && returnType.ElementType is null,
+            RootSymbol: source.Value.RootSymbol,
+            NamedType: ResolveNamedTypeSymbol(returnType),
+            IsIndirectStorageAccess: true,
+            IsAddressMutable: isAddressMutable,
+            UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(source.Value)
+                || returnType.AccessKind == StarkAccessKind.Frozen,
+            HasConstProvenance: HasConstProvenance(source.Value));
+    }
+
+    private static (int ParameterIndex, ValidationValue Value)? TryInferBorrowedCallReturnRoot(
+        ValidationValue target,
+        IReadOnlyList<ValidationValue> argumentValues,
+        int receiverOffset,
+        int explicitParameterCount)
+    {
+        if (target.Function is null)
+        {
+            return null;
+        }
+
+        if (target.Receiver is { RootSymbol: not null } receiver
+            && target.Function.Parameters.Count != 0
+            && CanAliasCalleeParameterMemory(target.Function.Parameters[0].Type))
+        {
+            return (0, receiver);
+        }
+
+        (int ParameterIndex, ValidationValue Value)? candidate = null;
+        for (var index = 0; index < Math.Min(explicitParameterCount, argumentValues.Count); index++)
+        {
+            var parameterIndex = index + receiverOffset;
+            if (argumentValues[index].RootSymbol is null
+                || parameterIndex >= target.Function.Parameters.Count
+                || !CanAliasCalleeParameterMemory(target.Function.Parameters[parameterIndex].Type))
+            {
+                continue;
+            }
+
+            if (candidate is not null)
+            {
+                return null;
+            }
+
+            candidate = (parameterIndex, argumentValues[index]);
+        }
+
+        return candidate;
+    }
+
+    private static bool CanMutateReturnedBorrow(StarkTypeSymbol returnType, ValidationValue source)
+    {
+        if (returnType.AccessKind == StarkAccessKind.Frozen)
+        {
+            return false;
+        }
+
+        return source.IsAddressMutable
+            && (returnType.IsMutableView
+                || returnType.IsMutablePointer
+                || returnType.InitializationKind != StarkInitializationKind.None);
     }
 
     private void ValidatePendingCallArguments(
@@ -4741,8 +4835,11 @@ internal sealed class SemanticValidator
         bool hasBody)
     {
         var isAliasing = CanAliasCalleeParameterMemory(parameter.Type);
-        var writes = parameter.Type.InitializationKind != StarkInitializationKind.None;
-        var reads = isAliasing && !writes;
+        var guaranteedReadOnly = parameter.IsConst || DeriveGuaranteedReadOnly(parameter.Type);
+        var guaranteedWriteOnly = parameter.Type.InitializationKind != StarkInitializationKind.None;
+        var reads = isAliasing && !guaranteedWriteOnly;
+        var writes = guaranteedWriteOnly
+            || (!hasBody && isAliasing && !guaranteedReadOnly);
         var captureKind = ParameterCaptureKind.None;
 
         if (parameter.Type.BorrowKind == StarkBorrowKind.StoreBorrow)

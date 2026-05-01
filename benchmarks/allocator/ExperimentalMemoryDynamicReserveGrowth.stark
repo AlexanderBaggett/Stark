@@ -53,12 +53,14 @@ export ffi fn i32[min max] main() {
         stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
 
         for willexit (stack mut i32[0 32] chunk = 0; chunk < Chunks; chunk += 1) {
-            if (!Ok(System.Experimental.Memory.AppendBytes(bytes, byteSource, byteChunkLength))) {
-                return 1;
-            }
+            unsafe {
+                if (!Ok(System.Experimental.Memory.AppendBytesDisjoint(bytes, byteSource, byteChunkLength))) {
+                    return 1;
+                }
 
-            if (!Ok(System.Experimental.Memory.AppendCodePoints(codePoints, codePointSource, codePointChunkLength))) {
-                return 2;
+                if (!Ok(System.Experimental.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, codePointChunkLength))) {
+                    return 2;
+                }
             }
         }
 

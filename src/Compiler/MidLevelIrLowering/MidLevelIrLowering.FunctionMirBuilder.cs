@@ -1640,6 +1640,10 @@ internal sealed partial class MidLevelIrLowerer
         private void EmitEvaluateExpressionStatement(StarkParser.ExpressionContext expression, MidLevelIrRValue value)
         {
             Emit(MidLevelIrStatementKind.Evaluate, expression.GetText(), value: value);
+            if (value is MidLevelIrCallRValue evaluatedCall)
+            {
+                EmitPostCallDynamicLengthCommits(evaluatedCall);
+            }
 
             if (value is MidLevelIrCallRValue call && IsKnownNoReturnCall(call.FunctionName))
             {
@@ -5484,6 +5488,11 @@ internal sealed partial class MidLevelIrLowerer
                 loweredFunctionName = dictionaryKeySpecialization;
             }
 
+            var postCallDynamicLengthCommits = BuildPostCallDynamicLengthCommits(
+                signature,
+                loweredArguments,
+                indirectArgumentLocals);
+
             call = new MidLevelIrCallRValue(
                 loweredFunctionName,
                 loweredArguments,
@@ -5491,8 +5500,144 @@ internal sealed partial class MidLevelIrLowerer
                 text,
                 indirectArgumentLocals,
                 signature.ReturnType,
-                indirectArgumentAddresses);
+                indirectArgumentAddresses,
+                postCallDynamicLengthCommits);
             return true;
+        }
+
+        private IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? BuildPostCallDynamicLengthCommits(
+            TypedFunctionSignature signature,
+            IReadOnlyList<MidLevelIrOperand> arguments,
+            IReadOnlyList<string?> indirectArgumentLocals)
+        {
+            if (!TryGetFullInitSliceCommitShape(signature, out var destinationIndex, out var countIndex)
+                || destinationIndex >= arguments.Count
+                || countIndex >= arguments.Count
+                || destinationIndex >= indirectArgumentLocals.Count
+                || countIndex >= signature.Parameters.Count
+                || destinationIndex >= signature.Parameters.Count)
+            {
+                return null;
+            }
+
+            var destinationParameterType = signature.Parameters[destinationIndex].Type;
+            if (destinationParameterType.Kind != StarkTypeKind.Slice
+                || destinationParameterType.InitializationKind != StarkInitializationKind.Init)
+            {
+                return null;
+            }
+
+            var destinationLocal = indirectArgumentLocals[destinationIndex];
+            if (destinationLocal is null
+                && arguments[destinationIndex] is MidLevelIrLocalOperand localDestination)
+            {
+                destinationLocal = localDestination.Name;
+            }
+
+            if (destinationLocal is null
+                || !_dynamicInitSliceProvenanceByLocal.TryGetValue(destinationLocal, out var provenance)
+                || arguments[countIndex].Type.Kind != StarkTypeKind.Integer)
+            {
+                return null;
+            }
+
+            var start = CoerceOperand(provenance.StartIndex, NonNegativeI64Type) ?? provenance.StartIndex;
+            var count = CoerceOperand(arguments[countIndex], NonNegativeI64Type) ?? arguments[countIndex];
+            var initializedLength = EmitTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Add,
+                    start,
+                    count,
+                    NonNegativeI64Type,
+                    $"{provenance.StartIndex.Text} + {arguments[countIndex].Text}"),
+                "dynamic_len");
+            if (initializedLength is null)
+            {
+                return null;
+            }
+
+            return
+            [
+                new MidLevelIrDynamicStorageLengthCommit(
+                    provenance.StorageAddress,
+                    provenance.StorageType,
+                    initializedLength)
+            ];
+        }
+
+        private bool TryGetFullInitSliceCommitShape(
+            TypedFunctionSignature signature,
+            out int destinationIndex,
+            out int countIndex)
+        {
+            destinationIndex = -1;
+            countIndex = -1;
+
+            if (IsExperimentalMemoryFullInitSliceHelper(
+                    signature,
+                    "InitializeBytesDisjoint",
+                    "InitializeBytes",
+                    "InitializeCodePointsDisjoint",
+                    "InitializeCodePoints"))
+            {
+                destinationIndex = 1;
+                countIndex = 2;
+                return true;
+            }
+
+            if (IsExperimentalMemoryFullInitSliceHelper(
+                    signature,
+                    "InitializeBytesFromPointerDisjoint",
+                    "InitializeCodePointsFromPointerDisjoint"))
+            {
+                destinationIndex = 2;
+                countIndex = 0;
+                return true;
+            }
+
+            if (IsExperimentalMemoryFullInitSliceHelper(signature, "FillBytes", "FillCodePoints"))
+            {
+                destinationIndex = 0;
+                countIndex = 2;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsExperimentalMemoryFullInitSliceHelper(
+            TypedFunctionSignature signature,
+            params string[] helperNames)
+        {
+            foreach (var candidate in EnumerateFunctionIdentityNames(signature))
+            {
+                foreach (var helperName in helperNames)
+                {
+                    var qualifiedHelperName = $"System.Experimental.Memory.{helperName}";
+                    if (string.Equals(candidate, qualifiedHelperName, StringComparison.Ordinal)
+                        || (string.Equals(CurrentModuleName, "System.Experimental.Memory", StringComparison.Ordinal)
+                            && string.Equals(candidate, helperName, StringComparison.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<string> EnumerateFunctionIdentityNames(TypedFunctionSignature signature)
+        {
+            yield return signature.Name;
+            if (signature.SourceName is not null)
+            {
+                yield return signature.SourceName;
+            }
+
+            if (signature.TemplateName is not null)
+            {
+                yield return signature.TemplateName;
+            }
         }
 
         private PlaceTarget? CreateRootPlaceTarget(MidLevelIrOperand root)
@@ -7214,7 +7359,20 @@ internal sealed partial class MidLevelIrLowerer
                 isConstant: false,
                 hasConstProvenance: RValueHasConstProvenance(value));
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {value.Text}", name, value.Type, value);
+            if (value is MidLevelIrCallRValue call)
+            {
+                EmitPostCallDynamicLengthCommits(call);
+            }
+
             return new MidLevelIrLocalOperand(name, value.Type);
+        }
+
+        private void EmitPostCallDynamicLengthCommits(MidLevelIrCallRValue call)
+        {
+            foreach (var commit in call.PostCallDynamicLengthCommits ?? [])
+            {
+                EmitDynamicStorageLengthCommitCore(commit, $"{call.Text}: dynamic length");
+            }
         }
 
         private MidLevelIrOperand EmitRequiredTemporary(MidLevelIrRValue value, string hint)

@@ -207,6 +207,89 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
     }
 
     [Fact]
+    public void StdLibSourceExperimentalConsoleByteAndLineWritesUseDirectPlatformPaths()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Console.stark");
+        var platformPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark");
+        var resolver = new TargetAwareStdLibModuleResolver(
+            new FileSystemModuleResolver(sourceRoot),
+            [sourceRoot],
+            targetInfo: null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                ModuleResolver: resolver));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        var writeBytesToStdout = ExtractLlvmFunctionBody(llvm, "@WriteBytesToStdout(");
+        var writeBytesToStderr = ExtractLlvmFunctionBody(llvm, "@WriteBytesToStderr(");
+        var writeBytesLineToStdout = ExtractLlvmFunctionBody(llvm, "@WriteBytesLineToStdout(");
+        var writeBytesLineToStderr = ExtractLlvmFunctionBody(llvm, "@WriteBytesLineToStderr(");
+        var writeLineAscii = ExtractLlvmFunctionBody(llvm, "@WriteLine__ascii_(");
+        var writeLineUnicode = ExtractLlvmFunctionBody(llvm, "@WriteLine__unicode_(");
+        var writeLineBytes = ExtractLlvmFunctionBody(llvm, "@WriteLine__borrowi8_minmax____(");
+        var writeErrorLineAscii = ExtractLlvmFunctionBody(llvm, "@WriteErrorLine__ascii_(");
+        var writeErrorLineUnicode = ExtractLlvmFunctionBody(llvm, "@WriteErrorLine__unicode_(");
+        var writeErrorLineBytes = ExtractLlvmFunctionBody(llvm, "@WriteErrorLine__borrowi8_minmax____(");
+        var byteWriteBodies = string.Join(
+            Environment.NewLine,
+            [writeBytesToStdout, writeBytesToStderr, writeBytesLineToStdout, writeBytesLineToStderr]);
+
+        Assert.Contains("@System_Runtime_Platform_WriteStdoutBytes(", writeBytesToStdout, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStderrBytes(", writeBytesToStderr, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStdoutBytesLine(", writeBytesLineToStdout, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStderrBytesLine(", writeBytesLineToStderr, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStdoutAsciiLine(", writeLineAscii, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStdoutUnicodeLine(", writeLineUnicode, StringComparison.Ordinal);
+        Assert.Contains("@WriteBytesLineToStdout(", writeLineBytes, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStderrAsciiLine(", writeErrorLineAscii, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_WriteStderrUnicodeLine(", writeErrorLineUnicode, StringComparison.Ordinal);
+        Assert.Contains("@WriteBytesLineToStderr(", writeErrorLineBytes, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_Experimental_Text_OwnedAscii_AppendByte", byteWriteBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Write__ascii_", writeLineAscii, StringComparison.Ordinal);
+        Assert.DoesNotContain("@WriteError__ascii_", writeErrorLineAscii, StringComparison.Ordinal);
+
+        var platformSource = File.ReadAllText(platformPath);
+        Assert.Contains("WriteStdoutBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length)", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteStderrBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length)", platformSource, StringComparison.Ordinal);
+        Assert.Contains("ReadStdin(rawmutptr<i8[-128 127]>[capacity] buffer, i64[0 max] capacity)", platformSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        var bufferLine = ExtractLlvmFunctionBody(llvm, "@WriteBufferLineToHandle(");
+        var asciiLine = ExtractLlvmFunctionBody(llvm, "@WriteAsciiLineToHandle(");
+        var unicodeLine = ExtractLlvmFunctionBody(llvm, "@WriteUnicodeLineToHandle(");
+
+        Assert.Contains("%System_Runtime_Buffer_ByteBuffer8192", bufferLine, StringComparison.Ordinal);
+        Assert.Contains("@WriteBufferToHandle(", bufferLine, StringComparison.Ordinal);
+        Assert.Contains("@WriteBufferLineToHandle(", asciiLine, StringComparison.Ordinal);
+        Assert.Contains("%System_Runtime_Buffer_ByteBuffer4096", unicodeLine, StringComparison.Ordinal);
+        Assert.Contains("@AppendUtf8CodePoint(", unicodeLine, StringComparison.Ordinal);
+        Assert.Contains("i32 10", unicodeLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SourceStdLibExperimentalConsoleExecutableRuns()
     {
         await AssertSourceExecutableRunsAsync(
@@ -272,5 +355,27 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                 // Best effort cleanup only.
             }
         }
+    }
+
+    private static string ExtractLlvmFunctionBody(string llvm, string functionSignatureFragment)
+    {
+        var signatureIndex = llvm.IndexOf(functionSignatureFragment, StringComparison.Ordinal);
+        Assert.True(signatureIndex >= 0, $"Unable to find LLVM function fragment '{functionSignatureFragment}'.");
+
+        var start = llvm.LastIndexOf("\ndefine ", signatureIndex, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            start = llvm.LastIndexOf("define ", signatureIndex, StringComparison.Ordinal);
+        }
+
+        Assert.True(start >= 0, $"Unable to find LLVM function start for '{functionSignatureFragment}'.");
+
+        var next = llvm.IndexOf("\ndefine ", signatureIndex + functionSignatureFragment.Length, StringComparison.Ordinal);
+        if (next < 0)
+        {
+            next = llvm.Length;
+        }
+
+        return llvm[start..next];
     }
 }

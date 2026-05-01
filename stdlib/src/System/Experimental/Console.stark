@@ -89,7 +89,11 @@ fn bool RefillConsoleInput() {
         return false;
     }
 
-    stack i64[min max] readCount = System.Runtime.Platform.ReadStdin(&ConsoleInputStorage.Storage[0], ConsoleInputByteCapacity);
+    stack mut i64[min max] readCount = 0;
+    unsafe {
+        readCount = System.Runtime.Platform.ReadStdin(&ConsoleInputStorage.Storage[0], ConsoleInputByteCapacity);
+    }
+
     if (readCount <= 0) {
         CloseConsoleInputHandle();
         return false;
@@ -163,17 +167,16 @@ fn System.IO.IOStatus WriteBytesToStdout(borrow i8[min max][] source) {
         return System.IO.IOStatus.Ok;
     }
 
-    stack mut System.Experimental.Text.OwnedAscii text = new();
-    for willexit (stack mut i64[0 max] index = 0; index < sourceParts.Length; index += 1) {
-        stack System.Memory.MemoryStatus status = text.AppendByte((i8[-128 127])source[index]);
-        switch (status) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
-            case System.Memory.MemoryStatus.Ok:
-        }
+    if (sourceParts.Data == null) {
+        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
     }
 
-    return Write(text);
+    stack mut i32[min max] result = 0;
+    unsafe {
+        result = System.Runtime.Platform.WriteStdoutBytes(sourceParts.Data, sourceParts.Length);
+    }
+
+    return StatusFromWriteResult(result);
 }
 
 fn System.IO.IOStatus WriteBytesToStderr(borrow i8[min max][] source) {
@@ -182,17 +185,44 @@ fn System.IO.IOStatus WriteBytesToStderr(borrow i8[min max][] source) {
         return System.IO.IOStatus.Ok;
     }
 
-    stack mut System.Experimental.Text.OwnedAscii text = new();
-    for willexit (stack mut i64[0 max] index = 0; index < sourceParts.Length; index += 1) {
-        stack System.Memory.MemoryStatus status = text.AppendByte((i8[-128 127])source[index]);
-        switch (status) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
-            case System.Memory.MemoryStatus.Ok:
-        }
+    if (sourceParts.Data == null) {
+        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
     }
 
-    return WriteError(text);
+    stack mut i32[min max] result = 0;
+    unsafe {
+        result = System.Runtime.Platform.WriteStderrBytes(sourceParts.Data, sourceParts.Length);
+    }
+
+    return StatusFromWriteResult(result);
+}
+
+fn System.IO.IOStatus WriteBytesLineToStdout(borrow i8[min max][] source) {
+    stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
+    if (sourceParts.Length > 0 && sourceParts.Data == null) {
+        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+    }
+
+    stack mut i32[min max] result = 0;
+    unsafe {
+        result = System.Runtime.Platform.WriteStdoutBytesLine(sourceParts.Data, sourceParts.Length);
+    }
+
+    return StatusFromWriteResult(result);
+}
+
+fn System.IO.IOStatus WriteBytesLineToStderr(borrow i8[min max][] source) {
+    stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
+    if (sourceParts.Length > 0 && sourceParts.Data == null) {
+        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+    }
+
+    stack mut i32[min max] result = 0;
+    unsafe {
+        result = System.Runtime.Platform.WriteStderrBytesLine(sourceParts.Data, sourceParts.Length);
+    }
+
+    return StatusFromWriteResult(result);
 }
 
 public fn System.IO.IOStatus Write(ascii text) {
@@ -232,53 +262,23 @@ public fn System.IO.IOStatus Write(borrow System.Experimental.Runtime.Buffer.Fix
 }
 
 public fn System.IO.IOStatus WriteLine(ascii text) {
-    stack System.IO.IOStatus status = Write(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write("\n");
-    }
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutAsciiLine(text));
 }
 
 public fn System.IO.IOStatus WriteLine(unicode text) {
-    stack System.IO.IOStatus status = Write(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write((unicode)"\n");
-    }
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutUnicodeLine(text));
 }
 
 public fn System.IO.IOStatus WriteLine(mut borrow System.Experimental.Text.OwnedAscii text) {
-    stack System.IO.IOStatus status = Write(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write("\n");
-    }
+    return WriteLine(text.View());
 }
 
 public fn System.IO.IOStatus WriteLine(mut borrow System.Experimental.Text.OwnedUnicode text) {
-    stack System.IO.IOStatus status = Write(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write((unicode)"\n");
-    }
+    return WriteLine(text.View());
 }
 
 public fn System.IO.IOStatus WriteLine(borrow i8[min max][] source) {
-    stack System.IO.IOStatus status = WriteBytesToStdout(source);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return Write("\n");
-    }
+    return WriteBytesLineToStdout(source);
 }
 
 public fn System.IO.IOStatus WriteLine(borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer source) {
@@ -318,53 +318,23 @@ public fn System.IO.IOStatus WriteError(borrow i8[min max][] source) {
 }
 
 public fn System.IO.IOStatus WriteErrorLine(ascii text) {
-    stack System.IO.IOStatus status = WriteError(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError("\n");
-    }
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStderrAsciiLine(text));
 }
 
 public fn System.IO.IOStatus WriteErrorLine(unicode text) {
-    stack System.IO.IOStatus status = WriteError(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError((unicode)"\n");
-    }
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStderrUnicodeLine(text));
 }
 
 public fn System.IO.IOStatus WriteErrorLine(mut borrow System.Experimental.Text.OwnedAscii text) {
-    stack System.IO.IOStatus status = WriteError(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError("\n");
-    }
+    return WriteErrorLine(text.View());
 }
 
 public fn System.IO.IOStatus WriteErrorLine(mut borrow System.Experimental.Text.OwnedUnicode text) {
-    stack System.IO.IOStatus status = WriteError(text);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError((unicode)"\n");
-    }
+    return WriteErrorLine(text.View());
 }
 
 public fn System.IO.IOStatus WriteErrorLine(borrow i8[min max][] source) {
-    stack System.IO.IOStatus status = WriteBytesToStderr(source);
-    switch (status) {
-        case System.IO.IOStatus.Err(var error):
-            return System.IO.IOStatus.Err(error);
-        case System.IO.IOStatus.Ok:
-            return WriteError("\n");
-    }
+    return WriteBytesLineToStderr(source);
 }
 
 public fn System.IO.IOStatus WriteErrorLine(borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer source) {

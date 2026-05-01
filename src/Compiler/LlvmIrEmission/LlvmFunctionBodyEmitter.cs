@@ -362,13 +362,20 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private bool TryEmitOptimizedRawPointerLoopIntrinsicCall(RawPointerLoopIntrinsicPlan plan)
     {
-        return plan.Kind switch
+        var emitted = plan.Kind switch
         {
             RawPointerLoopIntrinsicKind.Memcpy => TryEmitOptimizedRawPointerMemcpy(plan),
             RawPointerLoopIntrinsicKind.Memmove => TryEmitOptimizedRawPointerMemmove(plan),
             RawPointerLoopIntrinsicKind.Memset => TryEmitOptimizedRawPointerMemset(plan),
             _ => false
         };
+        if (!emitted)
+        {
+            return false;
+        }
+
+        EmitOptimizedRawPointerLoopDynamicLengthCommit(plan);
+        return true;
     }
 
     private bool TryEmitOptimizedRawPointerMemcpy(RawPointerLoopIntrinsicPlan plan)
@@ -513,12 +520,13 @@ internal sealed class LlvmFunctionBodyEmitter
         string count64;
         if (countBitWidth == 64)
         {
-            count64 = FormatValue(plan.Count);
+            count64 = EmitOptimizedRawPointerLoopIntegerValue(plan.Count, plan.Count.Type, "rawptr_loop_count");
         }
         else
         {
+            var countValue = EmitOptimizedRawPointerLoopIntegerValue(plan.Count, plan.Count.Type, "rawptr_loop_count");
             count64 = $"%{EscapeIdentifier(CreateAbiTempName("rawptr_loop_count"))}";
-            AppendLine($"  {count64} = zext {MapType(plan.Count.Type)} {FormatValue(plan.Count)} to i64");
+            AppendLine($"  {count64} = zext {MapType(plan.Count.Type)} {countValue} to i64");
         }
 
         if (elementLayout.SizeBytes == 1)
@@ -566,6 +574,13 @@ internal sealed class LlvmFunctionBodyEmitter
                     AppendLine($"  {loaded} = load {MapType(load.Type)}, ptr {address}{GetKnownPointerAlignmentSuffix(load.Address, load.Type)}");
                     return loaded;
                 }
+                case SsaLoadLocalRValue loadLocal:
+                {
+                    EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
+                    var loaded = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_slice"))}";
+                    AppendLine($"  {loaded} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetStackObjectAlignmentSuffix(loadLocal.Type)}");
+                    return loaded;
+                }
             }
         }
 
@@ -585,10 +600,118 @@ internal sealed class LlvmFunctionBodyEmitter
                     return EmitOptimizedRawPointerLoopAddressOfParameter(addressOfParameter, purpose);
                 case SsaAddressOfLocalRValue addressOfLocal:
                     return EmitOptimizedRawPointerLoopAddressOfLocal(addressOfLocal, purpose);
+                case SsaFieldAddressRValue fieldAddress:
+                {
+                    var baseAddress = EmitOptimizedRawPointerLoopAddress(fieldAddress.Address, $"{purpose}_base");
+                    var fieldPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_field"))}";
+                    AppendLine($"  {fieldPointer} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {baseAddress}, i32 0, i32 {fieldAddress.FieldIndex}");
+                    return fieldPointer;
+                }
             }
         }
 
         return FormatValue(address);
+    }
+
+    private void EmitOptimizedRawPointerLoopDynamicLengthCommit(RawPointerLoopIntrinsicPlan plan)
+    {
+        if (plan.DynamicLengthCommit is not { } commit)
+        {
+            return;
+        }
+
+        var address = EmitOptimizedRawPointerLoopAddress(commit.LengthAddress, "dynamic_length_commit");
+        var count = EmitIntegerForOptimizedRawPointerLoopLengthCommit(plan.Count, commit.LengthType, "dynamic_length_count");
+        var start = EmitIntegerForOptimizedRawPointerLoopLengthCommit(commit.StartLength, commit.LengthType, "dynamic_length_start");
+        var finalLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_length_final"))}";
+        AppendLine($"  {finalLength} = add {MapType(commit.LengthType)} {start}, {count}");
+        AppendLine($"  store {MapType(commit.LengthType)} {finalLength}, ptr {address}{GetKnownPointerAlignmentSuffix(commit.LengthAddress, commit.LengthType)}");
+    }
+
+    private string EmitIntegerForOptimizedRawPointerLoopLengthCommit(
+        SsaValue value,
+        StarkTypeSymbol targetType,
+        string purpose)
+    {
+        if (value.Type.Kind != StarkTypeKind.Integer
+            || targetType.Kind != StarkTypeKind.Integer
+            || value.Type.BitWidth is not { } sourceWidth
+            || targetType.BitWidth is not { } targetWidth)
+        {
+            return FormatValue(value);
+        }
+
+        if (value is SsaValueReference reference
+            && _valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            switch (definition)
+            {
+                case SsaUseRValue use:
+                    return EmitIntegerForOptimizedRawPointerLoopLengthCommit(use.Value, targetType, purpose);
+                case SsaConvertRValue convert when CanPreserveIntegerRangeThroughConversion(convert):
+                    return EmitIntegerForOptimizedRawPointerLoopLengthCommit(convert.Operand, targetType, purpose);
+                case SsaBinaryRValue binary when IsAddZero(binary, _valueDefinitions):
+                    return EmitIntegerForOptimizedRawPointerLoopLengthCommit(
+                        IsZeroIntegerValue(binary.Left, _valueDefinitions, new HashSet<string>(StringComparer.Ordinal))
+                            ? binary.Right
+                            : binary.Left,
+                        targetType,
+                        purpose);
+            }
+        }
+
+        if (sourceWidth == targetWidth)
+        {
+            return FormatValue(value);
+        }
+
+        var converted = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+        var op = sourceWidth < targetWidth ? "zext" : "trunc";
+        AppendLine($"  {converted} = {op} {MapType(value.Type)} {FormatValue(value)} to {MapType(targetType)}");
+        return converted;
+    }
+
+    private string EmitOptimizedRawPointerLoopIntegerValue(
+        SsaValue value,
+        StarkTypeSymbol targetType,
+        string purpose)
+    {
+        if (value.Type.Kind != StarkTypeKind.Integer
+            || targetType.Kind != StarkTypeKind.Integer
+            || value.Type.BitWidth is not { } sourceWidth
+            || targetType.BitWidth is not { } targetWidth)
+        {
+            return FormatValue(value);
+        }
+
+        if (value is SsaValueReference reference
+            && _valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            switch (definition)
+            {
+                case SsaUseRValue use:
+                    return EmitOptimizedRawPointerLoopIntegerValue(use.Value, targetType, purpose);
+                case SsaConvertRValue convert when CanPreserveIntegerRangeThroughConversion(convert):
+                    return EmitOptimizedRawPointerLoopIntegerValue(convert.Operand, targetType, purpose);
+                case SsaBinaryRValue binary when IsAddZero(binary, _valueDefinitions):
+                    return EmitOptimizedRawPointerLoopIntegerValue(
+                        IsZeroIntegerValue(binary.Left, _valueDefinitions, new HashSet<string>(StringComparer.Ordinal))
+                            ? binary.Right
+                            : binary.Left,
+                        targetType,
+                        purpose);
+            }
+        }
+
+        if (sourceWidth == targetWidth)
+        {
+            return FormatValue(value);
+        }
+
+        var converted = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+        var op = sourceWidth < targetWidth ? "zext" : "trunc";
+        AppendLine($"  {converted} = {op} {MapType(value.Type)} {FormatValue(value)} to {MapType(targetType)}");
+        return converted;
     }
 
     private string EmitOptimizedRawPointerLoopAddressOfParameter(SsaAddressOfParameterRValue addressOfParameter, string purpose)
@@ -725,7 +848,7 @@ internal sealed class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
         var plans = new List<RawPointerLoopIntrinsicPlan>();
-        if (!function.HasBody || function.ReturnType.Kind != StarkTypeKind.Void)
+        if (!function.HasBody)
         {
             return plans;
         }
@@ -1820,7 +1943,7 @@ internal sealed class LlvmFunctionBodyEmitter
         out RawPointerLoopIntrinsicPlan plan)
     {
         plan = null!;
-        if (!TryGetSingleStore(loop.Body, out var store)
+        if (!TryGetDataStoreAndOptionalDynamicLengthCommit(loop, out var store, out var dynamicLengthCommit)
             || store.Value is not SsaValueReference loadReference
             || !loop.ValueDefinitions.TryGetValue(loadReference.Name, out var loadDefinition)
             || !TryMatchMemoryLoopIndexedElementAddress(
@@ -1872,6 +1995,11 @@ internal sealed class LlvmFunctionBodyEmitter
             allowedValueNames.Add(valueName);
         }
 
+        foreach (var valueName in dynamicLengthCommit?.SupportValueNames ?? [])
+        {
+            allowedValueNames.Add(valueName);
+        }
+
         if (!BodyContainsOnlyAllowedInstructions(loop.Body, allowedValueNames))
         {
             return false;
@@ -1886,7 +2014,8 @@ internal sealed class LlvmFunctionBodyEmitter
             loop.Count,
             store.Location,
             DestinationBaseIsSlice: destinationBaseIsSlice,
-            SourceBaseIsSlice: sourceBaseIsSlice);
+            SourceBaseIsSlice: sourceBaseIsSlice,
+            DynamicLengthCommit: dynamicLengthCommit);
         return true;
     }
 
@@ -1896,7 +2025,7 @@ internal sealed class LlvmFunctionBodyEmitter
         out RawPointerLoopIntrinsicPlan plan)
     {
         plan = null!;
-        if (!TryGetSingleStore(loop.Body, out var store)
+        if (!TryGetDataStoreAndOptionalDynamicLengthCommit(loop, out var store, out var dynamicLengthCommit)
             || !TryMatchMemoryLoopIndexedElementAddress(
                 store.Address,
                 loop.InductionValueName,
@@ -1929,6 +2058,11 @@ internal sealed class LlvmFunctionBodyEmitter
             allowedValueNames.Add(valueName);
         }
 
+        foreach (var valueName in dynamicLengthCommit?.SupportValueNames ?? [])
+        {
+            allowedValueNames.Add(valueName);
+        }
+
         if (!BodyContainsOnlyAllowedInstructions(loop.Body, allowedValueNames))
         {
             return false;
@@ -1942,8 +2076,213 @@ internal sealed class LlvmFunctionBodyEmitter
             destinationElementType,
             loop.Count,
             store.Location,
-            DestinationBaseIsSlice: destinationBaseIsSlice);
+            DestinationBaseIsSlice: destinationBaseIsSlice,
+            DynamicLengthCommit: dynamicLengthCommit);
         return true;
+    }
+
+    private static bool TryGetDataStoreAndOptionalDynamicLengthCommit(
+        CanonicalRawPointerLoop loop,
+        out SsaStoreIndirectInstruction dataStore,
+        out DynamicLengthCommitPlan? dynamicLengthCommit)
+    {
+        dataStore = null!;
+        dynamicLengthCommit = null;
+        var stores = loop.Body.Instructions.OfType<SsaStoreIndirectInstruction>().ToArray();
+        if (stores.Length == 1)
+        {
+            dataStore = stores[0];
+            return true;
+        }
+
+        if (stores.Length != 2)
+        {
+            return false;
+        }
+
+        if (TryMatchDynamicLengthCommitStore(loop, stores[0], out dynamicLengthCommit))
+        {
+            dataStore = stores[1];
+            return true;
+        }
+
+        if (TryMatchDynamicLengthCommitStore(loop, stores[1], out dynamicLengthCommit))
+        {
+            dataStore = stores[0];
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryMatchDynamicLengthCommitStore(
+        CanonicalRawPointerLoop loop,
+        SsaStoreIndirectInstruction store,
+        out DynamicLengthCommitPlan commit)
+    {
+        commit = null!;
+        if (store.Address is not SsaValueReference addressReference
+            || !loop.ValueDefinitions.TryGetValue(addressReference.Name, out var addressDefinition)
+            || addressDefinition is not SsaFieldAddressRValue
+            {
+                FieldName: "Length",
+                AggregateType.Kind: StarkTypeKind.Dynamic
+            }
+            || store.ValueType.Kind != StarkTypeKind.Integer
+            || !TryMatchDynamicLengthCommitValue(
+                loop,
+                store.Value,
+                out var startLength,
+                out var supportValueNames)
+            || ValueReferencesBodyDefinition(startLength, loop.Body))
+        {
+            return false;
+        }
+
+        var support = supportValueNames.ToHashSet(StringComparer.Ordinal);
+        support.Add(addressReference.Name);
+        commit = new DynamicLengthCommitPlan(
+            store.Address,
+            startLength,
+            store.ValueType,
+            support.ToArray());
+        return true;
+    }
+
+    private static bool TryMatchDynamicLengthCommitValue(
+        CanonicalRawPointerLoop loop,
+        SsaValue value,
+        out SsaValue startLength,
+        out IReadOnlyList<string> supportValueNames)
+    {
+        startLength = null!;
+        var support = new HashSet<string>(StringComparer.Ordinal);
+        if (!TryMatchAddOne(value, loop.ValueDefinitions, support, out var beforeIncrement)
+            || !TryMatchAddWithInduction(
+                beforeIncrement,
+                loop.InductionValueName,
+                loop.ValueDefinitions,
+                support,
+                out startLength))
+        {
+            supportValueNames = [];
+            return false;
+        }
+
+        supportValueNames = support.ToArray();
+        return true;
+    }
+
+    private static bool TryMatchAddOne(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> supportValueNames,
+        out SsaValue other)
+    {
+        other = null!;
+        if (value is not SsaValueReference reference
+            || !definitions.TryGetValue(reference.Name, out var definition)
+            || definition is not SsaBinaryRValue
+            {
+                Operator: SsaBinaryOperator.Add or SsaBinaryOperator.WrappingAdd
+            } binary)
+        {
+            return false;
+        }
+
+        if (IsOneIntegerConstant(binary.Left))
+        {
+            supportValueNames.Add(reference.Name);
+            other = binary.Right;
+            return true;
+        }
+
+        if (IsOneIntegerConstant(binary.Right))
+        {
+            supportValueNames.Add(reference.Name);
+            other = binary.Left;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryMatchAddWithInduction(
+        SsaValue value,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> supportValueNames,
+        out SsaValue other)
+    {
+        other = null!;
+        if (value is not SsaValueReference reference
+            || !definitions.TryGetValue(reference.Name, out var definition)
+            || definition is not SsaBinaryRValue
+            {
+                Operator: SsaBinaryOperator.Add or SsaBinaryOperator.WrappingAdd
+            } binary)
+        {
+            return false;
+        }
+
+        if (IsInductionValue(binary.Left, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            supportValueNames.Add(reference.Name);
+            AddInductionSupportValueNames(binary.Left, inductionValueName, definitions, supportValueNames);
+            other = binary.Right;
+            return true;
+        }
+
+        if (IsInductionValue(binary.Right, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            supportValueNames.Add(reference.Name);
+            AddInductionSupportValueNames(binary.Right, inductionValueName, definitions, supportValueNames);
+            other = binary.Left;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void AddInductionSupportValueNames(
+        SsaValue value,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> supportValueNames)
+    {
+        if (value is not SsaValueReference reference
+            || string.Equals(reference.Name, inductionValueName, StringComparison.Ordinal)
+            || !definitions.TryGetValue(reference.Name, out var definition))
+        {
+            return;
+        }
+
+        supportValueNames.Add(reference.Name);
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                AddInductionSupportValueNames(use.Value, inductionValueName, definitions, supportValueNames);
+                break;
+            case SsaConvertRValue convert when CanPreserveIntegerRangeThroughConversion(convert):
+                AddInductionSupportValueNames(convert.Operand, inductionValueName, definitions, supportValueNames);
+                break;
+            case SsaBinaryRValue binary when IsAddZero(binary, definitions):
+                AddInductionSupportValueNames(binary.Left, inductionValueName, definitions, supportValueNames);
+                AddInductionSupportValueNames(binary.Right, inductionValueName, definitions, supportValueNames);
+                break;
+        }
+    }
+
+    private static bool ValueReferencesBodyDefinition(SsaValue value, SsaBasicBlock body)
+    {
+        if (value is not SsaValueReference reference)
+        {
+            return false;
+        }
+
+        return body.Phis.Any(phi => string.Equals(phi.ResultName, reference.Name, StringComparison.Ordinal))
+            || body.Instructions.OfType<SsaValueInstruction>()
+                .Any(instruction => string.Equals(instruction.ResultName, reference.Name, StringComparison.Ordinal));
     }
 
     private static bool TryGetSingleStore(SsaBasicBlock body, out SsaStoreIndirectInstruction store)
@@ -2172,12 +2511,7 @@ internal sealed class LlvmFunctionBodyEmitter
         supportValueNames = [];
         if (slice is not SsaValueReference sliceReference
             || !definitions.TryGetValue(sliceReference.Name, out var definition)
-            || definition is not SsaLoadIndirectRValue load
-            || load.Type.Kind != StarkTypeKind.Slice
-            || !TryMatchLoopInvariantSliceHeaderAddress(
-                load.Address,
-                definitions,
-                out var addressSupportValueNames))
+            || !TryMatchLoopInvariantSliceLoad(definition, definitions, out var addressSupportValueNames))
         {
             return false;
         }
@@ -2187,6 +2521,26 @@ internal sealed class LlvmFunctionBodyEmitter
         baseSlice = slice;
         supportValueNames = supportNames;
         return true;
+    }
+
+    private static bool TryMatchLoopInvariantSliceLoad(
+        SsaRValue definition,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out IReadOnlyList<string> supportValueNames)
+    {
+        supportValueNames = [];
+        switch (definition)
+        {
+            case SsaLoadIndirectRValue load
+                when load.Type.Kind == StarkTypeKind.Slice
+                     && TryMatchLoopInvariantSliceHeaderAddress(load.Address, definitions, out var addressSupportValueNames):
+                supportValueNames = addressSupportValueNames;
+                return true;
+            case SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Slice }:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static bool TryMatchLoopInvariantSliceHeaderAddress(
@@ -2368,6 +2722,14 @@ internal sealed class LlvmFunctionBodyEmitter
                         return TryResolveEntryAvailableValue(use.Value, definitions, nonEntryValueNames, visitedValueNames, out resolved);
                     }
 
+                    if (definition is SsaConvertRValue convert
+                        && CanPreserveIntegerRangeThroughConversion(convert)
+                        && TryResolveEntryAvailableValue(convert.Operand, definitions, nonEntryValueNames, visitedValueNames, out _))
+                    {
+                        resolved = value;
+                        return true;
+                    }
+
                     if (definition is SsaBinaryRValue binary && IsAddZero(binary, definitions))
                     {
                         return TryResolveEntryAvailableValue(
@@ -2491,8 +2853,19 @@ internal sealed class LlvmFunctionBodyEmitter
         {
             case SsaUseRValue use:
                 return TryResolveParameterName(function, use.Value, definitions, out parameterName);
+            case SsaLoadLocalRValue loadLocal
+                when TryResolveSingleStoredLocalValue(function, loadLocal.LocalName, out var storedValue):
+                return TryResolveParameterName(function, storedValue, definitions, out parameterName);
             case SsaLoadIndirectRValue load:
                 return TryResolveParameterNameFromAddress(function, load.Address, definitions, out parameterName);
+            case SsaMakeSliceFromPointerRValue makeSlice:
+                return TryResolveParameterName(function, makeSlice.Pointer, definitions, out parameterName);
+            case SsaElementAddressRValue elementAddress:
+                return TryResolveParameterName(function, elementAddress.Address, definitions, out parameterName);
+            case SsaSliceElementAddressRValue sliceElementAddress:
+                return TryResolveParameterName(function, sliceElementAddress.Slice, definitions, out parameterName);
+            case SsaExtractFieldRValue extractField:
+                return TryResolveParameterName(function, extractField.Target, definitions, out parameterName);
             default:
                 parameterName = string.Empty;
                 return false;
@@ -2528,10 +2901,44 @@ internal sealed class LlvmFunctionBodyEmitter
             case SsaAddressOfParameterRValue addressOfParameter:
                 parameterName = addressOfParameter.ParameterName;
                 return true;
+            case SsaAddressOfLocalRValue addressOfLocal
+                when TryResolveSingleStoredLocalValue(function, addressOfLocal.LocalName, out var storedValue):
+                return TryResolveParameterName(function, storedValue, definitions, out parameterName);
+            case SsaFieldAddressRValue fieldAddress:
+                return TryResolveParameterNameFromAddress(function, fieldAddress.Address, definitions, out parameterName);
+            case SsaElementAddressRValue elementAddress:
+                return TryResolveParameterName(function, elementAddress.Address, definitions, out parameterName);
             default:
                 parameterName = string.Empty;
                 return false;
         }
+    }
+
+    private static bool TryResolveSingleStoredLocalValue(
+        SsaFunction function,
+        string localName,
+        out SsaValue value)
+    {
+        value = null!;
+        var found = false;
+        foreach (var store in function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>())
+        {
+            if (!string.Equals(store.LocalName, localName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (found)
+            {
+                value = null!;
+                return false;
+            }
+
+            value = store.Value;
+            found = true;
+        }
+
+        return found;
     }
 
     private static bool ParameterHasNoAliasProof(
@@ -2639,7 +3046,14 @@ internal sealed class LlvmFunctionBodyEmitter
         bool SourceBaseIsSlice = false,
         int? PreheaderBlockId = null,
         int? ExitBlockId = null,
-        IReadOnlyList<int>? SkippedBlockIds = null);
+        IReadOnlyList<int>? SkippedBlockIds = null,
+        DynamicLengthCommitPlan? DynamicLengthCommit = null);
+
+    private sealed record DynamicLengthCommitPlan(
+        SsaValue LengthAddress,
+        SsaValue StartLength,
+        StarkTypeSymbol LengthType,
+        IReadOnlyList<string> SupportValueNames);
 
     private sealed record CanonicalRawPointerLoop(
         SsaFunction Function,

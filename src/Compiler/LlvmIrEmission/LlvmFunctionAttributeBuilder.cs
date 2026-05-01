@@ -369,8 +369,10 @@ internal sealed class LlvmFunctionAttributeBuilder
               || FunctionAbiLoweringWritesArgumentMemory(abiFunction)
             : FunctionContractWritesArgumentMemory(abiFunction);
 
-        var readsOtherMemory = memoryEffects?.ReadsOtherMemory ?? false;
-        var writesOtherMemory = memoryEffects?.WritesOtherMemory ?? false;
+        var readsOtherMemory = (memoryEffects?.ReadsOtherMemory ?? false)
+            || FunctionContractReadsOtherMemory(abiFunction);
+        var writesOtherMemory = (memoryEffects?.WritesOtherMemory ?? false)
+            || FunctionContractWritesOtherMemory(abiFunction);
 
         if (memoryEffects is null)
         {
@@ -436,6 +438,16 @@ internal sealed class LlvmFunctionAttributeBuilder
             || abiFunction.UserParameters.Any(ParameterContractWritesArgumentMemory);
     }
 
+    private static bool FunctionContractReadsOtherMemory(AbiFunctionSignature abiFunction)
+    {
+        return abiFunction.UserParameters.Any(ParameterContractReadsOtherMemory);
+    }
+
+    private static bool FunctionContractWritesOtherMemory(AbiFunctionSignature abiFunction)
+    {
+        return abiFunction.UserParameters.Any(ParameterContractWritesOtherMemory);
+    }
+
     private static bool FunctionAbiLoweringReadsArgumentMemory(AbiFunctionSignature abiFunction)
     {
         return abiFunction.UserParameters.Any(AbiLoweringHeuristics.IsByValueIndirectParameter);
@@ -458,11 +470,11 @@ internal sealed class LlvmFunctionAttributeBuilder
             return true;
         }
 
-        return parameter.SourceType.InitializationKind == StarkInitializationKind.None
-            && (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
-                || parameter.SourceType.Kind == StarkTypeKind.Slice
-                || parameter.SourceType.BorrowKind != StarkBorrowKind.None
-                || parameter.SourceType.Kind == StarkTypeKind.RawPointer);
+        return parameter.SourceType.Kind == StarkTypeKind.Slice
+            || (parameter.SourceType.InitializationKind == StarkInitializationKind.None
+                && (parameter.SourceType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                    || parameter.SourceType.BorrowKind != StarkBorrowKind.None
+                    || parameter.SourceType.Kind == StarkTypeKind.RawPointer));
     }
 
     private static bool ParameterContractWritesArgumentMemory(AbiParameterSymbol parameter)
@@ -477,9 +489,29 @@ internal sealed class LlvmFunctionAttributeBuilder
             || (parameter.SourceType.Kind == StarkTypeKind.RawPointer && parameter.SourceType.IsMutablePointer);
     }
 
+    private static bool ParameterContractReadsOtherMemory(AbiParameterSymbol parameter)
+    {
+        if (parameter.SourceType.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        return parameter.SourceType.Kind is StarkTypeKind.Slice
+            or StarkTypeKind.Dynamic
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode;
+    }
+
+    private static bool ParameterContractWritesOtherMemory(AbiParameterSymbol parameter)
+    {
+        return parameter.SourceType.Kind is StarkTypeKind.Slice or StarkTypeKind.Dynamic
+            && (parameter.SourceType.InitializationKind != StarkInitializationKind.None
+                || parameter.SourceType.BorrowKind != StarkBorrowKind.None && parameter.SourceType.IsMutableView);
+    }
+
     private static bool ParameterContractReadsMustBePreserved(AbiParameterSymbol parameter)
     {
-        return parameter.SourceType.Kind == StarkTypeKind.RawPointer;
+        return parameter.SourceType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice;
     }
 
     private static bool ParameterContractWritesMustBePreserved(AbiParameterSymbol parameter)

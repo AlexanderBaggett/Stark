@@ -230,7 +230,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void InitSliceParametersCarryWriteOnlyContract()
+    public void InitSliceParametersKeepReadableSliceHeaderContract()
     {
         var result = Compile(
             """
@@ -248,8 +248,9 @@ public sealed class LlvmIrEmissionTests
         var fillHeader = ExtractDefinitionHeader(llvm, "Fill");
 
         Assert.Contains(
-            "ptr noundef nonnull noalias writeonly nocapture dereferenceable(16) align 8 %arg_dest",
+            "ptr noundef nonnull noalias nocapture dereferenceable(16) align 8 %arg_dest",
             fillHeader);
+        Assert.DoesNotContain("writeonly", fillHeader, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2656,6 +2657,8 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("alwaysinline", llvm);
         Assert.Contains("%convert_source_data = extractvalue %stark_ascii %arg_source, 0", llvm);
         Assert.Contains("%convert_fast_wide = zext i8 %convert_fast_unit to i32", llvm);
+        Assert.Contains("%convert_fast_disjoint = or i1 %convert_fast_source_before_dest, %convert_fast_dest_before_source", llvm);
+        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm);
         Assert.Contains("convert_fallback_loop:", llvm);
         Assert.DoesNotContain("call fastcc i64 @AsciiLength(", llvm);
         Assert.DoesNotContain("call fastcc ptr @AsciiData(", llvm);
@@ -6201,6 +6204,37 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Touch(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.DoesNotContain("define fastcc void @Touch(ptr nonnull noalias readonly", llvm);
+    }
+
+    [Fact]
+    public void MutableBorrowReturnedSliceWritesDoNotEmitReadonlyParameterFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                i8[-128 127][8] Storage;
+
+                fn retborrow mut i8[-128 127][] View(borrow mut Buffer self) {
+                    unsafe {
+                        return slice(&self.Storage[0], 8);
+                    }
+                }
+            }
+
+            fn void Touch(borrow mut Buffer buffer) {
+                buffer.View()[0] = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var touchHeader = ExtractDefinitionHeader(llvm, "Touch");
+
+        Assert.DoesNotContain("readonly", touchHeader, StringComparison.Ordinal);
+        Assert.Contains("store i8 7", llvm, StringComparison.Ordinal);
     }
 
     [Fact]

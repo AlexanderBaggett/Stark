@@ -3578,6 +3578,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : throw new InvalidOperationException($"System.Text ASCII-to-Unicode conversion builtin '{abiFunction.Name}' requires a raw pointer destination to a Unicode aggregate.");
         var viewLlvmType = MapType(sourceParameter.SourceType);
         var destinationPointer = $"%{EscapeIdentifier(destinationParameter.LlvmName)}";
+        var fastLoopAccessGroupRef = _context.GetSelfReferentialMetadataRef(
+            $"loop-access-group:{abiFunction.SymbolName}:ascii-to-unicode-fast",
+            _ => "distinct !{}");
+        var fastLoopAccessGroupSuffix = $", !llvm.access.group {fastLoopAccessGroupRef}";
+        var mustProgressRef = _context.GetMetadataTupleRef(["!\"llvm.loop.mustprogress\""]);
+        var parallelAccessRef = _context.GetMetadataTupleRef(["!\"llvm.loop.parallel_accesses\"", fastLoopAccessGroupRef]);
+        var fastLoopRef = _context.GetSelfReferentialMetadataRef(
+            $"loop:{abiFunction.SymbolName}:ascii-to-unicode-fast",
+            selfRef => $"distinct !{{{selfRef}, {mustProgressRef}, {parallelAccessRef}}}");
+        var fastLoopMetadataSuffix = $", !llvm.loop {fastLoopRef}";
 
         builder.AppendLine("entry:");
         var sourceValue = MaterializeAggregateBuiltinParameterValue(builder, sourceParameter, "convert_source_view");
@@ -3609,22 +3619,32 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret i1 false");
         builder.AppendLine("convert_fast_entry:");
         builder.AppendLine("  %convert_fits_as_unicode = icmp sle i64 %convert_source_length, %convert_capacity");
-        builder.AppendLine("  br i1 %convert_fits_as_unicode, label %convert_fast_loop, label %convert_fallback_entry");
+        builder.AppendLine("  br i1 %convert_fits_as_unicode, label %convert_fast_disjoint_check, label %convert_fallback_entry");
+        builder.AppendLine("convert_fast_disjoint_check:");
+        builder.AppendLine("  %convert_fast_source_empty = icmp eq i64 %convert_source_length, 0");
+        builder.AppendLine("  br i1 %convert_fast_source_empty, label %convert_fast_loop, label %convert_fast_disjoint_nonempty");
+        builder.AppendLine("convert_fast_disjoint_nonempty:");
+        builder.AppendLine("  %convert_fast_source_end = getelementptr i8, ptr %convert_source_data, i64 %convert_source_length");
+        builder.AppendLine("  %convert_fast_dest_end = getelementptr i32, ptr %convert_data, i64 %convert_source_length");
+        builder.AppendLine("  %convert_fast_source_before_dest = icmp ule ptr %convert_fast_source_end, %convert_data");
+        builder.AppendLine("  %convert_fast_dest_before_source = icmp ule ptr %convert_fast_dest_end, %convert_source_data");
+        builder.AppendLine("  %convert_fast_disjoint = or i1 %convert_fast_source_before_dest, %convert_fast_dest_before_source");
+        builder.AppendLine("  br i1 %convert_fast_disjoint, label %convert_fast_loop, label %convert_fail");
         builder.AppendLine("convert_fast_loop:");
-        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_entry ], [ %convert_fast_next, %convert_fast_store ]");
+        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_disjoint_check ], [ 0, %convert_fast_disjoint_nonempty ], [ %convert_fast_next, %convert_fast_store ]");
         builder.AppendLine("  %convert_fast_done = icmp eq i64 %convert_fast_index, %convert_source_length");
         builder.AppendLine("  br i1 %convert_fast_done, label %convert_success_source_length, label %convert_fast_load");
         builder.AppendLine("convert_fast_load:");
         builder.AppendLine("  %convert_fast_source_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_fast_index");
-        builder.AppendLine("  %convert_fast_unit = load i8, ptr %convert_fast_source_ptr");
+        builder.AppendLine($"  %convert_fast_unit = load i8, ptr %convert_fast_source_ptr{fastLoopAccessGroupSuffix}");
         builder.AppendLine("  %convert_fast_non_ascii = icmp slt i8 %convert_fast_unit, 0");
         builder.AppendLine("  br i1 %convert_fast_non_ascii, label %convert_fallback_entry, label %convert_fast_store");
         builder.AppendLine("convert_fast_store:");
         builder.AppendLine("  %convert_fast_dest_ptr = getelementptr i32, ptr %convert_data, i64 %convert_fast_index");
         builder.AppendLine("  %convert_fast_wide = zext i8 %convert_fast_unit to i32");
-        builder.AppendLine("  store i32 %convert_fast_wide, ptr %convert_fast_dest_ptr");
+        builder.AppendLine($"  store i32 %convert_fast_wide, ptr %convert_fast_dest_ptr{fastLoopAccessGroupSuffix}");
         builder.AppendLine("  %convert_fast_next = add i64 %convert_fast_index, 1");
-        builder.AppendLine("  br label %convert_fast_loop");
+        builder.AppendLine($"  br label %convert_fast_loop{fastLoopMetadataSuffix}");
         builder.AppendLine("convert_success_source_length:");
         builder.AppendLine("  store i64 %convert_source_length, ptr %convert_length_addr");
         builder.AppendLine("  ret i1 true");

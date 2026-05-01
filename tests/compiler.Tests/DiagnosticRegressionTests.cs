@@ -1721,6 +1721,30 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
+    public void IndependentSliceLoopsRejectAssignmentsToInductionVariable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Copy(
+                disjoint borrow i32[-2147483648 2147483647][] input,
+                disjoint borrow mut i32[-2147483648 2147483647][] output,
+                i32[0 10] count) {
+                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    index += 1;
+                    output[index] = input[index];
+                }
+
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3027", "Loop 'independent' contracts", "induction variable");
+    }
+
+    [Fact]
     public void IndependentSliceLoopsRejectCallsWithUnprovenMemoryEffects()
     {
         var result = Compile(

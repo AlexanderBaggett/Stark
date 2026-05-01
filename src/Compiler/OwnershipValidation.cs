@@ -18,6 +18,7 @@ internal sealed class OwnershipValidator
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
+    private readonly List<DynamicInitSliceLoopContext> _dynamicInitSliceLoopContexts = [];
     private ISet<string>? _currentFunctionGenericParameters;
     private int _unsafeDepth;
 
@@ -83,6 +84,7 @@ internal sealed class OwnershipValidator
         var parameterDeclarations = functionDeclaration.ParameterList.parameter();
         var previousGenericParameters = _currentFunctionGenericParameters;
         var previousUnsafeDepth = _unsafeDepth;
+        var previousDynamicInitSliceLoopContextCount = _dynamicInitSliceLoopContexts.Count;
         _currentFunctionGenericParameters = signature.IsGeneric
             ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
             : null;
@@ -130,6 +132,12 @@ internal sealed class OwnershipValidator
         {
             _currentFunctionGenericParameters = previousGenericParameters;
             _unsafeDepth = previousUnsafeDepth;
+            if (_dynamicInitSliceLoopContexts.Count > previousDynamicInitSliceLoopContextCount)
+            {
+                _dynamicInitSliceLoopContexts.RemoveRange(
+                    previousDynamicInitSliceLoopContextCount,
+                    _dynamicInitSliceLoopContexts.Count - previousDynamicInitSliceLoopContextCount);
+            }
         }
     }
 
@@ -322,7 +330,23 @@ internal sealed class OwnershipValidator
                 EvaluateExpression(condition.expression(), loopState, signature, summary, ValueUse.Read, allowFunctionReference: false);
             }
 
-            CheckStatement(forStatement.statement(), loopState, signature, summary);
+            var dynamicInitSliceLoopContext = TryCreateDynamicInitSliceLoopContext(forStatement);
+            if (dynamicInitSliceLoopContext is not null)
+            {
+                _dynamicInitSliceLoopContexts.Add(dynamicInitSliceLoopContext);
+            }
+
+            try
+            {
+                CheckStatement(forStatement.statement(), loopState, signature, summary);
+            }
+            finally
+            {
+                if (dynamicInitSliceLoopContext is not null)
+                {
+                    _dynamicInitSliceLoopContexts.RemoveAt(_dynamicInitSliceLoopContexts.Count - 1);
+                }
+            }
 
             if (forStatement.forIterator() is { } iterator)
             {
@@ -384,6 +408,169 @@ internal sealed class OwnershipValidator
             state,
             signature,
             summary);
+    }
+
+    private static DynamicInitSliceLoopContext? TryCreateDynamicInitSliceLoopContext(
+        StarkParser.ForStatementContext forStatement)
+    {
+        if (!forStatement.loopContract().Any(static contract => contract.INDEPENDENT() is not null)
+            || forStatement.forInitializer()?.localForVariableDeclaration() is not { } declaration
+            || declaration.MUT() is null
+            || declaration.variableDeclarators().variableDeclarator() is not [var declarator]
+            || declarator.variableInitializer()?.expression() is not { } initializerExpression
+            || !IsZeroExpression(initializerExpression)
+            || declarator.Identifier()?.GetText() is not { Length: > 0 } inductionName
+            || forStatement.forCondition()?.expression() is not { } conditionExpression
+            || !IsCanonicalExclusiveUpperBoundCondition(conditionExpression, inductionName)
+            || forStatement.forIterator()?.expressionList().expression() is not [var iteratorExpression]
+            || !IsUnitIncrementExpression(iteratorExpression, inductionName))
+        {
+            return null;
+        }
+
+        return new DynamicInitSliceLoopContext(inductionName);
+    }
+
+    private static bool IsCanonicalExclusiveUpperBoundCondition(
+        StarkParser.ExpressionContext expression,
+        string inductionName)
+    {
+        if (!TryGetSingleRelationalExpression(expression, out var relational)
+            || relational.shiftExpression() is not [var left, var right]
+            || ExtractOperators<StarkParser.ShiftExpressionContext>(relational) is not [var op])
+        {
+            return false;
+        }
+
+        return (op == "<" && IsSimpleIdentifierText(left.GetText(), inductionName))
+            || (op == ">" && IsSimpleIdentifierText(right.GetText(), inductionName));
+    }
+
+    private static bool IsUnitIncrementExpression(
+        StarkParser.ExpressionContext expression,
+        string inductionName)
+    {
+        var assignment = expression.assignmentExpression();
+        return assignment.assignmentOperator()?.GetText() == "+="
+            && TryGetDirectAssignmentTargetName(assignment.unaryExpression(), out var targetName)
+            && string.Equals(targetName, inductionName, StringComparison.Ordinal)
+            && IsOneExpression(assignment.assignmentExpression());
+    }
+
+    private static bool TryGetDirectAssignmentTargetName(
+        StarkParser.UnaryExpressionContext target,
+        out string name)
+    {
+        name = string.Empty;
+        if (target.unaryOperator() is not null
+            || target.powerExpression()?.postfixExpression() is not { } postfix
+            || postfix.postfixPart().Length != 0
+            || postfix.primaryExpression().Identifier()?.GetText() is not { } identifier)
+        {
+            return false;
+        }
+
+        name = identifier;
+        return true;
+    }
+
+    private static bool IsZeroExpression(StarkParser.ExpressionContext expression) =>
+        string.Equals(NormalizeSimpleExpressionText(expression.GetText()), "0", StringComparison.Ordinal);
+
+    private static bool IsOneExpression(StarkParser.AssignmentExpressionContext expression) =>
+        string.Equals(NormalizeSimpleExpressionText(expression.GetText()), "1", StringComparison.Ordinal);
+
+    private static bool IsSimpleIdentifierText(string text, string identifier) =>
+        string.Equals(NormalizeSimpleExpressionText(text), identifier, StringComparison.Ordinal);
+
+    private static string NormalizeSimpleExpressionText(string text)
+    {
+        while (text.Length >= 2 && text[0] == '(' && text[^1] == ')' && HasSingleOuterParentheses(text))
+        {
+            text = text[1..^1];
+        }
+
+        return text;
+    }
+
+    private static bool HasSingleOuterParentheses(string text)
+    {
+        var depth = 0;
+        for (var index = 0; index < text.Length; index++)
+        {
+            var ch = text[index];
+            if (ch == '(')
+            {
+                depth++;
+            }
+            else if (ch == ')')
+            {
+                depth--;
+                if (depth == 0 && index != text.Length - 1)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return depth == 0;
+    }
+
+    private static bool TryGetSingleRelationalExpression(
+        StarkParser.ExpressionContext expression,
+        out StarkParser.RelationalExpressionContext relational)
+    {
+        relational = null!;
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return false;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return false;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (ExtractOperators<StarkParser.RelationalExpressionContext>(equality).Count != 0
+            || equality.relationalExpression().Length != 1)
+        {
+            return false;
+        }
+
+        relational = equality.relationalExpression(0);
+        return true;
     }
 
     private void CheckLocalDeclaration(
@@ -1048,6 +1235,11 @@ internal sealed class OwnershipValidator
 
         if (!TryEvaluateNonNegativeIntegerLiteral(access.IndexExpression, out var index))
         {
+            if (TryAcceptDynamicInitSliceInductionProof(access, initSliceVariableId, initSlice, state, summary))
+            {
+                return;
+            }
+
             if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
             {
                 return;
@@ -1061,7 +1253,7 @@ internal sealed class OwnershipValidator
             return;
         }
 
-        if (index != initSlice.InitializedCount)
+        if (initSlice.InitializedCount is not { } initializedCount)
         {
             if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
             {
@@ -1071,12 +1263,27 @@ internal sealed class OwnershipValidator
             OwnershipError(
                 summary,
                 "STK4205",
-                $"Initialization error: init slice assignment to '{access.RootKey}' expected slot {initSlice.InitializedCount} but found slot {index}. Initialize dynamic spare slots in ascending order, or use an explicit sparse initialized-slot proof.",
+                $"Initialization error: init slice assignment to '{access.RootKey}' no longer has a compile-time dense slot proof after dynamic loop initialization. Use a fresh initialized slice view for later writes, or use an explicit sparse initialized-slot proof.",
                 access.Location);
             return;
         }
 
-        var nextCount = initSlice.InitializedCount + BigInteger.One;
+        if (index != initializedCount)
+        {
+            if (TryAcceptUnsafeSparseDynamicInitializationProof(access, state))
+            {
+                return;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: init slice assignment to '{access.RootKey}' expected slot {initializedCount} but found slot {index}. Initialize dynamic spare slots in ascending order, or use an explicit sparse initialized-slot proof.",
+                access.Location);
+            return;
+        }
+
+        var nextCount = initializedCount + BigInteger.One;
         state.SetDynamicInitSliceState(initSliceVariableId, initSlice with { InitializedCount = nextCount });
 
         if (initSlice.StartOffset is { } startOffset)
@@ -1087,6 +1294,40 @@ internal sealed class OwnershipValidator
         {
             state.SetDynamicStoragePrefix(access.RootKey, DynamicStoragePrefixState.Unknown);
         }
+    }
+
+    private bool TryAcceptDynamicInitSliceInductionProof(
+        DynamicStorageIndexAccess access,
+        int initSliceVariableId,
+        DynamicInitSliceState initSlice,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        var indexText = NormalizeSimpleExpressionText(access.IndexExpression.GetText());
+        for (var contextIndex = _dynamicInitSliceLoopContexts.Count - 1; contextIndex >= 0; contextIndex--)
+        {
+            var context = _dynamicInitSliceLoopContexts[contextIndex];
+            if (!string.Equals(context.InductionName, indexText, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!context.TryMarkInitialized(initSliceVariableId))
+            {
+                OwnershipError(
+                    summary,
+                    "STK4205",
+                    $"Initialization error: init slice assignment to '{access.RootKey}[{access.IndexExpression.GetText()}]' repeats the same dynamic loop slot proof. Initialize each dynamic spare slot at most once per canonical independent loop iteration.",
+                    access.Location);
+                return true;
+            }
+
+            state.SetDynamicInitSliceState(initSliceVariableId, initSlice with { InitializedCount = null });
+            state.SetDynamicStoragePrefix(access.RootKey, DynamicStoragePrefixState.Unknown);
+            return true;
+        }
+
+        return false;
     }
 
     private bool TryAcceptUnsafeSparseDynamicInitializationProof(
@@ -1676,7 +1917,10 @@ internal sealed class OwnershipValidator
         {
             var addressOperand = EvaluateUnaryExpression(expression.unaryExpression(), state, signature, summary, ValueUse.Place, allowFunctionReference: false);
             var pointerType = StarkTypeSymbols.RawPointer(addressOperand.Type, addressOperand.IsPlace);
-            return ApplyUse(new ExpressionInfo(pointerType), state, summary, use, expression);
+            var pointerLifetime = addressOperand.BorrowLifetime.Kind != BorrowLifetimeKind.None
+                ? addressOperand.BorrowLifetime
+                : InferBorrowLifetimeFromValue(addressOperand, expression.Start);
+            return ApplyUse(new ExpressionInfo(pointerType, BorrowLifetime: pointerLifetime), state, summary, use, expression);
         }
 
         if (op == "*")
@@ -1739,14 +1983,23 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
-        var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
-        var primaryUse = expression.postfixPart().Length == 0
-            ? use.Kind == ValueUseKind.Place ? ValueUse.Place : ValueUse.Read
-            : ValueUse.ProjectBase;
-        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, primaryUse, allowFunctionReference || requiresCallableTarget);
+        var firstUnhandledPostfixIndex = 0;
+        ExpressionInfo binding;
+        if (TryEvaluateRawSliceConstructionPrefix(expression, state, signature, summary, out var rawSliceBinding, out firstUnhandledPostfixIndex))
+        {
+            binding = rawSliceBinding;
+        }
+        else
+        {
+            var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
+            var primaryUse = expression.postfixPart().Length == 0
+                ? use.Kind == ValueUseKind.Place ? ValueUse.Place : ValueUse.Read
+                : ValueUse.ProjectBase;
+            binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, primaryUse, allowFunctionReference || requiresCallableTarget);
+        }
 
         var postfixParts = expression.postfixPart();
-        for (var index = 0; index < postfixParts.Length; index++)
+        for (var index = firstUnhandledPostfixIndex; index < postfixParts.Length; index++)
         {
             var postfixPart = postfixParts[index];
             if (postfixPart.argumentList() is { } argumentList)
@@ -1780,6 +2033,53 @@ internal sealed class OwnershipValidator
         }
 
         return ApplyUse(binding, state, summary, use, expression);
+    }
+
+    private bool TryEvaluateRawSliceConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        out ExpressionInfo binding,
+        out int firstUnhandledPostfixIndex)
+    {
+        binding = null!;
+        firstUnhandledPostfixIndex = 0;
+        if (!string.Equals(expression.primaryExpression().Identifier()?.GetText(), "slice", StringComparison.Ordinal)
+            || expression.postfixPart().Length == 0
+            || expression.postfixPart()[0] is not { } callPart
+            || callPart.argumentList() is not { } arguments)
+        {
+            return false;
+        }
+
+        firstUnhandledPostfixIndex = 1;
+        var argumentList = arguments.argument();
+        if (argumentList.Length != 2)
+        {
+            binding = new ExpressionInfo(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var pointer = EvaluateExpression(argumentList[0].expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        EvaluateExpression(argumentList[1].expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+
+        if (pointer.Type.Kind != StarkTypeKind.RawPointer || pointer.Type.ElementType is not { } elementType)
+        {
+            binding = new ExpressionInfo(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var sliceType = StarkTypeSymbols.ApplyQualifiers(
+            StarkTypeSymbols.Slice(elementType),
+            isMutableView: pointer.Type.IsMutablePointer);
+        var borrowLifetime = pointer.BorrowLifetime.Kind != BorrowLifetimeKind.None
+            ? pointer.BorrowLifetime
+            : InferBorrowLifetimeFromValue(pointer, arguments.Start);
+        binding = new ExpressionInfo(sliceType, BorrowLifetime: borrowLifetime);
+        return true;
     }
 
     private bool TryApplyDynamicStorageMemberCall(
@@ -4190,7 +4490,17 @@ internal sealed class OwnershipValidator
     private sealed record DynamicInitSliceState(
         string RootKey,
         BigInteger? StartOffset,
-        BigInteger InitializedCount);
+        BigInteger? InitializedCount);
+
+    private sealed class DynamicInitSliceLoopContext(string inductionName)
+    {
+        private readonly HashSet<int> _initializedInitSlices = [];
+
+        public string InductionName { get; } = inductionName;
+
+        public bool TryMarkInitialized(int initSliceVariableId) =>
+            _initializedInitSlices.Add(initSliceVariableId);
+    }
 
     private sealed record DynamicStorageRoot(
         string RootKey,
@@ -4616,11 +4926,15 @@ internal sealed class OwnershipValidator
                     }
 
                     if (!string.Equals(merged!.RootKey, state.RootKey, StringComparison.Ordinal)
-                        || merged.StartOffset != state.StartOffset
-                        || merged.InitializedCount != state.InitializedCount)
+                        || merged.StartOffset != state.StartOffset)
                     {
                         compatible = false;
                         break;
+                    }
+
+                    if (merged.InitializedCount != state.InitializedCount)
+                    {
+                        merged = merged with { InitializedCount = null };
                     }
                 }
 

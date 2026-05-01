@@ -124,9 +124,25 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 14;
             }
 
+            stack i64[0 max] aliasedFixedCount = fixedBuffer.Readable();
+            stack i8[-128 127][] aliasedFixedSource = fixedBuffer.ReadSlice();
+            if (!Ok(fixedBuffer.WriteSlice(aliasedFixedSource, aliasedFixedCount))) {
+                return 32;
+            }
+
+            stack i8[-128 127][] duplicatedFixed = fixedBuffer.ReadSlice();
+            if (fixedBuffer.Readable() != 10 || duplicatedFixed[5] != duplicatedFixed[0] || duplicatedFixed[9] != duplicatedFixed[4]) {
+                return 33;
+            }
+
             fixedBuffer.Clear();
             if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512) {
                 return 15;
+            }
+
+            fixedBuffer.Compact();
+            if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512) {
+                return 34;
             }
 
             stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
@@ -187,9 +203,19 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 25;
             }
 
+            dynamicBuffer.Compact();
+            if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0) {
+                return 36;
+            }
+
             stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer4096 fixed4096 = new();
             if (!Ok(fixed4096.WriteFill(3, 4096)) || !fixed4096.IsFull()) {
                 return 26;
+            }
+
+            fixed4096.Compact();
+            if (!fixed4096.IsFull() || fixed4096.Readable() != 4096) {
+                return 35;
             }
 
             stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer8192 fixed8192 = new();
@@ -261,6 +287,74 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
 
         Assert.Contains("icmp ule ptr", writeSliceBody, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", dynamicWriteSliceBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalRuntimeBufferModuleUsesTailRegionMemoryHelpers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Runtime", "Buffer.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var dynamicWriteSliceBody = ExtractLlvmFunctionBody(llvm, "@DynamicByteBuffer_WriteSlice(");
+        var dynamicWriteFillBody = ExtractLlvmFunctionBody(llvm, "@DynamicByteBuffer_WriteFill(");
+
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesDisjoint", dynamicWriteSliceBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_FillBytes", dynamicWriteFillBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@DynamicByteBuffer_WriteByte", dynamicWriteFillBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalRuntimeBufferFixedBuffersUseInlineStorage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Runtime", "Buffer.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("%FixedByteBuffer512 = type { [512 x i8], i64, i64 }", llvm, StringComparison.Ordinal);
+        Assert.Contains("%FixedByteBuffer4096 = type { [4096 x i8], i64, i64 }", llvm, StringComparison.Ordinal);
+        Assert.Contains("%FixedByteBuffer8192 = type { [8192 x i8], i64, i64 }", llvm, StringComparison.Ordinal);
+
+        var fixedBodies = string.Join(
+            Environment.NewLine,
+            [
+                ExtractLlvmFunctionBody(llvm, "@WriteSliceToStorage("),
+                ExtractLlvmFunctionBody(llvm, "@WriteFillToStorage("),
+                ExtractLlvmFunctionBody(llvm, "@CompactStorage("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer512_WriteByte("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer512_WriteFill("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer512_Compact("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer4096_WriteByte("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer4096_WriteFill("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer4096_Compact("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer8192_WriteByte("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer8192_WriteFill("),
+                ExtractLlvmFunctionBody(llvm, "@FixedByteBuffer8192_Compact(")
+            ]);
+
+        Assert.DoesNotContain("__stark_dynamic", fixedBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_alloc", fixedBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_try_alloc", fixedBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_realloc", fixedBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_try_realloc", fixedBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("DynamicByteBuffer", fixedBodies, StringComparison.Ordinal);
     }
 
     [Fact]

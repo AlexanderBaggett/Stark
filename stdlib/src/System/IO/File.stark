@@ -522,6 +522,30 @@ public struct File {
         return System.Runtime.Platform.WriteFile(buffer, size, count, self.Handle);
     }
 
+    fn i64[-9223372036854775808 9223372036854775807] ReadByteRegion(mut borrow File self, rawmutptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        if (self.Flush() != 0) {
+            return 0;
+        }
+
+        return System.Runtime.Platform.ReadFileBytes(buffer, count, self.Handle);
+    }
+
+    fn i64[-9223372036854775808 9223372036854775807] WriteByteRegion(mut borrow File self, rawptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        if (self.Flush() != 0) {
+            return 0;
+        }
+
+        return System.Runtime.Platform.WriteFileBytes(buffer, count, self.Handle);
+    }
+
     fn i64[-9223372036854775808 9223372036854775807] Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
         if (self.Closed || self.Handle == null) {
             return -1;
