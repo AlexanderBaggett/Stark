@@ -1835,6 +1835,23 @@ internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path)
     return OpenFileWithFlags(path, LinuxOpenReadOnlyFlag | LinuxOpenDirectoryFlag | LinuxOpenCloseOnExecFlag, 0);
 }
 
+internal fn rawptr<i8[-128 127]> OpenDirectoryInto(
+    ascii path,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> initialLength)
+{
+    if (initialLength != null) {
+        *initialLength = 0;
+    }
+
+    return OpenDirectory(path);
+}
+
+internal fn i64[0 max] DirectoryBufferCapacity() {
+    return 8192;
+}
+
 internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
     return CloseFile(handle);
 }
@@ -2271,6 +2288,74 @@ internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
             Length = entryNameLength,
             Capacity = nameCapacity
         };
+        *kind = DirectoryEntryKindFromLinuxType(UnsignedByte(rawEntryType));
+        return 1;
+    }
+}
+
+internal fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> nameLength,
+    rawmutptr<i32[-2147483648 2147483647]> kind)
+{
+    if (handle == null || buffer == null || capacity <= (i64[0 max])LinuxDirent64HeaderLength || readPos == null || readLength == null || nameLength == null || kind == null) {
+        return -1;
+    }
+
+    while willexit (true) {
+        if (*readPos >= *readLength) {
+            stack i64[-9223372036854775808 9223372036854775807] syscallResult = LinuxSyscall3HandleBuffer(
+                LinuxGetDents64SyscallNumber,
+                handle,
+                (rawptr<i8[-128 127]>)buffer,
+                capacity);
+            if (syscallResult < 0) {
+                *kind = (i32[-2147483648 2147483647])syscallResult;
+                *nameLength = -2;
+                return (i32[-2147483648 2147483647])syscallResult;
+            }
+
+            if (syscallResult == 0) {
+                *kind = 0;
+                *nameLength = -1;
+                return 0;
+            }
+
+            *readPos = 0;
+            *readLength = syscallResult;
+        }
+
+        stack i64[-9223372036854775808 9223372036854775807] current = *readPos;
+        if (current < 0 || current + LinuxDirent64HeaderLength > *readLength) {
+            *kind = -1;
+            *nameLength = -2;
+            return -1;
+        }
+
+        stack rawptr<i16[-32768 32767]> recordLengthPointer = (rawptr<i16[-32768 32767]>)(&buffer[current + LinuxDirent64RecordLengthOffset]);
+        stack i32[-2147483648 2147483647] recordLength = UnsignedShort(*recordLengthPointer);
+        if (recordLength <= LinuxDirent64HeaderLength || current + recordLength > *readLength) {
+            *kind = -1;
+            *nameLength = -2;
+            return -1;
+        }
+
+        stack rawptr<i8[-128 127]> entryNameData = (rawptr<i8[-128 127]>)(&buffer[current + LinuxDirent64HeaderLength]);
+        stack i64[-9223372036854775808 9223372036854775807] entryNameLength = LinuxDirectoryEntryNameLength(
+            entryNameData,
+            (i64[-9223372036854775808 9223372036854775807])recordLength - LinuxDirent64HeaderLength);
+        stack i8[-128 127] rawEntryType = *(&buffer[current + LinuxDirent64TypeOffset]);
+        *readPos = current + recordLength;
+
+        if (IsDotDirectoryEntry(entryNameData, entryNameLength)) {
+            continue;
+        }
+
+        *nameLength = entryNameLength;
         *kind = DirectoryEntryKindFromLinuxType(UnsignedByte(rawEntryType));
         return 1;
     }

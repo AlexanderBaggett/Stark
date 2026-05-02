@@ -7132,12 +7132,13 @@ internal sealed class TypeChecker
 
         var isReserve = string.Equals(memberName, "Reserve", StringComparison.Ordinal);
         var isTryReserve = string.Equals(memberName, "TryReserve", StringComparison.Ordinal);
-        if (!isReserve && !isTryReserve)
+        var isTryReserveCapacity = string.Equals(memberName, "TryReserveCapacity", StringComparison.Ordinal);
+        if (!isReserve && !isTryReserve && !isTryReserveCapacity)
         {
             return false;
         }
 
-        var methodResultType = isTryReserve ? StarkTypeSymbols.Bool : StarkTypeSymbols.Void;
+        var methodResultType = isReserve ? StarkTypeSymbols.Void : StarkTypeSymbols.Bool;
         result = new ExpressionBinding(methodResultType, DiagnosticName: $"dynamic storage {memberName}");
 
         if (!receiver.IsAddressMutable)
@@ -7151,30 +7152,32 @@ internal sealed class TypeChecker
         var suppliedArguments = arguments.argument();
         if (suppliedArguments.Length != 1)
         {
+            var argumentName = isTryReserveCapacity ? "target-capacity" : "additional-capacity";
             ReportError(
                 "STK3009",
-                $"Dynamic storage {memberName} expects one additional-capacity argument but received {suppliedArguments.Length}.",
+                $"Dynamic storage {memberName} expects one {argumentName} argument but received {suppliedArguments.Length}.",
                 arguments);
             return true;
         }
 
-        var additional = EvaluateExpression(
+        var capacityOperand = EvaluateExpression(
             suppliedArguments[0].expression(),
             scope,
             allowFunctionReference: false,
             NonNegativeI64Type);
-        if (additional.Type.Kind != StarkTypeKind.Integer)
+        var capacityDescription = isTryReserveCapacity ? "target capacity" : "additional capacity";
+        if (capacityOperand.Type.Kind != StarkTypeKind.Integer)
         {
             ReportError(
                 "STK3002",
-                $"Dynamic storage {memberName} additional capacity must be an integer, but found '{additional.Type.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(64), additional.Type)}",
+                $"Dynamic storage {memberName} {capacityDescription} must be an integer, but found '{capacityOperand.Type.DisplayName}'.{GetExplicitConversionHint(StarkTypeSymbols.Integer(64), capacityOperand.Type)}",
                 suppliedArguments[0].expression());
         }
-        else if (!IsProvablyNonNegativeIntegerType(additional.Type))
+        else if (!IsProvablyNonNegativeIntegerType(capacityOperand.Type))
         {
             ReportError(
                 "STK3002",
-                $"Dynamic storage {memberName} additional capacity must be provably non-negative.",
+                $"Dynamic storage {memberName} {capacityDescription} must be provably non-negative.",
                 suppliedArguments[0].expression());
         }
 

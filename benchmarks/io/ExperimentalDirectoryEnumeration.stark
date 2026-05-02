@@ -132,24 +132,24 @@ fn bool CreateEntries() {
     return true;
 }
 
-fn i64[-9223372036854775808 9223372036854775807] EntryLength(System.Experimental.FileSystem.DirectoryReadResult result) {
+fn i64[-9223372036854775808 9223372036854775807] EntryLength(System.Experimental.FileSystem.DirectoryReadInfoResult result) {
     switch (result) {
-        case System.Experimental.FileSystem.DirectoryReadResult.Entry(var entry):
-            return (i64[-9223372036854775808 9223372036854775807])entry.Name.Length();
-        case System.Experimental.FileSystem.DirectoryReadResult.End:
+        case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+            return (i64[-9223372036854775808 9223372036854775807])entry.NameLength;
+        case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
             return -1;
-        case System.Experimental.FileSystem.DirectoryReadResult.Err(var error):
+        case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var error):
             return -1;
     }
 }
 
-fn bool IsEnd(System.Experimental.FileSystem.DirectoryReadResult result) {
+fn bool IsEnd(System.Experimental.FileSystem.DirectoryReadInfoResult result) {
     switch (result) {
-        case System.Experimental.FileSystem.DirectoryReadResult.Entry(var entry):
+        case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
             return false;
-        case System.Experimental.FileSystem.DirectoryReadResult.End:
+        case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
             return true;
-        case System.Experimental.FileSystem.DirectoryReadResult.Err(var error):
+        case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var error):
             return false;
     }
 }
@@ -165,7 +165,7 @@ fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
             stack mut i64[-9223372036854775808 9223372036854775807] count = 0;
 
             for willexit (stack mut i32[0 128] index = 0; index < Entries; index += 1) {
-                stack i64[-9223372036854775808 9223372036854775807] length = EntryLength(directory.ReadNext());
+                stack i64[-9223372036854775808 9223372036854775807] length = EntryLength(directory.ReadNextInfo());
                 if (length < 0) {
                     directory.Close();
                     return -1;
@@ -175,7 +175,7 @@ fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
                 count += 1;
             }
 
-            if (count != Entries || !IsEnd(directory.ReadNext())) {
+            if (count != Entries || !IsEnd(directory.ReadNextInfo())) {
                 directory.Close();
                 return -1;
             }

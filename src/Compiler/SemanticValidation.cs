@@ -1715,7 +1715,8 @@ internal sealed class SemanticValidator
 
         var isReserve = string.Equals(memberName, "Reserve", StringComparison.Ordinal);
         var isTryReserve = string.Equals(memberName, "TryReserve", StringComparison.Ordinal);
-        if (!isReserve && !isTryReserve)
+        var isTryReserveCapacity = string.Equals(memberName, "TryReserveCapacity", StringComparison.Ordinal);
+        if (!isReserve && !isTryReserve && !isTryReserveCapacity)
         {
             if (!string.Equals(memberName, "MoveLast", StringComparison.Ordinal)
                 && !string.Equals(memberName, "MoveAt", StringComparison.Ordinal))
@@ -1759,7 +1760,7 @@ internal sealed class SemanticValidator
         RecordObservedMemoryRead(receiver, summary);
         RecordObservedMemoryWrite(receiver, summary);
         RecordDynamicStorageRuntimeEffects(function, effects, summary, arguments);
-        result = new ValidationValue(isTryReserve ? StarkTypeSymbols.Bool : StarkTypeSymbols.Void);
+        result = new ValidationValue(isReserve ? StarkTypeSymbols.Void : StarkTypeSymbols.Bool);
         return true;
     }
 

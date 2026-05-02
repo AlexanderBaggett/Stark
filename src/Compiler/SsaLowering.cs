@@ -440,6 +440,11 @@ internal sealed class SsaLowerer
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.AdditionalCapacity),
                     reserve.Text)),
+                MidLevelIrDynamicStorageTryReserveCapacityRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveCapacityRValue(
+                    LowerOperand(blockId, block, reserve.StorageAddress),
+                    reserve.StorageType,
+                    LowerOperand(blockId, block, reserve.TargetCapacity),
+                    reserve.Text)),
                 MidLevelIrDynamicStorageMoveLastRValue moveLast => EmitValue(block, new SsaDynamicStorageMoveLastRValue(
                     LowerOperand(blockId, block, moveLast.StorageAddress),
                     moveLast.StorageType,
@@ -1539,6 +1544,11 @@ internal sealed class SsaLowerer
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.Text),
+                SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
+                    RewriteValue(reserve.StorageAddress, replacements),
+                    reserve.StorageType,
+                    RewriteValue(reserve.TargetCapacity, replacements),
                     reserve.Text),
                 SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                     RewriteValue(moveLast.StorageAddress, replacements),

@@ -912,6 +912,7 @@ internal sealed class SsaCleanupOptimizer
             or SsaDynamicStorageFreeRValue
             or SsaDynamicStorageReserveRValue
             or SsaDynamicStorageTryReserveRValue
+            or SsaDynamicStorageTryReserveCapacityRValue
             or SsaDynamicStorageMoveLastRValue
             or SsaDynamicStorageMoveAtRValue;
     }
@@ -2251,6 +2252,7 @@ internal sealed class SsaCleanupOptimizer
             and not SsaDynamicStorageFreeRValue
             and not SsaDynamicStorageReserveRValue
             and not SsaDynamicStorageTryReserveRValue
+            and not SsaDynamicStorageTryReserveCapacityRValue
             and not SsaDynamicStorageMoveLastRValue
             and not SsaDynamicStorageMoveAtRValue;
     }
@@ -2431,6 +2433,7 @@ internal sealed class SsaCleanupOptimizer
             SsaDynamicStorageFreeRValue free => [free.Storage],
             SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
             SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveCapacityRValue reserve => [reserve.StorageAddress, reserve.TargetCapacity],
             SsaDynamicStorageMoveLastRValue moveLast => [moveLast.StorageAddress],
             SsaDynamicStorageMoveAtRValue moveAt => [moveAt.StorageAddress, moveAt.Index],
             SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
@@ -3138,6 +3141,11 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.TargetCapacity, replacements),
                 reserve.Text),
             SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                 RewriteValue(moveLast.StorageAddress, replacements),
@@ -4722,6 +4730,11 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             {
                 StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
                 AdditionalCapacity = RewriteValue(reserve.AdditionalCapacity, replacements)
+            },
+            SsaDynamicStorageTryReserveCapacityRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                TargetCapacity = RewriteValue(reserve.TargetCapacity, replacements)
             },
             SsaDynamicStorageMoveLastRValue moveLast => moveLast with
             {
@@ -10728,6 +10741,11 @@ internal sealed class SsaDirectCallInliner
                 StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
                 AdditionalCapacity = RewriteValue(reserve.AdditionalCapacity, replacements)
             },
+            SsaDynamicStorageTryReserveCapacityRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                TargetCapacity = RewriteValue(reserve.TargetCapacity, replacements)
+            },
             SsaDynamicStorageMoveLastRValue moveLast => moveLast with
             {
                 StorageAddress = RewriteValue(moveLast.StorageAddress, replacements)
@@ -12119,6 +12137,11 @@ internal sealed class SsaConstantPropagator
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.TargetCapacity, replacements),
                 reserve.Text),
             SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                 RewriteValue(moveLast.StorageAddress, replacements),

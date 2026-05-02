@@ -23,12 +23,14 @@ internal sealed class LlvmFunctionBodyEmitter
     private const string DynamicStorageAllocateHelperName = "__stark_dynamic_alloc";
     private const string DynamicStorageReserveHelperName = "__stark_dynamic_reserve";
     private const string DynamicStorageTryReserveHelperName = "__stark_dynamic_try_reserve";
+    private const string DynamicStorageTryReserveCapacityHelperName = "__stark_dynamic_try_reserve_capacity";
     private const string DynamicStorageMoveLastPointerHelperName = "__stark_dynamic_move_last_ptr";
     private const string DynamicStorageMoveAtToOutHelperName = "__stark_dynamic_move_at_to_out";
     private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateScalarizationMaxLeafCount = 4;
     private const int AggregateMemcpyThresholdBytes = 32;
+    private const int AggregateInlineMemcpyThresholdBytes = 256;
     private const int TbaaFixedArrayFieldLimit = 64;
     private const int TrapEdgeUnlikelyWeight = 1;
     private const int NormalEdgeLikelyWeight = 2000;
@@ -1207,6 +1209,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 SsaDynamicStorageTryReserveRValue reserve =>
                     ReferencesSkippedDefinition(reserve.StorageAddress)
                     || ReferencesSkippedDefinition(reserve.AdditionalCapacity),
+                SsaDynamicStorageTryReserveCapacityRValue reserve =>
+                    ReferencesSkippedDefinition(reserve.StorageAddress)
+                    || ReferencesSkippedDefinition(reserve.TargetCapacity),
                 SsaDynamicStorageMoveLastRValue moveLast => ReferencesSkippedDefinition(moveLast.StorageAddress),
                 SsaDynamicStorageMoveAtRValue moveAt =>
                     ReferencesSkippedDefinition(moveAt.StorageAddress)
@@ -2041,6 +2046,9 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaDynamicStorageTryReserveRValue reserve =>
                 ValueReferencesLocal(reserve.StorageAddress, localName, definitions, visitedValueNames)
                 || ValueReferencesLocal(reserve.AdditionalCapacity, localName, definitions, visitedValueNames),
+            SsaDynamicStorageTryReserveCapacityRValue reserve =>
+                ValueReferencesLocal(reserve.StorageAddress, localName, definitions, visitedValueNames)
+                || ValueReferencesLocal(reserve.TargetCapacity, localName, definitions, visitedValueNames),
             SsaDynamicStorageMoveLastRValue moveLast =>
                 ValueReferencesLocal(moveLast.StorageAddress, localName, definitions, visitedValueNames),
             SsaDynamicStorageMoveAtRValue moveAt =>
@@ -3959,6 +3967,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaDynamicStorageTryReserveRValue reserve:
                 EmitDynamicStorageTryReserve(result, reserve);
+                return;
+            case SsaDynamicStorageTryReserveCapacityRValue reserve:
+                EmitDynamicStorageTryReserveCapacity(result, reserve);
                 return;
             case SsaDynamicStorageMoveLastRValue moveLast:
                 EmitDynamicStorageMoveLast(result, moveLast);
@@ -6798,8 +6809,12 @@ internal sealed class LlvmFunctionBodyEmitter
         if (TryGetConcreteTypeLayout(copyMemory.CopyType) is { } layout
             && layout.SizeBytes > AggregateMemcpyThresholdBytes)
         {
-            AppendLine(
-                $"  call void @llvm.memcpy.inline.p0.p0.i64(ptr{GetKnownPointerArgumentAlignmentFragment(copyMemory.DestinationAddress, copyMemory.CopyType)} {FormatValue(copyMemory.DestinationAddress)}, ptr{GetKnownPointerArgumentAlignmentFragment(copyMemory.SourceAddress, copyMemory.CopyType)} {FormatValue(copyMemory.SourceAddress)}, i64 {layout.SizeBytes}, i1 false)");
+            EmitAggregateMemcpy(
+                FormatValue(copyMemory.DestinationAddress),
+                FormatValue(copyMemory.SourceAddress),
+                layout.SizeBytes,
+                GetKnownPointerArgumentAlignmentFragment(copyMemory.DestinationAddress, copyMemory.CopyType),
+                GetKnownPointerArgumentAlignmentFragment(copyMemory.SourceAddress, copyMemory.CopyType));
             EmitInvariantStartForLocalIfNeeded(invariantDestinationLocal, copyMemory.CopyType);
             return;
         }
@@ -6980,14 +6995,32 @@ internal sealed class LlvmFunctionBodyEmitter
         if (TryGetConcreteTypeLayout(copyType) is { } layout
             && layout.SizeBytes > AggregateScalarizationThresholdBytes)
         {
-            AppendLine(
-                $"  call void @llvm.memcpy.inline.p0.p0.i64(ptr{GetArgumentAlignmentFragment(destinationAlignmentBytes)} {destinationAddress}, ptr{GetArgumentAlignmentFragment(sourceAlignmentBytes)} {sourceAddress}, i64 {layout.SizeBytes}, i1 false)");
+            EmitAggregateMemcpy(
+                destinationAddress,
+                sourceAddress,
+                layout.SizeBytes,
+                GetArgumentAlignmentFragment(destinationAlignmentBytes),
+                GetArgumentAlignmentFragment(sourceAlignmentBytes));
             return;
         }
 
         var loadedValue = $"%{EscapeIdentifier(CreateAbiTempName("copy_load"))}";
         AppendLine($"  {loadedValue} = load {MapType(copyType)}, ptr {sourceAddress}{GetAlignmentSuffix(sourceAlignmentBytes)}{invariantLoadMetadataSuffix}{GetValueRangeMetadataSuffix(copyType)}");
         AppendLine($"  store {MapType(copyType)} {loadedValue}, ptr {destinationAddress}{GetAlignmentSuffix(destinationAlignmentBytes)}");
+    }
+
+    private void EmitAggregateMemcpy(
+        string destinationAddress,
+        string sourceAddress,
+        long sizeBytes,
+        string destinationAlignmentFragment,
+        string sourceAlignmentFragment)
+    {
+        var intrinsic = sizeBytes <= AggregateInlineMemcpyThresholdBytes
+            ? "llvm.memcpy.inline.p0.p0.i64"
+            : "llvm.memcpy.p0.p0.i64";
+        AppendLine(
+            $"  call void @{intrinsic}(ptr{destinationAlignmentFragment} {destinationAddress}, ptr{sourceAlignmentFragment} {sourceAddress}, i64 {sizeBytes}, i1 false)");
     }
 
     private bool TryResolveAggregateSourceAddress(SsaValue value, StarkTypeSymbol expectedType, out string sourceAddress)
@@ -7376,6 +7409,7 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaDynamicStorageFreeRValue free => IsNamedReference(free.Storage, valueName),
             SsaDynamicStorageReserveRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.AdditionalCapacity, valueName),
             SsaDynamicStorageTryReserveRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.AdditionalCapacity, valueName),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.TargetCapacity, valueName),
             SsaDynamicStorageMoveLastRValue moveLast => IsNamedReference(moveLast.StorageAddress, valueName),
             SsaDynamicStorageMoveAtRValue moveAt => IsNamedReference(moveAt.StorageAddress, valueName) || IsNamedReference(moveAt.Index, valueName),
             SsaLoadSliceElementRValue loadSlice => IsNamedReference(loadSlice.Slice, valueName) || IsNamedReference(loadSlice.Index, valueName),
@@ -8075,6 +8109,104 @@ internal sealed class LlvmFunctionBodyEmitter
         AppendLine($"{updateLabel}:");
         AppendLine($"  {withPointer} = insertvalue {storageType} {current}, ptr {newPointer}, 0");
         AppendLine($"  {updated} = insertvalue {storageType} {withPointer}, i64 {newCapacity}, 2");
+        AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{failLabel}:");
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi i1 [ true, %{checkLabel} ], [ true, %{updateLabel} ], [ false, %{failLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageTryReserveCapacity(string result, SsaDynamicStorageTryReserveCapacityRValue reserve)
+    {
+        if (reserve.StorageType.Kind != StarkTypeKind.Dynamic
+            || reserve.StorageType.ElementType is not { } elementType)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage TryReserveCapacity requires a dynamic type, but found '{reserve.StorageType.DisplayName}'.");
+        }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(elementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Dynamic storage TryReserveCapacity requires a concrete element layout for '{elementType.DisplayName}'.");
+        }
+
+        var storageType = MapType(reserve.StorageType);
+        var storageAddress = FormatValue(reserve.StorageAddress);
+        var targetCapacityI64 = EmitUnsignedIntegerAsI64(reserve.TargetCapacity, "dynamic_try_reserve_capacity_target");
+        var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        if (!CanSplitCurrentBlockForCallSiteControlFlow())
+        {
+            AppendLine(
+                $"  {result} = call i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr {storageAddress}, i64 noundef {targetCapacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+            return;
+        }
+
+        var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_current"))}";
+        var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_ptr"))}";
+        var capacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_capacity"))}";
+        var enoughCapacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_enough"))}";
+        var nullPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_null"))}";
+        var checkLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_check"));
+        var failLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_failed"));
+        var reallocLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_realloc"));
+        var updateLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_update"));
+        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_done"));
+        var failureProfile = _context.GetMetadataTupleRef([
+            "!\"branch_weights\"",
+            $"i32 {TrapEdgeUnlikelyWeight}",
+            $"i32 {NormalEdgeLikelyWeight}"
+        ]);
+
+        AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
+        AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
+        AppendLine($"  {capacity} = extractvalue {storageType} {current}, 2");
+        AppendLine($"  br label %{checkLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{checkLabel}:");
+        AppendLine($"  {enoughCapacity} = icmp ule i64 {targetCapacityI64}, {capacity}");
+        AppendLine($"  br i1 {enoughCapacity}, label %{doneLabel}, label %{reallocLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{reallocLabel}:");
+
+        if (maxCount < ulong.MaxValue)
+        {
+            var tooLarge = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_too_large"))}";
+            AppendLine($"  {tooLarge} = icmp ugt i64 {targetCapacityI64}, {maxCount.ToString(CultureInfo.InvariantCulture)}");
+            var growLabel = EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_grow"));
+            AppendLine($"  br i1 {tooLarge}, label %{failLabel}, label %{growLabel}, !prof {failureProfile}");
+            AppendLine(string.Empty);
+            AppendLine($"{growLabel}:");
+        }
+
+        var oldAllocatorCount = EmitI64AsAllocatorSize(capacity, "dynamic_try_reserve_capacity_old_count");
+        var newAllocatorCount = EmitI64AsAllocatorSize(targetCapacityI64, "dynamic_try_reserve_capacity_new_count");
+        var oldByteLength = oldAllocatorCount;
+        var newByteLength = newAllocatorCount;
+        if (elementLayout.SizeBytes != 1)
+        {
+            oldByteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_old_bytes"))}";
+            newByteLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_new_bytes"))}";
+            AppendLine($"  {oldByteLength} = mul {AllocatorSizeType} {oldAllocatorCount}, {elementLayout.SizeBytes}");
+            AppendLine($"  {newByteLength} = mul {AllocatorSizeType} {newAllocatorCount}, {elementLayout.SizeBytes}");
+        }
+
+        var newPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_new_ptr"))}";
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_with_ptr"))}";
+        var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_updated"))}";
+        AppendLine(
+            $"  {newPointer} = call ptr @{RuntimeTryReallocateHelperName}(ptr {pointer}, {AllocatorSizeType} noundef {oldByteLength}, {AllocatorSizeType} noundef {newByteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
+        AppendLine($"  {nullPointer} = icmp eq ptr {newPointer}, null");
+        AppendLine($"  br i1 {nullPointer}, label %{failLabel}, label %{updateLabel}, !prof {failureProfile}");
+        AppendLine(string.Empty);
+        AppendLine($"{updateLabel}:");
+        AppendLine($"  {withPointer} = insertvalue {storageType} {current}, ptr {newPointer}, 0");
+        AppendLine($"  {updated} = insertvalue {storageType} {withPointer}, i64 {targetCapacityI64}, 2");
         AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
         AppendLine($"  br label %{doneLabel}");
         AppendLine(string.Empty);
@@ -10535,6 +10667,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 case SsaDynamicStorageTryReserveRValue reserve:
                     VisitValue(reserve.StorageAddress);
                     VisitValue(reserve.AdditionalCapacity);
+                    break;
+                case SsaDynamicStorageTryReserveCapacityRValue reserve:
+                    VisitValue(reserve.StorageAddress);
+                    VisitValue(reserve.TargetCapacity);
                     break;
                 case SsaDynamicStorageMoveLastRValue moveLast:
                     VisitValue(moveLast.StorageAddress);

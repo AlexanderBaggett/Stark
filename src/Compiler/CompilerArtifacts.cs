@@ -2536,6 +2536,13 @@ public sealed record MidLevelIrDynamicStorageTryReserveRValue(
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
 
+public sealed record MidLevelIrDynamicStorageTryReserveCapacityRValue(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand TargetCapacity,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
+
 public sealed record MidLevelIrDynamicStorageMoveLastRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
@@ -2868,6 +2875,13 @@ public sealed record SsaDynamicStorageTryReserveRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue AdditionalCapacity,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Bool, Text);
+
+public sealed record SsaDynamicStorageTryReserveCapacityRValue(
+    SsaValue StorageAddress,
+    StarkTypeSymbol StorageType,
+    SsaValue TargetCapacity,
     string Text)
     : SsaRValue(StarkTypeSymbols.Bool, Text);
 

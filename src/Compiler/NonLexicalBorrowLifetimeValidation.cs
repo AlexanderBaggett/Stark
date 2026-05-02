@@ -723,6 +723,19 @@ internal sealed class NonLexicalBorrowLifetimeValidator
 
                 yield break;
 
+            case MidLevelIrDynamicStorageTryReserveCapacityRValue reserve:
+                foreach (var name in CollectBorrowLocalUses(reserve.StorageAddress, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                foreach (var name in CollectBorrowLocalUses(reserve.TargetCapacity, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
             case MidLevelIrDynamicStorageMoveLastRValue moveLast:
                 foreach (var name in CollectBorrowLocalUses(moveLast.StorageAddress, borrowLocals))
                 {

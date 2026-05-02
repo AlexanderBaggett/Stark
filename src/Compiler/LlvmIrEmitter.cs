@@ -12,6 +12,7 @@ internal sealed class LlvmIrEmitter
     private const string UnicodeStringTypeName = "stark_unicode";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateMemcpyThresholdBytes = 32;
+    private const int AggregateInlineMemcpyThresholdBytes = 256;
 
     private readonly CompilationInput _input;
     private readonly ParseResult _parseResult;
@@ -934,6 +935,7 @@ internal sealed class LlvmIrEmitter
             SsaDynamicStorageFreeRValue free => [free.Storage],
             SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
             SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveCapacityRValue reserve => [reserve.StorageAddress, reserve.TargetCapacity],
             SsaDynamicStorageMoveLastRValue moveLast => [moveLast.StorageAddress],
             SsaDynamicStorageMoveAtRValue moveAt => [moveAt.StorageAddress, moveAt.Index],
             SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
@@ -1138,7 +1140,9 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .OfType<SsaCopyMemoryInstruction>()
-            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout && layout.SizeBytes > AggregateMemcpyThresholdBytes)
+            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout
+                && layout.SizeBytes > AggregateMemcpyThresholdBytes
+                && layout.SizeBytes <= AggregateInlineMemcpyThresholdBytes)
             || UsesBuiltinMemcpyInlineIntrinsic();
     }
 
@@ -1153,7 +1157,35 @@ internal sealed class LlvmIrEmitter
             && _ssa.Functions.Any(function => LlvmFunctionBodyEmitter.MayEmitOptimizedRawPointerMemcpyIntrinsic(
                 function,
                 TryGetConcreteTypeLayout,
-                GetParameterEffects(function.Name, hasBody: true)));
+                GetParameterEffects(function.Name, hasBody: true)))
+            || UsesLargeAggregateMemcpyIntrinsic();
+    }
+
+    private bool UsesLargeAggregateMemcpyIntrinsic()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(UsesLargeAggregateMemcpyIntrinsic);
+    }
+
+    private bool UsesLargeAggregateMemcpyIntrinsic(SsaInstruction instruction)
+    {
+        return instruction switch
+        {
+            SsaCopyMemoryInstruction { CopyType: var type } => IsLargeAggregateMemcpyType(type),
+            SsaStoreLocalInstruction { LocalType: var type, Value: not SsaZeroInitializerValue } => IsLargeAggregateMemcpyType(type),
+            SsaStoreIndirectInstruction { ValueType: var type, Value: not SsaZeroInitializerValue } => IsLargeAggregateMemcpyType(type),
+            _ => false
+        };
+    }
+
+    private bool IsLargeAggregateMemcpyType(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        return TryGetConcreteTypeLayout(normalizedType) is { } layout
+            && layout.SizeBytes > AggregateInlineMemcpyThresholdBytes
+            && normalizedType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Named;
     }
 
     private bool UsesMemmoveIntrinsic()
@@ -1227,13 +1259,7 @@ internal sealed class LlvmIrEmitter
 
     private bool ShouldUseInlineAggregateZeroFill(StarkTypeSymbol valueType)
     {
-        var normalizedType = valueType with
-        {
-            BorrowKind = StarkBorrowKind.None,
-            AccessKind = StarkAccessKind.None,
-            InitializationKind = StarkInitializationKind.None,
-            IsMutableView = false
-        };
+        var normalizedType = NormalizeAggregateType(valueType);
 
         if (TryGetConcreteTypeLayout(normalizedType) is not { } layout
             || layout.SizeBytes <= AggregateScalarizationThresholdBytes)
@@ -1242,6 +1268,17 @@ internal sealed class LlvmIrEmitter
         }
 
         return normalizedType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Named;
+    }
+
+    private static StarkTypeSymbol NormalizeAggregateType(StarkTypeSymbol type)
+    {
+        return type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
     }
 
     private void EmitFunctionDefinition(
@@ -1457,7 +1494,7 @@ internal sealed class LlvmIrEmitter
         return ssaFunction.Blocks
             .SelectMany(static block => block.Instructions)
             .OfType<SsaValueInstruction>()
-            .Any(static instruction => instruction.Value is SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue);
+            .Any(static instruction => instruction.Value is SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue);
     }
 
     private static bool RequiresSyntheticStackTemporaries(

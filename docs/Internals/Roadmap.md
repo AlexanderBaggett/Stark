@@ -2989,6 +2989,25 @@ debuggability unless a task explicitly says otherwise.
   - [x] add a four-way many-entry directory-open benchmark matrix (`DirectoryEnumeration`) for Stark, Stark experimental, C, and Rust, with the benchmark harness reporting the experimental Stark implementation only as `stark-experimental`
   - [x] add Windows directory enumeration benchmarks against Rust and C, including many-entry directories and Unicode-heavy names
 
+- [ ] Close the remaining Windows `DirectoryEnumeration` gap against Rust.
+  - [x] split the Windows experimental `Directory` representation from the Linux `getdents64` representation so Windows does not carry an inline 8192-byte buffer through `IOResult<Directory>` and directory temporaries; `Directory` now carries a platform-sized indirect buffer allocation, so Windows opens use `WIN32_FIND_DATAW` sized storage while Linux keeps an 8 KiB `getdents64` buffer
+  - [x] preserve and consume the first `FindFirstFileExW` result in the directory handle, matching Rust's `ReadDir.first` behavior instead of discarding the first platform entry before `FindNextFileW`
+  - [x] remove zero-count buffer maintenance from `Directory.ReadNext`, including the current `WriteFill(0, 0)` path
+  - [x] add an allocation-free experimental directory-entry path for callers that only need name length and kind; `ReadNextInfo` now routes to a platform metadata reader that computes UTF-8 length/kind without constructing an owned entry or copying the filename bytes
+  - [x] route the existing owned-entry fallback through disjoint text append or reserve-exact construction when the source name buffer and destination `OwnedAscii` storage cannot overlap
+  - [x] preserve Unicode correctness, long-name handling, handle closing, moved/drop safety, and benchmark-visible API behavior while introducing the optimized path
+  - [x] add focused tests proving first-entry preservation, empty-directory behavior, ASCII names, Unicode names, long names, early close, and repeated enumeration; the Windows experimental runtime probe now opens an empty directory, scans ASCII/Unicode/184-byte names twice, validates the cached first entry is not dropped, and checks early/double close behavior
+  - [x] rerun `benchmarks/io/DirectoryEnumeration` for C, Rust, Stark, and Stark experimental after the representation and allocation changes, using enough runs to compare median C ratios on Windows; after the platform-sized buffer and ASCII length fast path, the 20-run Windows median was Stark 125,536 us, Stark experimental 134,788 us, C 125,640 us, and Rust 122,476 us
+  - [ ] remove or amortize the remaining per-open heap allocation in the Windows experimental `Directory` path, likely by allowing a platform-sized inline `WIN32_FIND_DATAW` directory state without reintroducing Linux's 8 KiB payload into Windows aggregate moves
+  - [ ] evaluate whether the experimental Windows info path should call `WideCharToMultiByte(..., null, 0, ...)` for non-ASCII names instead of scalar Stark UTF-16 length calculation, keeping the ASCII fast path in Stark for common names
+
+- [ ] Fix directory-enumeration lowering gaps exposed by Rust IR comparison.
+  - [x] stop lowering large aggregate copies such as `Directory` moves to `llvm.memcpy.inline`; use normal `llvm.memcpy` above a small-size threshold or eliminate the copy entirely
+  - [ ] add move/drop elision for large non-trivial aggregates returned through `IOResult<T>` so successful `OpenDirectory` constructs the final destination directly instead of copying large inline storage through temporaries
+  - [ ] preserve imported inline body visibility and effect facts for optimized directory-entry helpers so name-length-only callers do not retain unnecessary owned-string construction when the helper body is visible
+  - [x] add IR gates for `benchmarks/io/DirectoryEnumeration` checking optimized Stark and Stark experimental IR for large `llvm.memcpy.inline` calls, excessive aggregate scalarization, retained per-entry allocation/free, and unexpected directory helper calls
+  - [x] compare optimized Stark experimental IR against Rust IR for the Windows hot path, specifically tracking directory state size, platform call count, owned-string allocation count, large-copy count, and hot-function IR size
+
 - [x] Add a Windows `HeapReAlloc` path for experimental fallback reallocations.
   - [x] use `HeapReAlloc` for process-heap allocations where alignment, ownership headers, and bucket metadata make in-place growth or shrink safe
   - [x] preserve existing bucket reuse fast paths and keep allocate-copy-free fallback behavior for over-aligned or non-heap-owned regions

@@ -374,6 +374,11 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                     return directory.ReadNext();
                 }
 
+                fn System.Experimental.FileSystem.DirectoryReadInfoResult ReadOneInfo(
+                    mut borrow System.Experimental.FileSystem.Directory directory) {
+                    return directory.ReadNextInfo();
+                }
+
                 fn System.Memory.MemoryStatus CurrentDir(
                     mut borrow System.Experimental.Text.OwnedAscii destination) {
                     return System.Experimental.IO.Path.CurrentDirectory(destination);
@@ -387,9 +392,10 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer8192_WriteFill", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadDirectoryEntry", llvm, StringComparison.Ordinal);
-        Assert.Contains("OpenDirectoryFast", llvm, StringComparison.Ordinal);
+        Assert.Contains("ReadDirectoryEntryInfo", llvm, StringComparison.Ordinal);
+        Assert.Contains("OpenDirectoryFastInto", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Experimental_FileSystem_Directory_ReadNextInfo", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytesFast", llvm, StringComparison.Ordinal);
@@ -398,6 +404,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
 
         var platformSource = File.ReadAllText(Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark"));
         Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("OpenDirectoryFastInto", platformSource, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytes(rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytesFast(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);

@@ -128,10 +128,13 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @CreateDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @DeleteDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenDirectoryWithFlags(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @OpenDirectoryWithFlagsInto(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenDirectoryFast(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @OpenDirectoryFastInto(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CloseDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntry(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntryInfo(", llvm, StringComparison.Ordinal);
         Assert.Contains("@DirectoryEntryKindFromWindowsAttributes(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
@@ -505,6 +508,222 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
             Assert.Contains("System_Experimental_FileSystem_OpenDirectory", llvm, StringComparison.Ordinal);
             Assert.Contains("TryCopyWideAscii", llvm, StringComparison.Ordinal);
             Assert.Contains("TryCopyWideUtf8", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceWindowsExperimentalDirectoryEnumerationExecutablePreservesCachedFirstEntry()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-windows-dir-enum-runtime-");
+        var appPath = Path.Combine(tempDirectory.FullName, "DirectoryRuntimeProbe.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "DirectoryRuntimeProbe.exe");
+        var scanDirectory = Path.Combine(tempDirectory.FullName, "scan-root");
+        var emptyDirectory = Path.Combine(tempDirectory.FullName, "empty-root");
+
+        try
+        {
+            Directory.CreateDirectory(scanDirectory);
+            Directory.CreateDirectory(emptyDirectory);
+            File.WriteAllText(Path.Combine(scanDirectory, "first-entry.tmp"), string.Empty);
+            File.WriteAllText(Path.Combine(scanDirectory, "wide-\u00E9.txt"), string.Empty);
+            File.WriteAllText(Path.Combine(scanDirectory, new string('a', 180) + ".txt"), string.Empty);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Experimental.FileSystem
+                import System.IO
+                module WindowsDirectoryRuntimeProbe
+
+                fn bool IOOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool IsEnd(System.Experimental.FileSystem.DirectoryReadInfoResult result) {
+                    switch (result) {
+                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+                            return false;
+                        case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
+                            return true;
+                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool IsErr(System.Experimental.FileSystem.DirectoryReadInfoResult result) {
+                    switch (result) {
+                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+                            return false;
+                        case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
+                            return false;
+                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var error):
+                            return true;
+                    }
+                }
+
+                fn i32[min max] CheckEmptyDirectory() {
+                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
+                        System.Experimental.FileSystem.OpenDirectory("empty-root");
+                    switch (opened) {
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                            return 1;
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                            if (!IsEnd(directory.ReadNextInfo())) {
+                                directory.Close();
+                                return 2;
+                            }
+
+                            if (!IOOk(directory.Close())) {
+                                return 3;
+                            }
+
+                            return 0;
+                    }
+                }
+
+                fn i32[min max] CheckEarlyClose() {
+                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
+                        System.Experimental.FileSystem.OpenDirectory("scan-root");
+                    switch (opened) {
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                            return 1;
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                            if (!IOOk(directory.Close())) {
+                                return 2;
+                            }
+
+                            if (!IOOk(directory.Close())) {
+                                return 3;
+                            }
+
+                            if (!IsErr(directory.ReadNextInfo())) {
+                                return 4;
+                            }
+
+                            return 0;
+                    }
+                }
+
+                fn i32[min max] ScanOnce() {
+                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
+                        System.Experimental.FileSystem.OpenDirectory("scan-root");
+                    switch (opened) {
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                            return 1;
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                            stack mut bool foundFirst = false;
+                            stack mut bool foundWide = false;
+                            stack mut bool foundLong = false;
+                            stack mut i32[0 3] count = 0;
+                            stack mut i64[0 210] checksum = 0;
+
+                            while willexit (true) {
+                                switch (directory.ReadNextInfo()) {
+                                    case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var readError):
+                                        directory.Close();
+                                        return 2;
+                                    case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
+                                        if (!IOOk(directory.Close())) {
+                                            return 3;
+                                        }
+
+                                        if (count != 3 || checksum != 210) {
+                                            return 4;
+                                        }
+
+                                        if (!foundFirst || !foundWide || !foundLong) {
+                                            return 5;
+                                        }
+
+                                        return 0;
+                                    case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+                                        stack i64[0 210] length = (i64[0 210])entry.NameLength;
+                                        if (length == 15) {
+                                            foundFirst = true;
+                                        }
+
+                                        if (length == 11) {
+                                            foundWide = true;
+                                        }
+
+                                        if (length == 184) {
+                                            foundLong = true;
+                                        }
+
+                                        count += 1;
+                                        checksum += length;
+                                }
+                            }
+                    }
+                }
+
+                export ffi fn i32[min max] main() {
+                    stack i32[min max] emptyStatus = CheckEmptyDirectory();
+                    if (emptyStatus != 0) {
+                        return 10 + emptyStatus;
+                    }
+
+                    stack i32[min max] closeStatus = CheckEarlyClose();
+                    if (closeStatus != 0) {
+                        return 20 + closeStatus;
+                    }
+
+                    stack i32[min max] firstScan = ScanOnce();
+                    if (firstScan != 0) {
+                        return 30 + firstScan;
+                    }
+
+                    stack i32[min max] secondScan = ScanOnce();
+                    if (secondScan != 0) {
+                        return 40 + secondScan;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStdout + Environment.NewLine + compileStderr);
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessAsync(outputPath, tempDirectory.FullName);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
         }
         finally
         {

@@ -22,6 +22,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string DynamicStorageAllocateHelperName = "__stark_dynamic_alloc";
     private const string DynamicStorageReserveHelperName = "__stark_dynamic_reserve";
     private const string DynamicStorageTryReserveHelperName = "__stark_dynamic_try_reserve";
+    private const string DynamicStorageTryReserveCapacityHelperName = "__stark_dynamic_try_reserve_capacity";
     private const string DynamicStorageMoveLastPointerHelperName = "__stark_dynamic_move_last_ptr";
     private const string DynamicStorageMoveAtToOutHelperName = "__stark_dynamic_move_at_to_out";
     private const string OsAllocateHelperName = "__stark_os_allocate";
@@ -367,6 +368,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         EmitDynamicStorageTryReserveHelperDefinition(builder);
         builder.AppendLine();
+        EmitDynamicStorageTryReserveCapacityHelperDefinition(builder);
+        builder.AppendLine();
         EmitDynamicStorageMoveLastPointerHelperDefinition(builder);
         builder.AppendLine();
         EmitDynamicStorageMoveAtToOutHelperDefinition(builder);
@@ -535,6 +538,55 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("}");
     }
 
+    private void EmitDynamicStorageTryReserveCapacityHelperDefinition(StringBuilder builder)
+    {
+        var oldAllocatorCount = AllocatorSizeType == "i64"
+            ? "%capacity"
+            : "%old_count";
+        var targetAllocatorCount = AllocatorSizeType == "i64"
+            ? "%target_capacity"
+            : "%target_count";
+
+        builder.AppendLine(
+            $"define weak_odr hidden i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr nocapture %storage, i64 noundef %target_capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
+        builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
+        builder.AppendLine("  %capacity = extractvalue { ptr, i64, i64 } %current, 2");
+        builder.AppendLine("  %enough = icmp ule i64 %target_capacity, %capacity");
+        builder.AppendLine("  br i1 %enough, label %succeeded, label %grow");
+        builder.AppendLine();
+        builder.AppendLine("grow:");
+        builder.AppendLine("  %too_large = icmp ugt i64 %target_capacity, %max_count");
+        builder.AppendLine("  br i1 %too_large, label %failed, label %realloc");
+        builder.AppendLine();
+        builder.AppendLine("realloc:");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {oldAllocatorCount} = trunc i64 %capacity to {AllocatorSizeType}");
+            builder.AppendLine($"  {targetAllocatorCount} = trunc i64 %target_capacity to {AllocatorSizeType}");
+        }
+
+        builder.AppendLine($"  %old_bytes = mul {AllocatorSizeType} {oldAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_bytes = mul {AllocatorSizeType} {targetAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_ptr = call ptr @{RuntimeTryReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %old_bytes, {AllocatorSizeType} noundef %new_bytes, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  %new_ptr_is_null = icmp eq ptr %new_ptr, null");
+        builder.AppendLine("  br i1 %new_ptr_is_null, label %failed, label %update");
+        builder.AppendLine();
+        builder.AppendLine("update:");
+        builder.AppendLine("  %with_ptr = insertvalue { ptr, i64, i64 } %current, ptr %new_ptr, 0");
+        builder.AppendLine("  %updated = insertvalue { ptr, i64, i64 } %with_ptr, i64 %target_capacity, 2");
+        builder.AppendLine("  store { ptr, i64, i64 } %updated, ptr %storage");
+        builder.AppendLine("  br label %succeeded");
+        builder.AppendLine();
+        builder.AppendLine("failed:");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine();
+        builder.AppendLine("succeeded:");
+        builder.AppendLine("  ret i1 true");
+        builder.AppendLine("}");
+    }
+
     private void EmitDynamicStorageMoveLastPointerHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
@@ -607,7 +659,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             {
                 foreach (var instruction in block.Instructions)
                 {
-                    if (instruction is SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue })
+                    if (instruction is SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue })
                     {
                         return true;
                     }

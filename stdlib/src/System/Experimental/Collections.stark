@@ -149,7 +149,7 @@ public struct List<T> {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
-        if (!self.Items.TryReserve((i64[0 max])(nextCapacity - self.Items.Length))) {
+        if (!self.Items.TryReserveCapacity(nextCapacity)) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
 

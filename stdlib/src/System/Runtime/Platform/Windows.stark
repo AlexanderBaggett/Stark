@@ -1413,6 +1413,50 @@ internal fn i32[-2147483648 2147483647] TryCopyWideAscii(rawmutptr<Ascii> destin
     return 1;
 }
 
+internal fn i64[-9223372036854775808 9223372036854775807] WideUtf8Length(rawptr<i16[-32768 32767]> source, i32[-2147483648 2147483647] length) {
+    if (source == null || length < 0) {
+        return -1;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] required = (i64[-9223372036854775808 9223372036854775807])length;
+    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
+    stack mut i64[-9223372036854775808 9223372036854775807] encodedLength = 0;
+    while willexit (readIndex < required) {
+        stack i32[-2147483648 2147483647] first = UnsignedWide(*(&source[readIndex]));
+        if (first <= 127) {
+            readIndex += 1;
+            encodedLength += 1;
+            continue;
+        }
+
+        stack mut i32[-2147483648 2147483647] codePoint = first;
+        readIndex += 1;
+
+        if (55296 <= first && first <= 56319) {
+            if (readIndex < required) {
+                stack i32[-2147483648 2147483647] second = UnsignedWide(*(&source[readIndex]));
+                if (56320 <= second && second <= 57343) {
+                    readIndex += 1;
+                    codePoint = (((first - 55296) << 10) | (second - 56320)) + 65536;
+                }
+                else {
+                    codePoint = 65533;
+                }
+            }
+            else {
+                codePoint = 65533;
+            }
+        }
+        else if (56320 <= first && first <= 57343) {
+            codePoint = 65533;
+        }
+
+        encodedLength += Utf8EncodedLength(codePoint);
+    }
+
+    return encodedLength;
+}
+
 internal fn i32[-2147483648 2147483647] WriteBufferToHandle(rawptr<i8[-128 127]> handle, rawptr<i8[-128 127]>[length] buffer, i64[0 max] length) {
     if (handle == null) {
         return -1;
@@ -2392,6 +2436,21 @@ internal fn bool TryBuildWindowsDirectorySearchPath(rawmutptr<i16[-32768 32767]>
 
 internal fn rawptr<i8[-128 127]> OpenDirectoryWithFlags(ascii path, i32[-2147483648 2147483647] additionalFlags) {
     stack mut i8[-128 127][592] findData;
+    stack mut i64[-9223372036854775808 9223372036854775807] initialLength = 0;
+    return OpenDirectoryWithFlagsInto(path, &findData[0], 592, &initialLength, additionalFlags);
+}
+
+internal fn rawptr<i8[-128 127]> OpenDirectoryWithFlagsInto(
+    ascii path,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> initialLength,
+    i32[-2147483648 2147483647] additionalFlags)
+{
+    if (buffer == null || capacity < (i64[0 max])WinFindDataMinBytes || initialLength == null) {
+        return null;
+    }
+
     stack mut i16[-32768 32767][4096] searchPath;
     if (!TryBuildWindowsDirectorySearchPath(&searchPath[0], 4096, path)) {
         return null;
@@ -2400,14 +2459,16 @@ internal fn rawptr<i8[-128 127]> OpenDirectoryWithFlags(ascii path, i32[-2147483
     stack rawmutptr<i8[-128 127]> findHandle = FindFirstFileExW(
         &searchPath[0],
         WinFindExInfoBasic,
-        &findData[0],
+        buffer,
         WinFindExSearchNameMatch,
         null,
         additionalFlags);
     if (IsInvalidHandle(findHandle)) {
+        *initialLength = 0;
         return null;
     }
 
+    *initialLength = 1;
     return (rawptr<i8[-128 127]>)findHandle;
 }
 
@@ -2417,6 +2478,19 @@ internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path) {
 
 internal fn rawptr<i8[-128 127]> OpenDirectoryFast(ascii path) {
     return OpenDirectoryWithFlags(path, WinFindFirstExLargeFetch);
+}
+
+internal fn rawptr<i8[-128 127]> OpenDirectoryFastInto(
+    ascii path,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> initialLength)
+{
+    return OpenDirectoryWithFlagsInto(path, buffer, capacity, initialLength, WinFindFirstExLargeFetch);
+}
+
+internal fn i64[0 max] DirectoryBufferCapacity() {
+    return (i64[0 max])WinFindDataMinBytes;
 }
 
 internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
@@ -2546,6 +2620,65 @@ internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
             return -1;
         }
 
+        *kind = DirectoryEntryKindFromWindowsAttributes(attributes);
+        return 1;
+    }
+}
+
+internal fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> nameLength,
+    rawmutptr<i32[-2147483648 2147483647]> kind)
+{
+    if (handle == null || buffer == null || capacity < (i64[0 max])WinFindDataMinBytes || readPos == null || readLength == null || nameLength == null || kind == null) {
+        return -1;
+    }
+
+    while willexit (true) {
+        if (*readLength > 0) {
+            *readLength = 0;
+        }
+        else if (FindNextFileW(handle, buffer) == 0) {
+            stack i32[-2147483648 2147483647] error = GetLastError();
+            if (error == WinErrorNoMoreFiles) {
+                *kind = 0;
+                *nameLength = -1;
+                return 0;
+            }
+
+            if (error <= 0) {
+                *kind = -1;
+                *nameLength = -2;
+                return -1;
+            }
+
+            *kind = -error;
+            *nameLength = -2;
+            return -error;
+        }
+
+        stack rawptr<i32[-2147483648 2147483647]> attributesPointer = (rawptr<i32[-2147483648 2147483647]>)buffer;
+        stack i32[-2147483648 2147483647] attributes = *attributesPointer;
+        stack rawptr<i16[-32768 32767]> nameSource = (rawptr<i16[-32768 32767]>)(&buffer[WinFindDataFileNameOffset]);
+        stack i64[-9223372036854775808 9223372036854775807] wideLength = WindowsWideNullTerminatedLength(nameSource, WinFindDataMaxFileNameLength);
+        if (IsDotWideDirectoryEntry(nameSource, wideLength)) {
+            continue;
+        }
+
+        stack i64[-9223372036854775808 9223372036854775807] encodedLength = WideUtf8Length(
+            nameSource,
+            (i32[-2147483648 2147483647])wideLength);
+        if (encodedLength < 0) {
+            *kind = -1;
+            *nameLength = -2;
+            return -1;
+        }
+
+        *nameLength = encodedLength;
         *kind = DirectoryEntryKindFromWindowsAttributes(attributes);
         return 1;
     }

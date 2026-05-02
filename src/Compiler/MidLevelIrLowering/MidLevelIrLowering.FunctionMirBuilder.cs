@@ -7493,7 +7493,7 @@ internal sealed partial class MidLevelIrLowerer
             if (postfixParts.Length < 2
                 || postfixParts[^1].argumentList() is not { } arguments
                 || postfixParts[^2].Identifier()?.GetText() is not { } memberName
-                || (memberName is not "Reserve" and not "TryReserve"))
+                || (memberName is not "Reserve" and not "TryReserve" and not "TryReserveCapacity"))
             {
                 return false;
             }
@@ -7511,18 +7511,20 @@ internal sealed partial class MidLevelIrLowerer
 
             if (arguments.argument().Length != 1)
             {
-                MarkUnsupported(arguments, $"Dynamic storage {memberName} expects one additional-capacity argument.");
+                var argumentName = memberName == "TryReserveCapacity" ? "target-capacity" : "additional-capacity";
+                MarkUnsupported(arguments, $"Dynamic storage {memberName} expects one {argumentName} argument.");
                 return false;
             }
 
-            var additional = LowerExpressionToOperand(arguments.argument(0).expression(), NonNegativeI64Type);
-            if (additional is null || additional.Type.Kind != StarkTypeKind.Integer)
+            var capacityOperand = LowerExpressionToOperand(arguments.argument(0).expression(), NonNegativeI64Type);
+            if (capacityOperand is null || capacityOperand.Type.Kind != StarkTypeKind.Integer)
             {
-                MarkUnsupported(arguments.argument(0).expression(), $"Dynamic storage {memberName} requires an integer additional-capacity operand.");
+                var argumentName = memberName == "TryReserveCapacity" ? "target-capacity" : "additional-capacity";
+                MarkUnsupported(arguments.argument(0).expression(), $"Dynamic storage {memberName} requires an integer {argumentName} operand.");
                 return false;
             }
 
-            additional = CoerceOperand(additional, NonNegativeI64Type) ?? additional;
+            capacityOperand = CoerceOperand(capacityOperand, NonNegativeI64Type) ?? capacityOperand;
             var storageAddress = BuildAddress(currentPlace);
             if (storageAddress is null)
             {
@@ -7530,17 +7532,24 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            reserve = memberName == "TryReserve"
-                ? new MidLevelIrDynamicStorageTryReserveRValue(
+            reserve = memberName switch
+            {
+                "TryReserve" => new MidLevelIrDynamicStorageTryReserveRValue(
                     storageAddress,
                     currentValue.Type,
-                    additional,
+                    capacityOperand,
+                    expression.GetText()),
+                "TryReserveCapacity" => new MidLevelIrDynamicStorageTryReserveCapacityRValue(
+                    storageAddress,
+                    currentValue.Type,
+                    capacityOperand,
+                    expression.GetText()),
+                _ => new MidLevelIrDynamicStorageReserveRValue(
+                    storageAddress,
+                    currentValue.Type,
+                    capacityOperand,
                     expression.GetText())
-                : new MidLevelIrDynamicStorageReserveRValue(
-                    storageAddress,
-                    currentValue.Type,
-                    additional,
-                    expression.GetText());
+            };
             return true;
         }
 

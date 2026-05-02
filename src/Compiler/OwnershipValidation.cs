@@ -2098,7 +2098,8 @@ internal sealed class OwnershipValidator
         }
 
         if (string.Equals(memberName, "Reserve", StringComparison.Ordinal)
-            || string.Equals(memberName, "TryReserve", StringComparison.Ordinal))
+            || string.Equals(memberName, "TryReserve", StringComparison.Ordinal)
+            || string.Equals(memberName, "TryReserveCapacity", StringComparison.Ordinal))
         {
             TryEnsureValueAvailable(receiver, state, summary, ValueUse.Read, arguments.Start);
             foreach (var argument in arguments.argument())
@@ -2107,9 +2108,9 @@ internal sealed class OwnershipValidator
             }
 
             result = new ExpressionInfo(
-                string.Equals(memberName, "TryReserve", StringComparison.Ordinal)
-                    ? StarkTypeSymbols.Bool
-                    : StarkTypeSymbols.Void);
+                string.Equals(memberName, "Reserve", StringComparison.Ordinal)
+                    ? StarkTypeSymbols.Void
+                    : StarkTypeSymbols.Bool);
             return true;
         }
 

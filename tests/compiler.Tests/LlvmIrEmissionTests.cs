@@ -170,6 +170,40 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePath()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                if (!values.TryReserveCapacity(8)) {
+                    return 0;
+                }
+
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm);
+        Assert.Contains("define weak_odr hidden i1 @__stark_dynamic_try_reserve_capacity", llvm);
+        Assert.Contains("dynamic_try_reserve_capacity_realloc", runBody);
+        Assert.Contains("call ptr @__stark_runtime_try_realloc", runBody);
+        Assert.Contains("phi i1", runBody);
+        Assert.Contains("dynamic_try_reserve_capacity_failed", runBody);
+        Assert.DoesNotContain("dynamic_try_reserve_needed", runBody);
+        Assert.DoesNotContain("dynamic_try_reserve_minimum", runBody);
+        Assert.DoesNotContain("dynamic_try_reserve_new_capacity", runBody);
+    }
+
+    [Fact]
     public void DynamicStorageInitSliceWritesCommitOwnerLength()
     {
         var result = Compile(
@@ -5622,6 +5656,37 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("declare void @llvm.memcpy.inline.p0.p0.i64", llvm);
         Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %v", llvm);
         Assert.Contains("i64 36, i1 false)", llvm);
+    }
+
+    [Fact]
+    public void VeryLargeAddressableAggregateCopyUsesRegularMemcpy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i32[-2147483648 2147483647][128] Data;
+            }
+
+            ffi fn void Consume(rawptr<Big> value);
+
+            fn void Run() {
+                stack Big source = new Big();
+                stack mut Big dest = new Big();
+                Consume(&source);
+                dest = source;
+                Consume(&dest);
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64", llvm);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(", llvm);
+        Assert.Contains("i64 512, i1 false)", llvm);
+        Assert.DoesNotContain("@llvm.memcpy.inline.p0.p0.i64", llvm);
     }
 
     [Fact]

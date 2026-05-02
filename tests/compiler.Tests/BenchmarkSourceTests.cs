@@ -173,6 +173,25 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
+    public void WindowsExperimentalDirectoryEnumerationUsesAllocationFreeInfoPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var targetInfo = new LlvmTargetInfo("x86_64-pc-windows-msvc", null);
+        var llvm = CompileBenchmarkLlvm(repositoryRoot, "io/ExperimentalDirectoryEnumeration.stark", targetInfo);
+        var enumerateOnceBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i64 @EnumerateOnce()",
+            "Expected ExperimentalDirectoryEnumeration EnumerateOnce definition to be emitted.");
+
+        Assert.Contains("@System_Experimental_FileSystem_Directory_ReadNextInfo(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Experimental_FileSystem_Directory_ReadNext(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_alloc", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("__stark_runtime_free", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("i64 8192, i1 false", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("i64 8240, i1 false", enumerateOnceBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExperimentalStandardLibraryOptimizationBenchmarkGatesHaveExpectedSourceMatrix()
     {
         var repositoryRoot = FindRepositoryRoot();

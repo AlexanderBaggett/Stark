@@ -193,6 +193,19 @@ internal fn rawptr<i8[-128 127]> OpenDirectoryFast(ascii path)
     return System.Runtime.Platform.Linux.OpenDirectory(path);
 }
 
+internal fn rawptr<i8[-128 127]> OpenDirectoryFastInto(
+    ascii path,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> initialLength)
+{
+    return System.Runtime.Platform.Linux.OpenDirectoryInto(path, buffer, capacity, initialLength);
+}
+
+internal fn i64[0 max] DirectoryBufferCapacity() {
+    return System.Runtime.Platform.Linux.DirectoryBufferCapacity();
+}
+
 internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.CloseDirectory(handle);
 }
@@ -207,6 +220,18 @@ internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
     rawmutptr<i32[-2147483648 2147483647]> kind)
 {
     return System.Runtime.Platform.Linux.ReadDirectoryEntry(handle, buffer, capacity, readPos, readLength, name, kind);
+}
+
+internal fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> nameLength,
+    rawmutptr<i32[-2147483648 2147483647]> kind)
+{
+    return System.Runtime.Platform.Linux.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
 }
 
 internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {

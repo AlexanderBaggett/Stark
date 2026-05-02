@@ -3037,6 +3037,24 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void DynamicStorageTryReserveCapacityReturnsBool()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack bool grew = values.TryReserveCapacity(8);
+                return grew;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void DynamicStorageReserveRequiresMutableOwnerAndNonNegativeAdditionalCapacity()
     {
         var result = Compile(
